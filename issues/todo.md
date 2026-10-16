@@ -11,7 +11,7 @@ digraph issues {
 
   // status colors: todo=white, in-progress=lightyellow, review=lightblue,
   //                done=lightgreen, wontfix=lightgrey
-  "1"  [label="#1 typescript-coder agent\n(todo)", fillcolor="white"];
+  "1"  [label="#1 typescript-coder agent\n(done)", fillcolor="lightgreen"];
   "2"  [label="#2 Scaffold\n(done)", fillcolor="lightgreen"];
   "3"  [label="#3 Lexer\n(done)", fillcolor="lightgreen"];
   "4"  [label="#4 Parser\n(done)", fillcolor="lightgreen"];
@@ -20,7 +20,7 @@ digraph issues {
   "7"  [label="#7 Provider\n(done)", fillcolor="lightgreen"];
   "8"  [label="#8 Tools\n(done)", fillcolor="lightgreen"];
   "9"  [label="#9 Agent loop\n(done)", fillcolor="lightgreen"];
-  "10" [label="#10 CLI & main\n(todo)", fillcolor="white"];
+  "10" [label="#10 CLI & main\n(done)", fillcolor="lightgreen"];
 
   // tree edges (parent -> child), solid
   "1" -> "2";
@@ -49,7 +49,7 @@ digraph issues {
 
 | id  | title                       | status | priority | milestone | parent | deps    |
 | --- | --------------------------- | ------ | -------- | --------- | ------ | ------- |
-| 1   | [typescript-coder agent](0001-typescript-coder-agent.md) | todo | medium |  |  |  |
+| 1   | [typescript-coder agent](0001-typescript-coder-agent.md) | done | medium |  |  |  |
 | 2   | [Scaffold Bun/TypeScript project](0002-scaffold-bun-project.md) | done | medium | M0 | 1 |  |
 | 3   | [Lexer with strict errors](0003-lexer-strict-errors.md) | done | medium | M1 | 1 | 2 |
 | 4   | [Recursive-descent parser with source spans](0004-parser-source-spans.md) | done | medium | M2 | 1 | 3 |
@@ -58,4 +58,4 @@ digraph issues {
 | 7   | [OpenAI-compatible provider with tools](0007-provider-openai.md) | done | medium | M5 | 1 | 2 |
 | 8   | [Tools (rename, scroll, find-definition, check, test)](0008-tools.md) | done | medium | M6 | 1 | 6 |
 | 9   | [Agent loop with verify, rollback, retry](0009-agent-loop.md) | done | medium | M7 | 1 | 6, 7, 8 |
-| 10  | [CLI and main stdin entry](0010-cli-and-main.md) | todo | medium | M8 | 1 | 9 |
+| 10  | [CLI and main stdin entry](0010-cli-and-main.md) | done | medium | M8 | 1 | 9 |

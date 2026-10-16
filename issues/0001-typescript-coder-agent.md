@@ -1,7 +1,7 @@
 ---
 id: 1
 title: typescript-coder agent (umbrella)
-status: todo
+status: done
 priority: medium
 milestone: null
 parent: null
@@ -28,13 +28,13 @@ Deliver a working end-to-end TypeScript coding agent matching spec.md.
 
 ## Acceptance criteria
 
-- [ ] All child milestones are `done`.
-- [ ] Anchor fixture 1: on a fixture repo with a failing `bun test`, the agent
+- [x] All child milestones are `done`.
+- [x] Anchor fixture 1: on a fixture repo with a failing `bun test`, the agent
       applies a symbol replacement that turns tests green and keeps
       `tsc --noEmit` clean.
-- [ ] Anchor fixture 2: a deliberately-bad edit triggers rollback + retry and a
+- [x] Anchor fixture 2: a deliberately-bad edit triggers rollback + retry and a
       final explanation.
-- [ ] Anchor fixture 3: after the agent edits its own `src/`, `tsc` and
+- [x] Anchor fixture 3: after the agent edits its own `src/`, `tsc` and
       `bun test` still pass (self-host smoke).
 
 ## Verification
@@ -48,3 +48,22 @@ described in spec.md §10.
   #6 Editor, #7 Provider, #8 Tools, #9 Agent loop, #10 CLI & main.
 - Non-goals (v1): JSX/TSX support, lossless CST, custom TS printer, build step.
 - Priority defaulted to `medium` because spec.md states no priorities.
+- **Final state (2026-10-16):** all children `done`; 394 tests green across 9
+  files; `bunx tsc --noEmit` clean. Anchor fixtures:
+  1. `src/loop.test.ts` happy-path e2e (temp repo with failing test → green
+     through real `tsc` + `bun test` verification);
+  2. `src/loop.test.ts` persistent-failure e2e (type-invalid replacement →
+     rollback ×3 → explanation, file restored);
+  3. `src/cli.test.ts` self-host smoke (agent edits a copy of `src/`, loop's
+     check+test pass there, copied suite green).
+- **Known v1 limitations carried forward:** live LLM calls need a key that
+  permits `deepseek`/`qwen` (current key returns 403 for those model ids; all
+  automated tests use mocked providers); parser gaps for private `#names`,
+  import attributes, `using`, `<const>`, mapped key remapping, `typeof import`;
+  rename tool rewrites declaration names only; `scroll` variable view omits the
+  declaration keyword; the editor applies one symbol per loop iteration
+  (spec §13 default).
+- **Process note:** large single-shot sub-agent delegations fail silently in
+  this environment; all milestones were implemented via small bounded
+  sub-agent tasks with main-agent review + re-verification, committed per
+  component.
