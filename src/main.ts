@@ -1,0 +1,77 @@
+import { helpText, parseArgs } from "./cli";
+import { runLoop } from "./loop";
+import { OpenAIProvider, readConfigFromEnv } from "./openai";
+import type { CliOptions } from "./cli";
+import type { ProviderLike } from "./loop";
+
+export interface MainIo {
+  out: (line: string) => void;
+  err: (line: string) => void;
+}
+
+export interface RunMainOptions {
+  issue: string;
+  model: string;
+  cwd: string;
+  provider: ProviderLike;
+  io?: MainIo;
+  maxRetries?: number;
+}
+
+const NO_EXPLANATION = "the model did not provide an explanation";
+
+export async function runMain(options: RunMainOptions): Promise<number> {
+  const io = options.io ?? { out: console.log, err: console.error };
+  const issue = options.issue.trim();
+  if (issue === "") {
+    io.err("error: no issue provided on stdin");
+    return 1;
+  }
+  const result = await runLoop({
+    cwd: options.cwd,
+    issue,
+    model: options.model,
+    provider: options.provider,
+    maxRetries: options.maxRetries,
+  });
+  if (result.ok) {
+    const kind = result.locator?.kind ?? "symbol";
+    const name = result.locator?.name ?? "unknown";
+    const path = result.filePath ?? result.locator?.path ?? "unknown";
+    io.out(`applied ${kind} ${name} to ${path} after ${result.attempts.length} attempt(s)`);
+    return 0;
+  }
+  const explanation = result.explanation ?? NO_EXPLANATION;
+  io.err(result.diagnostics ?? "verification failed");
+  io.out(explanation);
+  io.err(explanation);
+  return 1;
+}
+
+function parseCliOptions(argv: string[]): CliOptions {
+  try {
+    return parseArgs(argv);
+  } catch (error) {
+    console.error(`error: ${error instanceof Error ? error.message : String(error)}`);
+    console.error(helpText());
+    process.exit(1);
+  }
+}
+
+if (import.meta.main) {
+  const cli = parseCliOptions(process.argv.slice(2));
+  if (cli.help) {
+    console.log(helpText());
+    process.exit(0);
+  }
+  const issue = await Bun.stdin.text();
+  const provider = new OpenAIProvider(readConfigFromEnv(cli.model));
+  const code = await runMain({
+    issue,
+    model: cli.model,
+    cwd: process.cwd(),
+    provider,
+    io: { out: console.log, err: console.error },
+  });
+  process.exit(code);
+}
