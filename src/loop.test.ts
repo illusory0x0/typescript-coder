@@ -1,5 +1,5 @@
 import { afterEach, describe, expect, test } from "bun:test";
-import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
+import { mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import {
@@ -11,8 +11,11 @@ import {
   discoverSourceFiles,
   parseLocatorResponse,
   parseReplacementResponse,
+  runLoop,
   stripCodeFences,
 } from "./loop";
+import type { ProviderLike } from "./loop";
+import type { ChatMessage, ChatResponse, ToolDefinition } from "./openai";
 import type { SourceFile } from "./utility";
 
 const tempDirs: string[] = [];
@@ -242,4 +245,337 @@ describe("parseReplacementResponse", () => {
       "model did not return replacement text",
     );
   });
+});
+
+const TSC = [
+  "bun",
+  new URL("../node_modules/typescript/bin/tsc", import.meta.url).pathname,
+  "--noEmit",
+];
+
+type ScriptedResponse = string | { toolCall: { name: string; arguments: string } };
+
+class ScriptedProvider implements ProviderLike {
+  readonly calls: ChatMessage[][] = [];
+
+  constructor(private readonly responses: ScriptedResponse[]) {}
+
+  async chat(
+    messages: ChatMessage[],
+    _tools?: ToolDefinition[],
+    _options?: { temperature?: number },
+  ): Promise<ChatResponse> {
+    this.calls.push(structuredClone(messages));
+    const response = this.responses.shift();
+    if (response === undefined) {
+      throw new Error("no scripted response");
+    }
+    if (typeof response === "string") {
+      return { content: response, toolCalls: [], finishReason: "stop", raw: {} };
+    }
+    return {
+      content: null,
+      toolCalls: [{ id: "t1", type: "function", function: response.toolCall }],
+      finishReason: "tool_calls",
+      raw: {},
+    };
+  }
+}
+
+function fixtureDir(): string {
+  const dir = tempDir();
+  mkdirSync(join(dir, "src"));
+  writeFileSync(
+    join(dir, "tsconfig.json"),
+    `${JSON.stringify(
+      {
+        compilerOptions: {
+          strict: true,
+          noEmit: true,
+          module: "ESNext",
+          moduleResolution: "bundler",
+          types: [],
+        },
+        include: ["src"],
+        exclude: ["src/**/*.test.ts"],
+      },
+      null,
+      2,
+    )}\n`,
+  );
+  writeFileSync(
+    join(dir, "src", "helper.ts"),
+    "export function answer(): number {\n  return 1;\n}\n",
+  );
+  writeFileSync(
+    join(dir, "src", "helper.test.ts"),
+    'import { expect, test } from "bun:test";\nimport { answer } from "./helper";\n\ntest("answer", () => {\n  expect(answer()).toBe(2);\n});\n',
+  );
+  return dir;
+}
+
+function helperSource(dir: string): string {
+  return readFileSync(join(dir, "src", "helper.ts"), "utf8");
+}
+
+describe("runLoop", () => {
+  test("applies, verifies, and returns a successful text response", async () => {
+    const dir = fixtureDir();
+    const provider = new ScriptedProvider([
+      '{"path":"src/helper.ts","name":"answer","kind":"function"}',
+      "```ts\nfunction answer(): number {\n  return 2;\n}\n```",
+    ]);
+    const result = await runLoop({
+      cwd: dir,
+      issue: "make the answer test pass",
+      model: "fake",
+      provider,
+      checkCommand: TSC,
+      testCommand: ["bun", "test"],
+    });
+    expect(result.ok).toBe(true);
+    expect(result.locator).toEqual({
+      path: "src/helper.ts",
+      name: "answer",
+      kind: "function",
+    });
+    expect(result.attempts.length).toBe(1);
+    expect(result.attempts[0]?.diagnostics).toBeNull();
+    expect(helperSource(dir)).toContain("return 2;");
+    expect(result.messages[0]?.role).toBe("system");
+    expect(result.messages[0]?.content).toBe(buildSystemPrompt());
+    expect(result.messages[3]?.content).toContain("```ts");
+    expect(provider.calls.length).toBe(2);
+  }, 30000);
+
+  test("accepts a locator delivered through a tool call", async () => {
+    const dir = fixtureDir();
+    const provider = new ScriptedProvider([
+      {
+        toolCall: {
+          name: "select",
+          arguments: '{"path":"src/helper.ts","name":"answer","kind":"function"}',
+        },
+      },
+      "function answer(): number {\n  return 2;\n}\n",
+    ]);
+    const result = await runLoop({
+      cwd: dir,
+      issue: "make the answer test pass",
+      model: "fake",
+      provider,
+      checkCommand: TSC,
+      testCommand: ["bun", "test"],
+    });
+    expect(result.ok).toBe(true);
+    expect(result.attempts.length).toBe(1);
+    expect(helperSource(dir)).toContain("return 2;");
+  }, 30000);
+
+  test("retries selection after an invalid locator and records the failure", async () => {
+    const dir = fixtureDir();
+    const provider = new ScriptedProvider([
+      "not json",
+      '{"path":"src/helper.ts","name":"answer","kind":"function"}',
+      "function answer(): number {\n  return 2;\n}\n",
+    ]);
+    const issue = "make the answer test pass";
+    const result = await runLoop({
+      cwd: dir,
+      issue,
+      model: "fake",
+      provider,
+      checkCommand: TSC,
+      testCommand: ["bun", "test"],
+    });
+    expect(result.ok).toBe(true);
+    expect(result.attempts.length).toBe(2);
+    expect(result.attempts[0]?.replacement).toBeNull();
+    expect(result.attempts[0]?.diagnostics).toContain("invalid locator");
+    const retryMessages = provider.calls[1] ?? [];
+    expect(
+      retryMessages.some(
+        (message) =>
+          typeof message.content === "string" && message.content.includes("invalid locator"),
+      ),
+    ).toBe(true);
+    expect(provider.calls[1]?.[0]?.content).toBe(buildSystemPrompt());
+    expect(provider.calls[1]?.[1]?.content).toBe(
+      buildUserPrompt(issue, buildContextYaml(discoverSourceFiles(dir))),
+    );
+    expect(helperSource(dir)).toContain("return 2;");
+  }, 30000);
+
+  test("gives up with an explanation when no locator can be selected", async () => {
+    const dir = fixtureDir();
+    const provider = new ScriptedProvider([
+      '{"path":"src/helper.ts","name":"nope","kind":"function"}',
+      '{"path":"src/helper.ts","name":"nope","kind":"function"}',
+      "the symbol does not exist in the project",
+    ]);
+    const result = await runLoop({
+      cwd: dir,
+      issue: "make the answer test pass",
+      model: "fake",
+      provider,
+      maxRetries: 1,
+      checkCommand: TSC,
+      testCommand: ["bun", "test"],
+    });
+    expect(result.ok).toBe(false);
+    expect(result.locator).toBeNull();
+    expect(result.attempts.length).toBe(1);
+    expect(result.attempts[0]?.diagnostics).toContain("invalid locator");
+    expect(result.explanation ?? "").not.toBe("");
+    expect(helperSource(dir)).toContain("return 1;");
+  }, 30000);
+
+  test("rolls back a failing edit and retries with diagnostics", async () => {
+    const dir = fixtureDir();
+    const provider = new ScriptedProvider([
+      '{"path":"src/helper.ts","name":"answer","kind":"function"}',
+      'function answer(): number {\n  return "nope";\n}',
+      "function answer(): number {\n  return 2;\n}\n",
+    ]);
+    const result = await runLoop({
+      cwd: dir,
+      issue: "make the answer test pass",
+      model: "fake",
+      provider,
+      checkCommand: TSC,
+      testCommand: ["bun", "test"],
+    });
+    expect(result.ok).toBe(true);
+    expect(result.attempts.length).toBe(2);
+    expect(result.attempts[0]?.diagnostics).not.toBeNull();
+    expect(result.attempts[1]?.diagnostics).toBeNull();
+    expect(helperSource(dir)).toContain("return 2;");
+    const retryMessages = provider.calls[2] ?? [];
+    expect(
+      retryMessages.some(
+        (message) =>
+          typeof message.content === "string" && message.content.includes("failed verification"),
+      ),
+    ).toBe(true);
+  }, 30000);
+
+  test("keeps the prompt prefix append-only and the system prompt stable across runs", async () => {
+    const issue = "make the answer test pass";
+    const locatorResponse = '{"path":"src/helper.ts","name":"answer","kind":"function"}';
+    const goodReplacement = "function answer(): number {\n  return 2;\n}\n";
+
+    const provider = new ScriptedProvider([locatorResponse, goodReplacement]);
+    const first = await runLoop({
+      cwd: fixtureDir(),
+      issue,
+      model: "fake",
+      provider,
+      checkCommand: TSC,
+      testCommand: ["bun", "test"],
+    });
+    expect(first.ok).toBe(true);
+    expect(provider.calls.length).toBeGreaterThanOrEqual(2);
+    const initial = provider.calls[0] ?? [];
+    const replacementCall = provider.calls[1] ?? [];
+    expect(replacementCall.slice(0, initial.length)).toEqual(initial);
+    expect(initial[0]?.role).toBe("system");
+    expect(initial[1]?.content).toContain(issue);
+    expect(initial[1]?.content).toContain("```yaml");
+
+    const otherProvider = new ScriptedProvider([locatorResponse, goodReplacement]);
+    const other = await runLoop({
+      cwd: fixtureDir(),
+      issue,
+      model: "fake",
+      provider: otherProvider,
+      checkCommand: TSC,
+      testCommand: ["bun", "test"],
+    });
+    expect(other.ok).toBe(true);
+    expect(otherProvider.calls[0]?.[0]).toEqual(initial[0]);
+
+    const retryProvider = new ScriptedProvider([
+      locatorResponse,
+      'function answer(): number {\n  return "nope";\n}',
+      goodReplacement,
+    ]);
+    const retry = await runLoop({
+      cwd: fixtureDir(),
+      issue,
+      model: "fake",
+      provider: retryProvider,
+      checkCommand: TSC,
+      testCommand: ["bun", "test"],
+    });
+    expect(retry.ok).toBe(true);
+    const beforeRetry = retryProvider.calls[1] ?? [];
+    const afterRetry = retryProvider.calls[2] ?? [];
+    expect(afterRetry.slice(0, beforeRetry.length)).toEqual(beforeRetry);
+    expect(afterRetry.length - beforeRetry.length).toBe(2);
+    const tail = afterRetry.slice(beforeRetry.length);
+    expect(tail.map((message) => message.role)).toEqual(["assistant", "user"]);
+    expect(tail[1]?.content).toContain("failed verification");
+  }, 30000);
+
+  test("restores the file and explains after exhausting retries", async () => {
+    const issue = "make the answer test pass";
+    const dir = fixtureDir();
+    const original = helperSource(dir);
+    const badReplacement = 'function answer(): number {\n  return "no";\n}';
+    const explanation = "```\nThe symbol cannot satisfy the test without a larger refactor.\n```";
+    const provider = new ScriptedProvider([
+      '{"path":"src/helper.ts","name":"answer","kind":"function"}',
+      badReplacement,
+      badReplacement,
+      badReplacement,
+      explanation,
+    ]);
+    const result = await runLoop({
+      cwd: dir,
+      issue,
+      model: "fake",
+      provider,
+      checkCommand: TSC,
+      testCommand: ["bun", "test"],
+    });
+    expect(result.ok).toBe(false);
+    expect(result.attempts.length).toBe(3);
+    for (const attempt of result.attempts) {
+      expect(attempt.replacement).toBe(badReplacement);
+      expect(attempt.diagnostics).toContain("src/helper.ts(2,3)");
+      expect(attempt.diagnostics).toContain("not assignable");
+    }
+    expect(result.diagnostics).toContain("src/helper.ts(2,3)");
+    expect(result.diagnostics).toContain("not assignable");
+    expect(result.diagnostics).toContain("tests failed:");
+    expect(result.editedSource).toBeNull();
+    expect(result.filePath).toBe("src/helper.ts");
+    expect(helperSource(dir)).toBe(original);
+    expect(result.explanation).toBe(
+      "The symbol cannot satisfy the test without a larger refactor.",
+    );
+
+    expect(provider.calls.length).toBe(5);
+    const attemptsCall = provider.calls[3] ?? [];
+    expect(attemptsCall).toHaveLength(8);
+    expect(attemptsCall[attemptsCall.length - 1]?.content).toContain("failed verification");
+    expect(attemptsCall[attemptsCall.length - 1]?.content).toContain("src/helper.ts(2,3)");
+    expect(attemptsCall[attemptsCall.length - 1]?.content).toContain("not assignable");
+    const explainCall = provider.calls[4] ?? [];
+    expect(explainCall).toHaveLength(11);
+    expect(explainCall[explainCall.length - 1]?.content).toContain("Explain");
+    expect(explainCall.map((message) => message.role)).toEqual([
+      "system",
+      "user",
+      "assistant",
+      "user",
+      "assistant",
+      "user",
+      "assistant",
+      "user",
+      "assistant",
+      "user",
+      "user",
+    ]);
+  }, 30000);
 });
