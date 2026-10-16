@@ -1,6 +1,6 @@
 ---
 name: resolve-issue
-description: Pick up a tracked issue from issues/, implement it, verify the acceptance criteria, and update its status in issues/todo.md (table and Graphviz tree). The counterpart to file-issue. Use when the user says "resolve-issue", "work on issue <id>", "pick up the next issue", "do the todo", or asks to implement and close a tracked work item.
+description: Pick up a tracked issue from issues/, implement it via a sub-agent, verify the acceptance criteria, and update its status in issues/todo.md (table and Graphviz tree). Always confirms which issue(s) to work on with the user. The counterpart to file-issue. Use when the user says "resolve-issue", "work on issue <id>", "pick up the next issue", "do the todo", or asks to implement and close a tracked work item.
 ---
 
 # resolve-issue
@@ -34,12 +34,22 @@ authoritative for structure.
 
 ## Workflow
 
-1. **Select.** If the user named an id, use it. Otherwise read `issues/todo.md`
-   and pick the highest-priority eligible work item: a `todo` **leaf** (no
-   children) whose `deps` are all `done`. Do not pick an umbrella that still has
-   unfinished children — resolve its leaves first. If none qualify, report that
-   and stop. If two or more are equally eligible, ask via the `question` tool
-   rather than guessing.
+1. **Select — ask, never pick silently.** If the user named an id, use it.
+   Otherwise read `issues/todo.md`, build the list of eligible work items, and —
+   for **every** invocation where the user did not name an id — **ask via the
+   `question` tool** which to resolve. Never auto-pick.
+
+   An eligible work item is a `todo` **leaf** (no children) whose `deps` are all
+   `done`; an umbrella is not eligible while it has open children. Order
+   candidates by priority, leaves before their umbrella. The question must
+   offer, in order:
+
+   - the top candidate, labeled `(Recommended)`;
+   - the other eligible leaves, one option each;
+   - `All eligible, in order` — a batch (see "Batch mode" below).
+
+   If no issue is eligible, report what is blocking (unmet `deps`, unfinished
+   children) and stop — do not ask an empty question.
 2. **Load.** Read the issue file fully — Context, Goal, Acceptance criteria,
    Verification, Notes — plus its full ancestor chain (`parent` up to the root)
    for context, and every issue in its `deps` that is not yet `done`. Read the
@@ -95,6 +105,22 @@ Include:
 The sub-agent is a worker, not the owner. It must not touch `issues/` — the main
 agent alone updates the tracker.
 
+## Batch mode
+
+Only when the user's answer to the selection question is `All eligible, in
+order` (or they explicitly ask for a batch):
+
+- Process issues **sequentially**, one at a time, re-reading `issues/todo.md`
+  before each pick — finishing one issue can make the next eligible (a leaf whose
+  `deps` were waiting on it).
+- Order: priority first, leaves before their umbrella, parents last.
+- After each issue, re-evaluate eligibility and propagate up the tree (step 8).
+  If a parent becomes fully `done`, include it.
+- **Stop on the first issue that cannot be closed** (failed verification or a
+  blocker) and report the remaining queue — do not skip ahead, because the
+  blocked issue may gate the rest.
+- The user may pick a subset instead of "all"; honor their list and order.
+
 ## Updating the tracker
 
 Update all three places together:
@@ -126,7 +152,10 @@ if you do reparent, update frontmatter, table, and both old/new tree edges.
 
 ## Rules
 
-- One issue per invocation unless the user explicitly asks for a batch.
+- Always confirm the target with the user via the `question` tool when no id is
+  named; never start work on a guessed issue.
+- One issue per invocation unless the user's answer selects a batch. In batch
+  mode, process sequentially and stop on the first issue that cannot be closed.
 - Never edit implementation files from the main context: all code changes go
   through the `task` sub-agent. The main agent owns selection, the tracker, and
   verification.
