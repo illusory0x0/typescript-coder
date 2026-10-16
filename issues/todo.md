@@ -21,6 +21,10 @@ digraph issues {
   "8"  [label="#8 Tools\n(done)", fillcolor="lightgreen"];
   "9"  [label="#9 Agent loop\n(done)", fillcolor="lightgreen"];
   "10" [label="#10 CLI & main\n(done)", fillcolor="lightgreen"];
+  "11" [label="#11 Live e2e acceptance\n(todo)", fillcolor="white"];
+  "12" [label="#12 Runner live layer\n(todo)", fillcolor="white"];
+  "13" [label="#13 Live run evidence\n(todo)", fillcolor="white"];
+  "14" [label="#14 Model records\n(todo)", fillcolor="white"];
 
   // tree edges (parent -> child), solid
   "1" -> "2";
@@ -33,6 +37,11 @@ digraph issues {
   "1" -> "9";
   "1" -> "10";
 
+  // tree edges (parent -> child), solid
+  "11" -> "12";
+  "11" -> "13";
+  "11" -> "14";
+
   // dependency edges (blocker -> blocked), dashed
   "2" -> "3" [style=dashed, label="blocks"];
   "3" -> "4" [style=dashed, label="blocks"];
@@ -44,6 +53,8 @@ digraph issues {
   "7" -> "9" [style=dashed, label="blocks"];
   "8" -> "9" [style=dashed, label="blocks"];
   "9" -> "10" [style=dashed, label="blocks"];
+  "12" -> "13" [style=dashed, label="blocks"];
+  "13" -> "14" [style=dashed, label="blocks"];
 }
 ```
 
@@ -59,3 +70,7 @@ digraph issues {
 | 8   | [Tools (rename, scroll, find-definition, check, test)](done/0008-tools.md) | done | medium | M6 | 1 | 6 |
 | 9   | [Agent loop with verify, rollback, retry](done/0009-agent-loop.md) | done | medium | M7 | 1 | 6, 7, 8 |
 | 10  | [CLI and main stdin entry](done/0010-cli-and-main.md) | done | medium | M8 | 1 | 9 |
+| 11  | [Live end-to-end acceptance and model-record corrections](0011-live-e2e-acceptance.md) | todo | medium |  |  |  |
+| 12  | [Add live layer to the acceptance runner](0012-runner-live-layer.md) | todo | medium |  | 11 |  |
+| 13  | [Run live end-to-end acceptance and capture evidence](0013-live-run-evidence.md) | todo | medium |  | 11 | 12 |
+| 14  | [Correct model records in spec and closed issues](0014-correct-model-records.md) | todo | medium |  | 11 | 13 |
