@@ -19,7 +19,7 @@ digraph issues {
   "6"  [label="#6 Editor\n(done)", fillcolor="lightgreen"];
   "7"  [label="#7 Provider\n(done)", fillcolor="lightgreen"];
   "8"  [label="#8 Tools\n(done)", fillcolor="lightgreen"];
-  "9"  [label="#9 Agent loop\n(todo)", fillcolor="white"];
+  "9"  [label="#9 Agent loop\n(done)", fillcolor="lightgreen"];
   "10" [label="#10 CLI & main\n(todo)", fillcolor="white"];
 
   // tree edges (parent -> child), solid
@@ -57,5 +57,5 @@ digraph issues {
 | 6   | [Editor apply-edits and oxfmt formatting](0006-editor-apply-edits.md) | done | medium | M4 | 1 | 5 |
 | 7   | [OpenAI-compatible provider with tools](0007-provider-openai.md) | done | medium | M5 | 1 | 2 |
 | 8   | [Tools (rename, scroll, find-definition, check, test)](0008-tools.md) | done | medium | M6 | 1 | 6 |
-| 9   | [Agent loop with verify, rollback, retry](0009-agent-loop.md) | todo | medium | M7 | 1 | 6, 7, 8 |
+| 9   | [Agent loop with verify, rollback, retry](0009-agent-loop.md) | done | medium | M7 | 1 | 6, 7, 8 |
 | 10  | [CLI and main stdin entry](0010-cli-and-main.md) | todo | medium | M8 | 1 | 9 |
