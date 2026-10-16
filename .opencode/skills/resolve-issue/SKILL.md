@@ -8,7 +8,9 @@ description: Pick up a tracked issue from issues/, implement it via a sub-agent,
 Take a tracked issue to done. This is the execution counterpart to `file-issue`:
 `file-issue` writes issue files and the `issues/todo.md` tracker (a Graphviz
 tree plus a status table), `resolve-issue` consumes them, does the work, and
-moves them through the status lifecycle.
+moves them through the status lifecycle. When an issue reaches `done`, its file
+is **physically moved** to `issues/done/` and the tracker link is updated to
+match.
 
 An issue is only "done" when every acceptance criterion is demonstrably met —
 not when the edits look right. In a tree, that also means an **umbrella is not
@@ -25,8 +27,10 @@ todo ──▶ in-progress ──▶ review ──▶ done
 - `todo`: not started.
 - `in-progress`: actively being worked. Move here *before* editing code.
 - `review`: implementation and verification pass, awaiting human sign-off.
-- `done`: signed off / accepted.
-- `wontfix`: deliberately abandoned, with a reason appended to Notes.
+- `done`: signed off / accepted. The issue file is moved to `issues/done/` (see
+  "On `done`: move the file").
+- `wontfix`: deliberately abandoned, with a reason appended to Notes. The file
+  stays where it is — only `done` issues move.
 
 Keep the issue frontmatter, its table row, **and** its node in the Graphviz
 block all in sync. The table is authoritative for scanning; the graph is
@@ -52,8 +56,10 @@ authoritative for structure.
    children) and stop — do not ask an empty question.
 2. **Load.** Read the issue file fully — Context, Goal, Acceptance criteria,
    Verification, Notes — plus its full ancestor chain (`parent` up to the root)
-   for context, and every issue in its `deps` that is not yet `done`. Read the
-   referenced code before changing anything.
+   for context, and every issue in its `deps` that is not yet `done`. Look files
+   up under `issues/NNNN-*.md` first, then `issues/done/NNNN-*.md`: done
+   ancestors and deps have been moved into `issues/done/`. Read the referenced
+   code before changing anything.
 3. **Mark `in-progress`.** Update the frontmatter, the table row, and the graph
    node color before the first edit. This is the signal that the issue is
    claimed.
@@ -76,12 +82,14 @@ authoritative for structure.
    verification output, and any criterion you could **not** confirm. If the
    project requires human sign-off, hold at `review` and let the user promote to
    `done`. If the user's request was "resolve and close", and all criteria pass
-   with no ambiguity, move straight to `done`.
+   with no ambiguity, move straight to `done` — and perform the file move
+   described in "On `done`: move the file".
 8. **Propagate up the tree.** After a child reaches `done`, check its siblings
    and its parent's own acceptance criteria. If every child of a parent is now
    `done` and the parent's criteria are satisfied, surface the parent as ready to
-   close (or close it if the user asked to auto-close). Never auto-close an
-   umbrella whose own criteria are unmet.
+   close (or close it if the user asked to auto-close) — moving the umbrella's
+   file to `issues/done/` as well. Never auto-close an umbrella whose own
+   criteria are unmet.
 9. **If verification still fails.** After bounded re-delegation, if you cannot
    satisfy the criteria, leave the issue `in-progress`, append the blocker to
    Notes, and report — never mark `done` on a failing check.
@@ -131,10 +139,17 @@ Update all three places together:
    status: review
    ```
 
-2. **Table row** (only the status column changes):
+2. **Table row** (the status column changes; on `done` the link target changes
+   too):
 
    ```markdown
    | [7](0007-short-issue-title.md) | Short issue title | review | high | | | |
+   ```
+
+   Once the issue is `done` and moved, the link must point into `done/`:
+
+   ```markdown
+   | [7](done/0007-short-issue-title.md) | Short issue title | done | high | | | |
    ```
 
 3. **Graph node** — recolor it by status:
@@ -150,6 +165,28 @@ When closing as `wontfix`, append a short reason under `## Notes` in the issue
 file. Leave the tree edges unchanged unless the user asks to restructure — and
 if you do reparent, update frontmatter, table, and both old/new tree edges.
 
+## On `done`: move the file
+
+The moment an issue becomes `done`, move its file into `issues/done/` — this is
+part of the status transition, not an optional cleanup:
+
+1. `mkdir -p issues/done` if needed.
+2. Move the file without changing its name: `git mv issues/0007-slug.md
+   issues/done/0007-slug.md` in a git repo, plain `mv` otherwise. Never rename,
+   renumber, or re-slug.
+3. Fix relative links inside the moved file: references that used to resolve
+   from `issues/` need one more `../` (e.g. `../spec.md` → `../../spec.md`).
+   Check links to the spec, the tracker, and any sibling issue files.
+4. Update the table row link to `done/NNNN-slug.md` (the graph node id stays
+   `"7"`; node labels have no paths).
+5. Mark `status: done` in the frontmatter and recolor the graph node to
+   lightgreen — all together with the move.
+6. If the project is a git repo, include the move and the tracker update in the
+   commit that closes the issue (do not leave the move uncommitted).
+
+Moving the file is only for `done`. `wontfix` and every in-flight status keep
+the file under `issues/`.
+
 ## Rules
 
 - Always confirm the target with the user via the `question` tool when no id is
@@ -163,6 +200,9 @@ if you do reparent, update frontmatter, table, and both old/new tree edges.
 - Never edit an issue's Goal or Acceptance criteria to make it pass. If the
   criteria are wrong, raise it with the user and fix the issue first.
 - Never renumber, re-slug, or delete issues.
+- When an issue becomes `done`, move its file to `issues/done/` (step order and
+  link fixes per "On `done`: move the file") and update the table link. Never
+  move a file for any other status.
 - Never mark `done` while any acceptance criterion is unverified.
 - Stay within the issue's scope; new discoveries become new `file-issue` items or
   a note on the current issue, not silent extra changes.

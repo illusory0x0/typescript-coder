@@ -15,14 +15,22 @@ Convert intent into tracked, actionable issues arranged as a **tree**. One issue
 issues/
   todo.md          # tracker: Graphviz tree + status table, single source of truth
   TEMPLATE.md      # optional, copy for new issues
-  0001-<slug>.md   # one file per issue
+  0001-<slug>.md   # one file per issue (open: todo/in-progress/review, or wontfix)
   0002-<slug>.md
+  done/            # completed issues are MOVED here by resolve-issue
+    0003-<slug>.md
 ```
 
 - Issue file name: zero-padded 4-digit id + kebab-case slug, e.g.
   `0007-lexer-strict-errors.md`.
-- Next id = `max(existing ids) + 1`. Never reuse, rename, or delete ids; a
-  cancelled issue stays listed and marked `wontfix`.
+- New issues are always created directly under `issues/`. Never create a file
+  under `issues/done/` by hand — that directory is populated only by the
+  `resolve-issue` skill moving an issue there once it is `done`.
+- A `done` issue's file lives at `issues/done/NNNN-<slug>.md`; its id, slug and
+  tracker links must still resolve (links point at the actual location).
+- Next id = `max(existing ids) + 1` across **both** `issues/` and
+  `issues/done/`. Never reuse, rename, or delete ids; a cancelled issue stays
+  listed and marked `wontfix`.
 
 ## Issue tree
 
@@ -43,8 +51,8 @@ Issues form a forest of hierarchies, plus cross-cutting dependency edges:
 
 1. **Gather source.** Read the user's request plus any referenced plan, spec, or
    code. If a planning document exists, mine its goals, risks, and acceptance
-   criteria. Always read `issues/todo.md` and list `issues/*.md` first so you
-   never duplicate an existing issue.
+   criteria. Always read `issues/todo.md` and list both `issues/*.md` and
+   `issues/done/*.md` first so you never duplicate an existing issue.
 2. **Build the tree.** Split by *independently shippable and verifiable* work.
    Group related leaves under an umbrella parent when they serve one goal.
    Attach cross-cutting prerequisites via `deps`, not by inventing a parent.
@@ -138,8 +146,11 @@ digraph issues {
 | 9   | Comments      | todo        | medium   |           | 7      |      |
 ````
 
-- `id` links to the file: `[7](0007-short-issue-title.md)`.
+- `id` links to the file at its actual location: `[7](0007-short-issue-title.md)`
+  for open issues, `[7](done/0007-short-issue-title.md)` once the issue is `done`
+  and has been moved into `issues/done/`.
 - Graph nodes: one per issue, label `#id title\n(status)`, colored by status.
+  Node ids stay `"7"` regardless of which directory the file lives in.
 - Tree edges: `parent -> child`, **solid**.
 - Dependency edges: `blocker -> blocked`, **dashed** with `label="blocks"`.
 - `parent` and `deps` columns mirror the frontmatter. `deps` lists blocking ids.
@@ -150,6 +161,11 @@ digraph issues {
 ## Rules
 
 - Do not close, delete, renumber, or re-slug existing issues.
+- Do not create or edit anything under `issues/done/`; that directory is owned by
+  `resolve-issue`, which moves issues there when they become `done`.
+- When you rebuild the tracker, keep each table link pointing at the issue's
+  current location (`done/NNNN-...md` for completed issues) — never rewrite a
+  moved issue's link back to the root.
 - Do not invent milestones or priorities the source does not support; use `null`
   (milestone/parent) or `medium` (priority) and flag the assumption.
 - One concern per issue. If a draft covers two unrelated changes, split it.
