@@ -1,7 +1,7 @@
 ---
 id: 5
 title: Binder and symbol index
-status: todo
+status: in-progress
 priority: medium
 milestone: M3
 parent: 1

@@ -12,10 +12,10 @@ digraph issues {
   // status colors: todo=white, in-progress=lightyellow, review=lightblue,
   //                done=lightgreen, wontfix=lightgrey
   "1"  [label="#1 typescript-coder agent\n(todo)", fillcolor="white"];
-  "2"  [label="#2 Scaffold\n(todo)", fillcolor="white"];
-  "3"  [label="#3 Lexer\n(todo)", fillcolor="white"];
-  "4"  [label="#4 Parser\n(todo)", fillcolor="white"];
-  "5"  [label="#5 Binder & symbol index\n(todo)", fillcolor="white"];
+  "2"  [label="#2 Scaffold\n(done)", fillcolor="lightgreen"];
+  "3"  [label="#3 Lexer\n(done)", fillcolor="lightgreen"];
+  "4"  [label="#4 Parser\n(done)", fillcolor="lightgreen"];
+  "5"  [label="#5 Binder & symbol index\n(in-progress)", fillcolor="lightyellow"];
   "6"  [label="#6 Editor\n(todo)", fillcolor="white"];
   "7"  [label="#7 Provider\n(todo)", fillcolor="white"];
   "8"  [label="#8 Tools\n(todo)", fillcolor="white"];
@@ -50,10 +50,10 @@ digraph issues {
 | id  | title                       | status | priority | milestone | parent | deps    |
 | --- | --------------------------- | ------ | -------- | --------- | ------ | ------- |
 | 1   | [typescript-coder agent](0001-typescript-coder-agent.md) | todo | medium |  |  |  |
-| 2   | [Scaffold Bun/TypeScript project](0002-scaffold-bun-project.md) | todo | medium | M0 | 1 |  |
-| 3   | [Lexer with strict errors](0003-lexer-strict-errors.md) | todo | medium | M1 | 1 | 2 |
-| 4   | [Recursive-descent parser with source spans](0004-parser-source-spans.md) | todo | medium | M2 | 1 | 3 |
-| 5   | [Binder and symbol index](0005-binder-symbol-index.md) | todo | medium | M3 | 1 | 4 |
+| 2   | [Scaffold Bun/TypeScript project](0002-scaffold-bun-project.md) | done | medium | M0 | 1 |  |
+| 3   | [Lexer with strict errors](0003-lexer-strict-errors.md) | done | medium | M1 | 1 | 2 |
+| 4   | [Recursive-descent parser with source spans](0004-parser-source-spans.md) | done | medium | M2 | 1 | 3 |
+| 5   | [Binder and symbol index](0005-binder-symbol-index.md) | in-progress | medium | M3 | 1 | 4 |
 | 6   | [Editor apply-edits and oxfmt formatting](0006-editor-apply-edits.md) | todo | medium | M4 | 1 | 5 |
 | 7   | [OpenAI-compatible provider with tools](0007-provider-openai.md) | todo | medium | M5 | 1 | 2 |
 | 8   | [Tools (rename, scroll, find-definition, check, test)](0008-tools.md) | todo | medium | M6 | 1 | 6 |
