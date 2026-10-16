@@ -1,6 +1,9 @@
-import { describe, expect, test } from "bun:test";
+import { afterEach, describe, expect, test } from "bun:test";
+import { mkdtempSync, rmSync, writeFileSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
 import { buildSignatureView, expand } from "./scroll";
-import { findDefinitionTool, renameTool, tools } from "./tools";
+import { checkTool, findDefinitionTool, renameTool, testTool, tools } from "./tools";
 import type { Locator } from "./utility";
 
 const FILE = "file.ts";
@@ -197,18 +200,142 @@ describe("renameTool", () => {
 });
 
 describe("tools", () => {
-  test("exposes find-definition, scroll, and rename definitions", () => {
+  test("exposes find-definition, scroll, rename, check, and test definitions", () => {
     const byName = new Map(tools.map((tool) => [tool.function.name, tool]));
-    expect([...byName.keys()].sort()).toEqual(["find-definition", "rename", "scroll"]);
+    expect([...byName.keys()].sort()).toEqual([
+      "check",
+      "find-definition",
+      "rename",
+      "scroll",
+      "test",
+    ]);
     for (const tool of tools) {
       expect(tool.type).toBe("function");
       expect(tool.function.description.length).toBeGreaterThan(0);
-      const parameters = tool.function.parameters;
-      expect(parameters["type"]).toBe("object");
-      expect(parameters["required"]).toEqual(
+      expect(tool.function.parameters["type"]).toBe("object");
+    }
+    for (const name of ["find-definition", "scroll", "rename"]) {
+      expect(byName.get(name)?.function.parameters["required"]).toEqual(
         expect.arrayContaining(["path", "name", "kind"]),
       );
     }
     expect(byName.get("rename")?.function.parameters["required"]).toContain("newName");
+    expect(byName.get("check")?.function.description).toContain("tsc --noEmit");
+    expect(byName.get("test")?.function.description).toContain("bun test");
+  });
+});
+
+describe("checkTool and testTool", () => {
+  const TSC = [
+    "bun",
+    new URL("../node_modules/typescript/bin/tsc", import.meta.url).pathname,
+    "--noEmit",
+  ];
+  const TS_CONFIG =
+    '{ "compilerOptions": { "strict": true, "noEmit": true }, "include": ["*.ts"] }\n';
+  const dirs: string[] = [];
+
+  function fixture(files: Record<string, string>): string {
+    const dir = mkdtempSync(join(tmpdir(), "tstools-"));
+    dirs.push(dir);
+    for (const [name, content] of Object.entries(files)) {
+      writeFileSync(join(dir, name), content);
+    }
+    return dir;
+  }
+
+  async function withDeadline<T>(run: Promise<T>): Promise<T> {
+    let timer: ReturnType<typeof setTimeout> | undefined;
+    const timeout = new Promise<never>((_, reject) => {
+      timer = setTimeout(() => reject(new Error("command timed out after 30s")), 30000);
+    });
+    try {
+      return await Promise.race([run, timeout]);
+    } finally {
+      clearTimeout(timer);
+    }
+  }
+
+  afterEach(() => {
+    while (dirs.length > 0) {
+      const dir = dirs.pop();
+      if (dir !== undefined) {
+        rmSync(dir, { recursive: true, force: true });
+      }
+    }
+  });
+
+  test("check reports a clean project as ok", async () => {
+    const dir = fixture({ "tsconfig.json": TS_CONFIG, "a.ts": "const x: number = 1;\n" });
+    const result = await withDeadline(checkTool(dir, TSC));
+    expect(result.ok).toBe(true);
+    expect(result.exitCode).toBe(0);
+    expect(result.diagnostics).toEqual([]);
+  });
+
+  test("check reports a type error with a parsed diagnostic", async () => {
+    const dir = fixture({ "tsconfig.json": TS_CONFIG, "a.ts": 'const x: number = "s";\n' });
+    const result = await withDeadline(checkTool(dir, TSC));
+    expect(result.ok).toBe(false);
+    expect(result.exitCode).not.toBe(0);
+    expect(result.diagnostics.length).toBeGreaterThanOrEqual(1);
+    const first = result.diagnostics[0];
+    expect(first).toBeDefined();
+    expect(first?.file).toContain("a.ts");
+    expect(first?.line).toBe(1);
+    expect(first?.column).toBeGreaterThanOrEqual(1);
+    expect(first?.message).toContain("not assignable");
+  });
+
+  test("check collects diagnostics from multiple files", async () => {
+    const dir = fixture({
+      "tsconfig.json": TS_CONFIG,
+      "a.ts": 'const a: number = "x";\n',
+      "b.ts": "const b: string = 1;\n",
+    });
+    const result = await withDeadline(checkTool(dir, TSC));
+    expect(result.ok).toBe(false);
+    expect(result.diagnostics.length).toBeGreaterThanOrEqual(2);
+    const files = result.diagnostics.map((diagnostic) => diagnostic.file);
+    expect(files).toContain("a.ts");
+    expect(files).toContain("b.ts");
+  });
+
+  test("check parses the exact location of a known error", async () => {
+    const dir = fixture({
+      "tsconfig.json": TS_CONFIG,
+      "a.ts": 'const a: number = 1;\nconst b: string = "x";\nconst c: number = "z";\n',
+    });
+    const result = await withDeadline(checkTool(dir, TSC));
+    expect(result.diagnostics).toEqual([
+      {
+        file: "a.ts",
+        line: 3,
+        column: 7,
+        message: "Type 'string' is not assignable to type 'number'.",
+      },
+    ]);
+  });
+
+  test("test reports a passing suite", async () => {
+    const dir = fixture({
+      "a.test.ts":
+        'import { expect, test } from "bun:test";\n\ntest("adds", () => {\n  expect(1 + 1).toBe(2);\n});\n',
+    });
+    const result = await withDeadline(testTool(dir, ["bun", "test"]));
+    expect(result.ok).toBe(true);
+    expect(result.exitCode).toBe(0);
+    expect(result.output).toContain("pass");
+  });
+
+  test("test reports a failing suite", async () => {
+    const dir = fixture({
+      "a.test.ts":
+        'import { expect, test } from "bun:test";\n\ntest("fails", () => {\n  expect(1).toBe(2);\n});\n',
+    });
+    const result = await withDeadline(testTool(dir, ["bun", "test"]));
+    expect(result.ok).toBe(false);
+    expect(result.exitCode).not.toBe(0);
+    expect(result.output).toContain("fail");
   });
 });

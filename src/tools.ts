@@ -16,6 +16,21 @@ import type {
 } from "./parser";
 import type { ToolDefinition } from "./openai";
 
+export interface CommandResult {
+  ok: boolean;
+  exitCode: number;
+  output: string;
+}
+
+export interface CheckDiagnostic {
+  file: string;
+  line: number;
+  column: number;
+  message: string;
+}
+
+const commandTimeoutMs = 30000;
+
 interface Span {
   start: number;
   end: number;
@@ -100,6 +115,58 @@ export async function renameTool(
   return applyEdits(source, [{ locator, llmOutput }], fileName);
 }
 
+async function runCommand(cwd: string, command: string[]): Promise<CommandResult> {
+  const proc = Bun.spawn(command, { cwd, stdout: "pipe", stderr: "pipe" });
+  const stdout = new Response(proc.stdout).text();
+  const stderr = new Response(proc.stderr).text();
+  const timer = setTimeout(() => {
+    proc.kill();
+  }, commandTimeoutMs);
+  const exitCode = await proc.exited;
+  clearTimeout(timer);
+  const output = (await stdout) + (await stderr);
+  return { ok: exitCode === 0, exitCode, output };
+}
+
+function parseDiagnostics(output: string): CheckDiagnostic[] {
+  const diagnostics: CheckDiagnostic[] = [];
+  const located = /^(.+)\((\d+),(\d+)\): error TS\d+: (.*)$/;
+  const unlocated = /error TS\d+: (.*)$/;
+  for (const line of output.split("\n")) {
+    const match = located.exec(line);
+    if (match !== null) {
+      const [, file = "", lineText = "0", columnText = "0", message = ""] = match;
+      diagnostics.push({
+        file,
+        line: Number(lineText),
+        column: Number(columnText),
+        message,
+      });
+      continue;
+    }
+    if (line.includes("error TS")) {
+      const message = unlocated.exec(line)?.[1];
+      diagnostics.push({ file: "", line: 0, column: 0, message: message ?? line.trim() });
+    }
+  }
+  return diagnostics;
+}
+
+export async function checkTool(
+  cwd: string,
+  command: string[] = ["bunx", "tsc", "--noEmit"],
+): Promise<CommandResult & { diagnostics: CheckDiagnostic[] }> {
+  const result = await runCommand(cwd, command);
+  return { ...result, diagnostics: parseDiagnostics(result.output) };
+}
+
+export async function testTool(
+  cwd: string,
+  command: string[] = ["bun", "test"],
+): Promise<CommandResult> {
+  return runCommand(cwd, command);
+}
+
 const locatorProperties = {
   path: { type: "string", description: "File path of the symbol." },
   name: { type: "string", description: "Symbol name, e.g. Foo.bar for a class member." },
@@ -150,6 +217,38 @@ export const tools: ToolDefinition[] = [
           newName: { type: "string", description: "New declaration name." },
         },
         required: ["path", "name", "kind", "newName"],
+        additionalProperties: false,
+      },
+    },
+  },
+  {
+    type: "function",
+    function: {
+      name: "check",
+      description:
+        "Run tsc --noEmit in the project directory and return its exit status and parsed diagnostics.",
+      parameters: {
+        type: "object",
+        properties: {
+          cwd: { type: "string", description: "Project directory to type-check." },
+        },
+        required: [],
+        additionalProperties: false,
+      },
+    },
+  },
+  {
+    type: "function",
+    function: {
+      name: "test",
+      description:
+        "Run bun test in the project directory and return its exit status and output.",
+      parameters: {
+        type: "object",
+        properties: {
+          cwd: { type: "string", description: "Project directory to test." },
+        },
+        required: [],
         additionalProperties: false,
       },
     },
