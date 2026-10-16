@@ -1,7 +1,7 @@
 ---
 id: 13
 title: Run live end-to-end acceptance and capture evidence
-status: todo
+status: done
 priority: medium
 milestone: null
 parent: 11
@@ -49,3 +49,13 @@ bun -e 'const r = await Bun.file("acceptance/report.json").json(); console.log(J
 - Model behavior is non-deterministic; temperature 0 reduces variance but does
   not guarantee identical output. Token cost is one small fixture run.
 - Non-goals: other models, self-host live, long-run stability.
+- Verified 2026-10-17: `bun run accept --live --model deepseek-v4.1-flash`
+  exit 0, `PASS live-fix-answer` (7421ms); report entry: `live: true`,
+  `model: "deepseek-v4.1-flash"`, `status: "passed"`, `attempts: 2`,
+  `durationMs: 7421`, all four assertions ok; other scenarios carry no
+  live/model fields.
+- Evidence summary for #14: result passed; attempts 2 (one retry); duration
+  7421ms. The retry cannot be attributed to the locator vs the edit: symbol
+  selection failures are appended to the same `result.attempts` list as edit
+  attempts (`src/loop.ts`), so first-try locator resolution is not itemized by
+  the retained evidence.
