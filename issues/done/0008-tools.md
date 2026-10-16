@@ -12,7 +12,7 @@ created: 2026-10-16
 
 ## Context
 
-Milestone **M6** of [spec.md](../spec.md) §11, implementing the tool set from
+Milestone **M6** of [spec.md](../../spec.md) §11, implementing the tool set from
 spec §7 and `scroll.ts` (spec §5). These are the tools exposed to the LLM through
 the provider's `tools` param (spec §8). `check` shells out to `tsc --noEmit` and
 `test` to `bun test` (spec §10).

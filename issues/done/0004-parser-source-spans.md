@@ -12,7 +12,7 @@ created: 2026-10-16
 
 ## Context
 
-Milestone **M2** of [spec.md](../spec.md) §11, implementing `parser.ts` (spec
+Milestone **M2** of [spec.md](../../spec.md) §11, implementing `parser.ts` (spec
 §5). Consumes the lexer token stream and produces an AST annotated with source
 spans. Per spec §9 the surface is modern app TS: ES2024 syntax, full TS type
 grammar, decorators, namespaces, `.d.ts`, declaration merging, and overloads —

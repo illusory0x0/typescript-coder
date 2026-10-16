@@ -12,7 +12,7 @@ created: 2026-10-16
 
 ## Context
 
-Milestone **M3** of [spec.md](../spec.md) §11, implementing the binder/symbol-index
+Milestone **M3** of [spec.md](../../spec.md) §11, implementing the binder/symbol-index
 part of `utility.ts` (spec §5). The spec's design premise (§3) requires modeling
 TypeScript symbol resolution explicitly: lexical scope, the few overloading
 rules, runtime symbols vs type symbols (declaration spaces), namespaces, and

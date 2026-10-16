@@ -12,7 +12,7 @@ created: 2026-10-16
 
 ## Context
 
-Milestone **M8** of [spec.md](../spec.md) §11, implementing `cli.ts` and
+Milestone **M8** of [spec.md](../../spec.md) §11, implementing `cli.ts` and
 `main.ts` (spec §5). The issue is delivered on **stdin** (spec §6, §8);
 `cli.ts` currently provides only `--help` and the `--model` flag; `main.ts`
 wires stdin into the loop.

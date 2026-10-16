@@ -12,7 +12,7 @@ created: 2026-10-16
 
 ## Context
 
-Milestone **M4** of [spec.md](../spec.md) §11, implementing `editor.ts` (spec
+Milestone **M4** of [spec.md](../../spec.md) §11, implementing `editor.ts` (spec
 §5). Implements the `apply-edits` abstraction from spec §4:
 `applyEdits(source, edits) → new-source`. Each `Edit` pairs a `Locator` with the
 LLM's complete replacement text for that symbol. Spans shift as edits are

@@ -12,7 +12,7 @@ created: 2026-10-16
 
 ## Context
 
-Milestone **M5** of [spec.md](../spec.md) §11, implementing `openai.ts` (spec
+Milestone **M5** of [spec.md](../../spec.md) §11, implementing `openai.ts` (spec
 §5) against the provider contract in spec §8: OpenAI-compatible, tool-call format
 via the `tools` param, models `deepseek`/`qwen`, credentials from
 `OPENAI_API_KEY` / `OPENAI_BASE_URL`, model selected by the `--model` flag only.
