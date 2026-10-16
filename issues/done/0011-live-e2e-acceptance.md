@@ -1,7 +1,7 @@
 ---
 id: 11
 title: Live end-to-end acceptance and model-record corrections
-status: todo
+status: done
 priority: medium
 milestone: null
 parent: null
@@ -61,3 +61,11 @@ plus: read `spec.md` §8 and the correction notes in `issues/done/0007` /
   additional models (glm/kimi/claude…), streaming/caching observation.
 - Priority defaulted to `medium` (source states none); milestone left `null`
   (this is post-spec hardening, not one of M0–M8).
+- Verified 2026-10-17: children #12–#14 done; `bunx tsc --noEmit` exit 0;
+  `bun test` 394 pass / 0 fail; `bun run accept` 5 passed / 0 failed;
+  `bun run accept --all` 6 passed / 0 failed; `bun run accept --live --model
+  deepseek-v4.1-flash` exit 0 with `PASS live-fix-answer` (13632ms) and
+  `acceptance/report.json` recording `live: true`, model `deepseek-v4.1-flash`,
+  `status: "passed"`, attempts 2, durationMs 13632. `spec.md` §8 and the
+  correction notes in `issues/done/0007` + `0001` state the real gateway chat
+  ids and the `qwen` embedding-only limitation.
