@@ -50,12 +50,18 @@ authoritative for structure.
 4. **Locate the work.** Find the real files and symbols the issue touches. If
    the issue's premises are wrong (missing file, already implemented, blocked by
    an unlisted dependency), stop and report to the user instead of improvising.
-5. **Implement.** Make the smallest change that satisfies the Goal. Follow the
-   project's existing conventions and stack; add tests the project uses. Do not
-   fold in unrelated refactors — if you find other work, offer to file a new
-   `file-issue` instead.
-6. **Verify.** Run the exact commands in the issue's Verification section. Every
-   acceptance criterion must map to an observed, passing result.
+5. **Delegate the implementation to a sub-agent.** Do **not** write the code in
+   this context. Launch a sub-agent via the `task` tool (`subagent_type:
+   general`) and pass it a self-contained brief — see "Sub-agent brief" below.
+   The sub-agent makes the edits; the main agent stays the orchestrator that
+   owns selection, the tracker, and final verification.
+6. **Review, then Verify.** Read the sub-agent's diff before trusting it — reject
+   scope creep and out-of-tree changes. Then run the exact commands in the
+   issue's Verification section **yourself**; do not accept the sub-agent's word
+   that they passed. Every acceptance criterion must map to an observed,
+   passing result. If the sub-agent reports failure or the diff is wrong,
+   re-delegate with the failure output appended (bounded retries), or stop and
+   report.
 7. **Move to `review`.** Report: issue id, what changed (file:line), the
    verification output, and any criterion you could **not** confirm. If the
    project requires human sign-off, hold at `review` and let the user promote to
@@ -66,9 +72,28 @@ authoritative for structure.
    `done` and the parent's criteria are satisfied, surface the parent as ready to
    close (or close it if the user asked to auto-close). Never auto-close an
    umbrella whose own criteria are unmet.
-9. **If verification fails.** Fix and retry while progress is real. If you
-   cannot satisfy the criteria, leave the issue `in-progress`, append the
-   blocker to Notes, and report — never mark `done` on a failing check.
+9. **If verification still fails.** After bounded re-delegation, if you cannot
+   satisfy the criteria, leave the issue `in-progress`, append the blocker to
+   Notes, and report — never mark `done` on a failing check.
+
+## Sub-agent brief
+
+The sub-agent starts with a fresh context, so the brief must be self-contained.
+Include:
+
+- The issue verbatim: id, title, Goal, Acceptance criteria, Verification, Notes.
+- Ancestor context: the umbrella goal(s) up the `parent` chain, and the outcome
+  of any `deps` that already landed.
+- The concrete target files/symbols you located in step 4, with paths.
+- Project conventions and stack the change must follow.
+- Scope fence: solve **only** this issue; no unrelated refactors, no changes
+  outside the issue's files without saying so; report extra findings instead of
+  acting on them.
+- The exact commands to run to self-check, and a request to return: a summary of
+  changes (`file:line`), the raw command output, and any blocker.
+
+The sub-agent is a worker, not the owner. It must not touch `issues/` — the main
+agent alone updates the tracker.
 
 ## Updating the tracker
 
@@ -102,6 +127,9 @@ if you do reparent, update frontmatter, table, and both old/new tree edges.
 ## Rules
 
 - One issue per invocation unless the user explicitly asks for a batch.
+- Never edit implementation files from the main context: all code changes go
+  through the `task` sub-agent. The main agent owns selection, the tracker, and
+  verification.
 - Work leaves first; never mark an umbrella `done` while it has an open child.
 - Never edit an issue's Goal or Acceptance criteria to make it pass. If the
   criteria are wrong, raise it with the user and fix the issue first.
