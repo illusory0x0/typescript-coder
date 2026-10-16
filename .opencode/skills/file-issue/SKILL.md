@@ -1,9 +1,9 @@
 ---
-name: to-issue
-description: Turn a request, plan, bug report, or spec section into concrete issue files under issues/ and keep issues/todo.md in sync. Use when the user says "to-issue", "file an issue", "break this into issues", "track this", or asks to capture work items.
+name: file-issue
+description: Turn a request, plan, bug report, or spec section into concrete issue files under issues/ and keep issues/todo.md in sync. Use when the user says "file-issue", "to-issue", "file an issue", "break this into issues", "track this", or asks to capture work items.
 ---
 
-# to-issue
+# file-issue
 
 Convert intent into tracked, actionable issues. One issue = one independently
 verifiable unit of work. This skill only writes files under `issues/`; it never
