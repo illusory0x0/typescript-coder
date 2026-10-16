@@ -39,7 +39,9 @@ export class ScriptedProvider implements ProviderLike {
 export interface ScenarioArtifacts {
   dir: string;
   result: LoopResult;
-  provider: ScriptedProvider;
+  provider: ProviderLike;
+  /** Captured provider calls; only recorded for scripted scenarios. */
+  calls?: ChatMessage[][];
   originals: Map<string, string>;
   finals: Map<string, string>;
 }
@@ -54,6 +56,8 @@ export interface Scenario {
   title: string;
   fixture: string | null;
   slow?: boolean;
+  /** Live scenarios call the real model and run only with --live. */
+  live?: boolean;
   issue: string;
   maxRetries?: number;
   responses: ScriptedResponse[];
@@ -91,13 +95,18 @@ export function hasAttempts(expectedCount: number): ScenarioAssertion {
 export function hasCallCount(expected: number): ScenarioAssertion {
   return {
     name: `provider call count is ${expected}`,
-    check: ({ provider }) =>
-      provider.calls.length === expected
-        ? { ok: true }
-        : {
-            ok: false,
-            detail: `expected ${expected} provider calls but got ${provider.calls.length}`,
-          },
+    check: ({ calls }) => {
+      if (calls === undefined) {
+        return { ok: false, detail: "provider calls are not captured for this scenario" };
+      }
+      if (calls.length === expected) {
+        return { ok: true };
+      }
+      return {
+        ok: false,
+        detail: `expected ${expected} provider calls but got ${calls.length}`,
+      };
+    },
   };
 }
 
@@ -143,6 +152,26 @@ export function fileEqualsOriginal(relPath: string): ScenarioAssertion {
   };
 }
 
+export function fileDiffersFromOriginal(relPath: string): ScenarioAssertion {
+  return {
+    name: `${relPath} differs from its original contents`,
+    check: ({ originals, finals }) => {
+      const original = originals.get(relPath);
+      if (original === undefined) {
+        return { ok: false, detail: `no original content recorded for ${relPath}` };
+      }
+      const final = finals.get(relPath);
+      if (final === undefined) {
+        return { ok: false, detail: `no final content recorded for ${relPath}` };
+      }
+      if (final !== original) {
+        return { ok: true };
+      }
+      return { ok: false, detail: `${relPath} was not modified` };
+    },
+  };
+}
+
 export function fileEquals(relPath: string, expected: string): ScenarioAssertion {
   return {
     name: `${relPath} equals ${JSON.stringify(expected)}`,
@@ -165,8 +194,11 @@ export function fileEquals(relPath: string, expected: string): ScenarioAssertion
 export function messageContains(callIndex: number, needle: string): ScenarioAssertion {
   return {
     name: `call ${callIndex} last message contains ${JSON.stringify(needle)}`,
-    check: ({ provider }) => {
-      const call = provider.calls[callIndex];
+    check: ({ calls }) => {
+      if (calls === undefined) {
+        return { ok: false, detail: "provider calls are not captured for this scenario" };
+      }
+      const call = calls[callIndex];
       if (call === undefined) {
         return { ok: false, detail: `no provider call at index ${callIndex}` };
       }
@@ -192,6 +224,19 @@ export function explanationEquals(expected: string): ScenarioAssertion {
         : {
             ok: false,
             detail: `expected explanation ${JSON.stringify(expected)} but got ${JSON.stringify(result.explanation)}`,
+          },
+  };
+}
+
+export function explanationIsNull(): ScenarioAssertion {
+  return {
+    name: "explanation is null",
+    check: ({ result }) =>
+      result.explanation === null
+        ? { ok: true }
+        : {
+            ok: false,
+            detail: `expected explanation to be null but got ${JSON.stringify(result.explanation)}`,
           },
   };
 }
@@ -228,6 +273,20 @@ export const scenarios: Scenario[] = [
       hasOk(true),
       hasAttempts(1),
       fileContains("src/helper.ts", "return 2;"),
+      fileEqualsOriginal("src/helper.test.ts"),
+    ],
+  },
+  {
+    id: "live-fix-answer",
+    title: "real model makes the failing test pass",
+    fixture: "fix-answer",
+    live: true,
+    issue: TEST_ISSUE,
+    responses: [],
+    assertions: [
+      hasOk(true),
+      explanationIsNull(),
+      fileDiffersFromOriginal("src/helper.ts"),
       fileEqualsOriginal("src/helper.test.ts"),
     ],
   },
@@ -282,8 +341,11 @@ export const scenarios: Scenario[] = [
       hasCallCount(2),
       {
         name: "context yaml exposes the dotted signature",
-        check: ({ provider }) => {
-          const call = provider.calls[0];
+        check: ({ calls }) => {
+          if (calls === undefined) {
+            return { ok: false, detail: "provider calls are not captured for this scenario" };
+          }
+          const call = calls[0];
           if (call === undefined) {
             return { ok: false, detail: "no provider call at index 0" };
           }

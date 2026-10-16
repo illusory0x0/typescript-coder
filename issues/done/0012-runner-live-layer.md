@@ -1,7 +1,7 @@
 ---
 id: 12
 title: Add live layer to the acceptance runner
-status: todo
+status: done
 priority: medium
 milestone: null
 parent: 11
@@ -66,3 +66,9 @@ run; `--induce-failure` still spends one chat call.)
   `acceptance/README.md` only.
 - Live calls: single scenario, temperature 0, minimal fixture → minimal token
   cost. Do not run live scenarios in `bun test` or default `accept`.
+- Verified 2026-10-17: `bunx tsc --noEmit` exit 0; `bun test` 394 pass / 0 fail;
+  `bun run accept` 5 passed / 0 failed; `bun run accept --all` 6 passed /
+  0 failed; `bun run accept --live --only live-fix-answer --induce-failure`
+  exit 1 — all four live assertions passed (`ok`, null explanation, helper.ts
+  changed, helper.test.ts unchanged), only the synthetic induced failure
+  failed (attempts 2, 7279ms, model `deepseek-v4.1-flash`).

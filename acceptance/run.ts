@@ -11,7 +11,9 @@ import { tmpdir } from "node:os";
 import { dirname, join, relative, sep } from "node:path";
 import { fileURLToPath } from "node:url";
 import { runLoop } from "../src/loop";
-import type { LoopResult } from "../src/loop";
+import type { LoopResult, ProviderLike } from "../src/loop";
+import { OpenAIProvider, readConfigFromEnv } from "../src/openai";
+import type { ChatMessage } from "../src/openai";
 import { scenarios, ScriptedProvider } from "./scenarios";
 import type { Scenario, ScenarioArtifacts, ScenarioAssertion } from "./scenarios";
 
@@ -27,6 +29,8 @@ interface ScenarioReport {
   id: string;
   title: string;
   slow: boolean;
+  live?: boolean;
+  model?: string;
   status: ScenarioStatus;
   durationMs: number;
   attempts: number;
@@ -52,6 +56,8 @@ interface Report {
 
 interface CliArgs {
   all: boolean;
+  live: boolean;
+  model: string | null;
   only: string | null;
   keep: boolean;
   json: string | null;
@@ -64,6 +70,16 @@ interface RunContext {
   repoRoot: string;
   checkCommand: string[];
   testCommand: string[];
+  model: string;
+}
+
+const LIVE_TIMEOUT_MS = 90_000;
+
+// Bun types `fetch` with an extra `preconnect` method (see bun-types docs);
+// OpenAIProvider never calls it, so a direct cast is the documented pattern
+// for fetch wrappers.
+function fetchWithTimeout(input: string | URL | Request, init?: RequestInit): Promise<Response> {
+  return fetch(input, { ...init, signal: AbortSignal.timeout(LIVE_TIMEOUT_MS) });
 }
 
 const SKIPPED_DIRECTORIES = new Set(["node_modules", ".git"]);
@@ -92,6 +108,10 @@ function printUsage(): void {
 
 Options:
   --all                    include slow scenarios
+  --live                   also run live scenarios that call the real model
+                           (requires OPENAI_API_KEY and OPENAI_BASE_URL)
+  --model <id>             model id for live scenarios
+                           (default: $ACCEPT_MODEL or deepseek-v4.1-flash)
   --only <id>              run a single scenario by id
   --keep                   keep temporary directories
   --json <path>            report output path (default: acceptance/report.json)
@@ -104,6 +124,8 @@ Options:
 function parseArgs(argv: string[]): CliArgs {
   const args: CliArgs = {
     all: false,
+    live: false,
+    model: null,
     only: null,
     keep: false,
     json: null,
@@ -119,6 +141,10 @@ function parseArgs(argv: string[]): CliArgs {
     switch (arg) {
       case "--all": {
         args.all = true;
+        break;
+      }
+      case "--live": {
+        args.live = true;
         break;
       }
       case "--keep": {
@@ -148,6 +174,15 @@ function parseArgs(argv: string[]): CliArgs {
         index += 1;
         break;
       }
+      case "--model": {
+        const value = argv[index + 1];
+        if (value === undefined || value.startsWith("-")) {
+          fail("missing value for --model");
+        }
+        args.model = value;
+        index += 1;
+        break;
+      }
       case "--induce-failure": {
         args.induceFailureRequested = true;
         const value = argv[index + 1];
@@ -171,9 +206,17 @@ function selectScenarios(args: CliArgs): Scenario[] {
     if (match === undefined) {
       fail(`unknown scenario: ${args.only}`);
     }
+    if (match.live === true && !args.live) {
+      fail(`scenario ${match.id} is a live scenario; rerun with --live`);
+    }
     return [match];
   }
-  return scenarios.filter((scenario) => args.all || scenario.slow !== true);
+  return scenarios.filter((scenario) => {
+    if (scenario.live === true) {
+      return args.live;
+    }
+    return args.all || scenario.slow !== true;
+  });
 }
 
 function walkSources(root: string): Map<string, string> {
@@ -238,17 +281,28 @@ async function runScenario(
       scenario.prepare(dir, context.repoRoot);
     }
     const originals = walkSources(dir);
-    const provider = new ScriptedProvider(scenario.responses);
+    const live = scenario.live === true;
+    let provider: ProviderLike | null = null;
+    let calls: ChatMessage[][] | undefined;
     const started = performance.now();
     let result: LoopResult | null = null;
     let errorText: string | null = null;
     try {
+      if (live) {
+        const config = readConfigFromEnv(context.model);
+        provider = new OpenAIProvider(config, fetchWithTimeout as typeof fetch);
+      } else {
+        const scripted = new ScriptedProvider(scenario.responses);
+        provider = scripted;
+        calls = scripted.calls;
+      }
       result = await runLoop({
         cwd: dir,
         issue: scenario.issue,
-        model: "acceptance-scripted",
+        model: live ? context.model : "acceptance-scripted",
         provider,
         maxRetries: scenario.maxRetries,
+        temperature: live ? 0 : undefined,
         checkCommand: context.checkCommand,
         testCommand: context.testCommand,
       });
@@ -257,8 +311,11 @@ async function runScenario(
     }
     const finals = walkSources(dir);
     let assertions: AssertionRecord[] = [];
-    if (result !== null) {
+    if (result !== null && provider !== null) {
       const artifacts: ScenarioArtifacts = { dir, result, provider, originals, finals };
+      if (calls !== undefined) {
+        artifacts.calls = calls;
+      }
       assertions = scenario.assertions.map((assertion) => evaluate(assertion, artifacts));
     }
     const induced =
@@ -286,6 +343,10 @@ async function runScenario(
       assertions,
       diagnostics,
     };
+    if (live) {
+      report.live = true;
+      report.model = context.model;
+    }
     printScenario(report);
     return report;
   } finally {
@@ -312,10 +373,12 @@ async function main(): Promise<void> {
   const repoRoot = fileURLToPath(new URL("..", import.meta.url));
   const tscBin =
     process.env["ACCEPT_TSC"] ?? join(repoRoot, "node_modules", "typescript", "bin", "tsc");
+  const model = args.model ?? process.env["ACCEPT_MODEL"] ?? "deepseek-v4.1-flash";
   const context: RunContext = {
     repoRoot,
     checkCommand: ["bun", tscBin, "--noEmit"],
     testCommand: ["bun", "test"],
+    model,
   };
   const jsonPath = args.json ?? join(repoRoot, "acceptance", "report.json");
 
