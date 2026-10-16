@@ -111,7 +111,10 @@ harness:
 
 - type: openai-compatible
 - tool-call format: `tools` param
-- models: `deepseek`, `qwen`
+- models: `deepseek-v4.1-flash`, `deepseek-v4-pro-0813`, `glm-5.3`, `zoe/glm-5.3`
+  (the gateway's key-permitted chat ids; the earlier `deepseek`/`qwen` shorthand
+  was inaccurate — `deepseek` is rejected and `qwen` has no chat model there,
+  embedding only)
 - credentials: `OPENAI_API_KEY`, `OPENAI_BASE_URL` (standard env vars)
 - model selection: `--model` flag only
 - entry: issue via stdin; `cli.ts` currently provides `--help` only

@@ -67,3 +67,9 @@ described in spec.md §10.
   this environment; all milestones were implemented via small bounded
   sub-agent tasks with main-agent review + re-verification, committed per
   component.
+- **Live evidence (2026-10-17, #13):** `bun run accept --live --model
+  deepseek-v4.1-flash` exit 0, `PASS live-fix-answer`; result passed, attempts
+  2, duration 7421ms. `acceptance/report.json` records the entry with
+  `live: true`, `model: "deepseek-v4.1-flash"`, `status: "passed"`. This
+  supersedes the "Known v1 limitations" reading that the key could not use the
+  configured models — the real, key-permitted chat ids are now in spec.md §8.

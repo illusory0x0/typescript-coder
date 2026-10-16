@@ -63,3 +63,9 @@ bun run scripts/openai-smoke.ts --model deepseek
   reviewed, verification re-run by the main agent.
 - Verified 2026-10-16: `bun test src/openai.test.ts` 15 pass / 0 fail;
   `bunx tsc --noEmit` exit 0; `bun test` 324 pass / 0 fail across 6 files.
+- **Correction (2026-10-17):** the 403 in the live-smoke status above was
+  misread as a key/permission limitation. The actual cause is unknown model
+  ids: the gateway rejects `deepseek` and has no chat model `qwen` (embedding
+  only, `qwen3-embedding-8b`). The same key permits `deepseek-v4.1-flash`,
+  `deepseek-v4-pro-0813`, `glm-5.3`, and `zoe/glm-5.3`; live acceptance (#13)
+  ran end-to-end with `deepseek-v4.1-flash`. See spec.md §8.

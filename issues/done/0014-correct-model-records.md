@@ -1,7 +1,7 @@
 ---
 id: 14
 title: Correct model records in spec and closed issues
-status: todo
+status: done
 priority: medium
 milestone: null
 parent: 11
@@ -53,3 +53,7 @@ bun run accept
 - Appending corrected notes to closed issues is intentional and allowed;
   their Goal/Acceptance sections must not be altered.
 - Do not edit `issues/todo.md` history or renumber anything.
+- Verified 2026-10-17: `grep -n "deepseek-v4.1-flash"` hits `spec.md` §8,
+  `issues/done/0007`, and `issues/done/0001`; `git diff -- spec.md` shows only
+  the §8 `models` bullet; `bunx tsc --noEmit` exit 0; `bun run accept` 5 passed
+  / 0 failed.
