@@ -51,7 +51,8 @@ finish in arbitrary order.
 - `steps`: ts = runLoop attempts; opencode = assistant messages in the session
   export (null when unavailable).
 - `attempts` (ts side): per-attempt summaries with `attempt`, `outcome` (`ok`,
-  `selection-invalid`, `empty-output`, `format`, `tsc`, `tests`), a bounded
+  `selection-invalid`, `empty-output`, `edits-invalid`, `anchor-not-found`,
+  `anchor-ambiguous`, `format`, `tsc`, `tests`), a bounded
   `diagnosticsHead` (≤200 chars, whitespace collapsed), `replacementChars`,
   the provider `finishReason`, and `extensionGranted` (true on the failed
   attempt that earned the next one); null for the opencode side.

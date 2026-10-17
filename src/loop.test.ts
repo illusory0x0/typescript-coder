@@ -485,7 +485,11 @@ describe("prompt builders", () => {
   test("buildSystemPrompt returns a stable string", () => {
     expect(buildSystemPrompt()).toBe(buildSystemPrompt());
     expect(buildSystemPrompt()).toContain('{ "path": ..., "name": ..., "kind": ... }');
-    expect(buildSystemPrompt()).toContain("COMPLETE replacement text");
+    expect(buildSystemPrompt()).toContain("single-edit JSON object");
+    expect(buildSystemPrompt()).toContain(
+      '{"edits":[{"anchor":"return 1;","replacement":"return 2;"}]}',
+    );
+    expect(buildSystemPrompt()).toContain("No markdown fences and no explanations");
   });
 
   test("buildSystemPrompt describes append/create for a missing symbol", () => {
@@ -547,6 +551,8 @@ describe("prompt builders", () => {
     const locatorJson = '{"path":"src/a.ts","name":"make","kind":"function"}';
     const symbolSource = "export function make(): number {\n  return 1;\n}\n";
     const prompt = buildReplacementPrompt(locatorJson, symbolSource);
+    expect(prompt).toContain('{"edits":[{"anchor": ..., "replacement": ...}]}');
+    expect(prompt).toContain("the replacement replaces exactly that snippet");
     expect(prompt).toContain(locatorJson);
     expect(prompt).toContain(symbolSource);
     expect(prompt).toContain("```ts");
@@ -568,6 +574,7 @@ describe("prompt builders", () => {
     const prompt = buildRetryPrompt({
       attemptNumber: 2,
       maxAttempts: 3,
+      mode: "append",
       locatorJson,
       currentSource,
       diagnostics,
@@ -583,6 +590,29 @@ describe("prompt builders", () => {
     expect(prompt).toContain("```ts");
     expect(prompt).toContain(currentSource);
     expect(prompt).toContain(diagnostics);
+  });
+
+  test("buildRetryPrompt describes the single-edit contract in replace mode", () => {
+    const locatorJson = '{"path":"src/a.ts","name":"make","kind":"function"}';
+    const currentSource = 'export function make(): number {\n  return "nope";\n}';
+    const diagnostics = "stage: anchor-not-found\nthe anchor was not found inside make";
+    const prompt = buildRetryPrompt({
+      attemptNumber: 2,
+      maxAttempts: 3,
+      mode: "replace",
+      locatorJson,
+      currentSource,
+      diagnostics,
+    });
+    expect(prompt).toContain("Attempt 2 of 3 failed verification.");
+    expect(prompt).toContain("single-edit JSON object");
+    expect(prompt).toContain("the anchor is a complete snippet copied from the current source");
+    expect(prompt).toContain("the replacement replaces exactly that snippet");
+    expect(prompt).toContain("use the whole symbol as the anchor only for a full rewrite");
+    expect(prompt).toContain("No markdown fences and no explanations");
+    expect(prompt).toContain(currentSource);
+    expect(prompt).toContain(diagnostics);
+    expect(prompt).not.toContain("COMPLETE corrected text");
   });
 
   test("buildSelectionRetryPrompt asks for a corrected locator without replacement wording", () => {
@@ -723,6 +753,11 @@ class ScriptedProvider implements ProviderLike {
   }
 }
 
+// A replace-phase response in the anchor-splice protocol.
+function editResponse(anchor: string, replacement: string): string {
+  return JSON.stringify({ edits: [{ anchor, replacement }] });
+}
+
 function fixtureDir(extraExclude: string[] = []): string {
   const dir = tempDir();
   mkdirSync(join(dir, "src"));
@@ -804,11 +839,11 @@ function invocationLog(dir: string): string[] {
 }
 
 describe("runLoop", () => {
-  test("applies, verifies, and returns a successful text response", async () => {
+  test("applies, verifies, and returns a successful edit", async () => {
     const dir = fixtureDir();
     const provider = new ScriptedProvider([
       '{"path":"src/helper.ts","name":"answer","kind":"function"}',
-      "```ts\nfunction answer(): number {\n  return 2;\n}\n```",
+      editResponse("return 1;", "return 2;"),
     ]);
     const result = await runLoop({
       cwd: dir,
@@ -837,7 +872,7 @@ describe("runLoop", () => {
     const dir = fixtureDir();
     const provider = new ScriptedProvider([
       '{"path":"src/helper.ts","name":"answer","kind":"function"}',
-      "function answer(): number {\n  return 2;\n}\n",
+      editResponse("return 1;", "return 2;"),
     ]);
     const result = await runLoop({
       cwd: dir,
@@ -863,7 +898,7 @@ describe("runLoop", () => {
           arguments: '{"path":"src/helper.ts","name":"answer","kind":"function"}',
         },
       },
-      "function answer(): number {\n  return 2;\n}\n",
+      editResponse("return 1;", "return 2;"),
     ]);
     const result = await runLoop({
       cwd: dir,
@@ -882,7 +917,7 @@ describe("runLoop", () => {
     const dir = fixtureDir();
     const provider = new ScriptedProvider([
       '{"path":"src/helper.ts","name":"answer","kind":"function"}',
-      "function answer(): number {\n  return 2;\n}\n",
+      editResponse("return 1;", "return 2;"),
     ]);
     const result = await runLoop({
       cwd: dir,
@@ -902,7 +937,7 @@ describe("runLoop", () => {
     const provider = new ScriptedProvider([
       "not json",
       '{"path":"src/helper.ts","name":"answer","kind":"function"}',
-      "function answer(): number {\n  return 2;\n}\n",
+      editResponse("return 1;", "return 2;"),
     ]);
     const issue = "make the answer test pass";
     const result = await runLoop({
@@ -976,8 +1011,8 @@ describe("runLoop", () => {
     const dir = fixtureDir();
     const provider = new ScriptedProvider([
       '{"path":"src/helper.ts","name":"answer","kind":"function"}',
-      'function answer(): number {\n  return "nope";\n}',
-      "function answer(): number {\n  return 2;\n}\n",
+      editResponse("return 1;", 'return "nope";'),
+      editResponse('return "nope";', "return 2;"),
     ]);
     const result = await runLoop({
       cwd: dir,
@@ -1004,11 +1039,11 @@ describe("runLoop", () => {
   test("rebuilds a bounded retry history without echoing the previous replacement", async () => {
     const dir = fixtureDir();
     const locator = '{"path":"src/helper.ts","name":"answer","kind":"function"}';
-    const badReplacement = 'function answer(): number { return "nope"; }';
+    const badEdit = editResponse("return 1;", 'return "nope";');
     const provider = new ScriptedProvider([
       locator,
-      badReplacement,
-      "function answer(): number {\n  return 2;\n}\n",
+      badEdit,
+      editResponse('return "nope";', "return 2;"),
     ]);
     const result = await runLoop({
       cwd: dir,
@@ -1031,7 +1066,7 @@ describe("runLoop", () => {
     expect(retryCall[2]).toEqual({ role: "assistant", content: locator });
     // The previous assistant replacement is not re-echoed as a message; the raw
     // response text only reappears as reformatted current source in the prompt.
-    expect(retryCall.some((message) => message.content === badReplacement)).toBe(false);
+    expect(retryCall.some((message) => message.content === badEdit)).toBe(false);
     const retryPrompt = retryCall[3]?.content ?? "";
     expect(retryPrompt).toContain("Attempt 2 of 3 failed verification.");
     expect(retryPrompt).toContain("1 attempt(s) remain");
@@ -1042,7 +1077,8 @@ describe("runLoop", () => {
 
   test("keeps the last attempted state on disk after failed verifications (no rollback)", async () => {
     const failingCommand = ["bun", "-e", "process.exit(1)"];
-    const badReplacement = 'function answer(): number {\n  return "nope";\n}';
+    const badEdit = editResponse("return 1;", 'return "nope";');
+    const keepEdit = editResponse('return "nope";', 'return "nope";');
 
     const replaceDir = fixtureDir();
     const replaceOriginal = helperSource(replaceDir);
@@ -1052,9 +1088,9 @@ describe("runLoop", () => {
       model: "fake",
       provider: new ScriptedProvider([
         '{"path":"src/helper.ts","name":"answer","kind":"function"}',
-        badReplacement,
-        badReplacement,
-        badReplacement,
+        badEdit,
+        keepEdit,
+        keepEdit,
         "the replacement never verifies",
       ]),
       checkCommand: failingCommand,
@@ -1090,10 +1126,9 @@ describe("runLoop", () => {
 
   test("maps a real tsc failure to a replacement line and a tsc-stage label", async () => {
     const dir = fixtureDir();
-    const badReplacement = 'function answer(): number {\n  return "no";\n}';
     const provider = new ScriptedProvider([
       '{"path":"src/helper.ts","name":"answer","kind":"function"}',
-      badReplacement,
+      editResponse("return 1;", 'return "no";'),
       "the replacement never typechecks",
     ]);
     const result = await runLoop({
@@ -1126,7 +1161,7 @@ describe("runLoop", () => {
     const dir = fixtureDir();
     const provider = new ScriptedProvider([
       '{"path":"src/helper.ts","name":"answer","kind":"function"}',
-      "function answer(): number {\n  return 1;\n}",
+      editResponse("return 1;", "return 1;"),
       "the test never passes",
     ]);
     const result = await runLoop({
@@ -1158,7 +1193,7 @@ describe("runLoop", () => {
     const dir = fixtureDir();
     const provider = new ScriptedProvider([
       '{"path":"src/helper.ts","name":"answer","kind":"function"}',
-      "function answer(): number {\n  return 2;\n}\n",
+      editResponse("return 1;", "return 2;"),
       "unused",
     ]);
     const result = await runLoop({
@@ -1181,7 +1216,7 @@ describe("runLoop", () => {
     const dir = fixtureDir();
     const provider = new ScriptedProvider([
       '{"path":"src/helper.ts","name":"answer","kind":"function"}',
-      "function answer(): number {\n  return 2;\n}\n",
+      editResponse("return 1;", "return 2;"),
     ]);
     const result = await runLoop({
       cwd: dir,
@@ -1199,9 +1234,10 @@ describe("runLoop", () => {
   test("keeps the system prompt stable and rebuilds a bounded retry history", async () => {
     const issue = "make the answer test pass";
     const locatorResponse = '{"path":"src/helper.ts","name":"answer","kind":"function"}';
-    const goodReplacement = "function answer(): number {\n  return 2;\n}\n";
+    const goodEdit = editResponse("return 1;", "return 2;");
+    const retryGoodEdit = editResponse('return "nope";', "return 2;");
 
-    const provider = new ScriptedProvider([locatorResponse, goodReplacement]);
+    const provider = new ScriptedProvider([locatorResponse, goodEdit]);
     const first = await runLoop({
       cwd: fixtureDir(),
       issue,
@@ -1219,7 +1255,7 @@ describe("runLoop", () => {
     expect(initial[1]?.content).toContain(issue);
     expect(initial[1]?.content).toContain("```yaml");
 
-    const otherProvider = new ScriptedProvider([locatorResponse, goodReplacement]);
+    const otherProvider = new ScriptedProvider([locatorResponse, goodEdit]);
     const other = await runLoop({
       cwd: fixtureDir(),
       issue,
@@ -1233,8 +1269,8 @@ describe("runLoop", () => {
 
     const retryProvider = new ScriptedProvider([
       locatorResponse,
-      'function answer(): number {\n  return "nope";\n}',
-      goodReplacement,
+      editResponse("return 1;", 'return "nope";'),
+      retryGoodEdit,
     ]);
     const retry = await runLoop({
       cwd: fixtureDir(),
@@ -1262,13 +1298,14 @@ describe("runLoop", () => {
     const issue = "make the answer test pass";
     const dir = fixtureDir();
     const original = helperSource(dir);
-    const badReplacement = 'function answer(): number {\n  return "no";\n}';
+    const badEdit = editResponse("return 1;", 'return "no";');
+    const keepEdit = editResponse('return "no";', 'return "no";');
     const explanation = "```\nThe symbol cannot satisfy the test without a larger refactor.\n```";
     const provider = new ScriptedProvider([
       '{"path":"src/helper.ts","name":"answer","kind":"function"}',
-      badReplacement,
-      badReplacement,
-      badReplacement,
+      badEdit,
+      keepEdit,
+      keepEdit,
       explanation,
     ]);
     const result = await runLoop({
@@ -1282,7 +1319,7 @@ describe("runLoop", () => {
     expect(result.ok).toBe(false);
     expect(result.attempts.length).toBe(3);
     for (const attempt of result.attempts) {
-      expect(attempt.replacement).toBe(badReplacement);
+      expect(attempt.replacement).toBe('return "no";');
       expect(attempt.diagnostics).toContain("stage: tsc");
       expect(attempt.diagnostics).toContain("not assignable");
     }
@@ -1550,7 +1587,7 @@ describe("runLoop with unparseable files", () => {
     const dir = brokenFixtureDir();
     const provider = new ScriptedProvider([
       '{"path":"src/helper.ts","name":"answer","kind":"function"}',
-      "function answer(): number {\n  return 2;\n}\n",
+      editResponse("return 1;", "return 2;"),
     ]);
     const result = await runLoop({
       cwd: dir,
@@ -1681,7 +1718,7 @@ describe("runLoop provider failures", () => {
     const original = helperSource(dir);
     const scripted = new ScriptedProvider([
       '{"path":"src/helper.ts","name":"answer","kind":"function"}',
-      'function answer(): number {\n  return "nope";\n}',
+      editResponse("return 1;", 'return "nope";'),
     ]);
     let calls = 0;
     const provider: ProviderLike = {
@@ -1729,7 +1766,7 @@ describe("attempt observability", () => {
     const dir = fixtureDir();
     const provider = new ScriptedProvider([
       '{"path":"src/helper.ts","name":"answer","kind":"function"}',
-      "function answer(): number {\n  return 2;\n}\n",
+      editResponse("return 1;", "return 2;"),
     ]);
     const result = await runLoop({
       cwd: dir,
@@ -1799,12 +1836,14 @@ describe("attempt observability", () => {
 
   test("classifies syntax errors as format failures", async () => {
     const dir = fixtureDir();
+    const anchor = "function answer(): number {\n  return 1;\n}";
     const bad = "function answer(): number {\n  return 2;\n";
+    const badEdit = editResponse(anchor, bad);
     const provider = new ScriptedProvider([
       '{"path":"src/helper.ts","name":"answer","kind":"function"}',
-      bad,
-      bad,
-      bad,
+      badEdit,
+      badEdit,
+      badEdit,
       "unused",
     ]);
     const result = await runLoop({
@@ -1827,13 +1866,14 @@ describe("attempt observability", () => {
   }, 30000);
 
   test("classifies tsc failures and test-only failures distinctly", async () => {
-    const typeError = 'function answer(): number {\n  return "no";\n}';
+    const typeEdit = editResponse("return 1;", 'return "no";');
+    const keepTypeEdit = editResponse('return "no";', 'return "no";');
     const tscDir = fixtureDir();
     const tscProvider = new ScriptedProvider([
       '{"path":"src/helper.ts","name":"answer","kind":"function"}',
-      typeError,
-      typeError,
-      typeError,
+      typeEdit,
+      keepTypeEdit,
+      keepTypeEdit,
       "unused",
     ]);
     const tscResult = await runLoop({
@@ -1850,13 +1890,13 @@ describe("attempt observability", () => {
       expect(attempt.outcome).toBe("tsc");
     }
 
-    const wrongValue = "function answer(): number {\n  return 1;\n}";
+    const wrongEdit = editResponse("return 1;", "return 1;");
     const testsDir = fixtureDir();
     const testsProvider = new ScriptedProvider([
       '{"path":"src/helper.ts","name":"answer","kind":"function"}',
-      wrongValue,
-      wrongValue,
-      wrongValue,
+      wrongEdit,
+      wrongEdit,
+      wrongEdit,
       "unused",
     ]);
     const testsResult = await runLoop({
@@ -1897,7 +1937,7 @@ describe("attempt observability", () => {
           beforeRetry = helperSource(dir);
         }
         return {
-          content: "function answer(): number {\n  return 2;\n}",
+          content: editResponse("return 1;", "return 2;"),
           toolCalls: [],
           finishReason: "stop",
           raw: {},
@@ -1930,6 +1970,145 @@ describe("attempt observability", () => {
   }, 30000);
 });
 
+describe("anchor splice protocol", () => {
+  test("splices a nested anchor and leaves the surrounding lines byte-identical", async () => {
+    const dir = fixtureDir();
+    const original =
+      "export function answer(): number {\n  const base = 1;\n  const extra = 1;\n  return base + extra;\n}\n";
+    writeFileSync(join(dir, "src", "helper.ts"), original);
+    writeFileSync(
+      join(dir, "src", "helper.test.ts"),
+      'import { expect, test } from "bun:test";\nimport { answer } from "./helper";\n\ntest("answer", () => {\n  expect(answer()).toBe(3);\n});\n',
+    );
+    const provider = new ScriptedProvider([
+      '{"path":"src/helper.ts","name":"answer","kind":"function"}',
+      editResponse("const extra = 1;", "const extra = 2;"),
+    ]);
+    const result = await runLoop({
+      cwd: dir,
+      issue: "make the answer test pass",
+      model: "fake",
+      provider,
+      checkCommand: TSC,
+      testCommand: ["bun", "test"],
+    });
+    expect(result.ok).toBe(true);
+    expect(result.attempts).toHaveLength(1);
+    expect(result.attempts[0]?.outcome).toBe("ok");
+    expect(helperSource(dir)).toBe(
+      "export function answer(): number {\n  const base = 1;\n  const extra = 2;\n  return base + extra;\n}\n",
+    );
+  }, 30000);
+
+  test("retries after an anchor-not-found failure without touching the file", async () => {
+    const dir = fixtureDir();
+    const original = helperSource(dir);
+    const provider = new ScriptedProvider([
+      '{"path":"src/helper.ts","name":"answer","kind":"function"}',
+      editResponse("return 99;", "return 2;"),
+      editResponse("return 1;", "return 2;"),
+    ]);
+    const result = await runLoop({
+      cwd: dir,
+      issue: "make the answer test pass",
+      model: "fake",
+      provider,
+      checkCommand: TSC,
+      testCommand: ["bun", "test"],
+    });
+    expect(result.ok).toBe(true);
+    expect(result.attempts.map((attempt) => attempt.outcome)).toEqual([
+      "anchor-not-found",
+      "ok",
+    ]);
+    expect(result.attempts[0]?.diagnostics).toContain("stage: anchor-not-found");
+    expect(original).toContain("return 1;");
+    expect(helperSource(dir)).toContain("return 2;");
+
+    const retryCall = provider.calls[2] ?? [];
+    const retryPrompt = retryCall[retryCall.length - 1]?.content ?? "";
+    expect(retryPrompt).toContain("stage: anchor-not-found");
+    expect(retryPrompt).toContain("extend the anchor");
+  }, 30000);
+
+  test("reports ambiguous anchors and recovers on the next attempt", async () => {
+    const dir = fixtureDir();
+    writeFileSync(
+      join(dir, "src", "helper.ts"),
+      "export function answer(): number {\n  void 0;\n  void 0;\n  return 1;\n}\n",
+    );
+    const provider = new ScriptedProvider([
+      '{"path":"src/helper.ts","name":"answer","kind":"function"}',
+      editResponse("void 0;", "void 1;"),
+      editResponse("return 1;", "return 2;"),
+    ]);
+    const result = await runLoop({
+      cwd: dir,
+      issue: "make the answer test pass",
+      model: "fake",
+      provider,
+      checkCommand: TSC,
+      testCommand: ["bun", "test"],
+    });
+    expect(result.ok).toBe(true);
+    expect(result.attempts.map((attempt) => attempt.outcome)).toEqual([
+      "anchor-ambiguous",
+      "ok",
+    ]);
+    expect(result.attempts[0]?.diagnostics).toContain("stage: anchor-ambiguous");
+    expect(result.attempts[0]?.diagnostics).toContain("2 places");
+    const content = helperSource(dir);
+    expect(content).toContain("void 0;\n  void 0;");
+    expect(content).toContain("return 2;");
+  }, 30000);
+
+  test("rejects plain-text responses as edits-invalid and retries with the edit contract", async () => {
+    const dir = fixtureDir();
+    const provider = new ScriptedProvider([
+      '{"path":"src/helper.ts","name":"answer","kind":"function"}',
+      "function answer(): number {\n  return 2;\n}",
+      editResponse("return 1;", "return 2;"),
+    ]);
+    const result = await runLoop({
+      cwd: dir,
+      issue: "make the answer test pass",
+      model: "fake",
+      provider,
+      checkCommand: TSC,
+      testCommand: ["bun", "test"],
+    });
+    expect(result.ok).toBe(true);
+    expect(result.attempts.map((attempt) => attempt.outcome)).toEqual(["edits-invalid", "ok"]);
+    expect(result.attempts[0]?.diagnostics?.startsWith("stage: edits-invalid\n")).toBe(true);
+    const retryCall = provider.calls[2] ?? [];
+    const retryPrompt = retryCall[retryCall.length - 1]?.content ?? "";
+    expect(retryPrompt).toContain("stage: edits-invalid");
+    expect(retryPrompt).toContain('"edits"');
+  }, 30000);
+
+  test("falls back to a full replacement when the anchor is the whole symbol", async () => {
+    const dir = fixtureDir();
+    const provider = new ScriptedProvider([
+      '{"path":"src/helper.ts","name":"answer","kind":"function"}',
+      editResponse(
+        "function answer(): number {\n  return 1;\n}",
+        "function answer(): number {\n  return 2;\n}",
+      ),
+    ]);
+    const result = await runLoop({
+      cwd: dir,
+      issue: "make the answer test pass",
+      model: "fake",
+      provider,
+      checkCommand: TSC,
+      testCommand: ["bun", "test"],
+    });
+    expect(result.ok).toBe(true);
+    expect(result.attempts).toHaveLength(1);
+    expect(helperSource(dir)).toBe("export function answer(): number {\n  return 2;\n}\n");
+  }, 30000);
+});
+
 describe("staged reasoning policy", () => {
   const passingCommand = ["bun", "-e", "process.exit(0)"];
   const failingCommand = ["bun", "-e", "process.exit(1)"];
@@ -1939,7 +2118,7 @@ describe("staged reasoning policy", () => {
     const provider = new ScriptedProvider([
       "not json",
       '{"path":"src/helper.ts","name":"answer","kind":"function"}',
-      "function answer(): number {\n  return 2;\n}\n",
+      editResponse("return 1;", "return 2;"),
     ]);
     const result = await runLoop({
       cwd: dir,
@@ -1959,12 +2138,13 @@ describe("staged reasoning policy", () => {
 
   test("steps generation retries after a failed verification up to medium", async () => {
     const dir = fixtureDir();
-    const badReplacement = 'function answer(): number {\n  return "nope";\n}';
+    const badReplacement = editResponse("return 1;", 'return "nope";');
+    const keepReplacement = editResponse('return "nope";', 'return "nope";');
     const provider = new ScriptedProvider([
       '{"path":"src/helper.ts","name":"answer","kind":"function"}',
       badReplacement,
-      badReplacement,
-      badReplacement,
+      keepReplacement,
+      keepReplacement,
       "the replacement never typechecks",
     ]);
     const result = await runLoop({
@@ -2048,17 +2228,18 @@ class UsageProvider implements ProviderLike {
 describe("progress-based attempt extension", () => {
   const failingTest = ["bun", "-e", "process.exit(1)"];
   const locator = '{"path":"src/helper.ts","name":"answer","kind":"function"}';
-  const badReplacement = 'function answer(): number {\n  return "nope";\n}';
+  const badEdit = editResponse("return 1;", 'return "nope";');
+  const keepEdit = editResponse('return "nope";', 'return "nope";');
 
   test("extends attempts on strict signature improvements up to the ceiling", async () => {
     const dir = fixtureDir();
     const provider = new ScriptedProvider([
       locator,
-      badReplacement,
-      badReplacement,
-      badReplacement,
-      badReplacement,
-      badReplacement,
+      badEdit,
+      keepEdit,
+      keepEdit,
+      keepEdit,
+      keepEdit,
       "the replacement never typechecks",
     ]);
     const result = await runLoop({
@@ -2090,10 +2271,10 @@ describe("progress-based attempt extension", () => {
     const dir = fixtureDir();
     const provider = new ScriptedProvider([
       locator,
-      badReplacement,
-      badReplacement,
-      badReplacement,
-      badReplacement,
+      badEdit,
+      keepEdit,
+      keepEdit,
+      keepEdit,
       "the replacement never typechecks",
     ]);
     const result = await runLoop({
@@ -2120,9 +2301,9 @@ describe("progress-based attempt extension", () => {
     const dir = fixtureDir();
     const provider = new ScriptedProvider([
       locator,
-      badReplacement,
-      badReplacement,
-      badReplacement,
+      badEdit,
+      keepEdit,
+      keepEdit,
       "the replacement never typechecks",
     ]);
     const result = await runLoop({
@@ -2149,10 +2330,10 @@ describe("progress-based attempt extension", () => {
     const dir = fixtureDir();
     const provider = new ScriptedProvider([
       locator,
-      badReplacement,
-      badReplacement,
+      badEdit,
+      keepEdit,
       "",
-      badReplacement,
+      keepEdit,
       "the replacement never typechecks",
     ]);
     const result = await runLoop({
@@ -2184,7 +2365,7 @@ describe("token budget", () => {
     const provider = new UsageProvider(
       [
         '{"path":"src/helper.ts","name":"answer","kind":"function"}',
-        "function answer(): number {\n  return 2;\n}\n",
+        editResponse("return 1;", "return 2;"),
       ],
       [{ total_tokens: 60 }, { total_tokens: 40 }],
     );
@@ -2211,7 +2392,7 @@ describe("token budget", () => {
     const provider = new UsageProvider(
       [
         '{"path":"src/helper.ts","name":"answer","kind":"function"}',
-        'function answer(): number {\n  return "nope";\n}',
+        editResponse("return 1;", 'return "nope";'),
       ],
       [{ total_tokens: 60 }, { total_tokens: 41 }],
     );
@@ -2245,7 +2426,7 @@ describe("token budget", () => {
     const provider = new UsageProvider(
       [
         '{"path":"src/helper.ts","name":"answer","kind":"function"}',
-        'function answer(): number {\n  return "nope";\n}',
+        editResponse("return 1;", 'return "nope";'),
       ],
       [
         { prompt_tokens: 60, completion_tokens: 0 },

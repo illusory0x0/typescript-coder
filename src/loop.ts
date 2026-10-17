@@ -7,7 +7,8 @@ import {
   writeFileSync,
 } from "node:fs";
 import { basename, dirname, isAbsolute, join, relative, resolve, sep } from "node:path";
-import { applyEdits, formatSource } from "./editor";
+import { applyAnchorSplice, findAnchor, parseEditsResponse, stripCodeFences } from "./anchor";
+import { formatSource } from "./editor";
 import { buildIndexTolerant, findDefinition } from "./utility";
 import { buildSignatureViewFromEntry } from "./scroll";
 import { checkTool, testTool } from "./tools";
@@ -149,9 +150,9 @@ export function buildSystemPrompt(): string {
     "",
     'First you will be asked to select the symbol to modify. Reply with ONLY a JSON object { "path": ..., "name": ..., "kind": ... }: no markdown fences and no prose.',
     "",
-    "Then you will be asked to output the COMPLETE replacement text for the selected symbol. Keep the same declaration kind and name unless the task requires otherwise. No markdown fences and no explanations.",
+    'Then you will be asked to replace part of the selected symbol. Reply with ONLY a single-edit JSON object {"edits":[{"anchor": ..., "replacement": ...}]}, e.g. {"edits":[{"anchor":"return 1;","replacement":"return 2;"}]}: the anchor is a complete snippet copied from the current source shown in the prompt, the replacement replaces exactly that snippet, and the whole symbol is the anchor only for a full rewrite. Keep the same declaration kind and name unless the task requires otherwise. No markdown fences and no explanations.',
     "",
-    "The selected symbol may not exist yet. When it is missing, the harness appends your complete output to the target file (creating the file and any parent directories when needed) instead of replacing a symbol range.",
+    "The selected symbol may not exist yet. When it is missing, the harness appends your complete output to the target file (creating the file and any parent directories when needed) instead of editing a symbol range.",
     "",
   ].join("\n");
 }
@@ -200,7 +201,9 @@ export function buildUserPrompt(
 
 export function buildReplacementPrompt(locatorJson: string, symbolSource: string): string {
   const body = symbolSource.endsWith("\n") ? symbolSource : `${symbolSource}\n`;
-  return `Output the COMPLETE replacement text for the symbol identified by this locator, with no markdown fences and no explanations.
+  return `Output a single edit as a JSON object {"edits":[{"anchor": ..., "replacement": ...}]} for the symbol identified by this locator, with no markdown fences and no explanations.
+
+The anchor is a complete snippet copied from the current source below; the replacement replaces exactly that snippet. Use the whole symbol as the anchor only for a full rewrite.
 
 Locator:
 
@@ -238,6 +241,8 @@ export interface RetryPromptInput {
   /** 1-based number of the retry this prompt requests. */
   attemptNumber: number;
   maxAttempts: number;
+  /** Replace mode requests a single-edit JSON object; append mode plain text. */
+  mode: "replace" | "append";
   locatorJson: string;
   /** Current on-disk source of the selected region (whole file in append mode). */
   currentSource: string;
@@ -245,12 +250,16 @@ export interface RetryPromptInput {
 }
 
 export function buildRetryPrompt(input: RetryPromptInput): string {
-  const { attemptNumber, maxAttempts, locatorJson, currentSource, diagnostics } = input;
+  const { attemptNumber, maxAttempts, mode, locatorJson, currentSource, diagnostics } = input;
   const remaining = maxAttempts - attemptNumber;
   const body = currentSource.endsWith("\n") ? currentSource : `${currentSource}\n`;
+  const instruction =
+    mode === "replace"
+      ? 'Make minimal corrective changes to the current source below. Output ONLY a single-edit JSON object, e.g. {"edits":[{"anchor":"return 1;","replacement":"return 2;"}]}: the anchor is a complete snippet copied from the current source below and the replacement replaces exactly that snippet; use the whole symbol as the anchor only for a full rewrite. No markdown fences and no explanations.'
+      : "Make minimal corrective changes to the current source of the selected region. Output the COMPLETE corrected text for the selected region, with no markdown fences and no explanations.";
   return `Attempt ${attemptNumber} of ${maxAttempts} failed verification. ${remaining} attempt(s) remain.
 
-Make minimal corrective changes to the current source of the selected region. Output the COMPLETE corrected text for the selected region, with no markdown fences and no explanations.
+${instruction}
 
 Locator:
 
@@ -284,21 +293,7 @@ Output ONLY a corrected locator JSON object { "path": ..., "name": ..., "kind": 
 `;
 }
 
-export function stripCodeFences(text: string): string {
-  const trimmed = text.trim();
-  if (trimmed.length < 6 || !trimmed.startsWith("```") || !trimmed.endsWith("```")) {
-    return trimmed;
-  }
-  const firstNewline = trimmed.indexOf("\n");
-  if (firstNewline === -1) {
-    return trimmed;
-  }
-  const inner = trimmed.slice(firstNewline + 1);
-  if (!inner.endsWith("```")) {
-    return trimmed;
-  }
-  return inner.slice(0, -3).trim();
-}
+export { stripCodeFences };
 
 function validateLocator(parsed: unknown): Locator {
   if (typeof parsed !== "object" || parsed === null) {
@@ -366,6 +361,9 @@ export type AttemptOutcome =
   | "ok"
   | "selection-invalid"
   | "empty-output"
+  | "edits-invalid"
+  | "anchor-not-found"
+  | "anchor-ambiguous"
   | "format"
   | "tsc"
   | "tests"
@@ -958,6 +956,7 @@ export async function runLoop(options: LoopOptions): Promise<LoopResult> {
       // limit (which a progress extension may have just raised).
       attemptNumber: Math.min(failedAttempt + 1, attemptLimit),
       maxAttempts: attemptLimit,
+      mode,
       locatorJson,
       currentSource: truncateSource(currentSource),
       diagnostics: promptDiagnostics,
@@ -1041,33 +1040,82 @@ export async function runLoop(options: LoopOptions): Promise<LoopResult> {
     // on disk now (the state left by the previous failed attempt).
     const sourceBefore =
       editAttempt === 0 ? baseSource : (readFileIfExists(join(cwd, targetPath)) ?? baseSource);
+    const content = response.content ?? "";
     let replacement: string | null = null;
     let newSource: string | null = null;
     let failure: string | null = null;
+    let failureStage: "format" | "edits-invalid" | "anchor-not-found" | "anchor-ambiguous" =
+      "format";
     let failureOutcome: AttemptOutcome = "empty-output";
-    try {
-      replacement = parseReplacementResponse(response.content ?? "");
-    } catch (error) {
-      failure = errorMessage(error);
-    }
-    if (replacement !== null) {
-      failureOutcome = "format";
+    if (selectionMode === "append") {
       try {
-        if (selectionMode === "append") {
-          newSource = await formatSource(targetPath, appendText(appendPrefix, replacement));
-        } else {
-          newSource = await applyEdits(
-            sourceBefore,
-            [{ locator: selected, llmOutput: replacement }],
-            targetPath,
-          );
-        }
+        replacement = parseReplacementResponse(content);
       } catch (error) {
         failure = errorMessage(error);
       }
+      if (replacement !== null) {
+        failureOutcome = "format";
+        try {
+          newSource = await formatSource(targetPath, appendText(appendPrefix, replacement));
+        } catch (error) {
+          failure = errorMessage(error);
+        }
+      }
+    } else if (content.trim() !== "") {
+      let edit: { anchor: string; replacement: string } | null = null;
+      try {
+        const parsed = parseEditsResponse(content);
+        if (parsed.edits.length !== 1) {
+          throw new Error(
+            `exactly one edit per response is supported (got ${parsed.edits.length})`,
+          );
+        }
+        edit = parsed.edits[0] ?? null;
+      } catch (error) {
+        failure = errorMessage(error);
+        failureStage = "edits-invalid";
+        failureOutcome = "edits-invalid";
+      }
+      if (edit !== null) {
+        replacement = edit.replacement;
+        const resolved = findDefinition(
+          buildIndexTolerant([{ path: targetPath, source: sourceBefore }]).index,
+          selected,
+        );
+        if (resolved === null) {
+          failure = "the selected symbol no longer resolves in the current source";
+          failureStage = "edits-invalid";
+          failureOutcome = "edits-invalid";
+        } else {
+          const anchored = findAnchor(sourceBefore, resolved.node, edit.anchor);
+          if (anchored.kind === "unparseable") {
+            failure = `the anchor could not be parsed as TypeScript: ${anchored.message}`;
+            failureStage = "edits-invalid";
+            failureOutcome = "edits-invalid";
+          } else if (anchored.kind === "not-found") {
+            failure = `the anchor was not found inside ${selected.name}; extend the anchor to a complete snippet copied from the current source`;
+            failureStage = "anchor-not-found";
+            failureOutcome = "anchor-not-found";
+          } else if (anchored.kind === "ambiguous") {
+            failure = `the anchor matches ${anchored.matches} places inside ${selected.name}; extend the anchor with more surrounding context`;
+            failureStage = "anchor-ambiguous";
+            failureOutcome = "anchor-ambiguous";
+          } else {
+            failureOutcome = "format";
+            try {
+              newSource = await formatSource(
+                targetPath,
+                applyAnchorSplice(sourceBefore, anchored.start, anchored.end, edit.replacement),
+              );
+            } catch (error) {
+              failure = errorMessage(error);
+            }
+          }
+        }
+      }
     }
     if (newSource === null || replacement === null) {
-      diagnostics = `stage: format\n${failure ?? "model did not return replacement text"}`;
+      diagnostics = `stage: ${failureStage}\n${failure ?? "model did not return replacement text"}`;
       attempts.push(
         recordAttempt({
           attempt: attempts.length + 1,

@@ -1,7 +1,7 @@
 ---
 id: 31
 title: "Anchor splice protocol: edits JSON with structural anchor matching"
-status: todo
+status: done
 priority: high
 milestone: null
 parent: 28
@@ -71,3 +71,39 @@ edits protocol path executing offline.
   normalization used for structural comparison.
 - Non-goals: multi-edit (#33), on-demand context fetching, protocol
   negotiation/versioning.
+- Validation (2026-10-18): implemented in `src/anchor.ts` (+30 unit tests).
+  Protocol: `parseEditsResponse` accepts a single-edit object, tolerates
+  fences/prose through the shared `extractJsonObject` (string-aware brace scan;
+  #32 reuses it), rejects `edits.length !== 1` as `edits-invalid`. Matching:
+  fallback fragment wrappers statement → class member → expression (first
+  strategy with matches wins), candidates = every node inside the re-resolved
+  symbol range in the current source, structural equality ignores
+  `start`/`end`/`raw`/`source` so trivia/comments/quoting normalize while
+  identifiers and literals compare exactly; 0 → `anchor-not-found`, >1 →
+  `anchor-ambiguous` with extend-the-anchor diagnostics; unparseable →
+  `edits-invalid`. Apply: `applyAnchorSplice` + oxfmt; a whole-symbol anchor
+  reproduces the old full-replacement fallback. Loop: three new outcomes with
+  `stage:` labels routed through the #30 retry machinery; empty output keeps
+  `empty-output` + `stage: format`; append mode is unchanged; the retry prompt
+  gained `mode` and asks for a single-edit JSON in replace mode; the recorded
+  `replacement` is the edit's replacement text. Prompts: system + replacement
+  prompts describe the contract with a concrete example
+  (`{"edits":[{"anchor":"return 1;","replacement":"return 2;"}]}`).
+- Test/doc migration: all replace-mode scripted responses across
+  `src/loop.test.ts`, `src/cli.test.ts`, `src/replay-runner.test.ts`, and
+  `acceptance/scenarios.ts` now use the edits protocol (anchors chosen against
+  the current on-disk state so retries still splice); `benchmark/README.md`
+  outcome list and `spec.md` (§1, Edit table, §6 pipeline) updated.
+- Evidence: offline `tmp/replays-31/fix-answer-anchor.json` (scripted nested
+  anchor → `replacement line 1: TS2322` → corrective anchor; replay
+  `prompt mismatches: none`, exit 0) and live `bun run tmp/smoke-31.ts`
+  (replace-mode fixture, real model: attempt 1 `format` — replacement re-added
+  a modifier the anchor omitted ("'export' modifier already seen") — then
+  retry spliced `return 1;` → `return 2;` and passed; 1,884 tokens total;
+  replayed offline with `prompt mismatches: none`). Append-path smoke:
+  sexp-parser ×1 PASS step 1, 4,835 tokens. Known edge: modifier
+  inconsistencies between anchor and replacement fail formatting once and are
+  recovered by the retry contract; benchmark tasks are append mode, so the KPI
+  matrix does not exercise it.
+- Validation gates: tsc 0, 514 → 550 tests, `accept` 5/5,
+  `benchmark/check.ts` 3 PASS.

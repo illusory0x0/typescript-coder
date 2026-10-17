@@ -25,7 +25,11 @@ const ORIGINAL_HELPER = "export function answer(): number {\n  return 1;\n}\n";
 // The index records the declaration without the `export` modifier, so the
 // replacement prompt shows the bare declaration.
 const ANSWER_DECLARATION = "function answer(): number {\n  return 1;\n}";
-const FIXED_HELPER = "function answer(): number {\n  return 2;\n}\n";
+// The replace-phase response uses the anchor-splice protocol: the anchor is a
+// snippet copied from the current source and the replacement rewrites it.
+const FIXED_EDIT = JSON.stringify({
+  edits: [{ anchor: "return 1;", replacement: "return 2;" }],
+});
 
 const tempDirs: string[] = [];
 
@@ -97,7 +101,7 @@ function recordedCalls(fixtureDir: string): ReplayCall[] {
         { role: "assistant", content: LOCATOR_JSON },
         { role: "user", content: buildReplacementPrompt(LOCATOR_JSON, ANSWER_DECLARATION) },
       ],
-      content: FIXED_HELPER,
+      content: FIXED_EDIT,
       toolCalls: [],
       finishReason: "stop",
       usage: null,

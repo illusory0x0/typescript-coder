@@ -4,8 +4,9 @@
 
 A self-contained TypeScript coding agent. It reads an issue from **stdin**, uses a
 hand-written TypeScript frontend plus a symbol index to select a target symbol
-(`Locator`), asks an OpenAI-compatible LLM to emit a **complete replacement** for
-that symbol, applies it via span replacement + `oxfmt`, and accepts the result
+(`Locator`), asks an OpenAI-compatible LLM to emit a **single-edit JSON object**
+(`{"edits":[{"anchor","replacement"}]}`) for that symbol, splices the replacement
+over the anchor's matched range + `oxfmt`, and accepts the result
 only if `tsc --noEmit` and `bun test` pass. On failure it keeps the attempted
 state, retries up to **3** times with a rebuilt bounded context, then reports an
 explanation for the planning main agent.
@@ -44,10 +45,11 @@ them.
 
 ### Edit
 
-| field        | type    | description                              |
-| ------------ | ------- | ---------------------------------------- |
-| `locator`    | Locator | the symbol being replaced                |
-| `llm-output` | string  | complete TypeScript AST text snippet     |
+| field        | type    | description                                                                    |
+| ------------ | ------- | ------------------------------------------------------------------------------ |
+| `locator`    | Locator | the symbol being replaced                                                      |
+| `anchor`     | string  | snippet copied from the current source, structurally matched inside the symbol |
+| `llm-output` | string  | the edit's replacement TypeScript AST text snippet                             |
 
 ### apply-edits
 
@@ -55,9 +57,11 @@ them.
 applyEdits(source: string, edits: Edit[]): string
 ```
 
-Replaces each symbol's source range with the LLM text, applying edits
-**bottom-up by offset** so spans stay valid, then formats with `oxfmt`. Returns
-the new source.
+Matches each edit's anchor structurally (AST equivalence: trivia and comments
+ignored, identifiers compared exactly) inside the locator's symbol, splices the
+replacement over exactly that range, then formats with `oxfmt`. Returns the new
+source. A whole-symbol anchor performs a full replacement; zero or multiple
+anchor matches fail the attempt with `anchor-not-found` / `anchor-ambiguous`.
 
 ### append/create (missing symbol)
 
@@ -103,7 +107,7 @@ harness:
 model:
   - LLM reads context                    # yaml
   - LLM selects modified symbol          # json (Locator)
-  - LLM outputs complete replacement text# text
+  - LLM outputs a single-edit JSON object # {"edits":[{"anchor","replacement"}]}
 
 harness:
   - apply edits          # replace the symbol range, or append/create when missing
@@ -119,7 +123,8 @@ harness:
   directories when absent), formats with `oxfmt`, and runs the same check + test
   gate. Keep-progress on failure: an existing file keeps the failed attempt's
   content, a created file stays, and a retry rewrites the first appended region.
-- **on-failure:** report staged diagnostics (format/tsc/tests) → keep the
+- **on-failure:** report staged diagnostics (edits-invalid, anchor-not-found,
+  anchor-ambiguous, format, tsc, tests) → keep the
   attempted state → retry with a rebuilt bounded context (system + issue/context
   + locator + attempt-aware retry prompt carrying the current source).
 - **truncation:** `finishReason: "length"` is classified as `truncated`, never
@@ -156,9 +161,9 @@ provider tool-call response is only ever parsed as a locator. Provider-level
 - Grammar surface: modern app TS — ES2024 syntax, full TS type grammar,
   decorators, namespaces, `.d.ts`, declaration merging, overloads.
   **Excludes** `.tsx` / JSX.
-- Representation: **AST + source spans** (not a lossless CST). Edits replace a
-  symbol's range; `oxfmt` reprints. Comments inside a replaced range come from
-  the LLM output.
+- Representation: **AST + source spans** (not a lossless CST). Edits splice the
+  replacement over an anchor's matched range inside a symbol; `oxfmt` reprints.
+  Comments inside the spliced range come from the LLM output.
 
 ## 10. Verification & done criteria
 

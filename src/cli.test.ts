@@ -148,12 +148,16 @@ function captureIo(): { io: MainIo; out: string[]; err: string[] } {
 
 const LOCATOR = '{"path":"src/helper.ts","name":"answer","kind":"function"}';
 
+function editResponse(anchor: string, replacement: string): string {
+  return JSON.stringify({ edits: [{ anchor, replacement }] });
+}
+
 describe("runMain", () => {
   test("applies a verified edit and reports success on stdout", async () => {
     const dir = fixtureDir();
     const provider = new ScriptedProvider([
       LOCATOR,
-      "function answer(): number {\n  return 2;\n}\n",
+      editResponse("return 1;", "return 2;"),
     ]);
     const captured = captureIo();
     const code = await runMain({
@@ -172,9 +176,10 @@ describe("runMain", () => {
 
   test("surfaces diagnostics on stderr and the explanation last on stdout", async () => {
     const dir = fixtureDir();
-    const bad = 'function answer(): number {\n  return "no";\n}';
+    const bad = editResponse("return 1;", 'return "no";');
+    const keep = editResponse('return "no";', 'return "no";');
     const explanation = "the symbol cannot satisfy the test without a larger refactor";
-    const provider = new ScriptedProvider([LOCATOR, bad, bad, bad, explanation]);
+    const provider = new ScriptedProvider([LOCATOR, bad, keep, keep, explanation]);
     const captured = captureIo();
     const code = await runMain({
       issue: "make the answer test pass",
@@ -212,7 +217,7 @@ describe("runMain", () => {
     writeFileSync(join(dir, "src", "broken.ts"), "function broken( {\n");
     const provider = new ScriptedProvider([
       LOCATOR,
-      "function answer(): number {\n  return 2;\n}\n",
+      editResponse("return 1;", "return 2;"),
     ]);
     const captured = captureIo();
     const code = await runMain({
@@ -326,7 +331,10 @@ test.skipIf(nestedSmoke)(
     writeFileSync(join(dir, ".nested-smoke"), "this copy runs under the self-host smoke test\n");
     const provider = new ScriptedProvider([
       '{"path":"src/index.ts","name":"greet","kind":"function"}',
-      "function greet(subject: string): string {\n  const greeting = `hello, ${subject}`;\n  return greeting;\n}\n",
+      editResponse(
+        "function greet(subject: string): string {\n  return `hello, ${subject}`;\n}",
+        "function greet(subject: string): string {\n  const greeting = `hello, ${subject}`;\n  return greeting;\n}",
+      ),
     ]);
     const captured = captureIo();
     const code = await runMain({

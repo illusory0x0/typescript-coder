@@ -257,9 +257,17 @@ export function diagnosticsContains(needle: string): ScenarioAssertion {
   };
 }
 
+function editResponse(anchor: string, replacement: string): string {
+  return JSON.stringify({ edits: [{ anchor, replacement }] });
+}
+
 const LOCATOR_JSON = '{"path":"src/helper.ts","name":"answer","kind":"function"}';
-const BAD_REPLACEMENT = 'function answer(): number {\n  return "no";\n}';
-const GOOD_REPLACEMENT = "function answer(): number {\n  return 2;\n}";
+const BAD_EDIT = editResponse("return 1;", 'return "no";');
+const KEEP_EDIT = editResponse('return "no";', 'return "no";');
+const RECOVER_EDIT = editResponse('return "no";', "return 2;");
+const TEST_PROPAGATION_EDIT = editResponse("return 1;", "return 3;");
+const TEST_PROPAGATION_RECOVER_EDIT = editResponse("return 3;", "return 2;");
+const GOOD_EDIT = editResponse("return 1;", "return 2;");
 const TEST_ISSUE = "make the failing test pass";
 
 export const scenarios: Scenario[] = [
@@ -268,7 +276,7 @@ export const scenarios: Scenario[] = [
     title: "failing test becomes green",
     fixture: "fix-answer",
     issue: TEST_ISSUE,
-    responses: [LOCATOR_JSON, GOOD_REPLACEMENT],
+    responses: [LOCATOR_JSON, GOOD_EDIT],
     assertions: [
       hasOk(true),
       hasAttempts(1),
@@ -295,7 +303,7 @@ export const scenarios: Scenario[] = [
     title: "type-invalid replacement stays on disk and the retry builds on it",
     fixture: "keep-progress-retry",
     issue: TEST_ISSUE,
-    responses: [LOCATOR_JSON, BAD_REPLACEMENT, GOOD_REPLACEMENT],
+    responses: [LOCATOR_JSON, BAD_EDIT, RECOVER_EDIT],
     assertions: [
       hasOk(true),
       hasAttempts(2),
@@ -311,9 +319,9 @@ export const scenarios: Scenario[] = [
     issue: TEST_ISSUE,
     responses: [
       LOCATOR_JSON,
-      BAD_REPLACEMENT,
-      BAD_REPLACEMENT,
-      BAD_REPLACEMENT,
+      BAD_EDIT,
+      KEEP_EDIT,
+      KEEP_EDIT,
       "The replacement could not satisfy the type checker; the next step is to review the return type.",
     ],
     assertions: [
@@ -334,7 +342,7 @@ export const scenarios: Scenario[] = [
     issue: TEST_ISSUE,
     responses: [
       '{"path":"src/lexer.ts","name":"lexer.make","kind":"function"}',
-      "function make(): number {\n  return 10;\n}",
+      editResponse("return 1;", "return 10;"),
     ],
     assertions: [
       hasOk(true),
@@ -380,7 +388,7 @@ export const scenarios: Scenario[] = [
     title: "test-only failure feeds back diagnostics",
     fixture: "check-test-propagation",
     issue: TEST_ISSUE,
-    responses: [LOCATOR_JSON, "function answer(): number {\n  return 3;\n}", GOOD_REPLACEMENT],
+    responses: [LOCATOR_JSON, TEST_PROPAGATION_EDIT, TEST_PROPAGATION_RECOVER_EDIT],
     assertions: [
       hasOk(true),
       hasAttempts(2),
@@ -404,7 +412,10 @@ export const scenarios: Scenario[] = [
     },
     responses: [
       '{"path":"src/index.ts","name":"greet","kind":"function"}',
-      "function greet(subject: string): string {\n  const greeting = `hello, ${subject}`;\n  return greeting;\n}",
+      editResponse(
+        "function greet(subject: string): string {\n  return `hello, ${subject}`;\n}",
+        "function greet(subject: string): string {\n  const greeting = `hello, ${subject}`;\n  return greeting;\n}",
+      ),
     ],
     assertions: [hasOk(true), fileContains("src/index.ts", "const greeting")],
   },
