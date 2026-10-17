@@ -1421,10 +1421,7 @@ export class Parser {
         return this.parseDecoratedClassStatement();
       }
     }
-    if (
-      (token.kind === "keyword" || token.kind === "identifier") &&
-      token.value === "import"
-    ) {
+    if ((token.kind === "keyword" || token.kind === "identifier") && token.value === "import") {
       const next = this.peek();
       if (next.kind !== "punctuator" || next.text !== "(") {
         return this.parseImportDeclaration();
@@ -1506,15 +1503,11 @@ export class Parser {
       }
       if (
         token.value === "namespace" &&
-        (next.kind === "identifier" ||
-          (next.kind === "punctuator" && next.text === "{"))
+        (next.kind === "identifier" || (next.kind === "punctuator" && next.text === "{"))
       ) {
         return this.parseNamespaceDeclaration();
       }
-      if (
-        token.value === "module" &&
-        (next.kind === "identifier" || next.kind === "string")
-      ) {
+      if (token.value === "module" && (next.kind === "identifier" || next.kind === "string")) {
         return this.parseNamespaceDeclaration();
       }
       if (next.kind === "punctuator" && next.text === ":") {
@@ -1759,10 +1752,7 @@ export class Parser {
     let typeOnly = false;
     if (allowTypeOnly && this.isIdentifier("type")) {
       const next = this.peek();
-      if (
-        (next.kind === "identifier" && next.value !== "as") ||
-        next.kind === "string"
-      ) {
+      if ((next.kind === "identifier" && next.value !== "as") || next.kind === "string") {
         typeOnly = true;
         this.advance();
       }
@@ -4158,11 +4148,7 @@ export class Parser {
     const first = this.current();
     const start = first.start;
     let readonly = false;
-    if (
-      first.kind === "identifier" &&
-      first.value === "readonly" &&
-      this.isReadonlyPrefix()
-    ) {
+    if (first.kind === "identifier" && first.value === "readonly" && this.isReadonlyPrefix()) {
       readonly = true;
       this.advance();
     }
@@ -5189,7 +5175,12 @@ export class Parser {
       if (this.isPunct("...")) {
         const spread = this.advance();
         const argument = this.parseAssignmentExpression();
-        properties.push({ kind: "SpreadElement", argument, start: spread.start, end: argument.end });
+        properties.push({
+          kind: "SpreadElement",
+          argument,
+          start: spread.start,
+          end: argument.end,
+        });
       } else {
         properties.push(this.parseProperty());
       }

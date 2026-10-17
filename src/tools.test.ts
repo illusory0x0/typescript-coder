@@ -125,9 +125,7 @@ describe("scroll", () => {
 
   test("expand returns the full declaration slice", () => {
     const source = "function f(): number {\n  return 1;\n}\n";
-    expect(expand(source, locator("f", "function"))).toBe(
-      "function f(): number {\n  return 1;\n}",
-    );
+    expect(expand(source, locator("f", "function"))).toBe("function f(): number {\n  return 1;\n}");
   });
 
   test("expand truncates past maxLines and reports the remainder", () => {
@@ -139,9 +137,7 @@ describe("scroll", () => {
 
   test("expand rejects maxLines of zero or less", () => {
     const source = "function f(): number {\n  return 1;\n}\n";
-    expect(() => expand(source, locator("f", "function"), { maxLines: 0 })).toThrow(
-      /maxLines/,
-    );
+    expect(() => expand(source, locator("f", "function"), { maxLines: 0 })).toThrow(/maxLines/);
   });
 });
 
@@ -272,9 +268,9 @@ describe("renameTool", () => {
   });
 
   test("throws for an unresolved locator", async () => {
-    await expect(
-      renameTool("const x = 1;\n", locator("nope", "function"), "y"),
-    ).rejects.toThrow(/cannot rename/);
+    await expect(renameTool("const x = 1;\n", locator("nope", "function"), "y")).rejects.toThrow(
+      /cannot rename/,
+    );
   });
 
   test("leaves same-file references untouched in v1", async () => {
@@ -429,9 +425,7 @@ describe("checkTool and testTool", () => {
   test("check kills a command that exceeds a short timeout", async () => {
     const dir = fixture({});
     const started = Date.now();
-    const result = await withDeadline(
-      checkTool(dir, ["bun", "-e", "await Bun.sleep(5000)"], 50),
-    );
+    const result = await withDeadline(checkTool(dir, ["bun", "-e", "await Bun.sleep(5000)"], 50));
     expect(result.ok).toBe(false);
     expect(result.exitCode).not.toBe(0);
     expect(Date.now() - started).toBeLessThan(2500);
@@ -440,9 +434,7 @@ describe("checkTool and testTool", () => {
   test("test kills a command that exceeds a short timeout", async () => {
     const dir = fixture({});
     const started = Date.now();
-    const result = await withDeadline(
-      testTool(dir, ["bun", "-e", "await Bun.sleep(5000)"], 50),
-    );
+    const result = await withDeadline(testTool(dir, ["bun", "-e", "await Bun.sleep(5000)"], 50));
     expect(result.ok).toBe(false);
     expect(result.exitCode).not.toBe(0);
     expect(Date.now() - started).toBeLessThan(2500);

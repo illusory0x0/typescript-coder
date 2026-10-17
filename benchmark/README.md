@@ -75,8 +75,7 @@ finish in arbitrary order.
 
 ## Multi-edit attempts (ts side)
 
-Replace-mode responses carry 1..8 anchored edits (`maxEditsPerAttempt`, default
-8) applied serially in listed order. Each anchor is matched against the source
+Replace-mode responses carry 1..8 anchored edits (`maxEditsPerAttempt`, default 8) applied serially in listed order. Each anchor is matched against the source
 as evolved by the previous edits (the selected symbol is re-indexed between
 edits); an anchor that is not found, ambiguous, or unparseable stops the
 response, the already-applied prefix is kept on disk (#30), and the diagnostic

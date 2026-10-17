@@ -37,7 +37,7 @@ diagnostics), with no network.
       mismatch reporting; one recorded real bundle from #29 is replayed and
       the result captured in this issue.
 - [ ] `benchmark/README.md` documents the command and the known limitation:
-      replayed responses were produced for the *old* prompts, so the runner
+      replayed responses were produced for the _old_ prompts, so the runner
       validates mechanics (parsing/matching/state flow) — not model
       behavior under new prompts.
 - [ ] Gates green (`bunx tsc --noEmit` 0, `bun test`, `bun run accept`).

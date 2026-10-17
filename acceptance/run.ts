@@ -325,7 +325,11 @@ async function runScenario(
       assertions.push({ ...SYNTHETIC_FAILURE });
     }
     const status: ScenarioStatus =
-      result === null ? "error" : assertions.every((assertion) => assertion.ok) ? "passed" : "failed";
+      result === null
+        ? "error"
+        : assertions.every((assertion) => assertion.ok)
+          ? "passed"
+          : "failed";
     const durationMs = Math.round(performance.now() - started);
     const diagnostics =
       result === null

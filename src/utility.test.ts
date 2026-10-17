@@ -374,7 +374,9 @@ describe("buildIndexTolerant", () => {
     ];
     const { index, skipped } = buildIndexTolerant(files);
     expect(index.lookup({ path: "src/ok.ts", name: "fix", kind: "function" })).toHaveLength(1);
-    expect(index.lookup({ path: "src/broken.ts", name: "broken", kind: "function" })).toHaveLength(0);
+    expect(index.lookup({ path: "src/broken.ts", name: "broken", kind: "function" })).toHaveLength(
+      0,
+    );
     expect(skipped).toEqual([
       { path: "src/broken.ts", message: "unexpected end of input (line 2, column 1)" },
     ]);

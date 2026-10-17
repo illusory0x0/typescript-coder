@@ -11,7 +11,7 @@ success counts are shown as `ok/runs`.
 ## Row format
 
 | Date | Change set | json-parser | sexp-parser | minilisp | Overall | Source | Notes |
-| --- | --- | --- | --- | --- | --- | --- | --- |
+| ---- | ---------- | ----------- | ----------- | -------- | ------- | ------ | ----- |
 
 - `Date`: measurement date (the result run's date).
 - `Change set`: series issue refs and/or a short description of what changed
@@ -27,8 +27,8 @@ success counts are shown as `ok/runs`.
 
 ## Rows
 
-| Date | Change set | json-parser | sexp-parser | minilisp | Overall | Source | Notes |
-| --- | --- | --- | --- | --- | --- | --- | --- |
+| Date       | Change set                     | json-parser | sexp-parser  | minilisp      | Overall      | Source                                                       | Notes                                                                                                                                                    |
+| ---------- | ------------------------------ | ----------- | ------------ | ------------- | ------------ | ------------------------------------------------------------ | -------------------------------------------------------------------------------------------------------------------------------------------------------- |
 | 2026-10-17 | baseline (pre-series, plan v4) | 5,877 (3/3) | 43,293 (3/3) | 348,080 (1/3) | 70,799 (7/9) | `benchmark/results/2026-10-17.json` (report `2026-10-17.md`) | ts side. opencode reference from the same report, recorded verbatim as the comparison target: 15,517 (3/3) / 11,812 (3/3) / 23,142 (3/3) / 16,824 (9/9). |
 
 ## How to add a row

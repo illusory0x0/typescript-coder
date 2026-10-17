@@ -38,7 +38,7 @@ issues/
 Issues form a forest of hierarchies, plus cross-cutting dependency edges:
 
 - **`parent`** — the umbrella/epic this issue belongs to, or `null` for a root.
-  Children are *derived* by scanning other issues' `parent` fields; never store a
+  Children are _derived_ by scanning other issues' `parent` fields; never store a
   `children` list (it drifts). Hierarchy is structural.
 - **`deps`** — blocking edges between any two issues, independent of the tree.
   `deps: [7]` means "7 must be `done` before this starts".
@@ -54,7 +54,7 @@ Issues form a forest of hierarchies, plus cross-cutting dependency edges:
    code. If a planning document exists, mine its goals, risks, and acceptance
    criteria. Always read `issues/todo.yaml` and list both `issues/*.md` and
    `issues/done/*.md` first so you never duplicate an existing issue.
-2. **Build the tree.** Split by *independently shippable and verifiable* work.
+2. **Build the tree.** Split by _independently shippable and verifiable_ work.
    Group related leaves under an umbrella parent when they serve one goal.
    Attach cross-cutting prerequisites via `deps`, not by inventing a parent.
    Collapse anything that cannot be verified on its own into its parent. If the
@@ -81,11 +81,11 @@ already exist.
 ---
 id: 7
 title: Short imperative title
-status: todo          # todo | in-progress | review | done | wontfix
-priority: high        # high | medium | low
-milestone: null       # optional grouping label
-parent: null          # umbrella issue id, or null for a root
-deps: []              # ids that must be done first
+status: todo # todo | in-progress | review | done | wontfix
+priority: high # high | medium | low
+milestone: null # optional grouping label
+parent: null # umbrella issue id, or null for a root
+deps: [] # ids that must be done first
 labels: []
 created: YYYY-MM-DD
 ---

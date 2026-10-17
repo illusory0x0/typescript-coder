@@ -818,8 +818,9 @@ async function runOpencodeSide(options: {
       };
       const messages = exportedJson["messages"];
       if (Array.isArray(messages)) {
-        steps = messages.filter((message) => isRecord(message) && message["type"] === "assistant")
-          .length;
+        steps = messages.filter(
+          (message) => isRecord(message) && message["type"] === "assistant",
+        ).length;
       }
     }
   }
@@ -976,9 +977,7 @@ function resolveOpencodeBin(): string {
   if (statSync(OPENCODE_FALLBACK_BIN, { throwIfNoEntry: false })?.isFile() === true) {
     return OPENCODE_FALLBACK_BIN;
   }
-  throw new InfraError(
-    "opencode binary not found: set OPENCODE_BIN or put opencode on PATH",
-  );
+  throw new InfraError("opencode binary not found: set OPENCODE_BIN or put opencode on PATH");
 }
 
 async function probeOpencodeCli(repoRoot: string): Promise<OpencodeContext> {
@@ -1052,9 +1051,7 @@ async function runOnce(
 
   const issue = TASK_ISSUES[task];
   const replayPath =
-    side === "ts" && context.replayDir !== null
-      ? join(context.replayDir, `${runName}.json`)
-      : null;
+    side === "ts" && context.replayDir !== null ? join(context.replayDir, `${runName}.json`) : null;
   let outcome: SideOutcome;
   if (side === "ts") {
     outcome = await runTypescriptSide({
@@ -1187,9 +1184,7 @@ function aggregateRuns(
     const total = values.reduce((left, right) => left + right, 0);
     return { mean: total / values.length, total };
   };
-  const steps = selected
-    .map((run) => run.steps)
-    .filter((value): value is number => value !== null);
+  const steps = selected.map((run) => run.steps).filter((value): value is number => value !== null);
   const tokens = {
     input: tokenStats((usage) => usage.input),
     output: tokenStats((usage) => usage.output),
@@ -1239,9 +1234,7 @@ function computeAggregates(
 }
 
 function markdownPathFor(jsonPath: string): string {
-  return jsonPath.endsWith(".json")
-    ? `${jsonPath.slice(0, -".json".length)}.md`
-    : `${jsonPath}.md`;
+  return jsonPath.endsWith(".json") ? `${jsonPath.slice(0, -".json".length)}.md` : `${jsonPath}.md`;
 }
 
 function formatTokenCount(value: number | null): string {
@@ -1279,9 +1272,7 @@ function successRateSentence(rows: readonly AggregateRow[]): string {
   }
   const summaries = rows.map(successSummary).join(" vs ");
   const equal = rows.every((row) => row.successRate === first.successRate);
-  return equal
-    ? `Success rates are equal: ${summaries}.`
-    : `Success rates differ: ${summaries}.`;
+  return equal ? `Success rates are equal: ${summaries}.` : `Success rates differ: ${summaries}.`;
 }
 
 // The references tree names one file per task (json/sexp/lisp today); probe the
@@ -1325,7 +1316,14 @@ function writeMarkdownReport(mdPath: string, report: Report): void {
   lines.push("## Frozen task specs", "");
   for (const task of report.tasks) {
     lines.push(`### ${task}`, "");
-    lines.push("Issue (verbatim, identical for both sides):", "", "```", TASK_ISSUES[task], "```", "");
+    lines.push(
+      "Issue (verbatim, identical for both sides):",
+      "",
+      "```",
+      TASK_ISSUES[task],
+      "```",
+      "",
+    );
     lines.push(
       `- fixture: benchmark/fixtures/${task}/`,
       `- reference: ${resolveReferencePath(repoRoot, task)}`,
@@ -1353,11 +1351,11 @@ function writeMarkdownReport(mdPath: string, report: Report): void {
   );
   for (const row of aggregates.byTaskSide) {
     lines.push(
-      `| ${row.task ?? "all"} | ${row.side ?? "all"} | ${row.ok}/${row.runs} | ${
-        formatTokenCount(row.tokens.input.mean)
-      } | ${formatTokenCount(row.tokens.output.mean)} | ${
-        formatTokenCount(row.tokens.total.mean)
-      } | ${formatSeconds(row.durationMsMean)} | ${formatSteps(row.stepsMean)} |`,
+      `| ${row.task ?? "all"} | ${row.side ?? "all"} | ${row.ok}/${row.runs} | ${formatTokenCount(
+        row.tokens.input.mean,
+      )} | ${formatTokenCount(row.tokens.output.mean)} | ${formatTokenCount(
+        row.tokens.total.mean,
+      )} | ${formatSeconds(row.durationMsMean)} | ${formatSteps(row.stepsMean)} |`,
     );
   }
   lines.push("");
@@ -1369,26 +1367,23 @@ function writeMarkdownReport(mdPath: string, report: Report): void {
   );
   for (const row of aggregates.bySide) {
     lines.push(
-      `| ${row.side ?? "all"} | ${row.ok}/${row.runs} | ${
-        formatTokenCount(row.tokens.input.mean)
-      } | ${formatTokenCount(row.tokens.output.mean)} | ${
-        formatTokenCount(row.tokens.total.mean)
-      } | ${formatTokenCount(row.tokens.total.total)} | ${
-        formatSeconds(row.durationMsMean)
-      } | ${formatSteps(row.stepsMean)} |`,
+      `| ${row.side ?? "all"} | ${row.ok}/${row.runs} | ${formatTokenCount(
+        row.tokens.input.mean,
+      )} | ${formatTokenCount(row.tokens.output.mean)} | ${formatTokenCount(
+        row.tokens.total.mean,
+      )} | ${formatTokenCount(row.tokens.total.total)} | ${formatSeconds(
+        row.durationMsMean,
+      )} | ${formatSteps(row.stepsMean)} |`,
     );
   }
   lines.push("");
   lines.push("Tokens per success (usage-run token sums divided by successful runs):", "");
-  lines.push(
-    "| Side | Input | Output | Total |",
-    "| --- | ---: | ---: | ---: |",
-  );
+  lines.push("| Side | Input | Output | Total |", "| --- | ---: | ---: | ---: |");
   for (const row of aggregates.bySide) {
     lines.push(
-      `| ${row.side ?? "all"} | ${formatTokenCount(row.tokensPerSuccess.input)} | ${
-        formatTokenCount(row.tokensPerSuccess.output)
-      } | ${formatTokenCount(row.tokensPerSuccess.total)} |`,
+      `| ${row.side ?? "all"} | ${formatTokenCount(row.tokensPerSuccess.input)} | ${formatTokenCount(
+        row.tokensPerSuccess.output,
+      )} | ${formatTokenCount(row.tokensPerSuccess.total)} |`,
     );
   }
   lines.push("");
@@ -1403,8 +1398,11 @@ function writeMarkdownReport(mdPath: string, report: Report): void {
     for (const run of failures) {
       const reason =
         run.abortReason === null
-          ? run.judge?.detail ?? run.error ?? run.infraError ?? "no judge or error detail recorded"
-          : run.loopDiagnostics ?? run.abortReason;
+          ? (run.judge?.detail ??
+            run.error ??
+            run.infraError ??
+            "no judge or error detail recorded")
+          : (run.loopDiagnostics ?? run.abortReason);
       lines.push(`- ${run.task} ${run.side} rep${run.rep}: ${formatOneLine(reason)}`);
     }
     lines.push("");
@@ -1471,11 +1469,11 @@ function writeMarkdownReport(mdPath: string, report: Report): void {
   );
   for (const run of report.runs) {
     lines.push(
-      `| ${run.task} | ${run.side} | ${run.rep} | ${run.ok ? "yes" : "no"} | ${
-        formatTokenCount(run.tokens.input)
-      } | ${formatTokenCount(run.tokens.output)} | ${formatTokenCount(run.tokens.total)} | ${
-        formatTokenCount(run.steps)
-      } | ${formatSeconds(run.durationMs)} |`,
+      `| ${run.task} | ${run.side} | ${run.rep} | ${run.ok ? "yes" : "no"} | ${formatTokenCount(
+        run.tokens.input,
+      )} | ${formatTokenCount(run.tokens.output)} | ${formatTokenCount(run.tokens.total)} | ${formatTokenCount(
+        run.steps,
+      )} | ${formatSeconds(run.durationMs)} |`,
     );
   }
   lines.push("");

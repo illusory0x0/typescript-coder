@@ -2,15 +2,8 @@
   "generatedAt": "2026-10-17T08:20:15.116Z",
   "date": "2026-10-17",
   "mode": "full",
-  "tasks": [
-    "json-parser",
-    "sexp-parser",
-    "minilisp"
-  ],
-  "sides": [
-    "ts",
-    "opencode"
-  ],
+  "tasks": ["json-parser", "sexp-parser", "minilisp"],
+  "sides": ["ts", "opencode"],
   "reps": 3,
   "concurrency": 4,
   "model": "deepseek-v4.1-flash",

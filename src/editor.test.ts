@@ -7,46 +7,38 @@ function edit(name: string, kind: string, llmOutput: string, path = "file.ts"): 
 }
 
 test("replaces a top-level function with the llm output", async () => {
-  const result = await applyEdits(
-    "function make( ):number{return 1}\n",
-    [edit("make", "function", "function make(): number {\n  return 42;\n}")],
-  );
+  const result = await applyEdits("function make( ):number{return 1}\n", [
+    edit("make", "function", "function make(): number {\n  return 42;\n}"),
+  ]);
   expect(result).toBe("function make(): number {\n  return 42;\n}\n");
 });
 
 test("applies multiple edits bottom-up so spans stay valid", async () => {
-  const result = await applyEdits(
-    "function a(){return 1}\nfunction b(){return 2}\n",
-    [
-      edit(
-        "a",
-        "function",
-        "function a() {\n  const value = 1;\n  const doubled = value * 2;\n  return doubled;\n}",
-      ),
-      edit("b", "function", "function b() {\n  return 20;\n}"),
-    ],
-  );
+  const result = await applyEdits("function a(){return 1}\nfunction b(){return 2}\n", [
+    edit(
+      "a",
+      "function",
+      "function a() {\n  const value = 1;\n  const doubled = value * 2;\n  return doubled;\n}",
+    ),
+    edit("b", "function", "function b() {\n  return 20;\n}"),
+  ]);
   expect(result).toBe(
     "function a() {\n  const value = 1;\n  const doubled = value * 2;\n  return doubled;\n}\nfunction b() {\n  return 20;\n}\n",
   );
 });
 
 test("replaces a class method and keeps the class header intact", async () => {
-  const result = await applyEdits(
-    "class C {\n  m( ){return 1}\n}\n",
-    [edit("C.m", "method", "m( ){return 42}")],
-  );
+  const result = await applyEdits("class C {\n  m( ){return 1}\n}\n", [
+    edit("C.m", "method", "m( ){return 42}"),
+  ]);
   expect(result).toBe("class C {\n  m() {\n    return 42;\n  }\n}\n");
 });
 
 test("replaces a function inside a namespace", async () => {
-  const result = await applyEdits(
-    "namespace lexer {\n  export function make(){return 1}\n}\n",
-    [edit("lexer.make", "function", "function make(){return 42}")],
-  );
-  expect(result).toBe(
-    "namespace lexer {\n  export function make() {\n    return 42;\n  }\n}\n",
-  );
+  const result = await applyEdits("namespace lexer {\n  export function make(){return 1}\n}\n", [
+    edit("lexer.make", "function", "function make(){return 42}"),
+  ]);
+  expect(result).toBe("namespace lexer {\n  export function make() {\n    return 42;\n  }\n}\n");
 });
 
 test("replaces a variable declarator", async () => {
@@ -64,7 +56,9 @@ test("rejects a locator that does not resolve to a symbol", async () => {
 
 test("rejects a locator whose path does not match the file name", async () => {
   await expect(
-    applyEdits("function make() {}\n", [edit("make", "function", "function make() {}", "other.ts")]),
+    applyEdits("function make() {}\n", [
+      edit("make", "function", "function make() {}", "other.ts"),
+    ]),
   ).rejects.toThrow(/no symbol function make/);
 });
 

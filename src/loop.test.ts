@@ -485,9 +485,7 @@ describe("prompt builders", () => {
   test("buildSystemPrompt returns a stable string", () => {
     expect(buildSystemPrompt()).toBe(buildSystemPrompt());
     expect(buildSystemPrompt()).toContain('{ "path": ..., "name": ..., "kind": ... }');
-    expect(buildSystemPrompt()).toContain(
-      '{"edits":[{"anchor": ..., "replacement": ...}, ...]}',
-    );
+    expect(buildSystemPrompt()).toContain('{"edits":[{"anchor": ..., "replacement": ...}, ...]}');
     expect(buildSystemPrompt()).toContain("1 to 8 edits");
     expect(buildSystemPrompt()).toContain("fewest edits that cover the change");
     expect(buildSystemPrompt()).toContain("top-to-bottom");
@@ -2032,10 +2030,7 @@ describe("anchor splice protocol", () => {
       testCommand: ["bun", "test"],
     });
     expect(result.ok).toBe(true);
-    expect(result.attempts.map((attempt) => attempt.outcome)).toEqual([
-      "anchor-not-found",
-      "ok",
-    ]);
+    expect(result.attempts.map((attempt) => attempt.outcome)).toEqual(["anchor-not-found", "ok"]);
     expect(result.attempts[0]?.diagnostics).toContain("stage: anchor-not-found");
     expect(result.attempts[0]?.diagnostics).toContain("the anchor was not found inside answer");
     // The single-edit diagnostic wording is unchanged (no "edit 1 of 1" prefix).
@@ -2071,10 +2066,7 @@ describe("anchor splice protocol", () => {
       testCommand: ["bun", "test"],
     });
     expect(result.ok).toBe(true);
-    expect(result.attempts.map((attempt) => attempt.outcome)).toEqual([
-      "anchor-ambiguous",
-      "ok",
-    ]);
+    expect(result.attempts.map((attempt) => attempt.outcome)).toEqual(["anchor-ambiguous", "ok"]);
     expect(result.attempts[0]?.diagnostics).toContain("stage: anchor-ambiguous");
     expect(result.attempts[0]?.diagnostics).toContain("2 places");
     const content = helperSource(dir);
@@ -2218,10 +2210,7 @@ describe("multi-edit attempts", () => {
       testCommand: passingCommand,
     });
     expect(result.ok).toBe(true);
-    expect(result.attempts.map((attempt) => attempt.outcome)).toEqual([
-      "anchor-not-found",
-      "ok",
-    ]);
+    expect(result.attempts.map((attempt) => attempt.outcome)).toEqual(["anchor-not-found", "ok"]);
     const failed = result.attempts[0];
     expect(failed?.diagnostics).toContain("stage: anchor-not-found");
     expect(failed?.diagnostics).toContain("edit 2 of 2");
@@ -2327,9 +2316,7 @@ describe("multi-edit attempts", () => {
     expect(result.attempts.map((attempt) => attempt.outcome)).toEqual(["edits-invalid", "ok"]);
     const failed = result.attempts[0];
     expect(failed?.diagnostics).toContain("stage: edits-invalid");
-    expect(failed?.diagnostics).toContain(
-      "at most 8 edits per response are supported (got 9)",
-    );
+    expect(failed?.diagnostics).toContain("at most 8 edits per response are supported (got 9)");
     expect(failed?.edits).toBe(9);
     expect(failed?.appliedEdits).toBe(0);
     expect(helperSource(dir)).toContain("return 2;");
@@ -2359,9 +2346,7 @@ describe("multi-edit attempts", () => {
     expect(result.ok).toBe(true);
     expect(result.attempts.map((attempt) => attempt.outcome)).toEqual(["edits-invalid", "ok"]);
     const failed = result.attempts[0];
-    expect(failed?.diagnostics).toContain(
-      "at most 2 edits per response are supported (got 3)",
-    );
+    expect(failed?.diagnostics).toContain("at most 2 edits per response are supported (got 3)");
     expect(failed?.edits).toBe(3);
     expect(failed?.appliedEdits).toBe(0);
   }, 30000);

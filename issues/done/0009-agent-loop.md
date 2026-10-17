@@ -79,5 +79,5 @@ bun test src/loop.test.ts
 - Verified 2026-10-16: `bun test src/loop.test.ts` 29 pass / 0 fail;
   `bunx tsc --noEmit` exit 0; `bun test` 380 pass / 0 fail across 8 files.
   End-to-end anchor fixture (failing `bun test` → green, with real local `tsc`
-  + `bun test` verification) and persistent-failure rollback/explanation
-  fixtures both pass.
+  - `bun test` verification) and persistent-failure rollback/explanation
+    fixtures both pass.

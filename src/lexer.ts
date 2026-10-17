@@ -303,9 +303,7 @@ function isDigitInRadix(text: string | undefined, radix: number): boolean {
   }
   if (radix === 16) {
     return (
-      (text >= "0" && text <= "9") ||
-      (text >= "a" && text <= "f") ||
-      (text >= "A" && text <= "F")
+      (text >= "0" && text <= "9") || (text >= "a" && text <= "f") || (text >= "A" && text <= "F")
     );
   }
   if (radix === 10) {
@@ -406,7 +404,15 @@ export class Lexer {
     for (const punctuator of punctuators) {
       if (this.source.startsWith(punctuator, start)) {
         this.advanceCodeUnits(punctuator.length);
-        return { kind: "punctuator", text: punctuator, value: punctuator, start, end: start + punctuator.length, line, column };
+        return {
+          kind: "punctuator",
+          text: punctuator,
+          value: punctuator,
+          start,
+          end: start + punctuator.length,
+          line,
+          column,
+        };
       }
     }
     throw new LexError(`unexpected character ${JSON.stringify(char)}`, start, line, column);
@@ -451,7 +457,15 @@ export class Lexer {
       if (this.source[this.position] === "*" && this.source[this.position + 1] === "/") {
         this.advanceCodeUnits(2);
         const text = this.source.slice(start, this.position);
-        return { kind: "block-comment", text, value: text, start, end: this.position, line, column };
+        return {
+          kind: "block-comment",
+          text,
+          value: text,
+          start,
+          end: this.position,
+          line,
+          column,
+        };
       }
       this.advance();
     }
@@ -468,7 +482,12 @@ export class Lexer {
       if (this.source[this.position] === "\\") {
         const escape = this.tryReadEscape(this.position);
         if (escape === null) {
-          throw new LexError("invalid escape sequence in identifier", this.position, this.lineNumber, this.columnNumber);
+          throw new LexError(
+            "invalid escape sequence in identifier",
+            this.position,
+            this.lineNumber,
+            this.columnNumber,
+          );
         }
         value += escape.value;
         this.advanceCodeUnits(escape.length);

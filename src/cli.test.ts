@@ -65,8 +65,12 @@ describe("parseArgs", () => {
   });
 
   test("keeps the last --model", () => {
-    expect(parseArgs(["--model", "qwen", "--model", "deepseek-v4.1-flash"]).model).toBe("deepseek-v4.1-flash");
-    expect(parseArgs(["--model=qwen", "--model=deepseek-v4.1-flash"]).model).toBe("deepseek-v4.1-flash");
+    expect(parseArgs(["--model", "qwen", "--model", "deepseek-v4.1-flash"]).model).toBe(
+      "deepseek-v4.1-flash",
+    );
+    expect(parseArgs(["--model=qwen", "--model=deepseek-v4.1-flash"]).model).toBe(
+      "deepseek-v4.1-flash",
+    );
     expect(parseArgs(["--help", "--model", "qwen"])).toEqual({ help: true, model: "qwen" });
   });
 });
@@ -155,10 +159,7 @@ function editResponse(anchor: string, replacement: string): string {
 describe("runMain", () => {
   test("applies a verified edit and reports success on stdout", async () => {
     const dir = fixtureDir();
-    const provider = new ScriptedProvider([
-      LOCATOR,
-      editResponse("return 1;", "return 2;"),
-    ]);
+    const provider = new ScriptedProvider([LOCATOR, editResponse("return 1;", "return 2;")]);
     const captured = captureIo();
     const code = await runMain({
       issue: "make the answer test pass",
@@ -215,10 +216,7 @@ describe("runMain", () => {
   test("tolerates an unparseable file elsewhere in the project", async () => {
     const dir = fixtureDir(["src/helper.ts"]);
     writeFileSync(join(dir, "src", "broken.ts"), "function broken( {\n");
-    const provider = new ScriptedProvider([
-      LOCATOR,
-      editResponse("return 1;", "return 2;"),
-    ]);
+    const provider = new ScriptedProvider([LOCATOR, editResponse("return 1;", "return 2;")]);
     const captured = captureIo();
     const code = await runMain({
       issue: "make the answer test pass",

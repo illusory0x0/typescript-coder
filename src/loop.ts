@@ -1,11 +1,4 @@
-import {
-  existsSync,
-  mkdirSync,
-  readdirSync,
-  readFileSync,
-  statSync,
-  writeFileSync,
-} from "node:fs";
+import { existsSync, mkdirSync, readdirSync, readFileSync, statSync, writeFileSync } from "node:fs";
 import { basename, dirname, isAbsolute, join, relative, resolve, sep } from "node:path";
 import { applyAnchorSplice, findAnchor, parseEditsResponse, stripCodeFences } from "./anchor";
 import type { ParsedEdit } from "./anchor";
@@ -511,11 +504,7 @@ function safeAppendPath(cwd: string, path: string): string | null {
     return null;
   }
   const directories = segments.slice(0, -1).filter((segment) => segment !== ".");
-  if (
-    directories.some(
-      (segment) => segment.startsWith(".") || SKIPPED_DIRECTORIES.has(segment),
-    )
-  ) {
+  if (directories.some((segment) => segment.startsWith(".") || SKIPPED_DIRECTORIES.has(segment))) {
     return null;
   }
   const root = resolve(cwd);
@@ -993,8 +982,7 @@ export async function runLoop(options: LoopOptions): Promise<LoopResult> {
     try {
       // Staged reasoning policy (#35): generation starts at the provider default;
       // attempts after a failed verification step up to medium effort.
-      const editOptions =
-        editAttempt === 0 ? chatOptions : withEffort(chatOptions, "medium");
+      const editOptions = editAttempt === 0 ? chatOptions : withEffort(chatOptions, "medium");
       response = await options.provider.chat(messages, undefined, editOptions);
     } catch (error) {
       // Failed attempts keep their applied state on disk (#30), so a provider
@@ -1155,12 +1143,7 @@ export async function runLoop(options: LoopOptions): Promise<LoopResult> {
                 };
                 break;
               }
-              working = applyAnchorSplice(
-                working,
-                anchored.start,
-                anchored.end,
-                edit.replacement,
-              );
+              working = applyAnchorSplice(working, anchored.start, anchored.end, edit.replacement);
               appliedEdits += 1;
             }
             if (failedEdit === null) {

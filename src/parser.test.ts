@@ -5246,9 +5246,7 @@ test("parses empty interface declarations", () => {
 });
 
 test("parses interface extends clauses and members", () => {
-  expect(
-    parseProgram("interface I extends A, B<C> { x: T; m(): void }").body[0],
-  ).toMatchObject({
+  expect(parseProgram("interface I extends A, B<C> { x: T; m(): void }").body[0]).toMatchObject({
     kind: "InterfaceDeclaration",
     name: { kind: "Identifier", name: "I", start: 10, end: 11 },
     typeParameters: null,
@@ -6963,7 +6961,10 @@ test("keeps module and import usable as identifiers and expressions", () => {
     kind: "VariableStatement",
     declarationKind: "const",
     declarations: [
-      { kind: "VariableDeclarator", name: { kind: "Identifier", name: "module", start: 6, end: 12 } },
+      {
+        kind: "VariableDeclarator",
+        name: { kind: "Identifier", name: "module", start: 6, end: 12 },
+      },
     ],
   });
 });

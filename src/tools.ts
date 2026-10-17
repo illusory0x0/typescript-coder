@@ -258,8 +258,7 @@ export const tools: ToolDefinition[] = [
     type: "function",
     function: {
       name: "test",
-      description:
-        "Run bun test in the project directory and return its exit status and output.",
+      description: "Run bun test in the project directory and return its exit status and output.",
       parameters: {
         type: "object",
         properties: {

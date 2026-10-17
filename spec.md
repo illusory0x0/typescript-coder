@@ -33,11 +33,11 @@ The frontend must model these explicitly rather than deferring to `tsc`.
 
 ### Locator
 
-| field  | type   | description                                  | example         |
-| ------ | ------ | -------------------------------------------- | --------------- |
-| `path` | string | filesystem path                              | `src/lexer.ts`  |
-| `name` | string | dotted member path of the symbol             | `lexer.make`    |
-| `kind` | string | disambiguator / declaration kind             | `function`      |
+| field  | type   | description                      | example        |
+| ------ | ------ | -------------------------------- | -------------- |
+| `path` | string | filesystem path                  | `src/lexer.ts` |
+| `name` | string | dotted member path of the symbol | `lexer.make`   |
+| `kind` | string | disambiguator / declaration kind | `function`     |
 
 `kind` vocabulary (v1): `function`, `method`, `class`, `interface`, `type`,
 `variable`, `namespace`, `enum`, and other declaration kinds as the binder adds
@@ -86,17 +86,17 @@ outside `cwd` is ever written.
 
 ## 5. Source layout
 
-| file          | responsibility                                                  |
-| ------------- | --------------------------------------------------------------- |
-| `lexer.ts`    | full TypeScript lexer, **no error tolerance** (throws with loc) |
-| `parser.ts`   | full TypeScript grammar parser, recursive descent → AST + spans |
-| `utility.ts`  | shared helpers + binder / symbol index                          |
-| `editor.ts`   | `apply-edits` action + `oxfmt` formatting                       |
-| `openai.ts`   | OpenAI-compatible provider, `tools` param                       |
-| `loop.ts`     | main agent loop                                                 |
-| `scroll.ts`   | signature view + on-demand expand                               |
-| `cli.ts`      | entry point (currently `--help` only)                           |
-| `main.ts`     | wires stdin → loop                                              |
+| file         | responsibility                                                  |
+| ------------ | --------------------------------------------------------------- |
+| `lexer.ts`   | full TypeScript lexer, **no error tolerance** (throws with loc) |
+| `parser.ts`  | full TypeScript grammar parser, recursive descent → AST + spans |
+| `utility.ts` | shared helpers + binder / symbol index                          |
+| `editor.ts`  | `apply-edits` action + `oxfmt` formatting                       |
+| `openai.ts`  | OpenAI-compatible provider, `tools` param                       |
+| `loop.ts`    | main agent loop                                                 |
+| `scroll.ts`  | signature view + on-demand expand                               |
+| `cli.ts`     | entry point (currently `--help` only)                           |
+| `main.ts`    | wires stdin → loop                                              |
 
 ## 6. Agent loop
 
@@ -134,7 +134,7 @@ harness:
 - **on-failure:** report staged diagnostics (edits-invalid, anchor-not-found,
   anchor-ambiguous, format, tsc, tests) → keep the
   attempted state → retry with a rebuilt bounded context (system + issue/context
-  + locator + attempt-aware retry prompt carrying the current source).
+  - locator + attempt-aware retry prompt carrying the current source).
 - **truncation:** `finishReason: "length"` is classified as `truncated`, never
   applied, and the retry asks for a more compact replacement.
 - **max-retries:** 3; prompts are attempt-aware (attempt number + remaining
@@ -216,15 +216,15 @@ Edit is accepted only if both pass:
 
 ## 12. Risks & mitigations
 
-| #   | risk                                                        | mitigation                                                        |
-| --- | ----------------------------------------------------------- | ----------------------------------------------------------------- |
-| R1  | Full TS grammar + binder is enormous                        | freeze an app-TS subset via fixtures; gate per milestone          |
-| R2  | `oxfmt` native `@oxfmt/binding` may not load under Bun      | spike in M0; fall back to `bunx oxfmt` subprocess / prettier      |
-| R3  | LLM tool-call / JSON flakiness (deepseek/qwen)              | strict JSON schema, low temperature, bounded retries              |
-| R4  | whole-project `tsc` per retry is slow                       | incremental / changed-files scope, timeouts                       |
-| R5  | overload / namespace Locator ambiguity                      | `kind` + signature disambiguation; find-definition corpus         |
-| R6  | multiple edits shift spans                                  | serial edits, re-indexed between edits; one symbol per iteration  |
-| R7  | retry context growth / prompt drift                         | stable system + issue/context prefix; bounded rebuilt context     |
+| #   | risk                                                   | mitigation                                                       |
+| --- | ------------------------------------------------------ | ---------------------------------------------------------------- |
+| R1  | Full TS grammar + binder is enormous                   | freeze an app-TS subset via fixtures; gate per milestone         |
+| R2  | `oxfmt` native `@oxfmt/binding` may not load under Bun | spike in M0; fall back to `bunx oxfmt` subprocess / prettier     |
+| R3  | LLM tool-call / JSON flakiness (deepseek/qwen)         | strict JSON schema, low temperature, bounded retries             |
+| R4  | whole-project `tsc` per retry is slow                  | incremental / changed-files scope, timeouts                      |
+| R5  | overload / namespace Locator ambiguity                 | `kind` + signature disambiguation; find-definition corpus        |
+| R6  | multiple edits shift spans                             | serial edits, re-indexed between edits; one symbol per iteration |
+| R7  | retry context growth / prompt drift                    | stable system + issue/context prefix; bounded rebuilt context    |
 
 ## 13. Open items (defaults)
 

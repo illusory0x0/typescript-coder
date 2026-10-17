@@ -39,17 +39,15 @@ describe("extractJsonObject", () => {
 
   test("throws when no object exists", () => {
     expect(() => extractJsonObject("plain text")).toThrow("no JSON object found");
-    expect(() => extractJsonObject('{"unterminated":')).toThrow(
-      "no complete JSON object found",
-    );
+    expect(() => extractJsonObject('{"unterminated":')).toThrow("no complete JSON object found");
   });
 });
 
 describe("parseEditsResponse", () => {
   test("parses a single plain edit", () => {
-    expect(parseEditsResponse('{"edits":[{"anchor":"return 1;","replacement":"return 2;"}]}')).toEqual(
-      { edits: [{ anchor: "return 1;", replacement: "return 2;" }] },
-    );
+    expect(
+      parseEditsResponse('{"edits":[{"anchor":"return 1;","replacement":"return 2;"}]}'),
+    ).toEqual({ edits: [{ anchor: "return 1;", replacement: "return 2;" }] });
   });
 
   test("tolerates a fenced object", () => {
@@ -93,12 +91,12 @@ describe("parseEditsResponse", () => {
     expect(() =>
       parseEditsResponse('{"edits":[{"anchor":"a","replacement":"b"},{"anchor":"c"}]}'),
     ).toThrow('expected {"edits"');
-    expect(() =>
-      parseEditsResponse('{"edits":[{"anchor":"a","replacement":"b"},5]}'),
-    ).toThrow('expected {"edits"');
-    expect(() =>
-      parseEditsResponse('{"edits":["nope",{"anchor":"a","replacement":"b"}]}'),
-    ).toThrow('expected {"edits"');
+    expect(() => parseEditsResponse('{"edits":[{"anchor":"a","replacement":"b"},5]}')).toThrow(
+      'expected {"edits"',
+    );
+    expect(() => parseEditsResponse('{"edits":["nope",{"anchor":"a","replacement":"b"}]}')).toThrow(
+      'expected {"edits"',
+    );
   });
 
   test("rejects non-object JSON", () => {
@@ -148,12 +146,12 @@ describe("structurallyEqual", () => {
   });
 
   test("compares identifiers by exact name", () => {
-    expect(structurallyEqual({ kind: "Identifier", name: "x" }, { kind: "Identifier", name: "x" })).toBe(
-      true,
-    );
-    expect(structurallyEqual({ kind: "Identifier", name: "x" }, { kind: "Identifier", name: "y" })).toBe(
-      false,
-    );
+    expect(
+      structurallyEqual({ kind: "Identifier", name: "x" }, { kind: "Identifier", name: "x" }),
+    ).toBe(true);
+    expect(
+      structurallyEqual({ kind: "Identifier", name: "x" }, { kind: "Identifier", name: "y" }),
+    ).toBe(false);
   });
 
   test("compares arrays elementwise and detects kind mismatches", () => {
@@ -248,7 +246,7 @@ describe("findAnchor", () => {
     const source = [
       "export class Widget {",
       "  render(): string {",
-      "    return \"x\";",
+      '    return "x";',
       "  }",
       "}",
       "",

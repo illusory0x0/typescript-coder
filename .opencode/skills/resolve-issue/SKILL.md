@@ -25,7 +25,7 @@ todo ──▶ in-progress ──▶ review ──▶ done
 ```
 
 - `todo`: not started.
-- `in-progress`: actively being worked. Move here *before* editing code.
+- `in-progress`: actively being worked. Move here _before_ editing code.
 - `review`: implementation and verification pass, awaiting human sign-off.
 - `done`: signed off / accepted. The issue file is moved to `issues/done/` (see
   "On `done`: move the file").
@@ -50,6 +50,7 @@ todo ──▶ in-progress ──▶ review ──▶ done
 
    If no issue is eligible, report what is blocking (unmet `deps`, unfinished
    children) and stop — do not ask an empty question.
+
 2. **Load.** Read the issue file fully — Context, Goal, Acceptance criteria,
    Verification, Notes — plus its full ancestor chain (`parent` up to the root)
    for context, and every issue in its `deps` that is not yet `done`. Look files

@@ -215,7 +215,20 @@ test("scans decimal, hexadecimal, octal, binary, and bigint literals", () => {
 });
 
 test("throws LexError for malformed numbers", () => {
-  for (const source of ["0x", "1__2", "1_", "1_.5", "08", "3in", "0b2", "1e+", "1e", "0x1g", "1.2f", "1n2"]) {
+  for (const source of [
+    "0x",
+    "1__2",
+    "1_",
+    "1_.5",
+    "08",
+    "3in",
+    "0b2",
+    "1e+",
+    "1e",
+    "0x1g",
+    "1.2f",
+    "1n2",
+  ]) {
     const error = captureLexError(() => lexAll(source));
     expect(error).toBeInstanceOf(LexError);
     expect(error.message).toBe("invalid number");
@@ -264,11 +277,27 @@ test("treats line continuations as empty string content and tracks lines", () =>
   expect(tokens[0]?.end).toBe(6);
   expect(tokens[0]?.line).toBe(1);
   expect(tokens[0]?.column).toBe(1);
-  expect(tokens[1]).toEqual({ kind: "eof", text: "", value: "", start: 6, end: 6, line: 2, column: 3 });
+  expect(tokens[1]).toEqual({
+    kind: "eof",
+    text: "",
+    value: "",
+    start: 6,
+    end: 6,
+    line: 2,
+    column: 3,
+  });
 
   const crlf = lexAll('"a\\\r\nb"');
   expect(crlf[0]?.value).toBe("ab");
-  expect(crlf[1]).toEqual({ kind: "eof", text: "", value: "", start: 7, end: 7, line: 2, column: 3 });
+  expect(crlf[1]).toEqual({
+    kind: "eof",
+    text: "",
+    value: "",
+    start: 7,
+    end: 7,
+    line: 2,
+    column: 3,
+  });
 });
 
 test("throws LexError for unterminated strings and raw newlines", () => {
@@ -508,7 +537,15 @@ test("tokenize tracks lines across a multiline template", () => {
   expect(tokens[0]?.text).toContain("\n");
   expect(tokens[0]?.line).toBe(1);
   expect(tokens[0]?.column).toBe(1);
-  expect(tokens[1]).toEqual({ kind: "eof", text: "", value: "", start: 5, end: 5, line: 2, column: 3 });
+  expect(tokens[1]).toEqual({
+    kind: "eof",
+    text: "",
+    value: "",
+    start: 5,
+    end: 5,
+    line: 2,
+    column: 3,
+  });
 });
 
 test("tokenize throws LexError for unterminated templates", () => {

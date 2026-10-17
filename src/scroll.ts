@@ -182,11 +182,8 @@ function renderTypeMember(member: TypeMember, source: string): string {
 
 function renderClass(node: ClassDeclaration, source: string): string {
   const name = node.name === null ? "" : node.name.name;
-  const heritage =
-    node.extends === null ? "" : ` extends ${textOf(source, node.extends)}`;
-  const lines = [
-    `class ${name}${renderTypeParameters(node.typeParameters, source)}${heritage}`,
-  ];
+  const heritage = node.extends === null ? "" : ` extends ${textOf(source, node.extends)}`;
+  const lines = [`class ${name}${renderTypeParameters(node.typeParameters, source)}${heritage}`];
   for (const member of node.members) {
     lines.push(`  ${renderClassMember(member, source)}`);
   }
@@ -194,9 +191,7 @@ function renderClass(node: ClassDeclaration, source: string): string {
 }
 
 function renderInterface(node: InterfaceDeclaration, source: string): string {
-  const lines = [
-    `interface ${node.name.name}${renderTypeParameters(node.typeParameters, source)}`,
-  ];
+  const lines = [`interface ${node.name.name}${renderTypeParameters(node.typeParameters, source)}`];
   for (const member of node.members) {
     lines.push(`  ${renderTypeMember(member, source)}`);
   }
@@ -217,7 +212,9 @@ function renderEnum(node: EnumDeclaration): string {
     names.length > ENUM_MEMBER_LIMIT ? [...names.slice(0, ENUM_MEMBER_LIMIT), "..."] : names;
   const body = shown.join(", ");
   const keyword = node.const ? "const enum" : "enum";
-  return body === "" ? `${keyword} ${node.name.name} {}` : `${keyword} ${node.name.name} { ${body} }`;
+  return body === ""
+    ? `${keyword} ${node.name.name} {}`
+    : `${keyword} ${node.name.name} { ${body} }`;
 }
 
 function renderNamespace(node: NamespaceDeclaration): string {
@@ -267,11 +264,7 @@ export function buildSignatureViewFromEntry(source: string, entry: IndexEntry): 
   return renderSignature(entry, source);
 }
 
-export function buildSignatureView(
-  source: string,
-  locator: Locator,
-  fileName = "file.ts",
-): string {
+export function buildSignatureView(source: string, locator: Locator, fileName = "file.ts"): string {
   return buildSignatureViewFromEntry(source, resolveEntry(source, locator, fileName));
 }
 

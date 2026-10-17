@@ -19,7 +19,7 @@ text.
 1. **Pick the target.** Ask the user with the `question` tool:
    - one skill — named, or inferred then asked;
    - all skills — coordination, pairings, consistency across the set.
-   Never pick without asking.
+     Never pick without asking.
 2. **Load it.** Search in order: repo `.opencode/skills/<id>/SKILL.md`, then
    `~/.config/opencode/skill(s)`, `~/.claude/skills`, `~/.agents/skills`.
    Several copies? Ask which. None? Stop and report — never substitute.
