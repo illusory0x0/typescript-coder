@@ -2003,3 +2003,296 @@ describe("staged reasoning policy", () => {
     expect(provider.optionCalls).toEqual([{ reasoningEffort: "low" }, undefined]);
   }, 30000);
 });
+
+// A fake check command: call i prints signatures[i] synthetic tsc diagnostics
+// (clamped to the last entry) and exits 1 while the count is positive.
+function signatureCheckCommand(dir: string, signatures: number[]): string[] {
+  const counterPath = join(dir, "check-calls.txt");
+  const script = [
+    'const { existsSync, readFileSync, writeFileSync } = require("node:fs");',
+    `const counterPath = ${JSON.stringify(counterPath)};`,
+    `const signatures = ${JSON.stringify(signatures)};`,
+    'const index = existsSync(counterPath) ? Number(readFileSync(counterPath, "utf8")) : 0;',
+    "writeFileSync(counterPath, String(index + 1));",
+    "const count = signatures[Math.min(index, signatures.length - 1)] ?? 0;",
+    "for (let i = 0; i < count; i += 1) {",
+    "  console.log(`src/helper.ts(${i + 2},3): error TS2322: synthetic ${i}`);",
+    "}",
+    "process.exit(count > 0 ? 1 : 0);",
+  ].join("\n");
+  return ["bun", "-e", script];
+}
+
+// Provider with a per-call usage payload; null counts as unreported.
+class UsageProvider implements ProviderLike {
+  readonly calls: ChatMessage[][] = [];
+  private index = 0;
+
+  constructor(
+    private readonly responses: string[],
+    private readonly usages: readonly unknown[],
+  ) {}
+
+  async chat(messages: ChatMessage[]): Promise<ChatResponse> {
+    this.calls.push(structuredClone(messages));
+    const content = this.responses[this.index];
+    if (content === undefined) {
+      throw new Error("no scripted response");
+    }
+    const usage = this.usages[this.index] ?? null;
+    this.index += 1;
+    return { content, toolCalls: [], finishReason: "stop", raw: { usage } };
+  }
+}
+
+describe("progress-based attempt extension", () => {
+  const failingTest = ["bun", "-e", "process.exit(1)"];
+  const locator = '{"path":"src/helper.ts","name":"answer","kind":"function"}';
+  const badReplacement = 'function answer(): number {\n  return "nope";\n}';
+
+  test("extends attempts on strict signature improvements up to the ceiling", async () => {
+    const dir = fixtureDir();
+    const provider = new ScriptedProvider([
+      locator,
+      badReplacement,
+      badReplacement,
+      badReplacement,
+      badReplacement,
+      badReplacement,
+      "the replacement never typechecks",
+    ]);
+    const result = await runLoop({
+      cwd: dir,
+      issue: "make the answer test pass",
+      model: "fake",
+      provider,
+      checkCommand: signatureCheckCommand(dir, [3, 2, 1, 1, 1]),
+      testCommand: failingTest,
+    });
+    expect(result.ok).toBe(false);
+    expect(result.attempts).toHaveLength(5);
+    expect(result.extensions).toBe(2);
+    expect(result.attempts.map((attempt) => attempt.extensionGranted === true)).toEqual([
+      false,
+      true,
+      true,
+      false,
+      false,
+    ]);
+    // The retry prompt after an improvement advertises the extended limit.
+    expect(provider.calls[3]?.[3]?.content).toContain("Attempt 3 of 4 failed verification.");
+    expect(provider.calls[4]?.[3]?.content).toContain("Attempt 4 of 5 failed verification.");
+    expect(provider.calls[5]?.[3]?.content).toContain("Attempt 5 of 5 failed verification.");
+    expect(provider.calls).toHaveLength(7);
+  }, 30000);
+
+  test("honors a smaller extension budget", async () => {
+    const dir = fixtureDir();
+    const provider = new ScriptedProvider([
+      locator,
+      badReplacement,
+      badReplacement,
+      badReplacement,
+      badReplacement,
+      "the replacement never typechecks",
+    ]);
+    const result = await runLoop({
+      cwd: dir,
+      issue: "make the answer test pass",
+      model: "fake",
+      provider,
+      retryExtensions: 1,
+      checkCommand: signatureCheckCommand(dir, [3, 2, 1, 1]),
+      testCommand: failingTest,
+    });
+    expect(result.ok).toBe(false);
+    expect(result.attempts).toHaveLength(4);
+    expect(result.extensions).toBe(1);
+    expect(result.attempts.map((attempt) => attempt.extensionGranted === true)).toEqual([
+      false,
+      true,
+      false,
+      false,
+    ]);
+  }, 30000);
+
+  test("does not extend when the signature stalls", async () => {
+    const dir = fixtureDir();
+    const provider = new ScriptedProvider([
+      locator,
+      badReplacement,
+      badReplacement,
+      badReplacement,
+      "the replacement never typechecks",
+    ]);
+    const result = await runLoop({
+      cwd: dir,
+      issue: "make the answer test pass",
+      model: "fake",
+      provider,
+      checkCommand: signatureCheckCommand(dir, [2, 2, 2]),
+      testCommand: failingTest,
+    });
+    expect(result.ok).toBe(false);
+    expect(result.attempts).toHaveLength(3);
+    expect(result.extensions).toBe(0);
+    expect(result.attempts.map((attempt) => attempt.extensionGranted === true)).toEqual([
+      false,
+      false,
+      false,
+    ]);
+    expect(provider.calls[2]?.[3]?.content).toContain("Attempt 2 of 3 failed verification.");
+    expect(provider.calls[3]?.[3]?.content).toContain("Attempt 3 of 3 failed verification.");
+  }, 30000);
+
+  test("breaks the progress chain on a non-verification failure", async () => {
+    const dir = fixtureDir();
+    const provider = new ScriptedProvider([
+      locator,
+      badReplacement,
+      badReplacement,
+      "",
+      badReplacement,
+      "the replacement never typechecks",
+    ]);
+    const result = await runLoop({
+      cwd: dir,
+      issue: "make the answer test pass",
+      model: "fake",
+      provider,
+      checkCommand: signatureCheckCommand(dir, [3, 2, 1]),
+      testCommand: failingTest,
+    });
+    expect(result.ok).toBe(false);
+    expect(result.attempts.map((attempt) => attempt.outcome)).toEqual([
+      "tsc",
+      "tsc",
+      "empty-output",
+      "tsc",
+    ]);
+    // Attempt 4's smaller signature cannot extend: the empty output broke the
+    // chain, so the limit the earlier improvement raised (4) is final.
+    expect(result.attempts).toHaveLength(4);
+    expect(result.attempts[3]?.extensionGranted).toBe(false);
+    expect(result.extensions).toBe(1);
+  }, 30000);
+});
+
+describe("token budget", () => {
+  test("runs through when usage lands exactly on the budget", async () => {
+    const dir = fixtureDir();
+    const provider = new UsageProvider(
+      [
+        '{"path":"src/helper.ts","name":"answer","kind":"function"}',
+        "function answer(): number {\n  return 2;\n}\n",
+      ],
+      [{ total_tokens: 60 }, { total_tokens: 40 }],
+    );
+    const result = await runLoop({
+      cwd: dir,
+      issue: "make the answer test pass",
+      model: "fake",
+      provider,
+      tokenBudget: 100,
+      checkCommand: TSC,
+      testCommand: ["bun", "test"],
+    });
+    expect(result.ok).toBe(true);
+    expect(result.abortReason).toBeUndefined();
+    expect(result.extensions).toBe(0);
+    expect(result.attempts).toHaveLength(1);
+    expect(helperSource(dir)).toContain("return 2;");
+    expect(provider.calls).toHaveLength(2);
+  }, 30000);
+
+  test("aborts before applying the in-flight replacement once the budget is exceeded", async () => {
+    const dir = fixtureDir();
+    const original = helperSource(dir);
+    const provider = new UsageProvider(
+      [
+        '{"path":"src/helper.ts","name":"answer","kind":"function"}',
+        'function answer(): number {\n  return "nope";\n}',
+      ],
+      [{ total_tokens: 60 }, { total_tokens: 41 }],
+    );
+    const result = await runLoop({
+      cwd: dir,
+      issue: "make the answer test pass",
+      model: "fake",
+      provider,
+      tokenBudget: 100,
+      checkCommand: TSC,
+      testCommand: ["bun", "test"],
+    });
+    expect(result.ok).toBe(false);
+    expect(result.abortReason).toBe("token-budget");
+    expect(result.diagnostics).toBe(
+      "token-budget: accumulated 101 tokens exceeded the 100 token budget",
+    );
+    expect(result.explanation).toBeNull();
+    expect(result.mode).toBe("replace");
+    expect(result.locator).toEqual({ path: "src/helper.ts", name: "answer", kind: "function" });
+    expect(result.filePath).toBe("src/helper.ts");
+    expect(result.editedSource).toBeNull();
+    expect(result.attempts).toEqual([]);
+    // No further provider call (no explain) and nothing written.
+    expect(provider.calls).toHaveLength(2);
+    expect(helperSource(dir)).toBe(original);
+  }, 30000);
+
+  test("sums prompt and completion tokens when no total is reported", async () => {
+    const dir = fixtureDir();
+    const provider = new UsageProvider(
+      [
+        '{"path":"src/helper.ts","name":"answer","kind":"function"}',
+        'function answer(): number {\n  return "nope";\n}',
+      ],
+      [
+        { prompt_tokens: 60, completion_tokens: 0 },
+        { prompt_tokens: 41, completion_tokens: 0 },
+      ],
+    );
+    const result = await runLoop({
+      cwd: dir,
+      issue: "make the answer test pass",
+      model: "fake",
+      provider,
+      tokenBudget: 100,
+      checkCommand: TSC,
+      testCommand: ["bun", "test"],
+    });
+    expect(result.ok).toBe(false);
+    expect(result.abortReason).toBe("token-budget");
+    expect(result.diagnostics).toBe(
+      "token-budget: accumulated 101 tokens exceeded the 100 token budget",
+    );
+    expect(provider.calls).toHaveLength(2);
+  }, 30000);
+
+  test("aborts during selection with a null locator and no edit calls", async () => {
+    const dir = fixtureDir();
+    const provider = new UsageProvider(
+      ['{"path":"src/helper.ts","name":"answer","kind":"function"}'],
+      [{ total_tokens: 60 }],
+    );
+    const result = await runLoop({
+      cwd: dir,
+      issue: "make the answer test pass",
+      model: "fake",
+      provider,
+      tokenBudget: 50,
+      checkCommand: TSC,
+      testCommand: ["bun", "test"],
+    });
+    expect(result.ok).toBe(false);
+    expect(result.abortReason).toBe("token-budget");
+    expect(result.locator).toBeNull();
+    expect(result.filePath).toBeNull();
+    expect(result.mode).toBeUndefined();
+    expect(result.attempts).toEqual([]);
+    expect(result.explanation).toBeNull();
+    expect(result.diagnostics).toContain("token-budget");
+    expect(provider.calls).toHaveLength(1);
+    expect(helperSource(dir)).toContain("return 1;");
+  }, 30000);
+});

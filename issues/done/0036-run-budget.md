@@ -1,7 +1,7 @@
 ---
 id: 36
 title: "Run budget: progress-based attempt extension and hard token cap"
-status: todo
+status: done
 priority: high
 milestone: null
 parent: 28
@@ -56,3 +56,33 @@ plus a mocked run that aborts at the cap and records `token-budget`.
   reason preserved.
 - Non-goals: per-call output caps, cost-in-USD budgets, model-side controls
   (see #35).
+- Validation (2026-10-18): extension implemented — on a verification failure
+  the signature (`check.diagnostics.length + failingTestNames(test.output).length`)
+  is compared with the previous verification failure; strict improvement
+  grants one attempt (bounded by `retryExtensions`, default 2, and the absolute
+  `MAX_TOTAL_ATTEMPTS = 5`), marks that attempt `extensionGranted`, and raises
+  the dynamic limit the retry prompt advertises ("Attempt 3 of 4 ...");
+  non-verification failures reset the chain; `LoopResult.extensions` records
+  the total. Budget: every successful provider chat (selection + edit)
+  accumulates `total_tokens` (fallback `prompt_tokens + completion_tokens`);
+  strictly exceeding `tokenBudget` (default 120,000) aborts before
+  parsing/applying the in-flight response with `abortReason: "token-budget"`,
+  `explanation: null` (no further provider call), and preserved
+  attempts/messages/skipped. Benchmark: `--token-budget <n>` (ts side, positive
+  integer) threaded to the loop; `RunRecord` gains `extensions`, `abortReason`,
+  per-attempt `extensionGranted`; `ok` is forced false on abort with judge
+  fields recorded as-is; `benchmark/README.md` documents the flag, fields, and
+  aggregate semantics. The #19-style comparability wording
+  (`benchmark/results/2026-10-17.md:69`) was checked and is still accurate —
+  left untouched.
+- Evidence: mocked runs (exactly-at-budget continues; 101 > 100 aborts with the
+  exact diagnostic, no third call, unchanged file; selection-phase abort has a
+  null locator and one call; 3→2→1→1→1 stops at 5 attempts with `extensions: 2`;
+  `retryExtensions: 1` stops at 4; stalled signatures stop at 3; a non-verification
+  failure breaks the chain) plus the live scale check
+  `bun run benchmark/run.ts --task minilisp --side ts --reps 1 --token-budget 1000`
+  → `ok:false, sideOk:false, steps:0, abortReason:"token-budget", extensions:0,
+  attempts:[], loopDiagnostics:"token-budget: accumulated 10544 tokens exceeded
+  the 1000 token budget"`; `--token-budget 0|abc|missing` exit 2.
+- Validation gates: tsc 0, 506 → 514 tests, `accept` 5/5,
+  `benchmark/check.ts` 3 PASS.

@@ -36,6 +36,7 @@ interface CliArgs {
   keep: boolean;
   json: string | null;
   replayDir: string | null;
+  tokenBudget: number | null;
   help: boolean;
 }
 
@@ -63,6 +64,7 @@ interface AttemptSummary {
   readonly diagnosticsHead: string | null;
   readonly replacementChars: number | null;
   readonly finishReason: string | null;
+  readonly extensionGranted: boolean;
 }
 
 interface SideOutcome {
@@ -77,6 +79,8 @@ interface SideOutcome {
   readonly rawUsage: unknown;
   readonly attemptSummaries: readonly AttemptSummary[] | null;
   readonly loopDiagnostics: string | null;
+  readonly extensions: number | null;
+  readonly abortReason: string | null;
   readonly logText: string;
   readonly sessionExportJson: string | null;
   readonly statsJson: string | null;
@@ -110,6 +114,8 @@ interface RunRecord {
   readonly steps: number | null;
   readonly attempts: readonly AttemptSummary[] | null;
   readonly loopDiagnostics: string | null;
+  readonly extensions: number | null;
+  readonly abortReason: string | null;
   readonly model: string;
   readonly workspace: string;
   readonly logs: LogPaths;
@@ -169,6 +175,7 @@ interface RunContext {
   readonly opencode: OpencodeContext | null;
   readonly runRoot: string;
   readonly replayDir: string | null;
+  readonly tokenBudget: number | null;
 }
 
 interface BenchmarkJob {
@@ -274,6 +281,8 @@ Options:
   --keep                                     keep workspaces and logs under ./tmp/benchmark/
   --json <path>                              report output path (default: benchmark/results/)
   --replay-dir <path>                        write per-run ts-side replay bundles to <path>
+  --token-budget <n>                         abort a ts-side run once accumulated provider
+                                             tokens exceed n (default: 120000)
   --help, -h                                 print this help and exit
 `);
 }
@@ -298,6 +307,17 @@ function parseConcurrency(value: string): number {
     failUsage(`invalid --concurrency value: ${value}`);
   }
   return concurrency;
+}
+
+function parseTokenBudget(value: string): number {
+  if (!/^\d+$/.test(value)) {
+    failUsage(`invalid --token-budget value: ${value}`);
+  }
+  const budget = Number(value);
+  if (!Number.isSafeInteger(budget) || budget < 1) {
+    failUsage(`invalid --token-budget value: ${value}`);
+  }
+  return budget;
 }
 
 function parseSide(value: string): SideSelection {
@@ -327,6 +347,7 @@ function parseArgs(argv: string[]): CliArgs {
     keep: false,
     json: null,
     replayDir: null,
+    tokenBudget: null,
     help: false,
   };
   for (let index = 0; index < argv.length; index += 1) {
@@ -412,6 +433,15 @@ function parseArgs(argv: string[]): CliArgs {
           failUsage("missing value for --replay-dir");
         }
         args.replayDir = value;
+        index += 1;
+        break;
+      }
+      case "--token-budget": {
+        const value = argv[index + 1];
+        if (value === undefined || value.startsWith("-")) {
+          failUsage("missing value for --token-budget");
+        }
+        args.tokenBudget = parseTokenBudget(value);
         index += 1;
         break;
       }
@@ -614,6 +644,7 @@ async function runTypescriptSide(options: {
   rep: number;
   fixture: string;
   replayPath: string | null;
+  tokenBudget: number | null;
 }): Promise<SideOutcome> {
   const recorder = options.replayPath === null ? null : new ReplayRecorder();
   const provider = new RecordingProvider(
@@ -637,6 +668,7 @@ async function runTypescriptSide(options: {
       temperature: 0,
       checkCommand: ["bun", options.tscBin, "--noEmit"],
       testCommand: ["bun", "test"],
+      tokenBudget: options.tokenBudget ?? undefined,
     });
   } catch (caught) {
     error = errorMessage(caught);
@@ -657,6 +689,8 @@ async function runTypescriptSide(options: {
   if (result !== null) {
     lines.push(`mode: ${result.mode ?? "none"}`);
     lines.push(`filePath: ${result.filePath ?? "none"}`);
+    lines.push(`extensions: ${result.extensions}`);
+    lines.push(`abortReason: ${result.abortReason ?? "none"}`);
     lines.push(`attempts: ${result.attempts.length}`);
     for (const attempt of result.attempts) {
       lines.push(
@@ -682,6 +716,7 @@ async function runTypescriptSide(options: {
           diagnosticsHead: attempt.diagnosticsHead,
           replacementChars: attempt.replacementChars,
           finishReason: attempt.finishReason,
+          extensionGranted: attempt.extensionGranted === true,
         }));
 
   if (recorder !== null && options.replayPath !== null) {
@@ -707,6 +742,8 @@ async function runTypescriptSide(options: {
     rawUsage: provider.rawUsages,
     attemptSummaries,
     loopDiagnostics: result?.diagnostics ?? null,
+    extensions: result?.extensions ?? null,
+    abortReason: result?.abortReason ?? null,
     logText: `${lines.join("\n")}\n`,
     sessionExportJson: null,
     statsJson: null,
@@ -848,6 +885,8 @@ async function runOpencodeSide(options: {
     rawUsage,
     attemptSummaries: null,
     loopDiagnostics: null,
+    extensions: null,
+    abortReason: null,
     logText: `${lines.join("\n")}\n`,
     sessionExportJson,
     statsJson,
@@ -1023,6 +1062,7 @@ async function runOnce(
       rep,
       fixture: ["benchmark", "fixtures", task].join("/"),
       replayPath,
+      tokenBudget: context.tokenBudget,
     });
   } else {
     if (context.opencode === null) {
@@ -1055,7 +1095,9 @@ async function runOnce(
     task,
     side,
     rep,
-    ok: judge.ok,
+    // A token-budget abort is a run failure even when the judge passes on the
+    // state left on disk (#36); judge fields stay as recorded.
+    ok: outcome.abortReason === null && judge.ok,
     sideOk: outcome.sideOk,
     tokens: outcome.tokens,
     usageAvailable: outcome.usageAvailable,
@@ -1065,6 +1107,8 @@ async function runOnce(
     steps: outcome.steps,
     attempts: outcome.attemptSummaries,
     loopDiagnostics: outcome.loopDiagnostics,
+    extensions: outcome.extensions,
+    abortReason: outcome.abortReason,
     model: side === "ts" ? context.model : context.opencodeModel,
     workspace: asRelative(workspace),
     logs: {
@@ -1112,8 +1156,9 @@ function writeReport(path: string, report: Report): void {
 // Aggregates are computed from the final `runs` array (matrix order) so reruns
 // never leak in: only final records are listed. Token means/totals cover runs
 // whose `tokens.total` is non-null; a field is skipped when its value is null.
-// `tokensPerSuccess` divides those token sums by the number of judge-passing
-// runs (null when there were no successes).
+// `tokensPerSuccess` divides those token sums by the number of passing runs
+// (judge-passing and not aborted at the token budget; null when there were no
+// successes).
 function aggregateRuns(
   runs: readonly RunRecord[],
   task: TaskName | null,
@@ -1353,7 +1398,9 @@ function writeMarkdownReport(mdPath: string, report: Report): void {
   } else {
     for (const run of failures) {
       const reason =
-        run.judge?.detail ?? run.error ?? run.infraError ?? "no judge or error detail recorded";
+        run.abortReason === null
+          ? run.judge?.detail ?? run.error ?? run.infraError ?? "no judge or error detail recorded"
+          : run.loopDiagnostics ?? run.abortReason;
       lines.push(`- ${run.task} ${run.side} rep${run.rep}: ${formatOneLine(reason)}`);
     }
     lines.push("");
@@ -1530,6 +1577,7 @@ async function main(): Promise<number> {
     opencode,
     runRoot,
     replayDir,
+    tokenBudget: args.tokenBudget,
   };
 
   // Bounded worker pool: workers claim jobs by index so each run keeps its own

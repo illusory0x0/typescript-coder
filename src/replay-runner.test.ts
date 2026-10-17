@@ -235,6 +235,7 @@ describe("summarizeReplay", () => {
       diagnostics: "could not select a symbol",
       explanation: null,
       messages: [],
+      extensions: 0,
     };
     const run: ReplayRun = {
       bundle: syntheticBundle("project", []),

@@ -11,6 +11,7 @@ import { applyEdits, formatSource } from "./editor";
 import { buildIndexTolerant, findDefinition } from "./utility";
 import { buildSignatureViewFromEntry } from "./scroll";
 import { checkTool, testTool } from "./tools";
+import { usageFromRaw } from "./replay-format";
 import type {
   ChatMessage,
   ChatOptions,
@@ -340,12 +341,21 @@ export interface ProviderLike {
   ): Promise<ChatResponse>;
 }
 
+export const DEFAULT_TOKEN_BUDGET = 120_000;
+export const DEFAULT_RETRY_EXTENSIONS = 2;
+/** Absolute attempt ceiling, including progress extensions (#36). */
+export const MAX_TOTAL_ATTEMPTS = 5;
+
 export interface LoopOptions {
   cwd: string;
   issue: string;
   model: string;
   provider: ProviderLike;
   maxRetries?: number;
+  /** Extra attempts granted after strictly improving failure signatures (#36). */
+  retryExtensions?: number;
+  /** Abort the run once accumulated provider tokens exceed this (#36). */
+  tokenBudget?: number;
   temperature?: number;
   checkCommand?: string[];
   testCommand?: string[];
@@ -370,6 +380,8 @@ export interface LoopAttempt {
   diagnosticsHead: string | null;
   replacementChars: number | null;
   finishReason: string | null;
+  /** True on the failed attempt that earned the next one (#36). */
+  extensionGranted?: boolean;
 }
 
 export interface LoopResult {
@@ -383,6 +395,10 @@ export interface LoopResult {
   explanation: string | null;
   messages: ChatMessage[];
   skipped?: SkippedFile[];
+  /** Progress extensions granted over the retry budget (#36). */
+  extensions: number;
+  /** Set when the run aborted at the token budget (#36). */
+  abortReason?: "token-budget";
 }
 
 type Selection =
@@ -397,6 +413,35 @@ const EXPLANATION_PROMPT =
 
 function errorMessage(error: unknown): string {
   return error instanceof Error ? error.message : String(error);
+}
+
+// Tolerant provider usage reader (#36): prefer the reported total, fall back to
+// prompt + completion when both are reported; unknown shapes count as zero.
+function tokensFromResponse(response: ChatResponse): number {
+  const usage = usageFromRaw(response.raw);
+  if (typeof usage !== "object" || usage === null) {
+    return 0;
+  }
+  const record = usage as Record<string, unknown>;
+  const total = record["total_tokens"];
+  if (typeof total === "number" && Number.isFinite(total)) {
+    return total;
+  }
+  const prompt = record["prompt_tokens"];
+  const completion = record["completion_tokens"];
+  if (
+    typeof prompt !== "number" ||
+    !Number.isFinite(prompt) ||
+    typeof completion !== "number" ||
+    !Number.isFinite(completion)
+  ) {
+    return 0;
+  }
+  return prompt + completion;
+}
+
+function tokenBudgetDiagnostics(consumedTokens: number, tokenBudget: number): string {
+  return `token-budget: accumulated ${consumedTokens} tokens exceeded the ${tokenBudget} token budget`;
 }
 
 function diagnosticsHeadOf(diagnostics: string | null): string | null {
@@ -416,9 +461,11 @@ function recordAttempt(input: {
   diagnostics: string | null;
   outcome: AttemptOutcome;
   finishReason: string | null;
+  extensionGranted?: boolean;
 }): LoopAttempt {
   return {
     ...input,
+    extensionGranted: input.extensionGranted === true,
     diagnosticsHead: diagnosticsHeadOf(input.diagnostics),
     replacementChars: input.replacement === null ? null : input.replacement.length,
   };
@@ -745,6 +792,8 @@ function withEffort(base: ChatOptions | undefined, effort: ReasoningEffort): Cha
 
 export async function runLoop(options: LoopOptions): Promise<LoopResult> {
   const maxRetries = options.maxRetries ?? 3;
+  const tokenBudget = options.tokenBudget ?? DEFAULT_TOKEN_BUDGET;
+  const retryExtensions = options.retryExtensions ?? DEFAULT_RETRY_EXTENSIONS;
   const temperature = options.temperature;
   const chatOptions: ChatOptions | undefined =
     temperature === undefined ? undefined : { temperature };
@@ -762,6 +811,8 @@ export async function runLoop(options: LoopOptions): Promise<LoopResult> {
   };
   let messages: ChatMessage[] = [systemMessage, issueMessage];
   const attempts: LoopAttempt[] = [];
+  let consumedTokens = 0;
+  let grantedExtensions = 0;
 
   let selection: Selection | null = null;
   let selectionFailures = 0;
@@ -781,6 +832,23 @@ export async function runLoop(options: LoopOptions): Promise<LoopResult> {
         explanation: await explain(options.provider, messages, temperature),
         messages,
         skipped,
+        extensions: grantedExtensions,
+      };
+    }
+    consumedTokens += tokensFromResponse(response);
+    if (consumedTokens > tokenBudget) {
+      return {
+        ok: false,
+        locator: null,
+        filePath: null,
+        editedSource: null,
+        attempts,
+        diagnostics: tokenBudgetDiagnostics(consumedTokens, tokenBudget),
+        explanation: null,
+        messages,
+        skipped,
+        extensions: grantedExtensions,
+        abortReason: "token-budget",
       };
     }
     let candidate: Locator | null = null;
@@ -846,6 +914,7 @@ export async function runLoop(options: LoopOptions): Promise<LoopResult> {
       explanation: await explain(options.provider, messages, temperature),
       messages,
       skipped,
+      extensions: grantedExtensions,
     };
   }
 
@@ -879,14 +948,16 @@ export async function runLoop(options: LoopOptions): Promise<LoopResult> {
   const buildRetryMessages = (
     mode: "replace" | "append",
     path: string,
-    retryAttempt: number,
+    failedAttempt: number,
     promptDiagnostics: string,
   ): ChatMessage[] => {
     const diskSource = readFileIfExists(join(cwd, path)) ?? "";
     const currentSource = currentSourceForPrompt(mode, path, selected, diskSource);
     const prompt = buildRetryPrompt({
-      attemptNumber: retryAttempt,
-      maxAttempts: maxRetries,
+      // The prompt describes the retry it requests, clamped to the current
+      // limit (which a progress extension may have just raised).
+      attemptNumber: Math.min(failedAttempt + 1, attemptLimit),
+      maxAttempts: attemptLimit,
       locatorJson,
       currentSource: truncateSource(currentSource),
       diagnostics: promptDiagnostics,
@@ -900,11 +971,13 @@ export async function runLoop(options: LoopOptions): Promise<LoopResult> {
   };
 
   let diagnostics: string | null = null;
-  for (let editAttempt = 0; editAttempt < maxRetries; editAttempt += 1) {
+  // Extensions raise attemptLimit while the verification failure signature
+  // strictly improves (#36); previousSignature tracks it across verification
+  // failures and is reset by non-verification failures (the chain breaks).
+  let attemptLimit = maxRetries;
+  let previousSignature: number | null = null;
+  for (let editAttempt = 0; editAttempt < attemptLimit; editAttempt += 1) {
     const failedAttempt = editAttempt + 1;
-    // The prompt describes the retry it requests, clamped to the budget once
-    // the last attempt has been used.
-    const retryAttempt = Math.min(failedAttempt + 1, maxRetries);
     let response: ChatResponse;
     try {
       // Staged reasoning policy (#35): generation starts at the provider default;
@@ -926,6 +999,25 @@ export async function runLoop(options: LoopOptions): Promise<LoopResult> {
         explanation: await explain(options.provider, messages, temperature),
         messages,
         skipped,
+        extensions: grantedExtensions,
+      };
+    }
+    consumedTokens += tokensFromResponse(response);
+    if (consumedTokens > tokenBudget) {
+      // Abort before parsing, applying, or verifying the in-flight response.
+      return {
+        ok: false,
+        mode: selectionMode,
+        locator: selected,
+        filePath: targetPath,
+        editedSource: null,
+        attempts,
+        diagnostics: tokenBudgetDiagnostics(consumedTokens, tokenBudget),
+        explanation: null,
+        messages,
+        skipped,
+        extensions: grantedExtensions,
+        abortReason: "token-budget",
       };
     }
     if (response.finishReason === "length") {
@@ -941,7 +1033,8 @@ export async function runLoop(options: LoopOptions): Promise<LoopResult> {
           finishReason: response.finishReason,
         }),
       );
-      messages = buildRetryMessages(selectionMode, targetPath, retryAttempt, diagnostics);
+      previousSignature = null;
+      messages = buildRetryMessages(selectionMode, targetPath, failedAttempt, diagnostics);
       continue;
     }
     // The first attempt edits the run-start source; later attempts edit what is
@@ -985,7 +1078,8 @@ export async function runLoop(options: LoopOptions): Promise<LoopResult> {
           finishReason: response.finishReason,
         }),
       );
-      messages = buildRetryMessages(selectionMode, targetPath, retryAttempt, diagnostics);
+      previousSignature = null;
+      messages = buildRetryMessages(selectionMode, targetPath, failedAttempt, diagnostics);
       continue;
     }
     writeTarget(cwd, targetPath, newSource);
@@ -1013,6 +1107,7 @@ export async function runLoop(options: LoopOptions): Promise<LoopResult> {
         explanation: null,
         messages,
         skipped,
+        extensions: grantedExtensions,
       };
     }
     // No rollback (#30): the attempted state stays on disk for the next attempt
@@ -1024,6 +1119,19 @@ export async function runLoop(options: LoopOptions): Promise<LoopResult> {
       baseSource: sourceBefore,
       newSource,
     });
+    const signature = check.diagnostics.length + failingTestNames(test.output).length;
+    // A strictly smaller signature earns one extra attempt, bounded by the
+    // configured extension count and the absolute ceiling.
+    const extensionGranted =
+      previousSignature !== null &&
+      signature < previousSignature &&
+      grantedExtensions < retryExtensions &&
+      attemptLimit < MAX_TOTAL_ATTEMPTS;
+    if (extensionGranted) {
+      grantedExtensions += 1;
+      attemptLimit += 1;
+    }
+    previousSignature = signature;
     attempts.push(
       recordAttempt({
         attempt: attempts.length + 1,
@@ -1032,9 +1140,10 @@ export async function runLoop(options: LoopOptions): Promise<LoopResult> {
         diagnostics,
         outcome: check.ok ? "tests" : "tsc",
         finishReason: response.finishReason,
+        extensionGranted,
       }),
     );
-    messages = buildRetryMessages(selectionMode, targetPath, retryAttempt, diagnostics);
+    messages = buildRetryMessages(selectionMode, targetPath, failedAttempt, diagnostics);
   }
 
   return {
@@ -1048,5 +1157,6 @@ export async function runLoop(options: LoopOptions): Promise<LoopResult> {
     explanation: await explain(options.provider, messages, temperature),
     messages,
     skipped,
+    extensions: grantedExtensions,
   };
 }

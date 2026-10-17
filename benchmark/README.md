@@ -16,8 +16,9 @@ Flags: `--task`, `--all` (default), `--reps <n>` (default 3), `--concurrency
 `benchmark/results/pilot-<date>.json`), `--side ts|opencode|both`, `--model`
 (default `deepseek-v4.1-flash`), `--keep`, `--json <path>`, `--replay-dir
 <path>` (ts side only: write one replay bundle per run to `<path>/<task>-ts-
-rep<n>.json`; off by default), `--help`. Non-pilot results default to
-`benchmark/results/<date>.json`.
+rep<n>.json`; off by default), `--token-budget <n>` (ts side only: abort a run
+once accumulated provider tokens exceed n; default 120000, see "Run budget"
+below), `--help`. Non-pilot results default to `benchmark/results/<date>.json`.
 
 Each run also writes a sibling Markdown report next to the `--json` target
 (`.json` replaced by `.md`): aggregates per task and side plus token-accounting
@@ -52,15 +53,41 @@ finish in arbitrary order.
 - `attempts` (ts side): per-attempt summaries with `attempt`, `outcome` (`ok`,
   `selection-invalid`, `empty-output`, `format`, `tsc`, `tests`), a bounded
   `diagnosticsHead` (≤200 chars, whitespace collapsed), `replacementChars`,
-  and the provider `finishReason`; null for the opencode side.
+  the provider `finishReason`, and `extensionGranted` (true on the failed
+  attempt that earned the next one); null for the opencode side.
 - `loopDiagnostics` (ts side): the loop's final run-level diagnostic (e.g. a
   provider error that aborted the run before any attempt), null when none.
+- `extensions` (ts side): progress extensions granted over the retry budget
+  (0 when none); null for the opencode side.
+- `abortReason` (ts side): `"token-budget"` when the run stopped at the token
+  budget, null otherwise and for the opencode side.
 - Replay bundles (`--replay-dir`): versioned JSON (`format` =
   `typescript-coder-replay@1`) with the task issue, fixture path, and the
   ordered chat calls (request messages, response content, finishReason,
   usage); consumed offline by the replay runner.
 - `durationMs`: model work only (the judge runs afterwards and is not counted).
-- `ok`: judge verdict; `sideOk` is the side's own result.
+- `ok`: judge verdict, forced to false when `abortReason` is non-null (budget
+  aborts count as run failures in aggregates); `sideOk` is the side's own
+  result.
+
+## Run budget (ts side)
+
+The ts loop tracks accumulated provider usage per run. A failed verification
+attempt whose failure signature (tsc diagnostics + failing tests) is strictly
+smaller than the previous attempt's signature grants one extra attempt: at most
+twice by default (`retryExtensions`, configurable), and extensions never raise
+the limit above 5 attempts overall. Non-verification failures (empty output,
+format, truncation) reset the progress comparison. The record carries
+`extensions` and the per-attempt `extensionGranted` flag.
+
+`--token-budget <n>` (default 120,000) aborts a ts-side run as soon as
+accumulated provider tokens strictly exceed `<n>` (exactly at the budget keeps
+running). The in-flight response is neither applied nor verified, no further
+provider call is made, and the record carries `ok: false`, `abortReason:
+"token-budget"`, and the reason in `loopDiagnostics`; the judge still runs and
+its fields are recorded as-is. Budget aborts are run failures, not
+infrastructure errors: provider failures keep their own error path and
+`infraErrors` is untouched. The opencode side is unaffected.
 
 ## Replay runner
 
