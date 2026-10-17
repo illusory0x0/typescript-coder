@@ -27,6 +27,8 @@ export interface CheckDiagnostic {
   line: number;
   column: number;
   message: string;
+  /** TypeScript error code, e.g. "TS2322", for located diagnostics. */
+  code?: string;
 }
 
 const commandTimeoutMs = 30000;
@@ -136,17 +138,18 @@ export function parseDiagnostics(output: string): CheckDiagnostic[] {
   const diagnostics: CheckDiagnostic[] = [];
   // The file part is greedy so paths containing parentheses, e.g.
   // `src/(a).ts(3,4): error TS...`, bind the location to the trailing group.
-  const located = /^(.+)\((\d+),(\d+)\): error TS\d+: (.*)$/;
+  const located = /^(.+)\((\d+),(\d+)\): error (TS\d+): (.*)$/;
   const unlocated = /error TS\d+: (.*)$/;
   for (const line of output.split("\n")) {
     const match = located.exec(line);
     if (match !== null) {
-      const [, file = "", lineText = "0", columnText = "0", message = ""] = match;
+      const [, file = "", lineText = "0", columnText = "0", code = "", message = ""] = match;
       diagnostics.push({
         file,
         line: Number(lineText),
         column: Number(columnText),
         message,
+        code,
       });
       continue;
     }

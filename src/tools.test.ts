@@ -157,6 +157,7 @@ describe("parseDiagnostics", () => {
         line: 3,
         column: 7,
         message: "Type 'string' is not assignable to type 'number'.",
+        code: "TS2322",
       },
       {
         file: "",
@@ -181,6 +182,7 @@ describe("parseDiagnostics", () => {
         line: 3,
         column: 7,
         message: "Type 'string' is not assignable to type 'number'.",
+        code: "TS2322",
       },
       {
         file: "",
@@ -193,6 +195,7 @@ describe("parseDiagnostics", () => {
         line: 1,
         column: 1,
         message: "Property 'foo' does not exist.",
+        code: "TS2551",
       },
     ]);
   });
@@ -203,8 +206,20 @@ describe("parseDiagnostics", () => {
       "src/weird(1,2).ts(5,6): error TS2304: Cannot find name 'y'.",
     ].join("\n");
     expect(parseDiagnostics(output)).toEqual([
-      { file: "src/feat(1).ts", line: 10, column: 5, message: "Cannot find name 'x'." },
-      { file: "src/weird(1,2).ts", line: 5, column: 6, message: "Cannot find name 'y'." },
+      {
+        file: "src/feat(1).ts",
+        line: 10,
+        column: 5,
+        message: "Cannot find name 'x'.",
+        code: "TS2304",
+      },
+      {
+        file: "src/weird(1,2).ts",
+        line: 5,
+        column: 6,
+        message: "Cannot find name 'y'.",
+        code: "TS2304",
+      },
     ]);
   });
 });
@@ -384,6 +399,7 @@ describe("checkTool and testTool", () => {
         line: 3,
         column: 7,
         message: "Type 'string' is not assignable to type 'number'.",
+        code: "TS2322",
       },
     ]);
   });

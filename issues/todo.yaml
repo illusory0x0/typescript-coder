@@ -43,14 +43,6 @@
   parent: 28
   deps: [30]
   file: 0036-run-budget.md
-- id: 38
-  title: "Structured diagnostics: stages, line mapping, failure extraction"
-  status: todo
-  priority: high
-  milestone: null
-  parent: 28
-  deps: []
-  file: 0038-structured-diagnostics.md
 - id: 41
   title: "Create-mode repair: keep partial files and iterate with anchors"
   status: todo

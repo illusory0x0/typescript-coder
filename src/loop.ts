@@ -1,4 +1,5 @@
 import {
+  existsSync,
   mkdirSync,
   readdirSync,
   readFileSync,
@@ -480,26 +481,198 @@ function restoreTarget(cwd: string, path: string, original: string | null): void
   writeFileSync(target, original);
 }
 
-export function formatDiagnostics(
-  check: CommandResult & { diagnostics: CheckDiagnostic[] },
-  test: CommandResult,
-): string {
-  const lines: string[] = [];
-  for (const diagnostic of check.diagnostics) {
-    if (diagnostic.file === "") {
-      lines.push(diagnostic.message);
-    } else {
-      lines.push(
-        `${diagnostic.file}(${diagnostic.line},${diagnostic.column}): ${diagnostic.message}`,
-      );
+// Run the sibling test file first for fast feedback; a targeted failure is the
+// test verdict, otherwise the full suite still gates it.
+async function runVerificationTests(
+  cwd: string,
+  targetPath: string,
+  options: LoopOptions,
+): Promise<CommandResult> {
+  const command = options.testCommand ?? ["bun", "test"];
+  if (targetPath.endsWith(".ts") && !targetPath.endsWith(TEST_FILE_SUFFIX)) {
+    const sibling = `${targetPath.slice(0, -".ts".length)}${TEST_FILE_SUFFIX}`;
+    if (existsSync(join(cwd, sibling))) {
+      const targeted = await testTool(cwd, [...command, sibling], options.commandTimeoutMs);
+      if (!targeted.ok) {
+        return targeted;
+      }
     }
   }
-  if (lines.length === 0 && !check.ok) {
-    lines.push(check.output.trim());
+  return testTool(cwd, command, options.commandTimeoutMs);
+}
+
+export interface DiagnosticsInput {
+  check: CommandResult & { diagnostics: CheckDiagnostic[] };
+  test: CommandResult;
+  /** Repo-relative path of the edited file. */
+  targetPath: string;
+  /** Content before the edit ("" when the file was created). */
+  baseSource: string;
+  /** Formatted content that was written. */
+  newSource: string;
+}
+
+export interface LineRange {
+  /** 1-based inclusive; start === 0 when nothing changed. */
+  start: number;
+  end: number;
+}
+
+function toLines(source: string): string[] {
+  const lines = source.split("\n");
+  if (lines[lines.length - 1] === "") {
+    lines.pop();
+  }
+  return lines;
+}
+
+// Line-based applied range, found by comparing both ends so it is agnostic to
+// whole-symbol replacements and to lines inserted or removed around the edit.
+export function editedRange(baseSource: string, newSource: string): LineRange {
+  const newLines = toLines(newSource);
+  if (baseSource === "") {
+    return newLines.length === 0 ? { start: 0, end: 0 } : { start: 1, end: newLines.length };
+  }
+  const baseLines = toLines(baseSource);
+  let start = 0;
+  while (
+    start < baseLines.length &&
+    start < newLines.length &&
+    baseLines[start] === newLines[start]
+  ) {
+    start += 1;
+  }
+  let endFromTail = 0;
+  while (
+    endFromTail < baseLines.length - start &&
+    endFromTail < newLines.length - start &&
+    baseLines[baseLines.length - 1 - endFromTail] === newLines[newLines.length - 1 - endFromTail]
+  ) {
+    endFromTail += 1;
+  }
+  const end = newLines.length - endFromTail;
+  if (start >= end) {
+    return { start: 0, end: 0 };
+  }
+  return { start: start + 1, end };
+}
+
+function inEditedRange(range: LineRange, line: number): boolean {
+  return range.start > 0 && line >= range.start && line <= range.end;
+}
+
+function codeFrame(lines: readonly string[], line: number): string[] {
+  const first = Math.max(1, line - 1);
+  const last = Math.min(lines.length, line + 1);
+  const frame: string[] = [];
+  for (let current = first; current <= last; current += 1) {
+    frame.push(`  ${current} | ${lines[current - 1] ?? ""}`);
+  }
+  return frame;
+}
+
+function messageWithCode(diagnostic: CheckDiagnostic): string {
+  return diagnostic.code === undefined
+    ? diagnostic.message
+    : `${diagnostic.code}: ${diagnostic.message}`;
+}
+
+function renderElsewhere(diagnostic: CheckDiagnostic): string {
+  if (diagnostic.file === "") {
+    return messageWithCode(diagnostic);
+  }
+  const location = `${diagnostic.file}(${diagnostic.line},${diagnostic.column})`;
+  return diagnostic.code === undefined
+    ? `${location}: ${diagnostic.message}`
+    : `${location}: error ${diagnostic.code}: ${diagnostic.message}`;
+}
+
+const FAILING_TEST_LIMIT = 10;
+const MAPPED_DIAGNOSTIC_LIMIT = 10;
+const TEST_OUTPUT_TAIL_LIMIT = Math.floor(DIAGNOSTICS_LIMIT / 2);
+const TEST_TIMING_SUFFIX = /\s+\[\d+(?:\.\d+)?m?s\]$/;
+
+export function failingTestNames(output: string): string[] {
+  const names: string[] = [];
+  const seen = new Set<string>();
+  for (const rawLine of output.split("\n")) {
+    const line = rawLine.trim();
+    const marker = line.startsWith("(fail) ") ? "(fail) " : line.startsWith("✗ ") ? "✗ " : null;
+    if (marker === null) {
+      continue;
+    }
+    const name = line.slice(marker.length).trim().replace(TEST_TIMING_SUFFIX, "");
+    if (name === "" || seen.has(name)) {
+      continue;
+    }
+    seen.add(name);
+    names.push(name);
+    if (names.length >= FAILING_TEST_LIMIT) {
+      break;
+    }
+  }
+  return names;
+}
+
+function testOutputTail(output: string): string {
+  const text = output.trim();
+  if (text.length <= TEST_OUTPUT_TAIL_LIMIT) {
+    return text;
+  }
+  const omitted = text.length - TEST_OUTPUT_TAIL_LIMIT;
+  return `[${omitted} earlier characters omitted]\n${text.slice(omitted)}`;
+}
+
+export function formatDiagnostics(input: DiagnosticsInput): string {
+  const { check, test, targetPath, baseSource, newSource } = input;
+  const lines: string[] = [];
+  if (!check.ok) {
+    lines.push("stage: tsc");
+    const range = editedRange(baseSource, newSource);
+    const replacementLines = toLines(newSource);
+    const mapped: CheckDiagnostic[] = [];
+    const elsewhere: CheckDiagnostic[] = [];
+    for (const diagnostic of check.diagnostics) {
+      if (diagnostic.file === targetPath && inEditedRange(range, diagnostic.line)) {
+        mapped.push(diagnostic);
+      } else {
+        elsewhere.push(diagnostic);
+      }
+    }
+    for (const diagnostic of mapped.slice(0, MAPPED_DIAGNOSTIC_LIMIT)) {
+      lines.push(
+        `replacement line ${diagnostic.line - range.start + 1}: ${messageWithCode(diagnostic)}`,
+      );
+      lines.push(...codeFrame(replacementLines, diagnostic.line));
+    }
+    if (mapped.length > MAPPED_DIAGNOSTIC_LIMIT) {
+      lines.push(`... ${mapped.length - MAPPED_DIAGNOSTIC_LIMIT} more in the replacement`);
+    }
+    if (elsewhere.length > 0) {
+      lines.push("elsewhere in file:");
+      for (const diagnostic of elsewhere) {
+        lines.push(renderElsewhere(diagnostic));
+      }
+    }
+    if (check.diagnostics.length === 0 && check.output.trim() !== "") {
+      lines.push(check.output.trim());
+    }
   }
   if (!test.ok) {
+    lines.push("stage: tests");
     lines.push("tests failed:");
-    lines.push(test.output.trim());
+    const names = failingTestNames(test.output);
+    if (names.length > 0) {
+      lines.push("failing tests:");
+      for (const name of names) {
+        lines.push(`  - ${name}`);
+      }
+    }
+    const tail = testOutputTail(test.output);
+    if (tail !== "") {
+      lines.push("test output:");
+      lines.push(tail);
+    }
   }
   const text = lines.filter((line) => line !== "").join("\n");
   if (text.length <= DIAGNOSTICS_LIMIT) {
@@ -711,7 +884,7 @@ export async function runLoop(options: LoopOptions): Promise<LoopResult> {
       }
     }
     if (newSource === null || replacement === null) {
-      diagnostics = failure ?? "model did not return replacement text";
+      diagnostics = `stage: format\n${failure ?? "model did not return replacement text"}`;
       attempts.push(
         recordAttempt({
           attempt: attempts.length + 1,
@@ -728,7 +901,7 @@ export async function runLoop(options: LoopOptions): Promise<LoopResult> {
     }
     writeTarget(cwd, targetPath, newSource);
     const check = await checkTool(cwd, options.checkCommand, options.commandTimeoutMs);
-    const test = await testTool(cwd, options.testCommand, options.commandTimeoutMs);
+    const test = await runVerificationTests(cwd, targetPath, options);
     if (check.ok && test.ok) {
       attempts.push(
         recordAttempt({
@@ -754,7 +927,7 @@ export async function runLoop(options: LoopOptions): Promise<LoopResult> {
       };
     }
     restoreTarget(cwd, targetPath, original);
-    diagnostics = formatDiagnostics(check, test);
+    diagnostics = formatDiagnostics({ check, test, targetPath, baseSource, newSource });
     attempts.push(
       recordAttempt({
         attempt: attempts.length + 1,

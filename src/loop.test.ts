@@ -11,6 +11,8 @@ import {
   buildSystemPrompt,
   buildUserPrompt,
   discoverSourceFiles,
+  editedRange,
+  failingTestNames,
   formatDiagnostics,
   parseLocatorResponse,
   parseReplacementResponse,
@@ -224,8 +226,14 @@ describe("formatDiagnostics", () => {
       ],
     };
     const testResult = { ok: false, exitCode: 1, output: `${"z".repeat(3000)} last test line` };
-    const result = formatDiagnostics(check, testResult);
-    expect(result.startsWith("src/a.ts(1,1): first error ")).toBe(true);
+    const result = formatDiagnostics({
+      check,
+      test: testResult,
+      targetPath: "src/a.ts",
+      baseSource: "const a = 1;\n",
+      newSource: "const a = 2;\n",
+    });
+    expect(result.startsWith("stage: tsc\nreplacement line 1: first error ")).toBe(true);
     expect(result.endsWith("last test line")).toBe(true);
     expect(result).toMatch(/\.\.\. \[\d+ characters truncated\] \.\.\./);
   });
@@ -237,8 +245,239 @@ describe("formatDiagnostics", () => {
       output: "",
       diagnostics: [{ file: "src/a.ts", line: 1, column: 1, message: "boom" }],
     };
-    const result = formatDiagnostics(check, { ok: true, exitCode: 0, output: "" });
-    expect(result).toBe("src/a.ts(1,1): boom");
+    const result = formatDiagnostics({
+      check,
+      test: { ok: true, exitCode: 0, output: "" },
+      targetPath: "src/a.ts",
+      baseSource: "",
+      newSource: "const a = 1;\n",
+    });
+    expect(result).toBe("stage: tsc\nreplacement line 1: boom\n  1 | const a = 1;");
+  });
+
+  test("maps an in-range diagnostic to the replacement with a code frame", () => {
+    const result = formatDiagnostics({
+      check: {
+        ok: false,
+        exitCode: 1,
+        output: "",
+        diagnostics: [
+          {
+            file: "src/helper.ts",
+            line: 2,
+            column: 10,
+            message: "Type 'string' is not assignable to type 'number'.",
+            code: "TS2322",
+          },
+        ],
+      },
+      test: { ok: true, exitCode: 0, output: "" },
+      targetPath: "src/helper.ts",
+      baseSource: "export function answer(): number {\n  return 1;\n}\n",
+      newSource: 'export function answer(): number {\n  return "no";\n}\n',
+    });
+    expect(result).toContain("stage: tsc");
+    expect(result).toContain(
+      "replacement line 1: TS2322: Type 'string' is not assignable to type 'number'.",
+    );
+    expect(result).toContain('  2 |   return "no";');
+    expect(result).not.toContain("elsewhere in file:");
+  });
+
+  test("buckets out-of-range, other-file, and unlocated diagnostics as elsewhere", () => {
+    const result = formatDiagnostics({
+      check: {
+        ok: false,
+        exitCode: 1,
+        output: "",
+        diagnostics: [
+          { file: "src/a.ts", line: 1, column: 7, message: "Cannot find name 'x'." },
+          {
+            file: "src/other.ts",
+            line: 3,
+            column: 1,
+            message: "Cannot find name 'y'.",
+            code: "TS2304",
+          },
+          { file: "", line: 0, column: 0, message: "Cannot find type definition file for 'bun'." },
+        ],
+      },
+      test: { ok: true, exitCode: 0, output: "" },
+      targetPath: "src/a.ts",
+      baseSource: "const a = 1;\nconst b = 2;\n",
+      newSource: "const a = 1;\nconst b = 3;\n",
+    });
+    expect(result).toContain("elsewhere in file:");
+    expect(result).toContain("src/a.ts(1,7): Cannot find name 'x'.");
+    expect(result).toContain("src/other.ts(3,1): error TS2304: Cannot find name 'y'.");
+    expect(result).toContain("Cannot find type definition file for 'bun'.");
+    expect(result).not.toContain("replacement line");
+  });
+
+  test("maps diagnostics against a range shifted by inserted lines", () => {
+    const result = formatDiagnostics({
+      check: {
+        ok: false,
+        exitCode: 1,
+        output: "",
+        diagnostics: [
+          {
+            file: "src/helper.ts",
+            line: 4,
+            column: 10,
+            message: "Type 'string' is not assignable to type 'number'.",
+            code: "TS2322",
+          },
+        ],
+      },
+      test: { ok: true, exitCode: 0, output: "" },
+      targetPath: "src/helper.ts",
+      baseSource: "export function answer(): number {\n  return 1;\n}\n",
+      newSource:
+        '// prepend one\n// prepend two\nexport function answer(): number {\n  return "no";\n}\n',
+    });
+    expect(result).toContain("replacement line 4: TS2322:");
+    expect(result).toContain('  4 |   return "no";');
+  });
+
+  test("treats an unchanged file as fully elsewhere", () => {
+    const source = "export function answer(): number {\n  return 1;\n}\n";
+    const result = formatDiagnostics({
+      check: {
+        ok: false,
+        exitCode: 1,
+        output: "",
+        diagnostics: [
+          { file: "src/helper.ts", line: 1, column: 1, message: "boom", code: "TS1000" },
+        ],
+      },
+      test: { ok: true, exitCode: 0, output: "" },
+      targetPath: "src/helper.ts",
+      baseSource: source,
+      newSource: source,
+    });
+    expect(result).toContain("elsewhere in file:");
+    expect(result).toContain("src/helper.ts(1,1): error TS1000: boom");
+    expect(result).not.toContain("replacement line");
+  });
+
+  test("caps mapped diagnostics and notes the remainder", () => {
+    const newSource = `${Array.from(
+      { length: 12 },
+      (_, index) => `const v${index} = ${index};`,
+    ).join("\n")}\n`;
+    const diagnostics = Array.from({ length: 12 }, (_, index) => ({
+      file: "src/a.ts",
+      line: index + 1,
+      column: 1,
+      message: `problem ${index}`,
+      code: "TS1000",
+    }));
+    const result = formatDiagnostics({
+      check: { ok: false, exitCode: 1, output: "", diagnostics },
+      test: { ok: true, exitCode: 0, output: "" },
+      targetPath: "src/a.ts",
+      baseSource: "",
+      newSource,
+    });
+    expect(result.split("\n").filter((line) => line.startsWith("replacement line "))).toHaveLength(
+      10,
+    );
+    expect(result).toContain("... 2 more in the replacement");
+  });
+
+  test("falls back to raw check output when no diagnostics parse", () => {
+    const result = formatDiagnostics({
+      check: {
+        ok: false,
+        exitCode: 2,
+        output: "tsc crashed: unknown option --wat\n",
+        diagnostics: [],
+      },
+      test: { ok: true, exitCode: 0, output: "" },
+      targetPath: "src/a.ts",
+      baseSource: "const a = 1;\n",
+      newSource: "const a = 2;\n",
+    });
+    expect(result).toContain("stage: tsc");
+    expect(result).toContain("tsc crashed: unknown option --wat");
+  });
+
+  test("lists failing test names before a bounded raw tail", () => {
+    const testOutput = `src/helper.test.ts:\nsome detail\n(fail) answer [1.00ms]\n${"x".repeat(
+      3000,
+    )}\n 2 fail`;
+    const result = formatDiagnostics({
+      check: { ok: true, exitCode: 0, output: "", diagnostics: [] },
+      test: { ok: false, exitCode: 1, output: testOutput },
+      targetPath: "src/helper.ts",
+      baseSource: "const a = 1;\n",
+      newSource: "const a = 2;\n",
+    });
+    expect(result).toContain("stage: tests");
+    expect(result).toContain("tests failed:");
+    expect(result).toContain("failing tests:");
+    expect(result).toContain("  - answer");
+    expect(result).toContain("earlier characters omitted");
+    expect(result.indexOf("failing tests:")).toBeLessThan(result.indexOf("test output:"));
+    expect(result.length).toBeLessThan(2200);
+  });
+});
+
+describe("editedRange", () => {
+  test("returns the whole file for a created file", () => {
+    expect(editedRange("", "a\nb\n")).toEqual({ start: 1, end: 2 });
+  });
+
+  test("returns an empty range for identical sources", () => {
+    expect(editedRange("a\nb\n", "a\nb\n")).toEqual({ start: 0, end: 0 });
+  });
+
+  test("covers inserted lines above the first change", () => {
+    expect(editedRange("a\nb\nc\n", "x\na\nb2\nc\n")).toEqual({ start: 1, end: 3 });
+  });
+});
+
+describe("failingTestNames", () => {
+  // Captured from bun 1.3.13: "(fail) answer [1.00ms]", "(fail) second failing
+  // [13.00ms]", and a describe-qualified "(fail) answers > nested failure"
+  // without a timing suffix.
+  const sample = [
+    "src/helper.test.ts:",
+    "error: expect(received).toBe(expected)",
+    "",
+    "Expected: 2",
+    "Received: 1",
+    "",
+    "(fail) answer [1.00ms]",
+    "(fail) second failing [13.00ms]",
+    "(fail) answers > nested failure",
+    "✗ legacy failure",
+    "(fail) answer [4.00ms]",
+    " 1 pass",
+    " 2 fail",
+  ].join("\n");
+
+  test("extracts, dedupes, and orders failing test names", () => {
+    expect(failingTestNames(sample)).toEqual([
+      "answer",
+      "second failing",
+      "answers > nested failure",
+      "legacy failure",
+    ]);
+  });
+
+  test("caps the list at ten names", () => {
+    const output = Array.from({ length: 12 }, (_, index) => `(fail) test ${index} [1.00ms]`).join(
+      "\n",
+    );
+    const names = failingTestNames(output);
+    expect(names).toHaveLength(10);
+    expect(names.at(-1)).toBe("test 9");
+  });
+
+  test("returns an empty list when nothing matches", () => {
+    expect(failingTestNames(" 1 pass\n 0 fail\nRan 1 test.")).toEqual([]);
   });
 });
 
@@ -525,6 +764,29 @@ function passingBrokenFixtureDir(): string {
   return dir;
 }
 
+// A bun -e script used as the test command: the loop appends the targeted
+// sibling path to its argv, so the script can log and branch on it.
+function invocationScript(dir: string, failOnTargeted: boolean): string[] {
+  const logPath = join(dir, "invocations.log");
+  const script = [
+    'const { appendFileSync } = require("node:fs");',
+    `const args = process.argv.slice(1);`,
+    `appendFileSync(${JSON.stringify(logPath)}, (args.length === 0 ? "(full)" : args.join(" ")) + "\\n");`,
+    'const targeted = args.some((arg) => arg.endsWith("helper.test.ts"));',
+    failOnTargeted ? "process.exit(targeted ? 1 : 0);" : "process.exit(0);",
+  ].join("\n");
+  return ["bun", "-e", script];
+}
+
+function invocationLog(dir: string): string[] {
+  const path = join(dir, "invocations.log");
+  if (!existsSync(path)) {
+    return [];
+  }
+  const text = readFileSync(path, "utf8").trim();
+  return text === "" ? [] : text.split("\n");
+}
+
 describe("runLoop", () => {
   test("applies, verifies, and returns a successful text response", async () => {
     const dir = fixtureDir();
@@ -723,6 +985,114 @@ describe("runLoop", () => {
     ).toBe(true);
   }, 30000);
 
+  test("maps a real tsc failure to a replacement line and a tsc-stage label", async () => {
+    const dir = fixtureDir();
+    const badReplacement = 'function answer(): number {\n  return "no";\n}';
+    const provider = new ScriptedProvider([
+      '{"path":"src/helper.ts","name":"answer","kind":"function"}',
+      badReplacement,
+      "the replacement never typechecks",
+    ]);
+    const result = await runLoop({
+      cwd: dir,
+      issue: "make the answer test pass",
+      model: "fake",
+      provider,
+      maxRetries: 1,
+      checkCommand: TSC,
+      testCommand: ["bun", "test"],
+    });
+    expect(result.ok).toBe(false);
+    expect(result.attempts.length).toBe(1);
+    expect(result.attempts[0]?.outcome).toBe("tsc");
+    const diagnostics = result.attempts[0]?.diagnostics ?? "";
+    expect(diagnostics).toContain("stage: tsc");
+    expect(diagnostics).toContain("replacement line 1: TS2322:");
+    expect(diagnostics).toContain("not assignable");
+    expect(diagnostics).toContain('2 |   return "no";');
+    expect(diagnostics).toContain("stage: tests");
+    expect(
+      result.messages.some(
+        (message) =>
+          typeof message.content === "string" && message.content.includes("replacement line 1:"),
+      ),
+    ).toBe(true);
+  }, 30000);
+
+  test("lists failing test names for a tests-stage failure", async () => {
+    const dir = fixtureDir();
+    const provider = new ScriptedProvider([
+      '{"path":"src/helper.ts","name":"answer","kind":"function"}',
+      "function answer(): number {\n  return 1;\n}",
+      "the test never passes",
+    ]);
+    const result = await runLoop({
+      cwd: dir,
+      issue: "make the answer test pass",
+      model: "fake",
+      provider,
+      maxRetries: 1,
+      checkCommand: TSC,
+      testCommand: ["bun", "test"],
+    });
+    expect(result.ok).toBe(false);
+    expect(result.attempts.length).toBe(1);
+    expect(result.attempts[0]?.outcome).toBe("tests");
+    const diagnostics = result.attempts[0]?.diagnostics ?? "";
+    expect(diagnostics).toContain("stage: tests");
+    expect(diagnostics).toContain("failing tests:");
+    expect(diagnostics).toContain("  - answer");
+    expect(diagnostics).not.toContain("stage: tsc");
+    expect(
+      result.messages.some(
+        (message) =>
+          typeof message.content === "string" && message.content.includes("failing tests:"),
+      ),
+    ).toBe(true);
+  }, 30000);
+
+  test("runs the sibling test file first and short-circuits on its failure", async () => {
+    const dir = fixtureDir();
+    const provider = new ScriptedProvider([
+      '{"path":"src/helper.ts","name":"answer","kind":"function"}',
+      "function answer(): number {\n  return 2;\n}\n",
+      "unused",
+    ]);
+    const result = await runLoop({
+      cwd: dir,
+      issue: "make the answer test pass",
+      model: "fake",
+      provider,
+      maxRetries: 1,
+      checkCommand: ["bun", "-e", "process.exit(0)"],
+      testCommand: invocationScript(dir, true),
+    });
+    expect(result.ok).toBe(false);
+    expect(result.attempts.length).toBe(1);
+    expect(result.attempts[0]?.outcome).toBe("tests");
+    expect(result.attempts[0]?.diagnostics).toContain("stage: tests");
+    expect(invocationLog(dir)).toEqual(["src/helper.test.ts"]);
+  }, 30000);
+
+  test("runs the full suite after the sibling test file passes", async () => {
+    const dir = fixtureDir();
+    const provider = new ScriptedProvider([
+      '{"path":"src/helper.ts","name":"answer","kind":"function"}',
+      "function answer(): number {\n  return 2;\n}\n",
+    ]);
+    const result = await runLoop({
+      cwd: dir,
+      issue: "make the answer test pass",
+      model: "fake",
+      provider,
+      checkCommand: ["bun", "-e", "process.exit(0)"],
+      testCommand: invocationScript(dir, false),
+    });
+    expect(result.ok).toBe(true);
+    expect(result.attempts[0]?.outcome).toBe("ok");
+    expect(invocationLog(dir)).toEqual(["src/helper.test.ts", "(full)"]);
+  }, 30000);
+
   test("keeps the prompt prefix append-only and the system prompt stable across runs", async () => {
     const issue = "make the answer test pass";
     const locatorResponse = '{"path":"src/helper.ts","name":"answer","kind":"function"}';
@@ -806,10 +1176,11 @@ describe("runLoop", () => {
     expect(result.attempts.length).toBe(3);
     for (const attempt of result.attempts) {
       expect(attempt.replacement).toBe(badReplacement);
-      expect(attempt.diagnostics).toContain("src/helper.ts(2,3)");
+      expect(attempt.diagnostics).toContain("stage: tsc");
+      expect(attempt.diagnostics).toContain("replacement line 1: TS2322:");
       expect(attempt.diagnostics).toContain("not assignable");
     }
-    expect(result.diagnostics).toContain("src/helper.ts(2,3)");
+    expect(result.diagnostics).toContain("replacement line 1: TS2322:");
     expect(result.diagnostics).toContain("not assignable");
     expect(result.diagnostics).toContain("tests failed:");
     expect(result.editedSource).toBeNull();
@@ -823,7 +1194,7 @@ describe("runLoop", () => {
     const attemptsCall = provider.calls[3] ?? [];
     expect(attemptsCall).toHaveLength(8);
     expect(attemptsCall[attemptsCall.length - 1]?.content).toContain("failed verification");
-    expect(attemptsCall[attemptsCall.length - 1]?.content).toContain("src/helper.ts(2,3)");
+    expect(attemptsCall[attemptsCall.length - 1]?.content).toContain("replacement line 1: TS2322:");
     expect(attemptsCall[attemptsCall.length - 1]?.content).toContain("not assignable");
     const explainCall = provider.calls[4] ?? [];
     expect(explainCall).toHaveLength(11);
@@ -1333,7 +1704,11 @@ describe("attempt observability", () => {
     expect(result.attempts.length).toBe(3);
     for (const attempt of result.attempts) {
       expect(attempt.outcome).toBe("format");
+      expect(attempt.diagnostics?.startsWith("stage: format\n")).toBe(true);
     }
+    const retryMessages = provider.calls[2] ?? [];
+    const lastMessage = retryMessages[retryMessages.length - 1]?.content ?? "";
+    expect(lastMessage).toContain("stage: format");
   }, 30000);
 
   test("classifies tsc failures and test-only failures distinctly", async () => {
