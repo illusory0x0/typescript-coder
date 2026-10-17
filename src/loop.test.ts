@@ -1127,3 +1127,184 @@ describe("runLoop provider failures", () => {
     expect(helperSource(dir)).toBe(original);
   }, 30000);
 });
+
+describe("attempt observability", () => {
+  test("records an ok outcome with replacement size and finish reason", async () => {
+    const dir = fixtureDir();
+    const provider = new ScriptedProvider([
+      '{"path":"src/helper.ts","name":"answer","kind":"function"}',
+      "function answer(): number {\n  return 2;\n}\n",
+    ]);
+    const result = await runLoop({
+      cwd: dir,
+      issue: "make the answer test pass",
+      model: "fake",
+      provider,
+      checkCommand: TSC,
+      testCommand: ["bun", "test"],
+    });
+    expect(result.ok).toBe(true);
+    expect(result.attempts.length).toBe(1);
+    const attempt = result.attempts[0];
+    expect(attempt?.outcome).toBe("ok");
+    expect(attempt?.diagnosticsHead).toBeNull();
+    expect(attempt?.replacement).not.toBeNull();
+    expect(attempt?.replacementChars).toBe(attempt?.replacement?.length ?? -1);
+    expect(attempt?.replacementChars).toBeGreaterThan(0);
+    expect(attempt?.finishReason).toBe("stop");
+  }, 30000);
+
+  test("bounds diagnosticsHead and nulls replacement size for selection failures", async () => {
+    const dir = fixtureDir();
+    const longName = "n".repeat(400);
+    const locator = JSON.stringify({ path: "../escape.ts", name: longName, kind: "function" });
+    const provider = new ScriptedProvider([locator, locator, locator, "unused"]);
+    const result = await runLoop({
+      cwd: dir,
+      issue: "make the answer test pass",
+      model: "fake",
+      provider,
+      checkCommand: TSC,
+      testCommand: ["bun", "test"],
+    });
+    expect(result.ok).toBe(false);
+    expect(result.attempts.length).toBe(3);
+    for (const attempt of result.attempts) {
+      expect(attempt.outcome).toBe("selection-invalid");
+      expect(attempt.replacementChars).toBeNull();
+      expect(attempt.diagnosticsHead).not.toBeNull();
+      expect(attempt.diagnosticsHead?.length).toBeLessThanOrEqual(200);
+    }
+  }, 30000);
+
+  test("classifies empty outputs as empty-output", async () => {
+    const dir = fixtureDir();
+    const provider = new ScriptedProvider([
+      '{"path":"src/helper.ts","name":"answer","kind":"function"}',
+      "",
+      "",
+      "",
+      "unused",
+    ]);
+    const result = await runLoop({
+      cwd: dir,
+      issue: "make the answer test pass",
+      model: "fake",
+      provider,
+      checkCommand: TSC,
+      testCommand: ["bun", "test"],
+    });
+    expect(result.ok).toBe(false);
+    expect(result.attempts.length).toBe(3);
+    for (const attempt of result.attempts) {
+      expect(attempt.outcome).toBe("empty-output");
+    }
+  }, 30000);
+
+  test("classifies syntax errors as format failures", async () => {
+    const dir = fixtureDir();
+    const bad = "function answer(): number {\n  return 2;\n";
+    const provider = new ScriptedProvider([
+      '{"path":"src/helper.ts","name":"answer","kind":"function"}',
+      bad,
+      bad,
+      bad,
+      "unused",
+    ]);
+    const result = await runLoop({
+      cwd: dir,
+      issue: "make the answer test pass",
+      model: "fake",
+      provider,
+      checkCommand: TSC,
+      testCommand: ["bun", "test"],
+    });
+    expect(result.ok).toBe(false);
+    expect(result.attempts.length).toBe(3);
+    for (const attempt of result.attempts) {
+      expect(attempt.outcome).toBe("format");
+    }
+  }, 30000);
+
+  test("classifies tsc failures and test-only failures distinctly", async () => {
+    const typeError = 'function answer(): number {\n  return "no";\n}';
+    const tscDir = fixtureDir();
+    const tscProvider = new ScriptedProvider([
+      '{"path":"src/helper.ts","name":"answer","kind":"function"}',
+      typeError,
+      typeError,
+      typeError,
+      "unused",
+    ]);
+    const tscResult = await runLoop({
+      cwd: tscDir,
+      issue: "make the answer test pass",
+      model: "fake",
+      provider: tscProvider,
+      checkCommand: TSC,
+      testCommand: ["bun", "test"],
+    });
+    expect(tscResult.ok).toBe(false);
+    expect(tscResult.attempts.length).toBe(3);
+    for (const attempt of tscResult.attempts) {
+      expect(attempt.outcome).toBe("tsc");
+    }
+
+    const wrongValue = "function answer(): number {\n  return 1;\n}";
+    const testsDir = fixtureDir();
+    const testsProvider = new ScriptedProvider([
+      '{"path":"src/helper.ts","name":"answer","kind":"function"}',
+      wrongValue,
+      wrongValue,
+      wrongValue,
+      "unused",
+    ]);
+    const testsResult = await runLoop({
+      cwd: testsDir,
+      issue: "make the answer test pass",
+      model: "fake",
+      provider: testsProvider,
+      checkCommand: TSC,
+      testCommand: ["bun", "test"],
+    });
+    expect(testsResult.ok).toBe(false);
+    expect(testsResult.attempts.length).toBe(3);
+    for (const attempt of testsResult.attempts) {
+      expect(attempt.outcome).toBe("tests");
+    }
+  }, 60000);
+
+  test("records the provider finish reason on success", async () => {
+    const dir = fixtureDir();
+    let calls = 0;
+    const provider: ProviderLike = {
+      async chat() {
+        calls += 1;
+        if (calls === 1) {
+          return {
+            content: '{"path":"src/helper.ts","name":"answer","kind":"function"}',
+            toolCalls: [],
+            finishReason: "stop",
+            raw: {},
+          };
+        }
+        return {
+          content: "function answer(): number {\n  return 2;\n}",
+          toolCalls: [],
+          finishReason: "length",
+          raw: {},
+        };
+      },
+    };
+    const result = await runLoop({
+      cwd: dir,
+      issue: "make the answer test pass",
+      model: "fake",
+      provider,
+      checkCommand: TSC,
+      testCommand: ["bun", "test"],
+    });
+    expect(result.ok).toBe(true);
+    expect(result.attempts[0]?.finishReason).toBe("length");
+  }, 30000);
+});

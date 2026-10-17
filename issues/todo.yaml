@@ -3,14 +3,6 @@
 # Available = deps done (an umbrella also needs all children done).
 # Tie-break by id.
 
-- id: 29
-  title: "Record per-attempt summaries and replay bundles"
-  status: todo
-  priority: high
-  milestone: null
-  parent: 28
-  deps: []
-  file: 0029-per-attempt-observability.md
 - id: 30
   title: "Retry convergence: keep progress, reset context, guard truncation"
   status: todo

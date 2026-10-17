@@ -11,8 +11,10 @@ CLI (`opencode`) on identical fixture copies, prompts, and model.
 Flags: `--task`, `--all` (default), `--reps <n>` (default 3), `--concurrency
 <n>` (default 4, max parallel runs), `--pilot` (1 rep per task and side, writes
 `benchmark/results/pilot-<date>.json`), `--side ts|opencode|both`, `--model`
-(default `deepseek-v4.1-flash`), `--keep`, `--json <path>`, `--help`. Non-pilot
-results default to `benchmark/results/<date>.json`.
+(default `deepseek-v4.1-flash`), `--keep`, `--json <path>`, `--replay-dir
+<path>` (ts side only: write one replay bundle per run to `<path>/<task>-ts-
+rep<n>.json`; off by default), `--help`. Non-pilot results default to
+`benchmark/results/<date>.json`.
 
 Each run also writes a sibling Markdown report next to the `--json` target
 (`.json` replaced by `.md`): aggregates per task and side plus token-accounting
@@ -41,6 +43,16 @@ stays in matrix order even though runs finish in arbitrary order.
   side did not report them.
 - `steps`: ts = runLoop attempts; opencode = assistant messages in the session
   export (null when unavailable).
+- `attempts` (ts side): per-attempt summaries with `attempt`, `outcome` (`ok`,
+  `selection-invalid`, `empty-output`, `format`, `tsc`, `tests`), a bounded
+  `diagnosticsHead` (≤200 chars, whitespace collapsed), `replacementChars`,
+  and the provider `finishReason`; null for the opencode side.
+- `loopDiagnostics` (ts side): the loop's final run-level diagnostic (e.g. a
+  provider error that aborted the run before any attempt), null when none.
+- Replay bundles (`--replay-dir`): versioned JSON (`format` =
+  `typescript-coder-replay@1`) with the task issue, fixture path, and the
+  ordered chat calls (request messages, response content, finishReason,
+  usage); consumed offline by the replay runner.
 - `durationMs`: model work only (the judge runs afterwards and is not counted).
 - `ok`: judge verdict; `sideOk` is the side's own result.
 

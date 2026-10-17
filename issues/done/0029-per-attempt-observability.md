@@ -1,7 +1,7 @@
 ---
 id: 29
 title: "Record per-attempt summaries and replay bundles"
-status: todo
+status: done
 priority: high
 milestone: null
 parent: 28
@@ -57,6 +57,21 @@ inspect one bundle and replay-read it by hand.
 - Bundle format is the input contract of #40 (replay runner); keep it minimal
   and versioned with a `format` field.
 - The `outcome` taxonomy is shared with #38 (structured diagnostics) and #31
-  (edits/anchor failures); evolve both together.
+  (edits/anchor failures); evolve both together. `provider` and `truncated`
+  kinds land with #39/#30; provider errors aborting a run are recorded at run
+  level (`loopDiagnostics`), not as attempts.
 - Non-goals: uploading bundles anywhere, capturing provider internals beyond
   messages/responses/usage.
+- Validation (2026-10-17): loop attempts carry `outcome`, `diagnosticsHead`
+  (≤200 chars, whitespace collapsed), `replacementChars`, and `finishReason`;
+  benchmark records add `attempts` summaries plus run-level `loopDiagnostics`
+  (added when the first smoke showed a provider error left a failed run
+  unattributed in the report JSON); both documented in `benchmark/README.md`,
+  plus the `--replay-dir` flag. Smokes: `json-parser --side ts --reps 2
+  --replay-dir tmp/replays3` → 2/2 pass, non-empty `attempts` (`outcome: ok`);
+  a kept run whose first selection was invalid shows
+  `attempts: [selection-invalid, ok]` with bounded heads
+  (`tmp/replays2/json-parser-ts-rep1.json`, 3 calls recorded); a forced
+  bad-gateway run records `loopDiagnostics: "provider error: ..."`. Unit
+  tests: 6 loop classification tests + 3 ReplayRecorder tests. Verified:
+  tsc 0, 455 tests, `accept` 5/5, `benchmark/check.ts` 3 PASS.

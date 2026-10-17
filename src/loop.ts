@@ -267,11 +267,23 @@ export interface LoopOptions {
   commandTimeoutMs?: number;
 }
 
+export type AttemptOutcome =
+  | "ok"
+  | "selection-invalid"
+  | "empty-output"
+  | "format"
+  | "tsc"
+  | "tests";
+
 export interface LoopAttempt {
   attempt: number;
   locator: Locator;
   replacement: string | null;
   diagnostics: string | null;
+  outcome: AttemptOutcome;
+  diagnosticsHead: string | null;
+  replacementChars: number | null;
+  finishReason: string | null;
 }
 
 export interface LoopResult {
@@ -293,11 +305,37 @@ type Selection =
 
 const EMPTY_LOCATOR: Locator = { path: "", name: "", kind: "" };
 const DIAGNOSTICS_LIMIT = 4000;
+const DIAGNOSTICS_HEAD_LIMIT = 200;
 const EXPLANATION_PROMPT =
   "Explain in one short paragraph why the task could not be completed and what the next step for the planner is. Do not output code.";
 
 function errorMessage(error: unknown): string {
   return error instanceof Error ? error.message : String(error);
+}
+
+function diagnosticsHeadOf(diagnostics: string | null): string | null {
+  if (diagnostics === null) {
+    return null;
+  }
+  const collapsed = diagnostics.replace(/\s+/g, " ").trim();
+  return collapsed.length > DIAGNOSTICS_HEAD_LIMIT
+    ? collapsed.slice(0, DIAGNOSTICS_HEAD_LIMIT)
+    : collapsed;
+}
+
+function recordAttempt(input: {
+  attempt: number;
+  locator: Locator;
+  replacement: string | null;
+  diagnostics: string | null;
+  outcome: AttemptOutcome;
+  finishReason: string | null;
+}): LoopAttempt {
+  return {
+    ...input,
+    diagnosticsHead: diagnosticsHeadOf(input.diagnostics),
+    replacementChars: input.replacement === null ? null : input.replacement.length,
+  };
 }
 
 function locatorFromResponse(response: ChatResponse): Locator {
@@ -493,12 +531,16 @@ export async function runLoop(options: LoopOptions): Promise<LoopResult> {
     }
     if (diagnostic !== null) {
       selectionFailures += 1;
-      attempts.push({
-        attempt: attempts.length + 1,
-        locator: candidate ?? EMPTY_LOCATOR,
-        replacement: null,
-        diagnostics: diagnostic,
-      });
+      attempts.push(
+        recordAttempt({
+          attempt: attempts.length + 1,
+          locator: candidate ?? EMPTY_LOCATOR,
+          replacement: null,
+          diagnostics: diagnostic,
+          outcome: "selection-invalid",
+          finishReason: response.finishReason,
+        }),
+      );
       if (selectionFailures >= maxRetries) {
         break;
       }
@@ -575,12 +617,14 @@ export async function runLoop(options: LoopOptions): Promise<LoopResult> {
     let replacement: string | null = null;
     let newSource: string | null = null;
     let failure: string | null = null;
+    let failureOutcome: AttemptOutcome = "empty-output";
     try {
       replacement = parseReplacementResponse(response.content ?? "");
     } catch (error) {
       failure = errorMessage(error);
     }
     if (replacement !== null) {
+      failureOutcome = "format";
       try {
         if (selection.mode === "append") {
           newSource = await formatSource(targetPath, appendText(baseSource, replacement));
@@ -597,12 +641,16 @@ export async function runLoop(options: LoopOptions): Promise<LoopResult> {
     }
     if (newSource === null || replacement === null) {
       diagnostics = failure ?? "model did not return replacement text";
-      attempts.push({
-        attempt: attempts.length + 1,
-        locator: selected,
-        replacement,
-        diagnostics,
-      });
+      attempts.push(
+        recordAttempt({
+          attempt: attempts.length + 1,
+          locator: selected,
+          replacement,
+          diagnostics,
+          outcome: failureOutcome,
+          finishReason: response.finishReason,
+        }),
+      );
       messages.push({ role: "assistant", content: replacement ?? response.content ?? "" });
       messages.push({ role: "user", content: buildDiagnosticsPrompt(diagnostics) });
       continue;
@@ -611,12 +659,16 @@ export async function runLoop(options: LoopOptions): Promise<LoopResult> {
     const check = await checkTool(cwd, options.checkCommand, options.commandTimeoutMs);
     const test = await testTool(cwd, options.testCommand, options.commandTimeoutMs);
     if (check.ok && test.ok) {
-      attempts.push({
-        attempt: attempts.length + 1,
-        locator: selected,
-        replacement,
-        diagnostics: null,
-      });
+      attempts.push(
+        recordAttempt({
+          attempt: attempts.length + 1,
+          locator: selected,
+          replacement,
+          diagnostics: null,
+          outcome: "ok",
+          finishReason: response.finishReason,
+        }),
+      );
       return {
         ok: true,
         mode: selection.mode,
@@ -632,12 +684,16 @@ export async function runLoop(options: LoopOptions): Promise<LoopResult> {
     }
     restoreTarget(cwd, targetPath, original);
     diagnostics = formatDiagnostics(check, test);
-    attempts.push({
-      attempt: attempts.length + 1,
-      locator: selected,
-      replacement,
-      diagnostics,
-    });
+    attempts.push(
+      recordAttempt({
+        attempt: attempts.length + 1,
+        locator: selected,
+        replacement,
+        diagnostics,
+        outcome: check.ok ? "tests" : "tsc",
+        finishReason: response.finishReason,
+      }),
+    );
     messages.push({ role: "assistant", content: replacement });
     messages.push({ role: "user", content: buildDiagnosticsPrompt(diagnostics) });
   }

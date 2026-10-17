@@ -14,6 +14,7 @@ import { fileURLToPath } from "node:url";
 import { runLoop } from "../src/loop";
 import { OpenAIProvider, readConfigFromEnv } from "../src/openai";
 import type { ProviderLike } from "../src/loop";
+import { ReplayRecorder, usageFromRaw } from "../src/replay-format";
 import type { ChatMessage, ChatResponse, ToolDefinition } from "../src/openai";
 
 type TaskName = "json-parser" | "sexp-parser" | "minilisp";
@@ -34,6 +35,7 @@ interface CliArgs {
   model: string;
   keep: boolean;
   json: string | null;
+  replayDir: string | null;
   help: boolean;
 }
 
@@ -55,6 +57,14 @@ interface CommandOutcome {
   readonly error: string | null;
 }
 
+interface AttemptSummary {
+  readonly attempt: number;
+  readonly outcome: string;
+  readonly diagnosticsHead: string | null;
+  readonly replacementChars: number | null;
+  readonly finishReason: string | null;
+}
+
 interface SideOutcome {
   readonly sideOk: boolean;
   readonly error: string | null;
@@ -65,6 +75,8 @@ interface SideOutcome {
   readonly usageAvailable: boolean;
   readonly usageSource: string;
   readonly rawUsage: unknown;
+  readonly attemptSummaries: readonly AttemptSummary[] | null;
+  readonly loopDiagnostics: string | null;
   readonly logText: string;
   readonly sessionExportJson: string | null;
   readonly statsJson: string | null;
@@ -96,6 +108,8 @@ interface RunRecord {
   readonly rawUsage: unknown;
   readonly durationMs: number;
   readonly steps: number | null;
+  readonly attempts: readonly AttemptSummary[] | null;
+  readonly loopDiagnostics: string | null;
   readonly model: string;
   readonly workspace: string;
   readonly logs: LogPaths;
@@ -154,6 +168,7 @@ interface RunContext {
   readonly opencodeModel: string;
   readonly opencode: OpencodeContext | null;
   readonly runRoot: string;
+  readonly replayDir: string | null;
 }
 
 interface BenchmarkJob {
@@ -258,6 +273,7 @@ Options:
   --model <id>                               gateway model id (default: ${DEFAULT_MODEL})
   --keep                                     keep workspaces and logs under ./tmp/benchmark/
   --json <path>                              report output path (default: benchmark/results/)
+  --replay-dir <path>                        write per-run ts-side replay bundles to <path>
   --help, -h                                 print this help and exit
 `);
 }
@@ -310,6 +326,7 @@ function parseArgs(argv: string[]): CliArgs {
     model: DEFAULT_MODEL,
     keep: false,
     json: null,
+    replayDir: null,
     help: false,
   };
   for (let index = 0; index < argv.length; index += 1) {
@@ -386,6 +403,15 @@ function parseArgs(argv: string[]): CliArgs {
           failUsage("missing value for --json");
         }
         args.json = value;
+        index += 1;
+        break;
+      }
+      case "--replay-dir": {
+        const value = argv[index + 1];
+        if (value === undefined || value.startsWith("-")) {
+          failUsage("missing value for --replay-dir");
+        }
+        args.replayDir = value;
         index += 1;
         break;
       }
@@ -495,14 +521,6 @@ function usageReported(usage: TokenUsage): boolean {
   );
 }
 
-function usageFromResponse(raw: unknown): unknown {
-  if (!isRecord(raw)) {
-    return null;
-  }
-  const usage = raw["usage"];
-  return usage === undefined ? null : usage;
-}
-
 function summarizeOutput(text: string, limit = OUTPUT_LIMIT): string {
   const trimmed = text.trim();
   return trimmed.length > limit ? `${trimmed.slice(0, limit)}...` : trimmed;
@@ -568,9 +586,11 @@ function fetchWithTimeout(input: string | URL | Request, init?: RequestInit): Pr
 class RecordingProvider implements ProviderLike {
   readonly rawUsages: unknown[] = [];
   readonly #inner: OpenAIProvider;
+  readonly #recorder: ReplayRecorder | null;
 
-  constructor(inner: OpenAIProvider) {
+  constructor(inner: OpenAIProvider, recorder: ReplayRecorder | null = null) {
     this.#inner = inner;
+    this.#recorder = recorder;
   }
 
   async chat(
@@ -579,7 +599,8 @@ class RecordingProvider implements ProviderLike {
     options?: { temperature?: number },
   ): Promise<ChatResponse> {
     const response = await this.#inner.chat(messages, tools, options);
-    this.rawUsages.push(usageFromResponse(response.raw));
+    this.rawUsages.push(usageFromRaw(response.raw));
+    this.#recorder?.record(messages, response);
     return response;
   }
 }
@@ -589,7 +610,12 @@ async function runTypescriptSide(options: {
   issue: string;
   model: string;
   tscBin: string;
+  task: TaskName;
+  rep: number;
+  fixture: string;
+  replayPath: string | null;
 }): Promise<SideOutcome> {
+  const recorder = options.replayPath === null ? null : new ReplayRecorder();
   const provider = new RecordingProvider(
     new OpenAIProvider(
       // Match the harness's own 10-minute chat deadline; the provider default
@@ -597,6 +623,7 @@ async function runTypescriptSide(options: {
       { ...readConfigFromEnv(options.model), timeoutMs: CHAT_TIMEOUT_MS },
       fetchWithTimeout as typeof fetch,
     ),
+    recorder,
   );
   const started = performance.now();
   let error: string | null = null;
@@ -633,7 +660,9 @@ async function runTypescriptSide(options: {
     lines.push(`attempts: ${result.attempts.length}`);
     for (const attempt of result.attempts) {
       lines.push(
-        `  attempt ${attempt.attempt}: locator=${JSON.stringify(attempt.locator)} diagnostics=${
+        `  attempt ${attempt.attempt}: outcome=${attempt.outcome} locator=${JSON.stringify(
+          attempt.locator,
+        )} diagnostics=${
           attempt.diagnostics === null ? "none" : summarizeOutput(attempt.diagnostics)
         }`,
       );
@@ -643,6 +672,28 @@ async function runTypescriptSide(options: {
   }
   lines.push(`usageAvailable: ${usageAvailable}`);
   lines.push(`rawUsage: ${JSON.stringify(provider.rawUsages, null, 2)}`);
+
+  const attemptSummaries =
+    result === null
+      ? null
+      : result.attempts.map((attempt) => ({
+          attempt: attempt.attempt,
+          outcome: attempt.outcome,
+          diagnosticsHead: attempt.diagnosticsHead,
+          replacementChars: attempt.replacementChars,
+          finishReason: attempt.finishReason,
+        }));
+
+  if (recorder !== null && options.replayPath !== null) {
+    const bundle = recorder.bundle({
+      task: options.task,
+      rep: options.rep,
+      model: options.model,
+      issue: options.issue,
+      fixture: options.fixture,
+    });
+    writeFile(options.replayPath, `${JSON.stringify(bundle, null, 2)}\n`);
+  }
 
   return {
     sideOk: result?.ok === true,
@@ -654,6 +705,8 @@ async function runTypescriptSide(options: {
     usageAvailable,
     usageSource: usageAvailable ? "chat-completions" : "unavailable",
     rawUsage: provider.rawUsages,
+    attemptSummaries,
+    loopDiagnostics: result?.diagnostics ?? null,
     logText: `${lines.join("\n")}\n`,
     sessionExportJson: null,
     statsJson: null,
@@ -793,6 +846,8 @@ async function runOpencodeSide(options: {
     usageAvailable,
     usageSource,
     rawUsage,
+    attemptSummaries: null,
+    loopDiagnostics: null,
     logText: `${lines.join("\n")}\n`,
     sessionExportJson,
     statsJson,
@@ -953,6 +1008,10 @@ async function runOnce(
   initWorkspaceGit(workspace);
 
   const issue = TASK_ISSUES[task];
+  const replayPath =
+    side === "ts" && context.replayDir !== null
+      ? join(context.replayDir, `${runName}.json`)
+      : null;
   let outcome: SideOutcome;
   if (side === "ts") {
     outcome = await runTypescriptSide({
@@ -960,6 +1019,10 @@ async function runOnce(
       issue,
       model: context.model,
       tscBin: context.tscBin,
+      task,
+      rep,
+      fixture: ["benchmark", "fixtures", task].join("/"),
+      replayPath,
     });
   } else {
     if (context.opencode === null) {
@@ -1000,6 +1063,8 @@ async function runOnce(
     rawUsage: outcome.rawUsage,
     durationMs: outcome.durationMs,
     steps: outcome.steps,
+    attempts: outcome.attemptSummaries,
+    loopDiagnostics: outcome.loopDiagnostics,
     model: side === "ts" ? context.model : context.opencodeModel,
     workspace: asRelative(workspace),
     logs: {
@@ -1034,6 +1099,8 @@ function printRecord(record: RunRecord): void {
     }
     if (record.error !== null) {
       process.stdout.write(`  - error: ${record.error}\n`);
+    } else if (record.loopDiagnostics !== null) {
+      process.stdout.write(`  - loop: ${summarizeOutput(record.loopDiagnostics, 200)}\n`);
     }
   }
 }
@@ -1385,6 +1452,12 @@ async function main(): Promise<number> {
       : isAbsolute(args.json)
         ? args.json
         : resolve(process.cwd(), args.json);
+  const replayDir =
+    args.replayDir === null
+      ? null
+      : isAbsolute(args.replayDir)
+        ? args.replayDir
+        : resolve(process.cwd(), args.replayDir);
   const tasks = args.task === null ? TASKS.map((task) => task.name) : [args.task];
   const sides: Side[] = args.side === "both" ? ["ts", "opencode"] : [args.side];
   const reps = args.pilot ? PILOT_REPS : args.reps;
@@ -1456,6 +1529,7 @@ async function main(): Promise<number> {
     opencodeModel: opencodeModelId(args.model),
     opencode,
     runRoot,
+    replayDir,
   };
 
   // Bounded worker pool: workers claim jobs by index so each run keeps its own
