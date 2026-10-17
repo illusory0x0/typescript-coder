@@ -34,19 +34,23 @@ todo ──▶ in-progress ──▶ review ──▶ done
 
 ## Workflow
 
-1. **Select — ask, never pick silently.** If the user named an id, use it.
-   Otherwise read `issues/todo.yaml`, build the list of eligible work items, and —
-   for **every** invocation where the user did not name an id — **ask via the
-   `question` tool** which to resolve. Never auto-pick.
+1. **Select — ask, never pick silently.** If the user named a target — an id, a
+   list, or a set — take it as given; "all" means the whole tracker. Otherwise
+   read `issues/todo.yaml`, build the eligible list and the topic sets, and
+   **ask via the `question` tool** what to resolve. Never auto-pick.
 
    An eligible work item is a `todo` **leaf** (no children) whose `deps` are all
-   `done`; an umbrella is not eligible while it has open children. Order
-   candidates by the tracker's picking order. The question must offer, in
-   order:
+   `done`; an umbrella is not eligible while it has open children. A **topic**
+   is an umbrella holding open work; its **set** is every `todo` descendant
+   plus the umbrella itself — a member blocked today joins as its deps land. A
+   picked set is fixed. Options are ranked by the tracker's picking order (a
+   set ranks as its highest member); the first carries `(Recommended)`. The
+   question offers, in order:
 
-   - the top candidate, labeled `(Recommended)`;
-   - the other eligible leaves, one option each;
-   - `All eligible, in order` — a batch (see "Batch mode" below).
+   - one **set** option per open topic, top topic first — e.g.
+     `Set #28: #42 → #43 → #44`;
+   - each eligible leaf as a **single** option;
+   - `All open, in order` — the whole tracker (see "Batch mode" below).
 
    If no issue is eligible, report what is blocking (unmet `deps`, unfinished
    children) and stop — do not ask an empty question.
@@ -111,19 +115,21 @@ agent alone updates the tracker.
 
 ## Batch mode
 
-Only when the user's answer to the selection question is `All eligible, in
-order` (or they explicitly ask for a batch):
+When the user's answer is a topic set or `All open, in order`:
 
 - Process issues **sequentially**, one at a time, re-reading `issues/todo.yaml`
   before each pick — finishing one issue can make the next eligible (a leaf whose
   `deps` were waiting on it).
 - Take issues in the tracker's picking order.
+- A **set** is a fixed queue: only its members are started, and the run stops
+  when the set is exhausted.
+- `All open` keeps draining the tracker — picking up newly eligible issues —
+  until no `todo` issue remains.
 - After each issue, re-evaluate eligibility and propagate up the tree (step 8).
   If a parent becomes fully `done`, include it.
 - **Stop on the first issue that cannot be closed** (failed verification or a
   blocker) and report the remaining queue — do not skip ahead, because the
   blocked issue may gate the rest.
-- The user may pick a subset instead of "all"; honor their list and order.
 
 ## Updating the tracker
 
@@ -155,10 +161,11 @@ the file under `issues/`.
 
 ## Rules
 
-- Always confirm the target with the user via the `question` tool when no id is
-  named; never start work on a guessed issue.
-- One issue per invocation unless the user's answer selects a batch. In batch
-  mode, process sequentially and stop on the first issue that cannot be closed.
+- Always confirm the target via the `question` tool when no target is named;
+  never start work on a guessed issue.
+- One issue per invocation unless the answer is a set or `All open, in order`.
+  In batch mode, process sequentially and stop on the first issue that cannot be
+  closed.
 - Never edit implementation files from the main context: all code changes go
   through the `subagent` tool. The main agent owns selection, the tracker, and
   verification.
