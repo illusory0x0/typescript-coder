@@ -30,5 +30,6 @@ every mechanical tracker operation — ids, file names, frontmatter,
 `issues/todo.yaml`, the `readme.md` dot block, status transitions, and
 `done`-file moves. Issue frontmatter is the source of truth: `setup` converges
 the generated files, `check` validates them, `add`/`set` mutate. The tracker is
-never hand-edited. Tests live beside the script
-(`bun test ./.opencode/skills/which-skill/scripts/`).
+never hand-edited. The bundle is a standalone Bun project (`.opencode/skills`
+owns its own package.json, tsconfig, and lockfile); tests live beside the
+script — `cd .opencode/skills && bun test`.

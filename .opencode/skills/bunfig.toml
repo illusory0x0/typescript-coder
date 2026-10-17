@@ -1,0 +1,3 @@
+# Standalone project: scan this directory for tests.
+[test]
+root = "."

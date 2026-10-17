@@ -11,9 +11,10 @@
  * touches anything outside `issues/`. Machine interface: one JSON object on
  * stdout per invocation; exit code 1 on failure.
  *
- * Owned by the skills bundle: .opencode/skills/which-skill (see SKILL.md,
- * "Shared tooling"). Used by file-issue and resolve-issue.
- * Tests: bun test ./.opencode/skills/which-skill/scripts/
+ * Owned by the skills bundle: .opencode/skills (a standalone Bun project —
+ * see which-skill/SKILL.md, "Shared tooling"). Used by file-issue and
+ * resolve-issue.
+ * Tests: cd .opencode/skills && bun test
  */
 import {
   existsSync,

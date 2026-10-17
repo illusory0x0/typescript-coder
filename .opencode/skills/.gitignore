@@ -1,0 +1,6 @@
+# The parent .opencode/.gitignore (machine-local) ignores these names at any
+# depth; re-include this project's manifest, lockfile, and this file itself
+# so they are tracked.
+!/package.json
+!/bun.lock
+!/.gitignore

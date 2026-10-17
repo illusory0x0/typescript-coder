@@ -3,8 +3,8 @@ import { existsSync, mkdirSync, readFileSync, rmSync, writeFileSync } from "node
 import { dirname, join, resolve } from "node:path";
 import { findRoot, run, slugify } from "./issue-tracker";
 
-const repoRoot = resolve(import.meta.dir, "../../../..");
-const baseTmp = join(repoRoot, "tmp", "issue-tracker-tests");
+const projectRoot = resolve(import.meta.dir, "../..");
+const baseTmp = join(projectRoot, "tmp", "issue-tracker-tests");
 let seq = 0;
 const made: string[] = [];
 
