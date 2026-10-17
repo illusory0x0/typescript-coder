@@ -8,6 +8,7 @@ import {
 } from "node:fs";
 import { basename, dirname, isAbsolute, join, relative, resolve, sep } from "node:path";
 import { applyAnchorSplice, findAnchor, parseEditsResponse, stripCodeFences } from "./anchor";
+import type { ParsedEdit } from "./anchor";
 import { formatSource } from "./editor";
 import { buildIndexTolerant, findDefinition } from "./utility";
 import { buildSignatureViewFromEntry } from "./scroll";
@@ -150,7 +151,7 @@ export function buildSystemPrompt(): string {
     "",
     'First you will be asked to select the symbol to modify. Reply with ONLY a JSON object { "path": ..., "name": ..., "kind": ... }: no markdown fences and no prose.',
     "",
-    'Then you will be asked to replace part of the selected symbol. Reply with ONLY a single-edit JSON object {"edits":[{"anchor": ..., "replacement": ...}]}, e.g. {"edits":[{"anchor":"return 1;","replacement":"return 2;"}]}: the anchor is a complete snippet copied from the current source shown in the prompt, the replacement replaces exactly that snippet, and the whole symbol is the anchor only for a full rewrite. Keep the same declaration kind and name unless the task requires otherwise. No markdown fences and no explanations.',
+    'Then you will be asked to replace part of the selected symbol. Reply with ONLY a JSON object {"edits":[{"anchor": ..., "replacement": ...}, ...]} holding 1 to 8 edits, e.g. {"edits":[{"anchor":"return 1;","replacement":"return 2;"},{"anchor":"return 3;","replacement":"return 4;"}]}: emit the fewest edits that cover the change, ordered top-to-bottom (earlier source text first). Each anchor is a complete snippet copied from the current source; anchors must be unique, and each is matched against the evolving source after the previous edits. The replacement is a drop-in for the anchor: keep leading keywords and modifiers consistent (do not re-add `export` the anchor omitted). Use the whole symbol as the anchor only for a full rewrite. Keep the same declaration kind and name unless the task requires otherwise. No markdown fences and no explanations.',
     "",
     "The selected symbol may not exist yet. When it is missing, the harness appends your complete output to the target file (creating the file and any parent directories when needed) instead of editing a symbol range.",
     "",
@@ -201,9 +202,9 @@ export function buildUserPrompt(
 
 export function buildReplacementPrompt(locatorJson: string, symbolSource: string): string {
   const body = symbolSource.endsWith("\n") ? symbolSource : `${symbolSource}\n`;
-  return `Output a single edit as a JSON object {"edits":[{"anchor": ..., "replacement": ...}]} for the symbol identified by this locator, with no markdown fences and no explanations.
+  return `Output a JSON object {"edits":[{"anchor": ..., "replacement": ...}, ...]} holding 1 to 8 edits for the symbol identified by this locator, with no markdown fences and no explanations.
 
-The anchor is a complete snippet copied from the current source below; the replacement replaces exactly that snippet. Use the whole symbol as the anchor only for a full rewrite.
+Each anchor is a complete snippet copied from the current source below; emit the fewest edits that cover the change, ordered top-to-bottom (earlier source text first). Anchors must be unique, and each is matched against the evolving source after the previous edits. Each replacement is a drop-in for its anchor: keep leading keywords and modifiers consistent (do not re-add \`export\` the anchor omitted). Use the whole symbol as the anchor only for a full rewrite.
 
 Locator:
 
@@ -241,7 +242,7 @@ export interface RetryPromptInput {
   /** 1-based number of the retry this prompt requests. */
   attemptNumber: number;
   maxAttempts: number;
-  /** Replace mode requests a single-edit JSON object; append mode plain text. */
+  /** Replace mode requests a 1..N edit JSON object; append mode plain text. */
   mode: "replace" | "append";
   locatorJson: string;
   /** Current on-disk source of the selected region (whole file in append mode). */
@@ -255,7 +256,7 @@ export function buildRetryPrompt(input: RetryPromptInput): string {
   const body = currentSource.endsWith("\n") ? currentSource : `${currentSource}\n`;
   const instruction =
     mode === "replace"
-      ? 'Make minimal corrective changes to the current source below. Output ONLY a single-edit JSON object, e.g. {"edits":[{"anchor":"return 1;","replacement":"return 2;"}]}: the anchor is a complete snippet copied from the current source below and the replacement replaces exactly that snippet; use the whole symbol as the anchor only for a full rewrite. No markdown fences and no explanations.'
+      ? 'Make minimal corrective changes to the current source below. Output ONLY a JSON object {"edits":[{"anchor": ..., "replacement": ...}, ...]} holding 1 to 8 edits, e.g. {"edits":[{"anchor":"return 1;","replacement":"return 2;"},{"anchor":"return 3;","replacement":"return 4;"}]}: emit the fewest edits that cover the change, ordered top-to-bottom (earlier source text first); anchors must be unique, and each is matched against the evolving source after the previous edits; each replacement is a drop-in for its anchor (do not re-add `export` the anchor omitted). Use the whole symbol as the anchor only for a full rewrite. No markdown fences and no explanations.'
       : "Make minimal corrective changes to the current source of the selected region. Output the COMPLETE corrected text for the selected region, with no markdown fences and no explanations.";
   return `Attempt ${attemptNumber} of ${maxAttempts} failed verification. ${remaining} attempt(s) remain.
 
@@ -338,6 +339,8 @@ export interface ProviderLike {
 
 export const DEFAULT_TOKEN_BUDGET = 120_000;
 export const DEFAULT_RETRY_EXTENSIONS = 2;
+/** Hard cap on anchored edits per replace response (#33). */
+export const MAX_EDITS_PER_ATTEMPT = 8;
 /** Absolute attempt ceiling, including progress extensions (#36). */
 export const MAX_TOTAL_ATTEMPTS = 5;
 
@@ -349,6 +352,8 @@ export interface LoopOptions {
   maxRetries?: number;
   /** Extra attempts granted after strictly improving failure signatures (#36). */
   retryExtensions?: number;
+  /** Cap on anchored edits per replace response (#33); defaults to MAX_EDITS_PER_ATTEMPT. */
+  maxEditsPerAttempt?: number;
   /** Abort the run once accumulated provider tokens exceed this (#36). */
   tokenBudget?: number;
   temperature?: number;
@@ -380,6 +385,10 @@ export interface LoopAttempt {
   finishReason: string | null;
   /** True on the failed attempt that earned the next one (#36). */
   extensionGranted?: boolean;
+  /** Anchored edits parsed from the replace response (#33); absent in append mode. */
+  edits?: number;
+  /** Prefix of the response's edits applied before a failure (#33); equals edits on success. */
+  appliedEdits?: number;
 }
 
 export interface LoopResult {
@@ -460,6 +469,8 @@ function recordAttempt(input: {
   outcome: AttemptOutcome;
   finishReason: string | null;
   extensionGranted?: boolean;
+  edits?: number;
+  appliedEdits?: number;
 }): LoopAttempt {
   return {
     ...input,
@@ -792,6 +803,7 @@ export async function runLoop(options: LoopOptions): Promise<LoopResult> {
   const maxRetries = options.maxRetries ?? 3;
   const tokenBudget = options.tokenBudget ?? DEFAULT_TOKEN_BUDGET;
   const retryExtensions = options.retryExtensions ?? DEFAULT_RETRY_EXTENSIONS;
+  const maxEditsPerAttempt = options.maxEditsPerAttempt ?? MAX_EDITS_PER_ATTEMPT;
   const temperature = options.temperature;
   const chatOptions: ChatOptions | undefined =
     temperature === undefined ? undefined : { temperature };
@@ -1047,6 +1059,8 @@ export async function runLoop(options: LoopOptions): Promise<LoopResult> {
     let failureStage: "format" | "edits-invalid" | "anchor-not-found" | "anchor-ambiguous" =
       "format";
     let failureOutcome: AttemptOutcome = "empty-output";
+    let editCount = 0;
+    let appliedEdits = 0;
     if (selectionMode === "append") {
       try {
         replacement = parseReplacementResponse(content);
@@ -1062,53 +1076,117 @@ export async function runLoop(options: LoopOptions): Promise<LoopResult> {
         }
       }
     } else if (content.trim() !== "") {
-      let edit: { anchor: string; replacement: string } | null = null;
+      let edits: ParsedEdit[] = [];
       try {
-        const parsed = parseEditsResponse(content);
-        if (parsed.edits.length !== 1) {
-          throw new Error(
-            `exactly one edit per response is supported (got ${parsed.edits.length})`,
-          );
-        }
-        edit = parsed.edits[0] ?? null;
+        edits = parseEditsResponse(content).edits;
       } catch (error) {
         failure = errorMessage(error);
         failureStage = "edits-invalid";
         failureOutcome = "edits-invalid";
       }
-      if (edit !== null) {
-        replacement = edit.replacement;
-        const resolved = findDefinition(
-          buildIndexTolerant([{ path: targetPath, source: sourceBefore }]).index,
-          selected,
-        );
-        if (resolved === null) {
-          failure = "the selected symbol no longer resolves in the current source";
+      if (edits.length > 0) {
+        editCount = edits.length;
+        replacement = edits.map((edit) => edit.replacement).join("\n");
+        if (edits.length > maxEditsPerAttempt) {
+          failure = `at most ${maxEditsPerAttempt} edits per response are supported (got ${edits.length})`;
           failureStage = "edits-invalid";
           failureOutcome = "edits-invalid";
         } else {
-          const anchored = findAnchor(sourceBefore, resolved.node, edit.anchor);
-          if (anchored.kind === "unparseable") {
-            failure = `the anchor could not be parsed as TypeScript: ${anchored.message}`;
+          let duplicate: [number, number] | null = null;
+          const firstByAnchor = new Map<string, number>();
+          for (const [index, edit] of edits.entries()) {
+            const anchor = edit.anchor.trim();
+            const first = firstByAnchor.get(anchor);
+            if (first !== undefined) {
+              duplicate = [first, index];
+              break;
+            }
+            firstByAnchor.set(anchor, index);
+          }
+          if (duplicate !== null) {
+            failure = `edit ${duplicate[1] + 1} duplicates the anchor of edit ${duplicate[0] + 1}; anchors must be unique and each apply to the evolving source`;
             failureStage = "edits-invalid";
             failureOutcome = "edits-invalid";
-          } else if (anchored.kind === "not-found") {
-            failure = `the anchor was not found inside ${selected.name}; extend the anchor to a complete snippet copied from the current source`;
-            failureStage = "anchor-not-found";
-            failureOutcome = "anchor-not-found";
-          } else if (anchored.kind === "ambiguous") {
-            failure = `the anchor matches ${anchored.matches} places inside ${selected.name}; extend the anchor with more surrounding context`;
-            failureStage = "anchor-ambiguous";
-            failureOutcome = "anchor-ambiguous";
           } else {
-            failureOutcome = "format";
-            try {
-              newSource = await formatSource(
-                targetPath,
-                applyAnchorSplice(sourceBefore, anchored.start, anchored.end, edit.replacement),
+            // Serial application (#33): each anchor is matched against the
+            // source as evolved by the previous edits, so the symbol is
+            // re-indexed before every edit.
+            let working = sourceBefore;
+            let failedEdit: {
+              index: number;
+              outcome: "edits-invalid" | "anchor-not-found" | "anchor-ambiguous";
+              message: string;
+            } | null = null;
+            for (const [index, edit] of edits.entries()) {
+              const resolved = findDefinition(
+                buildIndexTolerant([{ path: targetPath, source: working }]).index,
+                selected,
               );
-            } catch (error) {
-              failure = errorMessage(error);
+              if (resolved === null) {
+                failedEdit = {
+                  index,
+                  outcome: "edits-invalid",
+                  message: "the selected symbol no longer resolves in the current source",
+                };
+                break;
+              }
+              const anchored = findAnchor(working, resolved.node, edit.anchor);
+              if (anchored.kind === "unparseable") {
+                failedEdit = {
+                  index,
+                  outcome: "edits-invalid",
+                  message: `the anchor could not be parsed as TypeScript: ${anchored.message}`,
+                };
+                break;
+              }
+              if (anchored.kind === "not-found") {
+                failedEdit = {
+                  index,
+                  outcome: "anchor-not-found",
+                  message: `the anchor was not found inside ${selected.name}; extend the anchor to a complete snippet copied from the current source`,
+                };
+                break;
+              }
+              if (anchored.kind === "ambiguous") {
+                failedEdit = {
+                  index,
+                  outcome: "anchor-ambiguous",
+                  message: `the anchor matches ${anchored.matches} places inside ${selected.name}; extend the anchor with more surrounding context`,
+                };
+                break;
+              }
+              working = applyAnchorSplice(
+                working,
+                anchored.start,
+                anchored.end,
+                edit.replacement,
+              );
+              appliedEdits += 1;
+            }
+            if (failedEdit === null) {
+              failureOutcome = "format";
+              try {
+                newSource = await formatSource(targetPath, working);
+              } catch (error) {
+                failureStage = "format";
+                failure = errorMessage(error);
+              }
+            } else {
+              failureStage = failedEdit.outcome;
+              failureOutcome = failedEdit.outcome;
+              failure =
+                edits.length > 1
+                  ? `edit ${failedEdit.index + 1} of ${edits.length}: ${failedEdit.message}`
+                  : failedEdit.message;
+              if (appliedEdits > 0) {
+                // Keep the applied prefix on disk so the retry builds on it (#30).
+                try {
+                  const formatted = await formatSource(targetPath, working);
+                  writeTarget(cwd, targetPath, formatted);
+                } catch (error) {
+                  failure += ` (the applied prefix could not be formatted and was not kept: ${errorMessage(error)})`;
+                }
+              }
             }
           }
         }
@@ -1124,6 +1202,8 @@ export async function runLoop(options: LoopOptions): Promise<LoopResult> {
           diagnostics,
           outcome: failureOutcome,
           finishReason: response.finishReason,
+          edits: selectionMode === "replace" ? editCount : undefined,
+          appliedEdits: selectionMode === "replace" ? appliedEdits : undefined,
         }),
       );
       previousSignature = null;
@@ -1142,6 +1222,8 @@ export async function runLoop(options: LoopOptions): Promise<LoopResult> {
           diagnostics: null,
           outcome: "ok",
           finishReason: response.finishReason,
+          edits: selectionMode === "replace" ? editCount : undefined,
+          appliedEdits: selectionMode === "replace" ? appliedEdits : undefined,
         }),
       );
       return {
@@ -1189,6 +1271,8 @@ export async function runLoop(options: LoopOptions): Promise<LoopResult> {
         outcome: check.ok ? "tests" : "tsc",
         finishReason: response.finishReason,
         extensionGranted,
+        edits: selectionMode === "replace" ? editCount : undefined,
+        appliedEdits: selectionMode === "replace" ? appliedEdits : undefined,
       }),
     );
     messages = buildRetryMessages(selectionMode, targetPath, failedAttempt, diagnostics);

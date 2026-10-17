@@ -4,12 +4,12 @@
 
 A self-contained TypeScript coding agent. It reads an issue from **stdin**, uses a
 hand-written TypeScript frontend plus a symbol index to select a target symbol
-(`Locator`), asks an OpenAI-compatible LLM to emit a **single-edit JSON object**
-(`{"edits":[{"anchor","replacement"}]}`) for that symbol, splices the replacement
-over the anchor's matched range + `oxfmt`, and accepts the result
-only if `tsc --noEmit` and `bun test` pass. On failure it keeps the attempted
-state, retries up to **3** times with a rebuilt bounded context, then reports an
-explanation for the planning main agent.
+(`Locator`), asks an OpenAI-compatible LLM to emit an **edit set**
+(`{"edits":[{"anchor","replacement"}, ...]}`, 1..8 anchored edits) for that
+symbol, applies the edits serially over their matched ranges + `oxfmt`, and
+accepts the result only if `tsc --noEmit` and `bun test` pass. On failure it
+keeps the attempted state, retries up to **3** times with a rebuilt bounded
+context, then reports an explanation for the planning main agent.
 
 ## 2. Language & runtime
 
@@ -60,8 +60,12 @@ applyEdits(source: string, edits: Edit[]): string
 Matches each edit's anchor structurally (AST equivalence: trivia and comments
 ignored, identifiers compared exactly) inside the locator's symbol, splices the
 replacement over exactly that range, then formats with `oxfmt`. Returns the new
-source. A whole-symbol anchor performs a full replacement; zero or multiple
-anchor matches fail the attempt with `anchor-not-found` / `anchor-ambiguous`.
+source. A response carries 1..N edits (bounded, default 8) applied serially in
+listed order: the source is re-indexed between edits, so every anchor matches
+the evolving state and whole-symbol anchors belong to full rewrites. Zero or
+multiple anchor matches fail the attempt with `anchor-not-found` /
+`anchor-ambiguous`; the already-applied prefix stays on disk and the next
+attempt works from that state. Verification runs once after all edits apply.
 
 ### append/create (missing symbol)
 
@@ -107,14 +111,18 @@ harness:
 model:
   - LLM reads context                    # yaml
   - LLM selects modified symbol          # json (Locator)
-  - LLM outputs a single-edit JSON object # {"edits":[{"anchor","replacement"}]}
+  - LLM outputs 1..8 anchored edits    # {"edits":[{"anchor","replacement"}, ...]}
 
 harness:
-  - apply edits          # replace the symbol range, or append/create when missing
+  - apply edits          # serial anchored splices inside the symbol; append/create when missing
   - run TypeScript checker   (tsc --noEmit)
   - run TypeScript tests     (bun test)
 ```
 
+- **multi-edit:** one response carries 1..8 anchored edits applied serially
+  top-to-bottom; each anchor is matched against the evolving source (re-indexed
+  between edits), the already-applied prefix is kept on failure, and verification
+  runs once after all edits apply.
 - **selection:** a locator whose symbol is not in the index enters append mode
   when its path is safe (see §4); otherwise it stays an invalid locator and the
   model is asked to select again.
@@ -199,9 +207,9 @@ Edit is accepted only if both pass:
 - **M6 · Tools** — internal library APIs (`find-definition`, `check`, `test`,
   `scroll`, `rename`), not offered to the model in v1.
   _Gate:_ per-tool unit tests.
-- **M7 · `loop.ts`** — context YAML → symbol select JSON → replacement text →
-  apply → verify → keep-progress retry(3) → explanation; bounded rebuilt retry
-  context.
+- **M7 · `loop.ts`** — context YAML → symbol select JSON → 1..8 anchored edits →
+  apply serially → verify → keep-progress retry(3) → explanation; bounded rebuilt
+  retry context.
   _Gate:_ end-to-end fix-a-failing-test fixture; bad-edit keep-progress test.
 - **M8 · `cli.ts` + `main.ts`** — stdin issue reader, `--model`, `--help`.
   _Gate:_ self-host smoke test.
@@ -215,7 +223,7 @@ Edit is accepted only if both pass:
 | R3  | LLM tool-call / JSON flakiness (deepseek/qwen)              | strict JSON schema, low temperature, bounded retries              |
 | R4  | whole-project `tsc` per retry is slow                       | incremental / changed-files scope, timeouts                       |
 | R5  | overload / namespace Locator ambiguity                      | `kind` + signature disambiguation; find-definition corpus         |
-| R6  | multiple edits shift spans                                  | apply bottom-up; one symbol per iteration in v1                   |
+| R6  | multiple edits shift spans                                  | serial edits, re-indexed between edits; one symbol per iteration  |
 | R7  | retry context growth / prompt drift                         | stable system + issue/context prefix; bounded rebuilt context     |
 
 ## 13. Open items (defaults)

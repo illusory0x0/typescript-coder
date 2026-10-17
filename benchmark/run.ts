@@ -65,6 +65,8 @@ interface AttemptSummary {
   readonly replacementChars: number | null;
   readonly finishReason: string | null;
   readonly extensionGranted: boolean;
+  readonly edits: number | null;
+  readonly appliedEdits: number | null;
 }
 
 interface SideOutcome {
@@ -717,6 +719,8 @@ async function runTypescriptSide(options: {
           replacementChars: attempt.replacementChars,
           finishReason: attempt.finishReason,
           extensionGranted: attempt.extensionGranted === true,
+          edits: attempt.edits ?? null,
+          appliedEdits: attempt.appliedEdits ?? null,
         }));
 
   if (recorder !== null && options.replayPath !== null) {

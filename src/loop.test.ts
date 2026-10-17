@@ -485,10 +485,13 @@ describe("prompt builders", () => {
   test("buildSystemPrompt returns a stable string", () => {
     expect(buildSystemPrompt()).toBe(buildSystemPrompt());
     expect(buildSystemPrompt()).toContain('{ "path": ..., "name": ..., "kind": ... }');
-    expect(buildSystemPrompt()).toContain("single-edit JSON object");
     expect(buildSystemPrompt()).toContain(
-      '{"edits":[{"anchor":"return 1;","replacement":"return 2;"}]}',
+      '{"edits":[{"anchor": ..., "replacement": ...}, ...]}',
     );
+    expect(buildSystemPrompt()).toContain("1 to 8 edits");
+    expect(buildSystemPrompt()).toContain("fewest edits that cover the change");
+    expect(buildSystemPrompt()).toContain("top-to-bottom");
+    expect(buildSystemPrompt()).toContain("anchors must be unique");
     expect(buildSystemPrompt()).toContain("No markdown fences and no explanations");
   });
 
@@ -551,8 +554,11 @@ describe("prompt builders", () => {
     const locatorJson = '{"path":"src/a.ts","name":"make","kind":"function"}';
     const symbolSource = "export function make(): number {\n  return 1;\n}\n";
     const prompt = buildReplacementPrompt(locatorJson, symbolSource);
-    expect(prompt).toContain('{"edits":[{"anchor": ..., "replacement": ...}]}');
-    expect(prompt).toContain("the replacement replaces exactly that snippet");
+    expect(prompt).toContain('{"edits":[{"anchor": ..., "replacement": ...}, ...]}');
+    expect(prompt).toContain("1 to 8 edits");
+    expect(prompt).toContain("the fewest edits that cover the change");
+    expect(prompt).toContain("ordered top-to-bottom");
+    expect(prompt).toContain("Anchors must be unique");
     expect(prompt).toContain(locatorJson);
     expect(prompt).toContain(symbolSource);
     expect(prompt).toContain("```ts");
@@ -592,7 +598,7 @@ describe("prompt builders", () => {
     expect(prompt).toContain(diagnostics);
   });
 
-  test("buildRetryPrompt describes the single-edit contract in replace mode", () => {
+  test("buildRetryPrompt describes the multi-edit contract in replace mode", () => {
     const locatorJson = '{"path":"src/a.ts","name":"make","kind":"function"}';
     const currentSource = 'export function make(): number {\n  return "nope";\n}';
     const diagnostics = "stage: anchor-not-found\nthe anchor was not found inside make";
@@ -605,10 +611,12 @@ describe("prompt builders", () => {
       diagnostics,
     });
     expect(prompt).toContain("Attempt 2 of 3 failed verification.");
-    expect(prompt).toContain("single-edit JSON object");
-    expect(prompt).toContain("the anchor is a complete snippet copied from the current source");
-    expect(prompt).toContain("the replacement replaces exactly that snippet");
-    expect(prompt).toContain("use the whole symbol as the anchor only for a full rewrite");
+    expect(prompt).toContain('{"edits":[{"anchor": ..., "replacement": ...}, ...]}');
+    expect(prompt).toContain("1 to 8 edits");
+    expect(prompt).toContain("fewest edits that cover the change");
+    expect(prompt).toContain("ordered top-to-bottom");
+    expect(prompt).toContain("anchors must be unique");
+    expect(prompt).toContain("Use the whole symbol as the anchor only for a full rewrite");
     expect(prompt).toContain("No markdown fences and no explanations");
     expect(prompt).toContain(currentSource);
     expect(prompt).toContain(diagnostics);
@@ -758,6 +766,11 @@ function editResponse(anchor: string, replacement: string): string {
   return JSON.stringify({ edits: [{ anchor, replacement }] });
 }
 
+// A replace-phase response carrying several anchored edits in listed order.
+function editSetResponse(edits: { anchor: string; replacement: string }[]): string {
+  return JSON.stringify({ edits });
+}
+
 function fixtureDir(extraExclude: string[] = []): string {
   const dir = tempDir();
   mkdirSync(join(dir, "src"));
@@ -861,6 +874,8 @@ describe("runLoop", () => {
     });
     expect(result.attempts.length).toBe(1);
     expect(result.attempts[0]?.diagnostics).toBeNull();
+    expect(result.attempts[0]?.edits).toBe(1);
+    expect(result.attempts[0]?.appliedEdits).toBe(1);
     expect(helperSource(dir)).toContain("return 2;");
     expect(result.messages[0]?.role).toBe("system");
     expect(result.messages[0]?.content).toBe(buildSystemPrompt());
@@ -2022,6 +2037,11 @@ describe("anchor splice protocol", () => {
       "ok",
     ]);
     expect(result.attempts[0]?.diagnostics).toContain("stage: anchor-not-found");
+    expect(result.attempts[0]?.diagnostics).toContain("the anchor was not found inside answer");
+    // The single-edit diagnostic wording is unchanged (no "edit 1 of 1" prefix).
+    expect(result.attempts[0]?.diagnostics).not.toContain("edit 1 of 1");
+    expect(result.attempts[0]?.edits).toBe(1);
+    expect(result.attempts[0]?.appliedEdits).toBe(0);
     expect(original).toContain("return 1;");
     expect(helperSource(dir)).toContain("return 2;");
 
@@ -2106,6 +2126,244 @@ describe("anchor splice protocol", () => {
     expect(result.ok).toBe(true);
     expect(result.attempts).toHaveLength(1);
     expect(helperSource(dir)).toBe("export function answer(): number {\n  return 2;\n}\n");
+  }, 30000);
+});
+
+describe("multi-edit attempts", () => {
+  const passingCommand = ["bun", "-e", "process.exit(0)"];
+
+  test("applies two disjoint edits in one response and verifies once", async () => {
+    const dir = fixtureDir();
+    writeFileSync(
+      join(dir, "src", "helper.ts"),
+      "export function answer(): number {\n  const base = 1;\n  const extra = 1;\n  return base + extra;\n}\n",
+    );
+    writeFileSync(
+      join(dir, "src", "helper.test.ts"),
+      'import { expect, test } from "bun:test";\nimport { answer } from "./helper";\n\ntest("answer", () => {\n  expect(answer()).toBe(4);\n});\n',
+    );
+    const provider = new ScriptedProvider([
+      '{"path":"src/helper.ts","name":"answer","kind":"function"}',
+      editSetResponse([
+        { anchor: "const base = 1;", replacement: "const base = 2;" },
+        { anchor: "const extra = 1;", replacement: "const extra = 2;" },
+      ]),
+    ]);
+    const result = await runLoop({
+      cwd: dir,
+      issue: "make the answer test pass",
+      model: "fake",
+      provider,
+      checkCommand: TSC,
+      testCommand: invocationScript(dir, false),
+    });
+    expect(result.ok).toBe(true);
+    expect(result.attempts).toHaveLength(1);
+    expect(result.attempts[0]?.outcome).toBe("ok");
+    expect(result.attempts[0]?.edits).toBe(2);
+    expect(result.attempts[0]?.appliedEdits).toBe(2);
+    expect(provider.calls).toHaveLength(2);
+    // One verification: the sibling test file, then the full suite.
+    expect(invocationLog(dir)).toEqual(["src/helper.test.ts", "(full)"]);
+    const content = helperSource(dir);
+    expect(content).toContain("const base = 2;");
+    expect(content).toContain("const extra = 2;");
+  }, 30000);
+
+  test("keeps the applied prefix when a later edit does not match", async () => {
+    const dir = fixtureDir();
+    rmSync(join(dir, "src", "helper.test.ts"));
+    const original = helperSource(dir);
+    const calls: ChatMessage[][] = [];
+    let afterFailure = "";
+    const provider: ProviderLike = {
+      async chat(messages) {
+        calls.push(structuredClone(messages));
+        if (calls.length === 3) {
+          afterFailure = helperSource(dir);
+        }
+        if (calls.length === 1) {
+          return {
+            content: '{"path":"src/helper.ts","name":"answer","kind":"function"}',
+            toolCalls: [],
+            finishReason: "stop",
+            raw: {},
+          };
+        }
+        if (calls.length === 2) {
+          return {
+            content: editSetResponse([
+              { anchor: "return 1;", replacement: "return 3;" },
+              { anchor: "const missing = 1;", replacement: "const missing = 2;" },
+            ]),
+            toolCalls: [],
+            finishReason: "stop",
+            raw: {},
+          };
+        }
+        return {
+          content: editResponse("return 3;", "return 2;"),
+          toolCalls: [],
+          finishReason: "stop",
+          raw: {},
+        };
+      },
+    };
+    const result = await runLoop({
+      cwd: dir,
+      issue: "make the answer test pass",
+      model: "fake",
+      provider,
+      checkCommand: passingCommand,
+      testCommand: passingCommand,
+    });
+    expect(result.ok).toBe(true);
+    expect(result.attempts.map((attempt) => attempt.outcome)).toEqual([
+      "anchor-not-found",
+      "ok",
+    ]);
+    const failed = result.attempts[0];
+    expect(failed?.diagnostics).toContain("stage: anchor-not-found");
+    expect(failed?.diagnostics).toContain("edit 2 of 2");
+    expect(failed?.diagnostics).toContain("the anchor was not found inside answer");
+    expect(failed?.edits).toBe(2);
+    expect(failed?.appliedEdits).toBe(1);
+    expect(result.attempts[1]?.edits).toBe(1);
+    expect(result.attempts[1]?.appliedEdits).toBe(1);
+    expect(original).toContain("return 1;");
+    // The first edit's change was formatted onto disk before the retry.
+    expect(afterFailure).toContain("return 3;");
+    const retryPrompt = calls[2]?.[3]?.content ?? "";
+    expect(retryPrompt).toContain("return 3;");
+    expect(retryPrompt).toContain("edit 2 of 2");
+    expect(helperSource(dir)).toContain("return 2;");
+  }, 30000);
+
+  test("rejects duplicate anchors up front and applies nothing", async () => {
+    const dir = fixtureDir();
+    rmSync(join(dir, "src", "helper.test.ts"));
+    const provider = new ScriptedProvider([
+      '{"path":"src/helper.ts","name":"answer","kind":"function"}',
+      editSetResponse([
+        { anchor: "return 1;", replacement: "return 2;" },
+        { anchor: "  return 1;  ", replacement: "return 3;" },
+      ]),
+      editResponse("return 1;", "return 2;"),
+    ]);
+    const result = await runLoop({
+      cwd: dir,
+      issue: "make the answer test pass",
+      model: "fake",
+      provider,
+      checkCommand: passingCommand,
+      testCommand: passingCommand,
+    });
+    expect(result.ok).toBe(true);
+    expect(result.attempts.map((attempt) => attempt.outcome)).toEqual(["edits-invalid", "ok"]);
+    const failed = result.attempts[0];
+    expect(failed?.diagnostics).toContain("stage: edits-invalid");
+    expect(failed?.diagnostics).toContain("edit 2 duplicates the anchor of edit 1");
+    expect(failed?.edits).toBe(2);
+    expect(failed?.appliedEdits).toBe(0);
+    // Nothing was applied: the retry still matches the original anchor.
+    const retryPrompt = provider.calls[2]?.[3]?.content ?? "";
+    expect(retryPrompt).toContain("return 1;");
+    expect(helperSource(dir)).toContain("return 2;");
+  }, 30000);
+
+  test("matches later anchors against the source evolved by earlier edits", async () => {
+    const dir = fixtureDir();
+    const wholeSymbol = "function answer(): number {\n  return 1;\n}";
+    const provider = new ScriptedProvider([
+      '{"path":"src/helper.ts","name":"answer","kind":"function"}',
+      editSetResponse([
+        { anchor: "return 1;", replacement: "return 2;" },
+        { anchor: wholeSymbol, replacement: wholeSymbol.replace("return 1;", "return 2;") },
+      ]),
+      "the whole-symbol anchor no longer matches after the inner edit",
+    ]);
+    const result = await runLoop({
+      cwd: dir,
+      issue: "make the answer test pass",
+      model: "fake",
+      provider,
+      maxRetries: 1,
+      checkCommand: passingCommand,
+      testCommand: passingCommand,
+    });
+    expect(result.ok).toBe(false);
+    expect(result.attempts.map((attempt) => attempt.outcome)).toEqual(["anchor-not-found"]);
+    const failed = result.attempts[0];
+    expect(failed?.diagnostics).toContain("edit 2 of 2");
+    expect(failed?.diagnostics).toContain("the anchor was not found inside answer");
+    expect(failed?.appliedEdits).toBe(1);
+    // The inner edit's prefix was kept on disk.
+    expect(helperSource(dir)).toContain("return 2;");
+  }, 30000);
+
+  test("rejects more than the default cap and applies nothing", async () => {
+    const dir = fixtureDir();
+    rmSync(join(dir, "src", "helper.test.ts"));
+    const nineEdits = editSetResponse(
+      Array.from({ length: 9 }, (_, index) => ({
+        anchor: `const v${index} = ${index};`,
+        replacement: `const v${index} = ${index + 1};`,
+      })),
+    );
+    const provider = new ScriptedProvider([
+      '{"path":"src/helper.ts","name":"answer","kind":"function"}',
+      nineEdits,
+      editResponse("return 1;", "return 2;"),
+    ]);
+    const result = await runLoop({
+      cwd: dir,
+      issue: "make the answer test pass",
+      model: "fake",
+      provider,
+      checkCommand: passingCommand,
+      testCommand: passingCommand,
+    });
+    expect(result.ok).toBe(true);
+    expect(result.attempts.map((attempt) => attempt.outcome)).toEqual(["edits-invalid", "ok"]);
+    const failed = result.attempts[0];
+    expect(failed?.diagnostics).toContain("stage: edits-invalid");
+    expect(failed?.diagnostics).toContain(
+      "at most 8 edits per response are supported (got 9)",
+    );
+    expect(failed?.edits).toBe(9);
+    expect(failed?.appliedEdits).toBe(0);
+    expect(helperSource(dir)).toContain("return 2;");
+  }, 30000);
+
+  test("honors a smaller maxEditsPerAttempt", async () => {
+    const dir = fixtureDir();
+    rmSync(join(dir, "src", "helper.test.ts"));
+    const provider = new ScriptedProvider([
+      '{"path":"src/helper.ts","name":"answer","kind":"function"}',
+      editSetResponse([
+        { anchor: "return 1;", replacement: "return 2;" },
+        { anchor: "const a = 1;", replacement: "const a = 2;" },
+        { anchor: "const b = 1;", replacement: "const b = 2;" },
+      ]),
+      editResponse("return 1;", "return 2;"),
+    ]);
+    const result = await runLoop({
+      cwd: dir,
+      issue: "make the answer test pass",
+      model: "fake",
+      provider,
+      maxEditsPerAttempt: 2,
+      checkCommand: passingCommand,
+      testCommand: passingCommand,
+    });
+    expect(result.ok).toBe(true);
+    expect(result.attempts.map((attempt) => attempt.outcome)).toEqual(["edits-invalid", "ok"]);
+    const failed = result.attempts[0];
+    expect(failed?.diagnostics).toContain(
+      "at most 2 edits per response are supported (got 3)",
+    );
+    expect(failed?.edits).toBe(3);
+    expect(failed?.appliedEdits).toBe(0);
   }, 30000);
 });
 

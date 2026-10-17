@@ -54,8 +54,10 @@ finish in arbitrary order.
   `selection-invalid`, `empty-output`, `edits-invalid`, `anchor-not-found`,
   `anchor-ambiguous`, `format`, `tsc`, `tests`), a bounded
   `diagnosticsHead` (≤200 chars, whitespace collapsed), `replacementChars`,
-  the provider `finishReason`, and `extensionGranted` (true on the failed
-  attempt that earned the next one); null for the opencode side.
+  the provider `finishReason`, `extensionGranted` (true on the failed attempt
+  that earned the next one), `edits` (anchored edits in the replace response,
+  null outside replace mode) and `appliedEdits` (the prefix applied before a
+  failure; equals `edits` when every edit applied); null for the opencode side.
 - `loopDiagnostics` (ts side): the loop's final run-level diagnostic (e.g. a
   provider error that aborted the run before any attempt), null when none.
 - `extensions` (ts side): progress extensions granted over the retry budget
@@ -70,6 +72,16 @@ finish in arbitrary order.
 - `ok`: judge verdict, forced to false when `abortReason` is non-null (budget
   aborts count as run failures in aggregates); `sideOk` is the side's own
   result.
+
+## Multi-edit attempts (ts side)
+
+Replace-mode responses carry 1..8 anchored edits (`maxEditsPerAttempt`, default
+8) applied serially in listed order. Each anchor is matched against the source
+as evolved by the previous edits (the selected symbol is re-indexed between
+edits); an anchor that is not found, ambiguous, or unparseable stops the
+response, the already-applied prefix is kept on disk (#30), and the diagnostic
+names the failing edit. Verification (tsc + tests) runs once after all edits
+apply. `edits` / `appliedEdits` summarize that per attempt.
 
 ## Run budget (ts side)
 

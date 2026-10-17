@@ -11,14 +11,6 @@
   parent: 28
   deps: [29]
   file: 0032-locator-robustness.md
-- id: 33
-  title: "Multi-edit attempts: serial application of N anchored edits"
-  status: todo
-  priority: high
-  milestone: null
-  parent: 28
-  deps: [31]
-  file: 0033-multi-edit-attempts.md
 - id: 41
   title: "Create-mode repair: keep partial files and iterate with anchors"
   status: todo

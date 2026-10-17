@@ -67,11 +67,14 @@ describe("parseEditsResponse", () => {
     expect(parseEditsResponse(content)).toEqual({ edits: [{ anchor: "a", replacement: "b" }] });
   });
 
-  test("rejects multiple edits", () => {
+  test("parses multiple edits in order", () => {
     const content = '{"edits":[{"anchor":"a","replacement":"b"},{"anchor":"c","replacement":"d"}]}';
-    expect(() => parseEditsResponse(content)).toThrow(
-      "exactly one edit per response is supported (got 2)",
-    );
+    expect(parseEditsResponse(content)).toEqual({
+      edits: [
+        { anchor: "a", replacement: "b" },
+        { anchor: "c", replacement: "d" },
+      ],
+    });
   });
 
   test("rejects missing or wrongly typed fields", () => {
@@ -84,6 +87,18 @@ describe("parseEditsResponse", () => {
     expect(() => parseEditsResponse('{"edits":[{"replacement":"b"}]}')).toThrow(
       'expected {"edits"',
     );
+  });
+
+  test("rejects a malformed entry anywhere in the array", () => {
+    expect(() =>
+      parseEditsResponse('{"edits":[{"anchor":"a","replacement":"b"},{"anchor":"c"}]}'),
+    ).toThrow('expected {"edits"');
+    expect(() =>
+      parseEditsResponse('{"edits":[{"anchor":"a","replacement":"b"},5]}'),
+    ).toThrow('expected {"edits"');
+    expect(() =>
+      parseEditsResponse('{"edits":["nope",{"anchor":"a","replacement":"b"}]}'),
+    ).toThrow('expected {"edits"');
   });
 
   test("rejects non-object JSON", () => {

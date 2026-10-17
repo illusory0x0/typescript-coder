@@ -96,9 +96,6 @@ export function parseEditsResponse(content: string): { edits: ParsedEdit[] } {
     }
     return { anchor, replacement };
   });
-  if (result.length !== 1) {
-    throw new Error(`exactly one edit per response is supported (got ${result.length})`);
-  }
   return { edits: result };
 }
 
