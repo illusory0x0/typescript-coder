@@ -1,7 +1,7 @@
 ---
 id: 41
 title: "Create-mode repair: keep partial files and iterate with anchors"
-status: todo
+status: wontfix
 priority: high
 milestone: null
 parent: 28
@@ -57,3 +57,7 @@ kept content.
   pristine workspace; the benchmark report wording is updated in #30/#28.
 - Non-goals: multi-file orchestration (H4 horizon), partial-section
   generation for very large files (parked).
+- Superseded (2026-10-18) by the v2 redesign (#42/#43): the create guard and
+  the create→repair transition move into the v2 protocol/loop, keeping the
+  kept-parseable-file behavior. Kept for the record; do not implement
+  separately.

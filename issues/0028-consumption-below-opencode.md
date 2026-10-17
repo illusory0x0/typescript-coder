@@ -28,29 +28,24 @@ and json still winning.
 
 ## Acceptance criteria
 
-- [ ] All child issues (#29–#41) are done.
-- [ ] A final ts-side run (`--all --side ts --reps 3`) is committed under
-      `benchmark/results/` (JSON + MD) and compared in the report against the
-      2026-10-17 baseline: json 3/3 (≤6,900 — pre-S 5,877 plus the documented
-      #34 spec-input allowance), sexp <43,293 (goal ≤11,812), minilisp ≥2/3
-      (goal 3/3) and <348,080, overall ≤16,824 when 9/9 (else documented
-      deviation).
-- [ ] `benchmark/results/consumption.md` holds the baseline row and the final
-      row, each citing its source result file.
+- [ ] All child issues are done or formally superseded: #29–#40 and #42–#44
+      done; #32/#41 superseded by #42/#43 (wontfix).
+- [ ] Final measurement (#44) committed: full ts-side run + report +
+      `consumption.md`, with the goal verdict documented.
 - [ ] Gates green at close: `bunx tsc --noEmit` 0, `bun test` all pass,
       `bun run accept` 5/5, `bun benchmark/check.ts` 3 PASS.
 
 ## Verification
 
 ```
-bun run benchmark/run.ts --all --side ts --reps 3 --json benchmark/results/<date>-ts.json
 bunx tsc --noEmit
 bun test
 bun run accept
 bun benchmark/check.ts
 ```
 
-plus: compare aggregates in the new MD/JSON against the figures above.
+plus: confirm every child is done (or superseded) and the #44 report is
+committed under `benchmark/results/`.
 
 ## Notes
 
@@ -62,3 +57,7 @@ plus: compare aggregates in the new MD/JSON against the figures above.
   re-running the opencode side (its baseline is static).
 - Open items are resolved inside the child issues; no direct implementation
   work lands on this umbrella.
+- Update (2026-10-18): the v2 loop redesign (#42 edit protocol, #43 agent
+  loop) replaced the anchor-protocol approach; #32/#41 are superseded
+  (wontfix); the final full-run measurement moved to #44, deliberately at the
+  lowest priority — v2 lands first.

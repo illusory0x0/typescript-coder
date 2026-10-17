@@ -51,6 +51,9 @@ digraph issues {
   "39" [label="#39 Provider backoff"];
   "40" [label="#40 Replay runner"];
   "41" [label="#41 Create-mode repair"];
+  "42" [label="#42 Edit protocol v2"];
+  "43" [label="#43 Agent loop v2"];
+  "44" [label="#44 Final measurement"];
 
   // tree edges (parent -> child), solid
   "1" -> "2";
@@ -82,6 +85,9 @@ digraph issues {
   "28" -> "39";
   "28" -> "40";
   "28" -> "41";
+  "28" -> "42";
+  "28" -> "43";
+  "28" -> "44";
 
   // dependency edges (blocker -> blocked), dashed
   "2" -> "3" [style=dashed, label="blocks"];
@@ -108,5 +114,8 @@ digraph issues {
   "30" -> "41" [style=dashed, label="blocks"];
   "31" -> "33" [style=dashed, label="blocks"];
   "31" -> "41" [style=dashed, label="blocks"];
+  "42" -> "43" [style=dashed, label="blocks"];
+  "42" -> "44" [style=dashed, label="blocks"];
+  "43" -> "44" [style=dashed, label="blocks"];
 }
 ```

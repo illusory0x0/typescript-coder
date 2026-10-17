@@ -1,7 +1,7 @@
 ---
 id: 32
 title: "Locator robustness: tolerant extraction, kind fallback, append guard"
-status: todo
+status: wontfix
 priority: high
 milestone: null
 parent: 28
@@ -55,3 +55,6 @@ kind-mismatch produces the improved diagnostic.
 - Depends on #29 for selection-failure recording.
 - Non-goals: `response_format` JSON mode (declined), selection assist /
   candidate shortlists (H4 horizon), multi-locator selection.
+- Superseded (2026-10-18) by the v2 edit protocol (#42): tolerant extraction,
+  kind-mismatch diagnostics and the duplicate-name guard are absorbed there.
+  Kept for the record; do not implement separately.

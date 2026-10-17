@@ -2,23 +2,32 @@
 # leaf; once no leaf is available, the highest-priority available umbrella.
 # Available = deps done (an umbrella also needs all children done).
 # Tie-break by id.
+# wontfix entries stay listed (not pickable) at the bottom.
 
-- id: 32
-  title: "Locator robustness: tolerant extraction, kind fallback, append guard"
+- id: 42
+  title: "Edit protocol v2: composite locator × matcher, modes, syntax gate"
   status: todo
   priority: high
   milestone: null
   parent: 28
-  deps: [29]
-  file: 0032-locator-robustness.md
-- id: 41
-  title: "Create-mode repair: keep partial files and iterate with anchors"
+  deps: []
+  file: 0042-edit-protocol-v2.md
+- id: 43
+  title: "Agent loop v2: Run/Edit/Verification with shared ≤3 and summary-first termination"
   status: todo
   priority: high
   milestone: null
   parent: 28
-  deps: [30, 31]
-  file: 0041-create-mode-repair.md
+  deps: [42]
+  file: 0043-agent-loop-v2.md
+- id: 44
+  title: "Final v2 measurement: full ts-side benchmark run + consumption report"
+  status: todo
+  priority: low
+  milestone: null
+  parent: 28
+  deps: [42, 43]
+  file: 0044-final-v2-measurement.md
 - id: 28
   title: "Cut harness token consumption below the opencode baseline"
   status: todo
@@ -27,3 +36,21 @@
   parent: null
   deps: []
   file: 0028-consumption-below-opencode.md
+
+# Superseded by the v2 redesign (#42/#43); kept for the record.
+- id: 32
+  title: "Locator robustness: tolerant extraction, kind fallback, append guard"
+  status: wontfix
+  priority: high
+  milestone: null
+  parent: 28
+  deps: [29]
+  file: 0032-locator-robustness.md
+- id: 41
+  title: "Create-mode repair: keep partial files and iterate with anchors"
+  status: wontfix
+  priority: high
+  milestone: null
+  parent: 28
+  deps: [30, 31]
+  file: 0041-create-mode-repair.md
