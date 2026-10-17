@@ -3,7 +3,14 @@ import { mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { buildSignatureView, expand } from "./scroll";
-import { checkTool, findDefinitionTool, renameTool, testTool, tools } from "./tools";
+import {
+  checkTool,
+  findDefinitionTool,
+  parseDiagnostics,
+  renameTool,
+  testTool,
+  tools,
+} from "./tools";
 import type { Locator } from "./utility";
 
 const FILE = "file.ts";
@@ -135,6 +142,70 @@ describe("scroll", () => {
     expect(() => expand(source, locator("f", "function"), { maxLines: 0 })).toThrow(
       /maxLines/,
     );
+  });
+});
+
+describe("parseDiagnostics", () => {
+  test("parses located and unlocated tsc errors", () => {
+    const output = [
+      "src/a.ts(3,7): error TS2322: Type 'string' is not assignable to type 'number'.",
+      "error TS2688: Cannot find type definition file for 'bun'.",
+    ].join("\n");
+    expect(parseDiagnostics(output)).toEqual([
+      {
+        file: "src/a.ts",
+        line: 3,
+        column: 7,
+        message: "Type 'string' is not assignable to type 'number'.",
+      },
+      {
+        file: "",
+        line: 0,
+        column: 0,
+        message: "Cannot find type definition file for 'bun'.",
+      },
+    ]);
+  });
+
+  test("appends indented continuation lines to the previous message", () => {
+    const output = [
+      "src/a.ts(3,7): error TS2322: Type 'string' is not assignable",
+      "  to type 'number'.",
+      "error TS2688: Cannot find type definition file",
+      "  for 'bun'.",
+      "src/b.ts(1,1): error TS2551: Property 'foo' does not exist.",
+    ].join("\n");
+    expect(parseDiagnostics(output)).toEqual([
+      {
+        file: "src/a.ts",
+        line: 3,
+        column: 7,
+        message: "Type 'string' is not assignable to type 'number'.",
+      },
+      {
+        file: "",
+        line: 0,
+        column: 0,
+        message: "Cannot find type definition file for 'bun'.",
+      },
+      {
+        file: "src/b.ts",
+        line: 1,
+        column: 1,
+        message: "Property 'foo' does not exist.",
+      },
+    ]);
+  });
+
+  test("keeps paths containing parentheses intact", () => {
+    const output = [
+      "src/feat(1).ts(10,5): error TS2304: Cannot find name 'x'.",
+      "src/weird(1,2).ts(5,6): error TS2304: Cannot find name 'y'.",
+    ].join("\n");
+    expect(parseDiagnostics(output)).toEqual([
+      { file: "src/feat(1).ts", line: 10, column: 5, message: "Cannot find name 'x'." },
+      { file: "src/weird(1,2).ts", line: 5, column: 6, message: "Cannot find name 'y'." },
+    ]);
   });
 });
 

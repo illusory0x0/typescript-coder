@@ -185,8 +185,9 @@ describe("runMain", () => {
     });
     expect(code).toBe(1);
     expect(captured.err.join("\n")).toContain("not assignable");
-    expect(captured.err.join("\n")).toContain(explanation);
+    expect(captured.err.join("\n")).not.toContain(explanation);
     expect(captured.out[captured.out.length - 1]).toBe(explanation);
+    expect(captured.out.filter((line) => line === explanation)).toHaveLength(1);
     expect(readFileSync(join(dir, "src", "helper.ts"), "utf8")).toContain("return 1;");
   }, 60000);
 

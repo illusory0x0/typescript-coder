@@ -132,8 +132,10 @@ async function runCommand(
   return { ok: exitCode === 0, exitCode, output };
 }
 
-function parseDiagnostics(output: string): CheckDiagnostic[] {
+export function parseDiagnostics(output: string): CheckDiagnostic[] {
   const diagnostics: CheckDiagnostic[] = [];
+  // The file part is greedy so paths containing parentheses, e.g.
+  // `src/(a).ts(3,4): error TS...`, bind the location to the trailing group.
   const located = /^(.+)\((\d+),(\d+)\): error TS\d+: (.*)$/;
   const unlocated = /error TS\d+: (.*)$/;
   for (const line of output.split("\n")) {
@@ -151,6 +153,12 @@ function parseDiagnostics(output: string): CheckDiagnostic[] {
     if (line.includes("error TS")) {
       const message = unlocated.exec(line)?.[1];
       diagnostics.push({ file: "", line: 0, column: 0, message: message ?? line.trim() });
+      continue;
+    }
+    // Indented lines continue the previous diagnostic's wrapped message.
+    const previous = diagnostics[diagnostics.length - 1];
+    if (previous !== undefined && /^\s+\S/.test(line)) {
+      previous.message = `${previous.message} ${line.trim()}`;
     }
   }
   return diagnostics;

@@ -258,12 +258,21 @@ function renderSignature(entry: IndexEntry, source: string): string {
   }
 }
 
+/**
+ * Render a signature view for an already-resolved index entry. Callers that
+ * hold a shared index (e.g. the context builder) use this to avoid rebuilding a
+ * single-file index, and therefore re-parsing the source, per symbol.
+ */
+export function buildSignatureViewFromEntry(source: string, entry: IndexEntry): string {
+  return renderSignature(entry, source);
+}
+
 export function buildSignatureView(
   source: string,
   locator: Locator,
   fileName = "file.ts",
 ): string {
-  return renderSignature(resolveEntry(source, locator, fileName), source);
+  return buildSignatureViewFromEntry(source, resolveEntry(source, locator, fileName));
 }
 
 export function expand(

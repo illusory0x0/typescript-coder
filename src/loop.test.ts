@@ -1,4 +1,4 @@
-import { afterEach, describe, expect, test } from "bun:test";
+import { afterEach, describe, expect, spyOn, test } from "bun:test";
 import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { basename, join } from "node:path";
@@ -11,6 +11,7 @@ import {
   buildSystemPrompt,
   buildUserPrompt,
   discoverSourceFiles,
+  formatDiagnostics,
   parseLocatorResponse,
   parseReplacementResponse,
   runLoop,
@@ -18,6 +19,8 @@ import {
 } from "./loop";
 import type { ProviderLike } from "./loop";
 import type { ChatMessage, ChatResponse, ToolDefinition } from "./openai";
+import { Parser } from "./parser";
+import { buildIndexTolerant } from "./utility";
 import type { SourceFile } from "./utility";
 
 const tempDirs: string[] = [];
@@ -50,6 +53,8 @@ describe("discoverSourceFiles", () => {
     writeFileSync(join(dir, "d.txt"), "not typescript\n");
     mkdirSync(join(dir, "dist"));
     writeFileSync(join(dir, "dist", "e.ts"), "export const e = 5;\n");
+    mkdirSync(join(dir, "tmp"));
+    writeFileSync(join(dir, "tmp", "f.ts"), "export const f = 6;\n");
 
     const files = discoverSourceFiles(dir);
     expect(files.map((file) => file.path)).toEqual(["a.ts", "sub/b.ts"]);
@@ -77,9 +82,6 @@ describe("buildContextYaml", () => {
       '      - name: "Widget"',
       '        kind: "class"',
       '        signature: "class Widget render(): string"',
-      '      - name: "Widget"',
-      '        kind: "class"',
-      '        signature: "class Widget render(): string"',
       '      - name: "Widget.render"',
       '        kind: "method"',
       '        signature: "render(): string"',
@@ -91,6 +93,21 @@ describe("buildContextYaml", () => {
       "",
     ].join("\n");
     expect(buildContextYaml(files)).toBe(expected);
+  });
+
+  test("reuses the provided tolerant index without re-parsing any file", () => {
+    const files: SourceFile[] = [
+      { path: "src/a.ts", source: aSource },
+      { path: "src/b.ts", source: bSource },
+    ];
+    const build = buildIndexTolerant(files);
+    const parse = spyOn(Parser.prototype, "parseProgram");
+    try {
+      buildContextYaml(files, build);
+      expect(parse).not.toHaveBeenCalled();
+    } finally {
+      parse.mockRestore();
+    }
   });
 
   test("escapes quotes and backslashes in signatures", () => {
@@ -146,6 +163,36 @@ describe("buildContextYaml", () => {
       "",
     ].join("\n");
     expect(buildContextYaml(files)).toBe(expected);
+  });
+});
+
+describe("formatDiagnostics", () => {
+  test("keeps the head and the tail of oversized diagnostics with a marker", () => {
+    const check = {
+      ok: false,
+      exitCode: 1,
+      output: "",
+      diagnostics: [
+        { file: "src/a.ts", line: 1, column: 1, message: `first error ${"h".repeat(3000)}` },
+        { file: "src/b.ts", line: 2, column: 3, message: "middle error" },
+      ],
+    };
+    const testResult = { ok: false, exitCode: 1, output: `${"z".repeat(3000)} last test line` };
+    const result = formatDiagnostics(check, testResult);
+    expect(result.startsWith("src/a.ts(1,1): first error ")).toBe(true);
+    expect(result.endsWith("last test line")).toBe(true);
+    expect(result).toMatch(/\.\.\. \[\d+ characters truncated\] \.\.\./);
+  });
+
+  test("returns short diagnostics unchanged", () => {
+    const check = {
+      ok: false,
+      exitCode: 1,
+      output: "",
+      diagnostics: [{ file: "src/a.ts", line: 1, column: 1, message: "boom" }],
+    };
+    const result = formatDiagnostics(check, { ok: true, exitCode: 0, output: "" });
+    expect(result).toBe("src/a.ts(1,1): boom");
   });
 });
 

@@ -579,10 +579,59 @@ function scopePrefix(scope: Scope, root: Scope, cache: Map<Scope, string | null>
   return prefix;
 }
 
+/**
+ * Imported names are aliases of declarations in another module, not editable
+ * declarations in this file, so the index excludes them. Otherwise `import`
+ * statements surface as misleading `variable` entries that no tool can edit.
+ * This only filters index entries: the binder and its scopes still bind imports
+ * normally.
+ */
+function importBindingNodes(program: Program): Set<Node> {
+  const nodes = new Set<Node>();
+  const collect = (statement: Statement): void => {
+    switch (statement.kind) {
+      case "ImportDeclaration": {
+        if (statement.defaultImport !== null) {
+          nodes.add(statement.defaultImport);
+        }
+        if (statement.namespaceImport !== null) {
+          nodes.add(statement.namespaceImport);
+        }
+        for (const specifier of statement.namedImports) {
+          nodes.add(specifier.local);
+        }
+        return;
+      }
+      case "ImportEqualsDeclaration":
+        nodes.add(statement);
+        return;
+      case "NamespaceDeclaration":
+        for (const inner of statement.body) {
+          collect(inner);
+        }
+        return;
+      case "ExportNamedDeclaration":
+        if (statement.declaration !== null) {
+          collect(statement.declaration);
+        }
+        return;
+      default:
+        return;
+    }
+  };
+  for (const statement of program.body) {
+    collect(statement);
+  }
+  return nodes;
+}
+
 function indexEntriesForFile(file: SourceFile): IndexEntry[] {
   const entries: IndexEntry[] = [];
   const program = new Parser(file.source).parseProgram();
   const binder = new Binder(program);
+  const imported = importBindingNodes(program);
+  /** Tracks (name, kind) pairs already emitted per declaration node. */
+  const emitted = new Map<Node, Set<string>>();
   const cache = new Map<Scope, string | null>();
   for (const scope of binder.scopes) {
     const prefix = scopePrefix(scope, binder.rootScope, cache);
@@ -598,12 +647,27 @@ function indexEntriesForFile(file: SourceFile): IndexEntry[] {
         if (scope.kind === "class" && node === scope.node) {
           continue;
         }
+        if (imported.has(node)) {
+          continue;
+        }
         const kind = declarationKind(node);
         if (kind === null) {
           continue;
         }
+        const name = `${prefix}${symbol.name}`;
+        // Class and enum declarations bind in both the value and type spaces
+        // with the same declaration node; collapse them into one entry.
+        const key = `${name}\u0000${kind}`;
+        const seen = emitted.get(node);
+        if (seen === undefined) {
+          emitted.set(node, new Set([key]));
+        } else if (seen.has(key)) {
+          continue;
+        } else {
+          seen.add(key);
+        }
         entries.push({
-          locator: { path: file.path, name: `${prefix}${symbol.name}`, kind },
+          locator: { path: file.path, name, kind },
           symbol,
           node,
         });

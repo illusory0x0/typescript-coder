@@ -1,7 +1,7 @@
 ---
 id: 26
 title: "Hygiene pack: context perf/dedup, tmp skip, diagnostics edges"
-status: todo
+status: done
 priority: low
 milestone: null
 parent: null
@@ -74,3 +74,17 @@ bun run accept
   coordinate the context-format test updates in a single resolve.
 - F9 is behavior pinned by tests — choose the intended channel deliberately
   (stdout for the planner agent, stderr for humans).
+- Resolved policies (2026-10-17): F7 **excludes imported names from the
+  index** (aliases, not editable declarations; `variable` was misleading) —
+  binder scope behavior unchanged; coverage includes top-level imports,
+  `export import`, and namespace/module-nested `import x = ...`; duplicates
+  collapse by `(node, name, kind)` so class/enum value+type pairs emit one
+  entry. F9 keeps the explanation **on stdout only** (planner agents read
+  stdout; diagnostics stay on stderr). F8 also rejects `tmp/` append targets
+  via `safeAppendPath` — consistent side effect.
+- Validation (2026-10-17): F6 renders signatures from the shared `IndexEntry`
+  (`buildSignatureViewFromEntry`); a spy test proves `buildContextYaml(files,
+  build)` performs zero extra parses. `parseDiagnostics` merges indented
+  continuation lines and keeps parenthesized paths; `formatDiagnostics`
+  truncates head+tail with an explicit marker. Verified: tsc 0, 446 tests,
+  `accept` 5/5, `accept --all` 6/6 (test suite runtime dropped ~80s → ~54s).

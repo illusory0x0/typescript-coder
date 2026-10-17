@@ -3,14 +3,6 @@
 # Available = deps done (an umbrella also needs all children done).
 # Tie-break by id.
 
-- id: 26
-  title: "Hygiene pack: context perf/dedup, tmp skip, diagnostics edges"
-  status: todo
-  priority: low
-  milestone: null
-  parent: null
-  deps: []
-  file: 0026-hygiene-context-diagnostics.md
 - id: 19
   title: "Full benchmark run and report"
   status: todo

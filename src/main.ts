@@ -50,7 +50,6 @@ export async function runMain(options: RunMainOptions): Promise<number> {
   const explanation = result.explanation ?? NO_EXPLANATION;
   io.err(result.diagnostics ?? "verification failed");
   io.out(explanation);
-  io.err(explanation);
   return 1;
 }
 

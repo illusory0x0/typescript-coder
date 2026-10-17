@@ -9,13 +9,13 @@ import {
 import { dirname, isAbsolute, join, relative, resolve, sep } from "node:path";
 import { applyEdits, formatSource } from "./editor";
 import { buildIndexTolerant, findDefinition } from "./utility";
-import { buildSignatureView } from "./scroll";
+import { buildSignatureViewFromEntry } from "./scroll";
 import { checkTool, testTool } from "./tools";
 import type { ChatMessage, ChatResponse, ToolDefinition } from "./openai";
 import type { CheckDiagnostic, CommandResult } from "./tools";
 import type { IndexEntry, Locator, SkippedFile, SourceFile, TolerantIndex } from "./utility";
 
-const SKIPPED_DIRECTORIES = new Set(["node_modules", ".git", "dist"]);
+const SKIPPED_DIRECTORIES = new Set(["node_modules", ".git", "dist", "tmp"]);
 const CONTEXT_SYMBOL_LIMIT = 500;
 const SIGNATURE_LIMIT = 200;
 
@@ -98,7 +98,7 @@ export function buildContextYaml(files: SourceFile[], build?: TolerantIndex): st
         break;
       }
       const source = sourceByPath.get(file.path) ?? "";
-      const signature = buildSignatureView(source, entry.locator, file.path);
+      const signature = buildSignatureViewFromEntry(source, entry);
       lines.push(`      - name: ${yamlString(entry.locator.name)}`);
       lines.push(`        kind: ${yamlString(entry.locator.kind)}`);
       lines.push(`        signature: ${yamlSignature(signature)}`);
@@ -382,7 +382,7 @@ function restoreTarget(cwd: string, path: string, original: string | null): void
   writeFileSync(target, original);
 }
 
-function formatDiagnostics(
+export function formatDiagnostics(
   check: CommandResult & { diagnostics: CheckDiagnostic[] },
   test: CommandResult,
 ): string {
@@ -407,7 +407,14 @@ function formatDiagnostics(
   if (text.length <= DIAGNOSTICS_LIMIT) {
     return text;
   }
-  return text.slice(text.length - DIAGNOSTICS_LIMIT);
+  // Keep the head (earliest tsc errors, i.e. the root causes) and the tail
+  // (bun-test summary) with an explicit marker in between.
+  const headLength = Math.floor(DIAGNOSTICS_LIMIT / 2);
+  const tailLength = DIAGNOSTICS_LIMIT - headLength;
+  const head = text.slice(0, headLength);
+  const tail = text.slice(text.length - tailLength);
+  const truncated = text.length - headLength - tailLength;
+  return `${head}... [${truncated} characters truncated] ...${tail}`;
 }
 
 async function explain(

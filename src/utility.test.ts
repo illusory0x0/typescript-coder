@@ -298,7 +298,39 @@ test("buildIndex accepts modern syntax that used to throw", () => {
   expect(index.lookup({ path, name: "A.#x", kind: "variable" })).toHaveLength(1);
   expect(index.lookup({ path, name: "f", kind: "function" })).toHaveLength(1);
   expect(index.lookup({ path, name: "x", kind: "variable" })).toHaveLength(1);
-  expect(index.lookup({ path, name: "data", kind: "variable" })).toHaveLength(1);
+  // Imported names are aliases of declarations elsewhere and stay out of the index.
+  expect(index.lookup({ path, name: "data", kind: "variable" })).toHaveLength(0);
+});
+
+test("class and enum declarations produce a single index entry each", () => {
+  const path = "src/duplicates.ts";
+  const source = "class Widget {}\nenum Color { Red }";
+  const index = buildIndex([{ path, source }]);
+  expect(index.lookup({ path, name: "Widget", kind: "class" })).toHaveLength(1);
+  expect(index.lookup({ path, name: "Color", kind: "enum" })).toHaveLength(1);
+});
+
+test("imported names are excluded from the index while real declarations remain", () => {
+  const path = "src/imports.ts";
+  const source = [
+    'import D, { named } from "m";',
+    'import type { T } from "m";',
+    'import * as ns from "m";',
+    'import E = require("m");',
+    "export const keep = 1;",
+    "namespace Inner {",
+    '  import N = require("m");',
+    "  export const nested = 2;",
+    "}",
+  ].join("\n");
+  const index = buildIndex([{ path, source }]);
+  for (const name of ["D", "named", "T", "ns", "E"]) {
+    expect(index.byName(name)).toHaveLength(0);
+  }
+  // Namespace-nested import aliases are excluded too; real nested declarations stay.
+  expect(index.lookup({ path, name: "Inner.N", kind: "variable" })).toHaveLength(0);
+  expect(index.lookup({ path, name: "Inner.nested", kind: "variable" })).toHaveLength(1);
+  expect(index.lookup({ path, name: "keep", kind: "variable" })).toHaveLength(1);
 });
 
 test("overload sets index as a single entry", () => {
