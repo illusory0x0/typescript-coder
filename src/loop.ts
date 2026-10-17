@@ -11,7 +11,13 @@ import { applyEdits, formatSource } from "./editor";
 import { buildIndexTolerant, findDefinition } from "./utility";
 import { buildSignatureViewFromEntry } from "./scroll";
 import { checkTool, testTool } from "./tools";
-import type { ChatMessage, ChatResponse, ToolDefinition } from "./openai";
+import type {
+  ChatMessage,
+  ChatOptions,
+  ChatResponse,
+  ReasoningEffort,
+  ToolDefinition,
+} from "./openai";
 import type { CheckDiagnostic, CommandResult } from "./tools";
 import type { IndexEntry, Locator, SkippedFile, SourceFile, TolerantIndex } from "./utility";
 
@@ -305,7 +311,7 @@ export interface ProviderLike {
   chat(
     messages: ChatMessage[],
     tools?: ToolDefinition[],
-    options?: { temperature?: number },
+    options?: ChatOptions,
   ): Promise<ChatResponse>;
 }
 
@@ -525,10 +531,15 @@ async function explain(
   }
 }
 
+function withEffort(base: ChatOptions | undefined, effort: ReasoningEffort): ChatOptions {
+  return { ...base, reasoningEffort: effort };
+}
+
 export async function runLoop(options: LoopOptions): Promise<LoopResult> {
   const maxRetries = options.maxRetries ?? 3;
   const temperature = options.temperature;
-  const chatOptions = temperature === undefined ? undefined : { temperature };
+  const chatOptions: ChatOptions | undefined =
+    temperature === undefined ? undefined : { temperature };
   const cwd = options.cwd;
   const files = discoverSourceFiles(cwd);
   const build = buildIndexTolerant(files);
@@ -547,7 +558,8 @@ export async function runLoop(options: LoopOptions): Promise<LoopResult> {
   while (selectionFailures < maxRetries) {
     let response: ChatResponse;
     try {
-      response = await options.provider.chat(messages, undefined, chatOptions);
+      // Staged reasoning policy (#35): selection is a low-effort step.
+      response = await options.provider.chat(messages, undefined, withEffort(chatOptions, "low"));
     } catch (error) {
       return {
         ok: false,
@@ -652,7 +664,11 @@ export async function runLoop(options: LoopOptions): Promise<LoopResult> {
   for (let editAttempt = 0; editAttempt < maxRetries; editAttempt += 1) {
     let response: ChatResponse;
     try {
-      response = await options.provider.chat(messages, undefined, chatOptions);
+      // Staged reasoning policy (#35): generation starts at the provider default;
+      // attempts after a failed verification step up to medium effort.
+      const editOptions =
+        editAttempt === 0 ? chatOptions : withEffort(chatOptions, "medium");
+      response = await options.provider.chat(messages, undefined, editOptions);
     } catch (error) {
       // A previous attempt that failed verification ran restoreTarget before this
       // chat call, so no uncommitted edit remains on disk at this point.

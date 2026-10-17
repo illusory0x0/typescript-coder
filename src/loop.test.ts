@@ -19,7 +19,7 @@ import {
   stripCodeFences,
 } from "./loop";
 import type { ProviderLike } from "./loop";
-import type { ChatMessage, ChatResponse, ToolDefinition } from "./openai";
+import type { ChatMessage, ChatOptions, ChatResponse, ToolDefinition } from "./openai";
 import { Parser } from "./parser";
 import { buildIndexTolerant } from "./utility";
 import type { SourceFile } from "./utility";
@@ -440,16 +440,18 @@ type ScriptedResponse = string | { toolCall: { name: string; arguments: string }
 class ScriptedProvider implements ProviderLike {
   readonly calls: ChatMessage[][] = [];
   readonly toolsArgs: (ToolDefinition[] | undefined)[] = [];
+  readonly optionCalls: (ChatOptions | undefined)[] = [];
 
   constructor(private readonly responses: ScriptedResponse[]) {}
 
   async chat(
     messages: ChatMessage[],
     tools?: ToolDefinition[],
-    _options?: { temperature?: number },
+    options?: ChatOptions,
   ): Promise<ChatResponse> {
     this.calls.push(structuredClone(messages));
     this.toolsArgs.push(tools);
+    this.optionCalls.push(options);
     const response = this.responses.shift();
     if (response === undefined) {
       throw new Error("no scripted response");
@@ -1414,5 +1416,79 @@ describe("attempt observability", () => {
     });
     expect(result.ok).toBe(true);
     expect(result.attempts[0]?.finishReason).toBe("length");
+  }, 30000);
+});
+
+describe("staged reasoning policy", () => {
+  const passingCommand = ["bun", "-e", "process.exit(0)"];
+  const failingCommand = ["bun", "-e", "process.exit(1)"];
+
+  test("runs both selection attempts at low effort and the first edit at the default", async () => {
+    const dir = fixtureDir();
+    const provider = new ScriptedProvider([
+      "not json",
+      '{"path":"src/helper.ts","name":"answer","kind":"function"}',
+      "function answer(): number {\n  return 2;\n}\n",
+    ]);
+    const result = await runLoop({
+      cwd: dir,
+      issue: "make the answer test pass",
+      model: "fake",
+      provider,
+      checkCommand: passingCommand,
+      testCommand: passingCommand,
+    });
+    expect(result.ok).toBe(true);
+    expect(provider.optionCalls).toEqual([
+      { reasoningEffort: "low" },
+      { reasoningEffort: "low" },
+      undefined,
+    ]);
+  }, 30000);
+
+  test("steps generation retries after a failed verification up to medium", async () => {
+    const dir = fixtureDir();
+    const badReplacement = 'function answer(): number {\n  return "nope";\n}';
+    const provider = new ScriptedProvider([
+      '{"path":"src/helper.ts","name":"answer","kind":"function"}',
+      badReplacement,
+      badReplacement,
+      badReplacement,
+      "the replacement never typechecks",
+    ]);
+    const result = await runLoop({
+      cwd: dir,
+      issue: "make the answer test pass",
+      model: "fake",
+      provider,
+      temperature: 0,
+      checkCommand: failingCommand,
+      testCommand: failingCommand,
+    });
+    expect(result.ok).toBe(false);
+    expect(provider.optionCalls).toEqual([
+      { temperature: 0, reasoningEffort: "low" },
+      { temperature: 0 },
+      { temperature: 0, reasoningEffort: "medium" },
+      { temperature: 0, reasoningEffort: "medium" },
+      { temperature: 0 },
+    ]);
+  }, 30000);
+
+  test("keeps the explanation call at the default effort", async () => {
+    const dir = fixtureDir();
+    const provider = new ScriptedProvider([
+      '{"path":"../escape.ts","name":"nope","kind":"function"}',
+      "the symbol does not exist in the project",
+    ]);
+    const result = await runLoop({
+      cwd: dir,
+      issue: "make the answer test pass",
+      model: "fake",
+      provider,
+      maxRetries: 1,
+    });
+    expect(result.ok).toBe(false);
+    expect(provider.optionCalls).toEqual([{ reasoningEffort: "low" }, undefined]);
   }, 30000);
 });

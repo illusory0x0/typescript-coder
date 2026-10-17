@@ -13,6 +13,14 @@ const DEFAULT_RETRIES = 2;
 const RETRY_BASE_DELAY_MS = 1000;
 const RETRY_AFTER_MAX_MS = 10_000;
 
+export type ReasoningEffort = "low" | "medium" | "high";
+
+export interface ChatOptions {
+  temperature?: number;
+  /** Sent to the API as the snake_case `reasoning_effort` field. */
+  reasoningEffort?: ReasoningEffort;
+}
+
 export interface ChatMessage {
   role: "system" | "user" | "assistant" | "tool";
   content: string | null;
@@ -52,6 +60,7 @@ interface ChatRequestBody {
   messages: SerializedMessage[];
   tools?: ToolDefinition[];
   temperature?: number;
+  reasoning_effort?: ReasoningEffort;
 }
 
 export function readConfigFromEnv(model: string): OpenAIConfig {
@@ -185,7 +194,7 @@ export class OpenAIProvider {
   async chat(
     messages: ChatMessage[],
     tools?: ToolDefinition[],
-    options?: { temperature?: number },
+    options?: ChatOptions,
   ): Promise<ChatResponse> {
     const body: ChatRequestBody = {
       model: this.config.model,
@@ -196,6 +205,9 @@ export class OpenAIProvider {
     }
     if (options?.temperature !== undefined) {
       body.temperature = options.temperature;
+    }
+    if (options?.reasoningEffort !== undefined) {
+      body.reasoning_effort = options.reasoningEffort;
     }
 
     const url = `${this.config.baseUrl}/chat/completions`;

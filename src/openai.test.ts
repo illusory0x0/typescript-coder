@@ -228,6 +228,45 @@ test("includes temperature only when provided", async () => {
   expect(requestBody(requests[1])["temperature"]).toBe(0);
 });
 
+test("includes reasoning_effort when provided", async () => {
+  const { fetchImpl, requests } = mockFetch(() => textResponse("hi"));
+  const provider = new OpenAIProvider(config, fetchImpl);
+
+  await provider.chat([{ role: "user", content: "hello" }], undefined, {
+    reasoningEffort: "low",
+  });
+
+  expect(requestBody(requests[0])["reasoning_effort"]).toBe("low");
+});
+
+test("omits reasoning_effort when not provided", async () => {
+  const { fetchImpl, requests } = mockFetch(() => textResponse("hi"));
+  const provider = new OpenAIProvider(config, fetchImpl);
+
+  await provider.chat([{ role: "user", content: "hello" }]);
+  await provider.chat([{ role: "user", content: "hello" }], undefined, { temperature: 0 });
+
+  expect(Object.hasOwn(requestBody(requests[0]), "reasoning_effort")).toBe(false);
+  expect(Object.hasOwn(requestBody(requests[1]), "reasoning_effort")).toBe(false);
+});
+
+test("keeps reasoning_effort on a retried request", async () => {
+  const { fetchImpl, requests } = queueFetch([
+    () => new Response("boom", { status: 500 }),
+    () => textResponse("hi"),
+  ]);
+  const { sleep } = mockSleep();
+  const provider = new OpenAIProvider(config, fetchImpl, sleep);
+
+  await provider.chat([{ role: "user", content: "hello" }], undefined, {
+    reasoningEffort: "medium",
+  });
+
+  expect(requests).toHaveLength(2);
+  expect(requestBody(requests[0])["reasoning_effort"]).toBe("medium");
+  expect(requestBody(requests[1])["reasoning_effort"]).toBe("medium");
+});
+
 test("maps content, tool calls, and finish reason from the response", async () => {
   const payload = {
     id: "chatcmpl-1",
