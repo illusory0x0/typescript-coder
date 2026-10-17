@@ -2,3 +2,116 @@
 # leaf; once no leaf is available, the highest-priority available umbrella.
 # Available = deps done (an umbrella also needs all children done).
 # Tie-break by id.
+
+- id: 29
+  title: "Record per-attempt summaries and replay bundles"
+  status: todo
+  priority: high
+  milestone: null
+  parent: 28
+  deps: []
+  file: 0029-per-attempt-observability.md
+- id: 30
+  title: "Retry convergence: keep progress, reset context, guard truncation"
+  status: todo
+  priority: high
+  milestone: null
+  parent: 28
+  deps: [29]
+  file: 0030-retry-convergence.md
+- id: 31
+  title: "Anchor splice protocol: edits JSON with structural anchor matching"
+  status: todo
+  priority: high
+  milestone: null
+  parent: 28
+  deps: [30]
+  file: 0031-anchor-splice-protocol.md
+- id: 32
+  title: "Locator robustness: tolerant extraction, kind fallback, append guard"
+  status: todo
+  priority: high
+  milestone: null
+  parent: 28
+  deps: [29]
+  file: 0032-locator-robustness.md
+- id: 33
+  title: "Multi-edit attempts: serial application of N anchored edits"
+  status: todo
+  priority: high
+  milestone: null
+  parent: 28
+  deps: [31]
+  file: 0033-multi-edit-attempts.md
+- id: 34
+  title: "Spec visibility: include test files and issue-mentioned files in context"
+  status: todo
+  priority: high
+  milestone: null
+  parent: 28
+  deps: []
+  file: 0034-spec-visibility.md
+- id: 35
+  title: "Reasoning control probe and staged policy"
+  status: todo
+  priority: high
+  milestone: null
+  parent: 28
+  deps: []
+  file: 0035-reasoning-control-probe.md
+- id: 36
+  title: "Run budget: progress-based attempt extension and hard token cap"
+  status: todo
+  priority: high
+  milestone: null
+  parent: 28
+  deps: [30]
+  file: 0036-run-budget.md
+- id: 37
+  title: "Consumption ledger under benchmark/results"
+  status: todo
+  priority: high
+  milestone: null
+  parent: 28
+  deps: []
+  file: 0037-consumption-ledger.md
+- id: 38
+  title: "Structured diagnostics: stages, line mapping, failure extraction"
+  status: todo
+  priority: high
+  milestone: null
+  parent: 28
+  deps: []
+  file: 0038-structured-diagnostics.md
+- id: 39
+  title: "Provider resilience: bounded backoff on 429/5xx"
+  status: todo
+  priority: high
+  milestone: null
+  parent: 28
+  deps: []
+  file: 0039-provider-backoff.md
+- id: 40
+  title: "Replay runner: offline iteration on recorded bundles"
+  status: todo
+  priority: high
+  milestone: null
+  parent: 28
+  deps: [29]
+  file: 0040-replay-runner.md
+- id: 41
+  title: "Create-mode repair: keep partial files and iterate with anchors"
+  status: todo
+  priority: high
+  milestone: null
+  parent: 28
+  deps: [30, 31]
+  file: 0041-create-mode-repair.md
+- id: 28
+  title: "Cut harness token consumption below the opencode baseline"
+  status: todo
+  priority: high
+  milestone: null
+  parent: null
+  deps: []
+  file: 0028-consumption-below-opencode.md

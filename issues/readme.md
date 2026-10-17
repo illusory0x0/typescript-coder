@@ -37,6 +37,21 @@ digraph issues {
 
   "27" [label="#27 Parallel benchmark"];
 
+  "28" [label="#28 Consumption below opencode"];
+  "29" [label="#29 Per-attempt observability"];
+  "30" [label="#30 Retry convergence"];
+  "31" [label="#31 Anchor splice protocol"];
+  "32" [label="#32 Locator robustness"];
+  "33" [label="#33 Multi-edit attempts"];
+  "34" [label="#34 Spec visibility"];
+  "35" [label="#35 Reasoning control"];
+  "36" [label="#36 Run budget"];
+  "37" [label="#37 Consumption ledger"];
+  "38" [label="#38 Structured diagnostics"];
+  "39" [label="#39 Provider backoff"];
+  "40" [label="#40 Replay runner"];
+  "41" [label="#41 Create-mode repair"];
+
   // tree edges (parent -> child), solid
   "1" -> "2";
   "1" -> "3";
@@ -54,6 +69,19 @@ digraph issues {
   "16" -> "18";
   "16" -> "19";
   "16" -> "27";
+  "28" -> "29";
+  "28" -> "30";
+  "28" -> "31";
+  "28" -> "32";
+  "28" -> "33";
+  "28" -> "34";
+  "28" -> "35";
+  "28" -> "36";
+  "28" -> "37";
+  "28" -> "38";
+  "28" -> "39";
+  "28" -> "40";
+  "28" -> "41";
 
   // dependency edges (blocker -> blocked), dashed
   "2" -> "3" [style=dashed, label="blocks"];
@@ -72,5 +100,13 @@ digraph issues {
   "17" -> "18" [style=dashed, label="blocks"];
   "18" -> "19" [style=dashed, label="blocks"];
   "27" -> "19" [style=dashed, label="blocks"];
+  "29" -> "30" [style=dashed, label="blocks"];
+  "29" -> "32" [style=dashed, label="blocks"];
+  "29" -> "40" [style=dashed, label="blocks"];
+  "30" -> "31" [style=dashed, label="blocks"];
+  "30" -> "36" [style=dashed, label="blocks"];
+  "30" -> "41" [style=dashed, label="blocks"];
+  "31" -> "33" [style=dashed, label="blocks"];
+  "31" -> "41" [style=dashed, label="blocks"];
 }
 ```
