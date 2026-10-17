@@ -35,6 +35,8 @@ digraph issues {
   "25" [label="#25 Provider timeout"];
   "26" [label="#26 Hygiene pack"];
 
+  "27" [label="#27 Parallel benchmark"];
+
   // tree edges (parent -> child), solid
   "1" -> "2";
   "1" -> "3";
@@ -51,6 +53,7 @@ digraph issues {
   "16" -> "17";
   "16" -> "18";
   "16" -> "19";
+  "16" -> "27";
 
   // dependency edges (blocker -> blocked), dashed
   "2" -> "3" [style=dashed, label="blocks"];
@@ -68,5 +71,6 @@ digraph issues {
   "15" -> "18" [style=dashed, label="blocks"];
   "17" -> "18" [style=dashed, label="blocks"];
   "18" -> "19" [style=dashed, label="blocks"];
+  "27" -> "19" [style=dashed, label="blocks"];
 }
 ```

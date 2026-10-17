@@ -5,7 +5,7 @@ status: todo
 priority: medium
 milestone: null
 parent: 16
-deps: [18]
+deps: [18, 27]
 labels: [benchmark]
 created: 2026-10-17
 ---

@@ -28,6 +28,7 @@ interface CliArgs {
   task: TaskName | null;
   all: boolean;
   reps: number;
+  concurrency: number;
   pilot: boolean;
   side: SideSelection;
   model: string;
@@ -126,6 +127,12 @@ interface RunContext {
   readonly runRoot: string;
 }
 
+interface BenchmarkJob {
+  readonly task: TaskName;
+  readonly side: Side;
+  readonly rep: number;
+}
+
 interface OpencodeContext {
   readonly bin: string;
   readonly version: string;
@@ -164,6 +171,7 @@ const TASK_ISSUES: Record<TaskName, string> = {
 
 const DEFAULT_MODEL = "deepseek-v4.1-flash";
 const DEFAULT_REPS = 3;
+const DEFAULT_CONCURRENCY = 4;
 const PILOT_REPS = 1;
 const OPENCODE_PROVIDER = "honghong";
 const OPENCODE_FALLBACK_BIN = "/home/illu/.opencode/bin/opencode";
@@ -204,6 +212,7 @@ Options:
   --task <json-parser|sexp-parser|minilisp>  run a single task (default: all)
   --all                                      run all tasks (default)
   --reps <n>                                 repetitions per task and side (default: 3)
+  --concurrency <n>                          max parallel runs (default: ${DEFAULT_CONCURRENCY})
   --pilot                                    force 1 rep per task and side and write
                                              benchmark/results/pilot-<date>.json
   --side ts|opencode|both                    which side(s) to run (default: both)
@@ -223,6 +232,17 @@ function parseReps(value: string): number {
     failUsage(`invalid --reps value: ${value}`);
   }
   return reps;
+}
+
+function parseConcurrency(value: string): number {
+  if (!/^\d+$/.test(value)) {
+    failUsage(`invalid --concurrency value: ${value}`);
+  }
+  const concurrency = Number(value);
+  if (!Number.isSafeInteger(concurrency) || concurrency < 1) {
+    failUsage(`invalid --concurrency value: ${value}`);
+  }
+  return concurrency;
 }
 
 function parseSide(value: string): SideSelection {
@@ -245,6 +265,7 @@ function parseArgs(argv: string[]): CliArgs {
     task: null,
     all: false,
     reps: DEFAULT_REPS,
+    concurrency: DEFAULT_CONCURRENCY,
     pilot: false,
     side: "both",
     model: DEFAULT_MODEL,
@@ -290,6 +311,15 @@ function parseArgs(argv: string[]): CliArgs {
           failUsage("missing value for --reps");
         }
         args.reps = parseReps(value);
+        index += 1;
+        break;
+      }
+      case "--concurrency": {
+        const value = argv[index + 1];
+        if (value === undefined || value.startsWith("-")) {
+          failUsage("missing value for --concurrency");
+        }
+        args.concurrency = parseConcurrency(value);
         index += 1;
         break;
       }
@@ -1046,16 +1076,44 @@ async function main(): Promise<number> {
     runRoot,
   };
 
+  const jobs: BenchmarkJob[] = [];
   for (const task of tasks) {
     for (const side of sides) {
       for (let rep = 1; rep <= reps; rep += 1) {
-        const record = await runOnce(task, side, rep, context);
-        report.runs.push(record);
-        printRecord(record);
-        if (record.infraError !== null) {
-          report.infraErrors.push(record.infraError);
-        }
+        jobs.push({ task, side, rep });
       }
+    }
+  }
+
+  // Bounded worker pool: workers claim jobs by index so each run keeps its own
+  // workspace, session, and logs. Completion order only affects the interleaved
+  // prints; `report.runs` is rebuilt from `records` in job order afterwards.
+  const records = new Array<RunRecord>(jobs.length);
+  let next = 0;
+  const workers = Array.from(
+    { length: Math.min(args.concurrency, jobs.length) },
+    async (): Promise<void> => {
+      for (;;) {
+        const i = next++;
+        const job = jobs[i];
+        if (job === undefined) {
+          return;
+        }
+        process.stdout.write(
+          `starting ${job.task} ${job.side} rep${job.rep} (${i + 1}/${jobs.length})\n`,
+        );
+        const record = await runOnce(job.task, job.side, job.rep, context);
+        records[i] = record;
+        printRecord(record);
+      }
+    },
+  );
+  await Promise.all(workers);
+
+  for (const record of records) {
+    report.runs.push(record);
+    if (record.infraError !== null) {
+      report.infraErrors.push(record.infraError);
     }
   }
 

@@ -8,16 +8,19 @@ CLI (`opencode`) on identical fixture copies, prompts, and model.
     bun run benchmark/run.ts --all --pilot
     bun run benchmark/run.ts --task json-parser --side ts --reps 2 --keep
 
-Flags: `--task`, `--all` (default), `--reps <n>` (default 3), `--pilot`
-(1 rep per task and side, writes `benchmark/results/pilot-<date>.json`),
-`--side ts|opencode|both`, `--model` (default `deepseek-v4.1-flash`), `--keep`,
-`--json <path>`, `--help`. Non-pilot results default to
-`benchmark/results/<date>.json`.
+Flags: `--task`, `--all` (default), `--reps <n>` (default 3), `--concurrency
+<n>` (default 4, max parallel runs), `--pilot` (1 rep per task and side, writes
+`benchmark/results/pilot-<date>.json`), `--side ts|opencode|both`, `--model`
+(default `deepseek-v4.1-flash`), `--keep`, `--json <path>`, `--help`. Non-pilot
+results default to `benchmark/results/<date>.json`.
 
 Each run gets a fresh workspace under `tmp/benchmark/<stamp>/` (fixture copy plus
 its own git repo, so the agent cannot reach this repository's
 `benchmark/references/`). The judge is `bun test` + `tsc --noEmit` + byte
-equality of the fixture's `src/*.test.ts` and `tsconfig.json`.
+equality of the fixture's `src/*.test.ts` and `tsconfig.json`. The task × side ×
+rep matrix runs through a bounded worker pool (`--concurrency`, default 4); each
+run keeps its own workspace, git repo, session, and logs, and `report.runs`
+stays in matrix order even though runs finish in arbitrary order.
 
 ## Metrics per record
 
