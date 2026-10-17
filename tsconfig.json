@@ -17,5 +17,6 @@
     "skipLibCheck": true,
     "noEmit": true
   },
-  "include": ["src", "acceptance"]
+  "include": ["src", "acceptance", "benchmark"],
+  "exclude": ["benchmark/fixtures"]
 }

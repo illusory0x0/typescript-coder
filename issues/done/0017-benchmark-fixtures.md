@@ -1,7 +1,7 @@
 ---
 id: 17
 title: Benchmark fixtures G1–G3 as test-only spec projects
-status: todo
+status: done
 priority: medium
 milestone: null
 parent: 16
