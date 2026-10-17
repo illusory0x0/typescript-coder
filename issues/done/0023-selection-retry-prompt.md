@@ -1,7 +1,7 @@
 ---
 id: 23
 title: "Loop: correct the selection-retry prompt and echo the rejected response"
-status: todo
+status: done
 priority: medium
 milestone: null
 parent: null
@@ -55,3 +55,9 @@ bun run accept
   deps.
 - Non-goals: changing the maximum number of selection retries (stays
   `maxRetries`).
+- Validation (2026-10-17): the retry test asserts the stable prefix is
+  byte-identical and the tail grows by exactly two messages (rejected response
+  echo + retry prompt); the exhausted-retries path breaks before the echo
+  (explain call stays `["system", "user", "user"]`). Edge recorded for #24: a
+  rejected locator arriving as a tool call has `response.content === null`, so
+  the echo is empty — tool-call arguments are not echoed.

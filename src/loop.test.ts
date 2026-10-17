@@ -7,6 +7,7 @@ import {
   buildContextYaml,
   buildDiagnosticsPrompt,
   buildReplacementPrompt,
+  buildSelectionRetryPrompt,
   buildSystemPrompt,
   buildUserPrompt,
   discoverSourceFiles,
@@ -194,6 +195,17 @@ describe("prompt builders", () => {
     expect(prompt).toContain("failed verification");
     expect(prompt).toContain(diagnostics);
     expect(prompt).toContain("COMPLETE replacement");
+  });
+
+  test("buildSelectionRetryPrompt asks for a corrected locator without replacement wording", () => {
+    const diagnostics = "invalid locator: model did not return a valid locator JSON";
+    const prompt = buildSelectionRetryPrompt(diagnostics);
+    expect(prompt).toContain("locator was rejected");
+    expect(prompt).toContain(diagnostics);
+    expect(prompt).toContain("```");
+    expect(prompt).toContain("no markdown fences");
+    expect(prompt).toContain("corrected locator JSON object");
+    expect(prompt.toLowerCase()).not.toContain("replacement");
   });
 });
 
@@ -450,17 +462,28 @@ describe("runLoop", () => {
     expect(result.attempts.length).toBe(2);
     expect(result.attempts[0]?.replacement).toBeNull();
     expect(result.attempts[0]?.diagnostics).toContain("invalid locator");
-    const retryMessages = provider.calls[1] ?? [];
-    expect(
-      retryMessages.some(
-        (message) =>
-          typeof message.content === "string" && message.content.includes("invalid locator"),
-      ),
-    ).toBe(true);
-    expect(provider.calls[1]?.[0]?.content).toBe(buildSystemPrompt());
-    expect(provider.calls[1]?.[1]?.content).toBe(
+
+    const initialMessages = provider.calls[0] ?? [];
+    expect(initialMessages).toHaveLength(2);
+    expect(initialMessages[0]?.role).toBe("system");
+    expect(initialMessages[0]?.content).toBe(buildSystemPrompt());
+    expect(initialMessages[1]?.role).toBe("user");
+    expect(initialMessages[1]?.content).toBe(
       buildUserPrompt(issue, buildContextYaml(discoverSourceFiles(dir))),
     );
+
+    const retryMessages = provider.calls[1] ?? [];
+    expect(retryMessages.slice(0, initialMessages.length)).toEqual(initialMessages);
+    expect(retryMessages.length - initialMessages.length).toBe(2);
+    const tail = retryMessages.slice(initialMessages.length);
+    expect(tail[0]).toEqual({ role: "assistant", content: "not json" });
+    expect(tail[1]?.role).toBe("user");
+    const retryPrompt = tail[1]?.content ?? "";
+    expect(retryPrompt).toBe(buildSelectionRetryPrompt(result.attempts[0]?.diagnostics ?? ""));
+    expect(retryPrompt.toLowerCase()).toContain("locator");
+    expect(retryPrompt.toLowerCase()).not.toContain("replacement");
+    expect(retryPrompt).toContain("no markdown fences");
+    expect(retryPrompt).toContain("invalid locator");
     expect(helperSource(dir)).toContain("return 2;");
   }, 30000);
 
@@ -486,6 +509,11 @@ describe("runLoop", () => {
     expect(result.attempts[0]?.diagnostics).toContain("invalid locator");
     expect(result.explanation ?? "").not.toBe("");
     expect(helperSource(dir)).toContain("return 1;");
+
+    expect(provider.calls.length).toBe(2);
+    const explainCall = provider.calls[1] ?? [];
+    expect(explainCall.map((message) => message.role)).toEqual(["system", "user", "user"]);
+    expect(explainCall[explainCall.length - 1]?.content).toContain("Explain");
   }, 30000);
 
   test("rolls back a failing edit and retries with diagnostics", async () => {

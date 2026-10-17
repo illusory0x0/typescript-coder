@@ -185,6 +185,19 @@ Output a corrected COMPLETE replacement for the selected symbol, with no markdow
 `;
 }
 
+export function buildSelectionRetryPrompt(diagnostics: string): string {
+  return `The previous locator was rejected.
+
+Diagnostics:
+
+\`\`\`
+${diagnostics}
+\`\`\`
+
+Output ONLY a corrected locator JSON object { "path": ..., "name": ..., "kind": ... }, with no markdown fences and no prose.
+`;
+}
+
 export function stripCodeFences(text: string): string {
   const trimmed = text.trim();
   if (trimmed.length < 6 || !trimmed.startsWith("```") || !trimmed.endsWith("```")) {
@@ -464,7 +477,8 @@ export async function runLoop(options: LoopOptions): Promise<LoopResult> {
       if (selectionFailures >= maxRetries) {
         break;
       }
-      messages.push({ role: "user", content: buildDiagnosticsPrompt(diagnostic) });
+      messages.push({ role: "assistant", content: response.content ?? "" });
+      messages.push({ role: "user", content: buildSelectionRetryPrompt(diagnostic) });
       continue;
     }
     if (candidate !== null) {

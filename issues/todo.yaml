@@ -3,22 +3,6 @@
 # Available = deps done (an umbrella also needs all children done).
 # Tie-break by id.
 
-- id: 19
-  title: "Full benchmark run and report"
-  status: todo
-  priority: medium
-  milestone: null
-  parent: 16
-  deps: [18]
-  file: 0019-benchmark-full-run-report.md
-- id: 23
-  title: "Loop: correct the selection-retry prompt and echo the rejected response"
-  status: todo
-  priority: medium
-  milestone: null
-  parent: null
-  deps: []
-  file: 0023-selection-retry-prompt.md
 - id: 24
   title: "Spec: declare tools internal-only for v1 (remove loop tools plumbing)"
   status: todo
@@ -43,6 +27,14 @@
   parent: null
   deps: []
   file: 0026-hygiene-context-diagnostics.md
+- id: 19
+  title: "Full benchmark run and report"
+  status: todo
+  priority: medium
+  milestone: null
+  parent: 16
+  deps: [18]
+  file: 0019-benchmark-full-run-report.md
 - id: 16
   title: "Token benchmark vs opencode CLI on generation tasks (G1–G3)"
   status: todo
