@@ -1,7 +1,7 @@
 ---
 id: 18
 title: Benchmark harness and pilot run
-status: todo
+status: done
 priority: medium
 milestone: null
 parent: 16
@@ -112,3 +112,19 @@ plus: inspect the pilot JSON (6 records, token fields populated) and optionally
   workspace's `src/*.test.ts` is discovered).
 - Optional: `benchmark/README.md` with usage and metric definitions.
 - Non-goals: CI wiring, parallel run execution, statistical analysis.
+
+## Validation (2026-10-17)
+
+- Pilot: `benchmark/results/pilot-2026-10-17.json` — 6 records, `infraErrors: []`,
+  5/6 judged ok; the single failure (sexp-parser/ts) is a genuine model failure
+  recorded as data (fixture bytes identical).
+- Isolation fix: opencode v2.0.31 derives its session directory from `PWD`, which
+  `Bun.spawn({cwd})` does not update; an early pilot attempt escaped the
+  workspace (repo writes were removed and the repo re-verified clean). The
+  harness now sets `PWD=cwd` on every spawn and `git init`s each workspace;
+  re-verified clean after fresh live runs.
+- Tamper check (reproduced by the main agent 2026-10-17): a modified
+  `src/json.test.ts` fails the judge on byte-equality even while tests and tsc
+  still pass.
+- `cost` is no longer always 0 on the gateway: session exports include small
+  costs, recorded verbatim and not compared.

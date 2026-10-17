@@ -3,14 +3,6 @@
 # Available = deps done (an umbrella also needs all children done).
 # Tie-break by id.
 
-- id: 18
-  title: "Benchmark harness and pilot run"
-  status: todo
-  priority: medium
-  milestone: null
-  parent: 16
-  deps: [15, 17]
-  file: 0018-benchmark-harness-pilot.md
 - id: 19
   title: "Full benchmark run and report"
   status: todo
