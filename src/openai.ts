@@ -3,9 +3,15 @@ export interface OpenAIConfig {
   baseUrl: string;
   model: string;
   timeoutMs?: number;
+  /** Additional attempts after a retryable failure; defaults to 2. */
+  retries?: number;
 }
 
 export const DEFAULT_TIMEOUT_MS = 120_000;
+
+const DEFAULT_RETRIES = 2;
+const RETRY_BASE_DELAY_MS = 1000;
+const RETRY_AFTER_MAX_MS = 10_000;
 
 export interface ChatMessage {
   role: "system" | "user" | "assistant" | "tool";
@@ -107,13 +113,44 @@ function errorMessage(error: unknown): string {
   return error instanceof Error ? error.message : String(error);
 }
 
+class ChatTimeoutError extends Error {}
+
+function isRetryableStatus(status: number): boolean {
+  return status === 429 || status >= 500;
+}
+
+function retryAfterMs(header: string | null): number | null {
+  if (header === null) {
+    return null;
+  }
+  const text = header.trim();
+  if (!/^\d+$/.test(text)) {
+    return null;
+  }
+  return Math.min(Number(text) * 1000, RETRY_AFTER_MAX_MS);
+}
+
+function backoffMs(attempt: number): number {
+  return RETRY_BASE_DELAY_MS * 2 ** attempt;
+}
+
 export class OpenAIProvider {
   private readonly config: OpenAIConfig;
   private readonly fetchImpl: typeof fetch;
+  private readonly sleep: (ms: number) => Promise<void>;
 
-  constructor(config: OpenAIConfig, fetchImpl: typeof fetch = fetch) {
+  constructor(
+    config: OpenAIConfig,
+    fetchImpl: typeof fetch = fetch,
+    sleep: (ms: number) => Promise<void> = (ms) =>
+      new Promise((resolve) => setTimeout(resolve, ms)),
+  ) {
+    if (config.retries !== undefined && (!Number.isInteger(config.retries) || config.retries < 0)) {
+      throw new Error(`retries must be a non-negative integer (got ${config.retries})`);
+    }
     this.config = config;
     this.fetchImpl = fetchImpl;
+    this.sleep = sleep;
   }
 
   private async fetchWithTimeout(url: string, init: RequestInit): Promise<Response> {
@@ -125,7 +162,7 @@ export class OpenAIProvider {
       timer = setTimeout(() => {
         timedOut = true;
         controller.abort();
-        reject(new Error(`chat request timed out after ${timeoutMs} ms`));
+        reject(new ChatTimeoutError(`chat request timed out after ${timeoutMs} ms`));
       }, timeoutMs);
     });
     try {
@@ -135,7 +172,7 @@ export class OpenAIProvider {
       ]);
     } catch (error) {
       if (timedOut) {
-        throw new Error(`chat request timed out after ${timeoutMs} ms`);
+        throw new ChatTimeoutError(`chat request timed out after ${timeoutMs} ms`);
       }
       throw new Error(`chat request failed: ${errorMessage(error)}`);
     } finally {
@@ -161,46 +198,70 @@ export class OpenAIProvider {
       body.temperature = options.temperature;
     }
 
-    const response = await this.fetchWithTimeout(`${this.config.baseUrl}/chat/completions`, {
+    const url = `${this.config.baseUrl}/chat/completions`;
+    const init: RequestInit = {
       method: "POST",
       headers: {
         "content-type": "application/json",
         authorization: `Bearer ${this.config.apiKey}`,
       },
       body: JSON.stringify(body),
-    });
-
-    if (!response.ok) {
-      const bodyText = await response.text();
-      throw new Error(`chat request failed: ${response.status} ${bodyText.slice(0, 500)}`);
-    }
-
-    let raw: unknown;
-    try {
-      raw = await response.json();
-    } catch {
-      throw new Error("chat response is not valid JSON");
-    }
-
-    if (!isRecord(raw)) {
-      throw new Error("chat response is not a JSON object");
-    }
-    const choices = raw["choices"];
-    if (!Array.isArray(choices) || choices.length === 0) {
-      throw new Error("chat response has no choices");
-    }
-    const choice = choices[0];
-    if (!isRecord(choice) || !isRecord(choice["message"])) {
-      throw new Error("chat response choice has no message");
-    }
-    const message = choice["message"];
-    const content = message["content"];
-    const finishReason = choice["finish_reason"];
-    return {
-      content: typeof content === "string" ? content : null,
-      toolCalls: parseToolCalls(message["tool_calls"]),
-      finishReason: typeof finishReason === "string" ? finishReason : null,
-      raw,
     };
+    const retries = this.config.retries ?? DEFAULT_RETRIES;
+
+    for (let attempt = 0; ; attempt += 1) {
+      let response: Response;
+      try {
+        response = await this.fetchWithTimeout(url, init);
+      } catch (error) {
+        // #25 semantics: timeouts surface immediately and are never retried.
+        if (error instanceof ChatTimeoutError) {
+          throw error;
+        }
+        if (attempt >= retries) {
+          throw error;
+        }
+        await this.sleep(backoffMs(attempt));
+        continue;
+      }
+
+      if (!response.ok) {
+        const bodyText = await response.text();
+        if (!isRetryableStatus(response.status) || attempt >= retries) {
+          throw new Error(`chat request failed: ${response.status} ${bodyText.slice(0, 500)}`);
+        }
+        const retryAfter = retryAfterMs(response.headers.get("retry-after"));
+        await this.sleep(retryAfter ?? backoffMs(attempt));
+        continue;
+      }
+
+      let raw: unknown;
+      try {
+        raw = await response.json();
+      } catch {
+        throw new Error("chat response is not valid JSON");
+      }
+
+      if (!isRecord(raw)) {
+        throw new Error("chat response is not a JSON object");
+      }
+      const choices = raw["choices"];
+      if (!Array.isArray(choices) || choices.length === 0) {
+        throw new Error("chat response has no choices");
+      }
+      const choice = choices[0];
+      if (!isRecord(choice) || !isRecord(choice["message"])) {
+        throw new Error("chat response choice has no message");
+      }
+      const message = choice["message"];
+      const content = message["content"];
+      const finishReason = choice["finish_reason"];
+      return {
+        content: typeof content === "string" ? content : null,
+        toolCalls: parseToolCalls(message["tool_calls"]),
+        finishReason: typeof finishReason === "string" ? finishReason : null,
+        raw,
+      };
+    }
   }
 }

@@ -25,6 +25,35 @@ function mockFetch(responseFactory: () => Response): {
   return { fetchImpl, requests };
 }
 
+function queueFetch(steps: Array<() => Response>): {
+  fetchImpl: typeof fetch;
+  requests: CapturedRequest[];
+} {
+  const requests: CapturedRequest[] = [];
+  let index = 0;
+  const fetchImpl = (async (input: string | URL | Request, init?: RequestInit) => {
+    requests.push({ url: String(input), init });
+    const step = steps[index];
+    index += 1;
+    if (step === undefined) {
+      throw new Error("unexpected fetch call");
+    }
+    return step();
+  }) as unknown as typeof fetch;
+  return { fetchImpl, requests };
+}
+
+function mockSleep(): { sleep: (ms: number) => Promise<void>; delays: number[] } {
+  const delays: number[] = [];
+  return {
+    delays,
+    sleep: (ms) => {
+      delays.push(ms);
+      return Promise.resolve();
+    },
+  };
+}
+
 function jsonResponse(payload: unknown, status = 200): Response {
   return new Response(JSON.stringify(payload), {
     status,
@@ -266,7 +295,7 @@ test("serializes assistant tool calls and tool results", async () => {
 
 test("rejects with status and body on a non-2xx response", async () => {
   const { fetchImpl } = mockFetch(() => new Response("rate limited", { status: 429 }));
-  const provider = new OpenAIProvider(config, fetchImpl);
+  const provider = new OpenAIProvider({ ...config, retries: 0 }, fetchImpl);
 
   await expect(provider.chat([{ role: "user", content: "hi" }])).rejects.toThrow(
     "chat request failed: 429 rate limited",
@@ -275,7 +304,7 @@ test("rejects with status and body on a non-2xx response", async () => {
 
 test("truncates a long error body", async () => {
   const { fetchImpl } = mockFetch(() => new Response("x".repeat(1000), { status: 500 }));
-  const provider = new OpenAIProvider(config, fetchImpl);
+  const provider = new OpenAIProvider({ ...config, retries: 0 }, fetchImpl);
 
   await expect(provider.chat([{ role: "user", content: "hi" }])).rejects.toThrow(
     /^chat request failed: 500 x{500}$/,
@@ -284,7 +313,9 @@ test("truncates a long error body", async () => {
 
 test("times out and aborts when fetch never resolves", async () => {
   const captured: { signal: AbortSignal | null } = { signal: null };
+  let calls = 0;
   const fetchImpl = (async (_input: string | URL | Request, init?: RequestInit) => {
+    calls += 1;
     captured.signal = init?.signal ?? null;
     return new Promise<Response>(() => {});
   }) as unknown as typeof fetch;
@@ -295,17 +326,157 @@ test("times out and aborts when fetch never resolves", async () => {
   );
   expect(captured.signal).toBeInstanceOf(AbortSignal);
   expect(captured.signal?.aborted).toBe(true);
+  expect(calls).toBe(1);
 });
 
 test("wraps fetch failures with the original message", async () => {
   const fetchImpl = (async () => {
     throw new Error("connect ECONNREFUSED");
   }) as unknown as typeof fetch;
-  const provider = new OpenAIProvider(config, fetchImpl);
+  const provider = new OpenAIProvider({ ...config, retries: 0 }, fetchImpl);
 
   await expect(provider.chat([{ role: "user", content: "hi" }])).rejects.toThrow(
     "chat request failed: connect ECONNREFUSED",
   );
+});
+
+test("retries a 429 after the default backoff and succeeds", async () => {
+  const { fetchImpl, requests } = queueFetch([
+    () => new Response("rate limited", { status: 429 }),
+    () => textResponse("hi"),
+  ]);
+  const { sleep, delays } = mockSleep();
+  const provider = new OpenAIProvider(config, fetchImpl, sleep);
+
+  const response = await provider.chat([{ role: "user", content: "hello" }]);
+
+  expect(response.content).toBe("hi");
+  expect(requests).toHaveLength(2);
+  expect(delays).toEqual([1000]);
+  expect(requestBody(requests[0])).toEqual(requestBody(requests[1]));
+});
+
+test("retries 5xx responses with exponential backoff", async () => {
+  const { fetchImpl, requests } = queueFetch([
+    () => new Response("boom", { status: 500 }),
+    () => new Response("boom", { status: 502 }),
+    () => textResponse("done"),
+  ]);
+  const { sleep, delays } = mockSleep();
+  const provider = new OpenAIProvider(config, fetchImpl, sleep);
+
+  const response = await provider.chat([{ role: "user", content: "hi" }]);
+
+  expect(response.content).toBe("done");
+  expect(requests).toHaveLength(3);
+  expect(delays).toEqual([1000, 2000]);
+});
+
+test("fails after exhausting the default retry budget", async () => {
+  const { fetchImpl, requests } = queueFetch([
+    () => new Response("upstream boom", { status: 500 }),
+    () => new Response("upstream boom", { status: 500 }),
+    () => new Response("upstream boom", { status: 500 }),
+  ]);
+  const { sleep, delays } = mockSleep();
+  const provider = new OpenAIProvider(config, fetchImpl, sleep);
+
+  await expect(provider.chat([{ role: "user", content: "hi" }])).rejects.toThrow(
+    "chat request failed: 500 upstream boom",
+  );
+  expect(requests).toHaveLength(3);
+  expect(delays).toEqual([1000, 2000]);
+});
+
+test("honors Retry-After seconds on a retryable response", async () => {
+  const { fetchImpl, requests } = queueFetch([
+    () => new Response("rate limited", { status: 429, headers: { "retry-after": "2" } }),
+    () => textResponse("hi"),
+  ]);
+  const { sleep, delays } = mockSleep();
+  const provider = new OpenAIProvider(config, fetchImpl, sleep);
+
+  const response = await provider.chat([{ role: "user", content: "hi" }]);
+
+  expect(response.content).toBe("hi");
+  expect(requests).toHaveLength(2);
+  expect(delays).toEqual([2000]);
+});
+
+test("caps an oversized Retry-After value", async () => {
+  const { fetchImpl } = queueFetch([
+    () => new Response("rate limited", { status: 429, headers: { "retry-after": "999" } }),
+    () => textResponse("hi"),
+  ]);
+  const { sleep, delays } = mockSleep();
+  const provider = new OpenAIProvider(config, fetchImpl, sleep);
+
+  await provider.chat([{ role: "user", content: "hi" }]);
+
+  expect(delays).toEqual([10000]);
+});
+
+test("ignores an invalid Retry-After value", async () => {
+  const { fetchImpl } = queueFetch([
+    () => new Response("rate limited", { status: 429, headers: { "retry-after": "soon" } }),
+    () => textResponse("hi"),
+  ]);
+  const { sleep, delays } = mockSleep();
+  const provider = new OpenAIProvider(config, fetchImpl, sleep);
+
+  await provider.chat([{ role: "user", content: "hi" }]);
+
+  expect(delays).toEqual([1000]);
+});
+
+test("does not retry other 4xx responses", async () => {
+  const { fetchImpl, requests } = queueFetch([() => new Response("bad request", { status: 400 })]);
+  const { sleep, delays } = mockSleep();
+  const provider = new OpenAIProvider(config, fetchImpl, sleep);
+
+  await expect(provider.chat([{ role: "user", content: "hi" }])).rejects.toThrow(
+    "chat request failed: 400 bad request",
+  );
+  expect(requests).toHaveLength(1);
+  expect(delays).toEqual([]);
+});
+
+test("retries network-level fetch failures", async () => {
+  const { fetchImpl, requests } = queueFetch([
+    () => {
+      throw new Error("socket hang up");
+    },
+    () => textResponse("recovered"),
+  ]);
+  const { sleep, delays } = mockSleep();
+  const provider = new OpenAIProvider(config, fetchImpl, sleep);
+
+  const response = await provider.chat([{ role: "user", content: "hi" }]);
+
+  expect(response.content).toBe("recovered");
+  expect(requests).toHaveLength(2);
+  expect(delays).toEqual([1000]);
+});
+
+test("retries: 0 makes a single attempt", async () => {
+  const { fetchImpl, requests } = queueFetch([() => new Response("unavailable", { status: 503 })]);
+  const { sleep, delays } = mockSleep();
+  const provider = new OpenAIProvider({ ...config, retries: 0 }, fetchImpl, sleep);
+
+  await expect(provider.chat([{ role: "user", content: "hi" }])).rejects.toThrow(
+    "chat request failed: 503 unavailable",
+  );
+  expect(requests).toHaveLength(1);
+  expect(delays).toEqual([]);
+});
+
+test("rejects invalid retry counts", () => {
+  const { fetchImpl } = mockFetch(() => textResponse("hi"));
+  for (const retries of [-1, 1.5, Number.NaN]) {
+    expect(() => new OpenAIProvider({ ...config, retries }, fetchImpl)).toThrow(
+      `retries must be a non-negative integer (got ${retries})`,
+    );
+  }
 });
 
 test("rejects when the response body is not JSON", async () => {

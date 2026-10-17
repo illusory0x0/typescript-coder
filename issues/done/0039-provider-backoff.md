@@ -1,7 +1,7 @@
 ---
 id: 39
 title: "Provider resilience: bounded backoff on 429/5xx"
-status: todo
+status: done
 priority: high
 milestone: null
 parent: 28
@@ -49,3 +49,16 @@ plus: no live probe required; existing provider tests must stay green.
   details into loop diagnostics beyond the final error.
 - Non-goals: circuit breakers, queueing, rate limiting local concurrency
   (benchmark `--concurrency` remains the knob).
+- Validation (2026-10-17): `OpenAIConfig.retries` (default 2 additional
+  attempts) drives an internal retry loop in `chat`: retryable = 429/5xx or
+  network-level fetch failure; timeouts keep #25 semantics and are never
+  retried (fresh timeout/AbortController per attempt); other 4xx fail
+  immediately. Backoff 1s then 2s; a digit-seconds `Retry-After` overrides
+  the wait, capped at 10s; the body is re-sent unchanged; final error
+  messages stay byte-compatible. Sleep is injectable so tests never wait.
+  Tests: +10 (429→200 with 1s delay, 5xx backoff sequence, budget exhaustion
+  with request counts, Retry-After honored/capped/invalid, 400 no-retry,
+  network-error→200, `retries: 0`, invalid config rejected, timeout proves a
+  single request); existing error-path tests pin `retries: 0` to keep their
+  single-request intent. Verified: tsc 0, 471 tests, `accept` 5/5,
+  `benchmark/check.ts` 3 PASS. No live probe required (per issue).
