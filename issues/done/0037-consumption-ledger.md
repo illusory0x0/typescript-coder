@@ -1,7 +1,7 @@
 ---
 id: 37
 title: "Consumption ledger under benchmark/results"
-status: todo
+status: done
 priority: high
 milestone: null
 parent: 28
@@ -45,3 +45,11 @@ against `2026-10-17.json` aggregates.
 - The final row is appended during #28 close-out.
 - Non-goals: charts, automated report generation (H1 horizon is about run
   result JSON, not this ledger).
+- Validation (2026-10-17): `benchmark/results/consumption.md` documents the
+  row format (Date | Change set | json/sexp/minilisp | Overall | Source |
+  Notes, cells `N,NNN (ok/runs)`) and holds the single baseline row (json
+  5,877 (3/3) · sexp 43,293 (3/3) · minilisp 348,080 (1/3) · overall 70,799
+  (7/9); opencode reference 15,517 / 11,812 / 23,142 / 16,824 recorded
+  verbatim), cross-checked against `2026-10-17.json` aggregates byte-for-byte
+  on the ts rows. `benchmark/README.md` points at the ledger as the canonical
+  before/after view. Verified: tsc 0, 471 tests, `accept` 5/5.

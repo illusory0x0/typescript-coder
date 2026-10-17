@@ -3,6 +3,9 @@
 Token benchmark comparing the typescript-coder loop (`ts`) with the opencode
 CLI (`opencode`) on identical fixture copies, prompts, and model.
 
+`results/consumption.md` is the canonical before/after token-efficiency view
+across the series.
+
 ## Usage
 
     bun run benchmark/run.ts --all --pilot
