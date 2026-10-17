@@ -1,7 +1,7 @@
 ---
 id: 19
 title: Full benchmark run and report
-status: todo
+status: done
 priority: medium
 milestone: null
 parent: 16
@@ -56,4 +56,19 @@ JSON.
   tokens-per-success alongside raw means.
 - Keep raw session transcripts out of the commit unless small; summarize.
 - `<date>` = `YYYY-MM-DD` of the run day.
-- Non-goals: cost figures (always 0), multiple models, >3 repetitions.
+- Non-goals: cost comparison (opencode cost is recorded verbatim, not compared),
+  multiple models, >3 repetitions.
+- Validation (2026-10-17): full matrix ran with `--all --reps 3 --concurrency 4`
+  in 17.9 min wall vs a ~54.6 min serial sum: 18/18 records, 16 passed,
+  `infraErrors: []`, no reruns. The two failures (`minilisp ts rep1/rep3`) are
+  model-side: each exhausted the loop's 3 attempts and rolled back by design, so
+  the judged workspace is the pristine fixture (TS18003 / missing `./lisp`);
+  per-attempt diagnostics were removed with the workspace (no `--keep`).
+  Aggregates spot-checked against raw records; `2026-10-17.md` documents the
+  frozen specs, token/step definitions, token ratios, and the failure analysis.
+  Harness timeouts widened for parallel headroom (opencode 15→25 min, chat
+  5→10 min). Verified: tsc 0, 446 tests, `accept` 5/5, `benchmark/check.ts`
+  3 PASS.
+- Update (2026-10-17): opencode `cost` is no longer always 0 on this gateway —
+  session exports report small non-zero values; cost remains recorded verbatim
+  and is not compared (supersedes the earlier "always 0" assumption).

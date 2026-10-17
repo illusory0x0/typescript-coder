@@ -3,14 +3,6 @@
 # Available = deps done (an umbrella also needs all children done).
 # Tie-break by id.
 
-- id: 19
-  title: "Full benchmark run and report"
-  status: todo
-  priority: medium
-  milestone: null
-  parent: 16
-  deps: [18, 27]
-  file: 0019-benchmark-full-run-report.md
 - id: 16
   title: "Token benchmark vs opencode CLI on generation tasks (G1–G3)"
   status: todo

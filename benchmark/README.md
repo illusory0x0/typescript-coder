@@ -14,6 +14,10 @@ Flags: `--task`, `--all` (default), `--reps <n>` (default 3), `--concurrency
 (default `deepseek-v4.1-flash`), `--keep`, `--json <path>`, `--help`. Non-pilot
 results default to `benchmark/results/<date>.json`.
 
+Each run also writes a sibling Markdown report next to the `--json` target
+(`.json` replaced by `.md`): aggregates per task and side plus token-accounting
+and anomaly notes.
+
 Each run gets a fresh workspace under `tmp/benchmark/<stamp>/` (fixture copy plus
 its own git repo, so the agent cannot reach this repository's
 `benchmark/references/`). The judge is `bun test` + `tsc --noEmit` + byte
