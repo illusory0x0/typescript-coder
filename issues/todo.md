@@ -1,8 +1,8 @@
 # Todo
 
-Issue tracker for `typescript-coder`. Filed from [spec.md](../spec.md).
-The table is authoritative for scanning; the graph is authoritative for
-structure.
+Issue tracker for `typescript-coder`. Filed from [spec.md](../spec.md). The
+tree maps relationships, the execution list drives picking, the table scans
+status.
 
 ```dot
 digraph issues {
@@ -77,6 +77,26 @@ digraph issues {
   "18" -> "19" [style=dashed, label="blocks"];
 }
 ```
+
+## Execution order
+
+Open issues (todo, in-progress, review) in picking order. Repeatedly take the
+highest-priority available leaf; once no leaf is available, the
+highest-priority available umbrella. Available = `deps` `done` (an umbrella
+also needs all children `done`). Tie-break by id.
+
+1. #15 Append or create files when a locator's symbol is missing
+2. #20 Parser: #private fields, using declarations, import attributes, const type parameters
+3. #21 Loop: tolerate unparseable files instead of crashing
+4. #22 CLI: default model deepseek-v4.1-flash instead of rejected deepseek
+5. #17 Benchmark fixtures G1–G3 as test-only spec projects
+6. #18 Benchmark harness and pilot run
+7. #19 Full benchmark run and report
+8. #23 Loop: correct the selection-retry prompt and echo the rejected response
+9. #24 Spec: declare tools internal-only for v1 (remove loop tools plumbing)
+10. #25 Provider: request timeout and runLoop error handling
+11. #26 Hygiene pack: context perf/dedup, tmp skip, diagnostics edges
+12. #16 Token benchmark vs opencode CLI on generation tasks (G1–G3)
 
 | id  | title                       | status | priority | milestone | parent | deps    |
 | --- | --------------------------- | ------ | -------- | --------- | ------ | ------- |
