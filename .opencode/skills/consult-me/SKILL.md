@@ -49,25 +49,21 @@ List what is still unknown for a decision, ordered by importance.
 - Things you can verify yourself (read the code, inspect files, check docs):
   do that first, and only raise what genuinely needs the user's call.
 
-## Stage 4 · Select a decision model
+## Stage 4 · Generate a decision model
 
-Pick one explicit decision framework based on the problem type, and say why.
+Generate a model for this decision; do not pick from a fixed catalog.
 
-| Situation                           | Decision model                                       |
-| ----------------------------------- | ---------------------------------------------------- |
-| Multiple mutually exclusive options | Decision matrix (weighted scoring)                   |
-| Trade-offs                          | Pros/cons table · cost-benefit                       |
-| Prioritization                      | MoSCoW or Eisenhower                                 |
-| Iterative, uncertain requirements   | Hypothesis-validate loop (smallest experiment first) |
-| High-risk, irreversible             | Pre-mortem / working backwards                       |
-| Fuzzy goal                          | 5 Whys to root cause                                 |
+- Shape it from the actual choice: the options, the criteria that separate
+  them, the evidence on hand.
+- State it in one or two lines: the criteria and how they combine.
+- Use it to give a **leaning recommendation**, not an exhaustive list of
+  possibilities.
+- If no model would change the call (decision obvious, context too thin),
+  say so and go to Stage 5.
 
-Use the chosen model to give a **leaning recommendation**, not an exhaustive
-list of possibilities.
-
-**Ask the user** to confirm the decision model via the `question` tool: put your
-**recommended model** first, labeled `(Recommended)`, followed by the other
-candidate models with a one-line rationale each.
+**Ask the user** to confirm via the `question` tool: put the generated model
+first, labeled `(Recommended)`, then any alternative models you considered,
+one line of rationale each.
 
 ## Stage 5 · Ask about granular decisions
 
