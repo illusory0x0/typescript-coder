@@ -338,4 +338,33 @@ describe("checkTool and testTool", () => {
     expect(result.exitCode).not.toBe(0);
     expect(result.output).toContain("fail");
   });
+
+  test("check kills a command that exceeds a short timeout", async () => {
+    const dir = fixture({});
+    const started = Date.now();
+    const result = await withDeadline(
+      checkTool(dir, ["bun", "-e", "await Bun.sleep(5000)"], 50),
+    );
+    expect(result.ok).toBe(false);
+    expect(result.exitCode).not.toBe(0);
+    expect(Date.now() - started).toBeLessThan(2500);
+  });
+
+  test("test kills a command that exceeds a short timeout", async () => {
+    const dir = fixture({});
+    const started = Date.now();
+    const result = await withDeadline(
+      testTool(dir, ["bun", "-e", "await Bun.sleep(5000)"], 50),
+    );
+    expect(result.ok).toBe(false);
+    expect(result.exitCode).not.toBe(0);
+    expect(Date.now() - started).toBeLessThan(2500);
+  });
+
+  test("test still runs a fast command with the default timeout", async () => {
+    const dir = fixture({});
+    const result = await withDeadline(testTool(dir, ["bun", "-e", "process.exit(0)"]));
+    expect(result.ok).toBe(true);
+    expect(result.exitCode).toBe(0);
+  });
 });

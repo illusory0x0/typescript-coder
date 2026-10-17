@@ -522,7 +522,12 @@ async function runTypescriptSide(options: {
   tscBin: string;
 }): Promise<SideOutcome> {
   const provider = new RecordingProvider(
-    new OpenAIProvider(readConfigFromEnv(options.model), fetchWithTimeout as typeof fetch),
+    new OpenAIProvider(
+      // Match the harness's own 5-minute chat deadline; the provider default
+      // (120 s) would otherwise fire first and abort long generations.
+      { ...readConfigFromEnv(options.model), timeoutMs: CHAT_TIMEOUT_MS },
+      fetchWithTimeout as typeof fetch,
+    ),
   );
   const started = performance.now();
   let error: string | null = null;

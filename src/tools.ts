@@ -115,13 +115,17 @@ export async function renameTool(
   return applyEdits(source, [{ locator, llmOutput }], fileName);
 }
 
-async function runCommand(cwd: string, command: string[]): Promise<CommandResult> {
+async function runCommand(
+  cwd: string,
+  command: string[],
+  timeoutMs: number = commandTimeoutMs,
+): Promise<CommandResult> {
   const proc = Bun.spawn(command, { cwd, stdout: "pipe", stderr: "pipe" });
   const stdout = new Response(proc.stdout).text();
   const stderr = new Response(proc.stderr).text();
   const timer = setTimeout(() => {
     proc.kill();
-  }, commandTimeoutMs);
+  }, timeoutMs);
   const exitCode = await proc.exited;
   clearTimeout(timer);
   const output = (await stdout) + (await stderr);
@@ -155,16 +159,18 @@ function parseDiagnostics(output: string): CheckDiagnostic[] {
 export async function checkTool(
   cwd: string,
   command: string[] = ["bunx", "tsc", "--noEmit"],
+  timeoutMs: number = commandTimeoutMs,
 ): Promise<CommandResult & { diagnostics: CheckDiagnostic[] }> {
-  const result = await runCommand(cwd, command);
+  const result = await runCommand(cwd, command, timeoutMs);
   return { ...result, diagnostics: parseDiagnostics(result.output) };
 }
 
 export async function testTool(
   cwd: string,
   command: string[] = ["bun", "test"],
+  timeoutMs: number = commandTimeoutMs,
 ): Promise<CommandResult> {
-  return runCommand(cwd, command);
+  return runCommand(cwd, command, timeoutMs);
 }
 
 const locatorProperties = {

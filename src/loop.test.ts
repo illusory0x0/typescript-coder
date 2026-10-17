@@ -987,3 +987,96 @@ describe("runLoop with unparseable files", () => {
     expect(content).toBe('export function greet(): string {\n  return "hi";\n}\n');
   }, 30000);
 });
+
+describe("runLoop provider failures", () => {
+  async function watchRejections<T>(
+    operation: () => Promise<T>,
+  ): Promise<{ unhandled: unknown[]; value: T }> {
+    const unhandled: unknown[] = [];
+    const listener = (reason: unknown): void => {
+      unhandled.push(reason);
+    };
+    process.on("unhandledRejection", listener);
+    try {
+      const value = await operation();
+      await Bun.sleep(10);
+      return { unhandled, value };
+    } finally {
+      process.off("unhandledRejection", listener);
+    }
+  }
+
+  test("returns a failed result when the selection call throws", async () => {
+    const dir = fixtureDir();
+    const provider: ProviderLike = {
+      async chat() {
+        throw new Error("gateway unreachable");
+      },
+    };
+    const { unhandled, value: result } = await watchRejections(() =>
+      runLoop({
+        cwd: dir,
+        issue: "make the answer test pass",
+        model: "fake",
+        provider,
+        checkCommand: TSC,
+        testCommand: ["bun", "test"],
+      }),
+    );
+    expect(unhandled).toEqual([]);
+    expect(result.ok).toBe(false);
+    expect(result.locator).toBeNull();
+    expect(result.filePath).toBeNull();
+    expect(result.editedSource).toBeNull();
+    expect(result.attempts).toEqual([]);
+    expect(result.diagnostics).toBe("provider error: gateway unreachable");
+    expect(result.explanation ?? "").toContain("no explanation available");
+    expect(helperSource(dir)).toContain("return 1;");
+  }, 30000);
+
+  test("rolls back an applied edit and fails when a later call throws", async () => {
+    const dir = fixtureDir();
+    const original = helperSource(dir);
+    const scripted = new ScriptedProvider([
+      '{"path":"src/helper.ts","name":"answer","kind":"function"}',
+      'function answer(): number {\n  return "nope";\n}',
+    ]);
+    let calls = 0;
+    const provider: ProviderLike = {
+      async chat(messages, tools, options) {
+        calls += 1;
+        if (calls >= 3) {
+          throw new Error("gateway dropped");
+        }
+        return scripted.chat(messages, tools, options);
+      },
+    };
+    const failingCommand = ["bun", "-e", "process.exit(1)"];
+    const { unhandled, value: result } = await watchRejections(() =>
+      runLoop({
+        cwd: dir,
+        issue: "make the answer test pass",
+        model: "fake",
+        provider,
+        checkCommand: failingCommand,
+        testCommand: failingCommand,
+      }),
+    );
+    expect(unhandled).toEqual([]);
+    expect(result.ok).toBe(false);
+    expect(result.mode).toBe("replace");
+    expect(result.locator).toEqual({
+      path: "src/helper.ts",
+      name: "answer",
+      kind: "function",
+    });
+    expect(result.filePath).toBe("src/helper.ts");
+    expect(result.editedSource).toBeNull();
+    expect(result.diagnostics).toContain("provider error");
+    expect(result.attempts.length).toBe(1);
+    expect(result.attempts[0]?.replacement).toContain("nope");
+    expect(result.attempts[0]?.diagnostics).not.toBeNull();
+    expect(result.explanation ?? "").toContain("no explanation available");
+    expect(helperSource(dir)).toBe(original);
+  }, 30000);
+});

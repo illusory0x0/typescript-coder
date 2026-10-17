@@ -246,6 +246,42 @@ describe("runMain", () => {
     expect(captured.err.join("\n")).toContain("could not select a symbol");
     expect(readFileSync(join(dir, "src", "broken.ts"), "utf8")).toBe("function broken( {\n");
   }, 60000);
+
+  test("returns 1 with a readable message when the provider throws", async () => {
+    const provider: ProviderLike = {
+      async chat() {
+        throw new Error("gateway unreachable");
+      },
+    };
+    const captured = captureIo();
+    const code = await runMain({
+      issue: "make the answer test pass",
+      model: "fake",
+      cwd: fixtureDir(),
+      provider,
+      io: captured.io,
+    });
+    expect(code).toBe(1);
+    const errText = captured.err.join("\n");
+    expect(errText).toContain("provider error");
+    expect(errText).toContain("gateway unreachable");
+    expect(errText).not.toContain("\n    at ");
+  }, 60000);
+
+  test("returns 1 with an error message when the loop itself throws", async () => {
+    const captured = captureIo();
+    const code = await runMain({
+      issue: "make the answer test pass",
+      model: "fake",
+      cwd: join(tempDir(), "missing"),
+      provider: new ScriptedProvider([]),
+      io: captured.io,
+    });
+    expect(code).toBe(1);
+    const errText = captured.err.join("\n");
+    expect(errText).toContain("error:");
+    expect(errText).not.toContain("\n    at ");
+  });
 });
 
 function spawnHelp(script: string): { code: number | null; stdout: string; stderr: string } {

@@ -2,7 +2,10 @@ export interface OpenAIConfig {
   apiKey: string;
   baseUrl: string;
   model: string;
+  timeoutMs?: number;
 }
+
+export const DEFAULT_TIMEOUT_MS = 120_000;
 
 export interface ChatMessage {
   role: "system" | "user" | "assistant" | "tool";
@@ -54,7 +57,15 @@ export function readConfigFromEnv(model: string): OpenAIConfig {
   if (baseUrl === undefined || baseUrl === "") {
     throw new Error("OPENAI_BASE_URL is not set");
   }
-  return { apiKey, baseUrl: baseUrl.replace(/\/$/, ""), model };
+  const timeoutText = process.env.OPENAI_TIMEOUT_MS;
+  if (timeoutText === undefined) {
+    return { apiKey, baseUrl: baseUrl.replace(/\/$/, ""), model };
+  }
+  const timeoutMs = Number(timeoutText);
+  if (!Number.isInteger(timeoutMs) || timeoutMs <= 0) {
+    throw new Error(`OPENAI_TIMEOUT_MS must be a positive integer (got "${timeoutText}")`);
+  }
+  return { apiKey, baseUrl: baseUrl.replace(/\/$/, ""), model, timeoutMs };
 }
 
 function serializeMessage(message: ChatMessage): SerializedMessage {
@@ -92,6 +103,10 @@ function parseToolCalls(value: unknown): ToolCall[] {
   return value as ToolCall[];
 }
 
+function errorMessage(error: unknown): string {
+  return error instanceof Error ? error.message : String(error);
+}
+
 export class OpenAIProvider {
   private readonly config: OpenAIConfig;
   private readonly fetchImpl: typeof fetch;
@@ -99,6 +114,35 @@ export class OpenAIProvider {
   constructor(config: OpenAIConfig, fetchImpl: typeof fetch = fetch) {
     this.config = config;
     this.fetchImpl = fetchImpl;
+  }
+
+  private async fetchWithTimeout(url: string, init: RequestInit): Promise<Response> {
+    const timeoutMs = this.config.timeoutMs ?? DEFAULT_TIMEOUT_MS;
+    const controller = new AbortController();
+    let timedOut = false;
+    let timer: ReturnType<typeof setTimeout> | null = null;
+    const timeout = new Promise<never>((_resolve, reject) => {
+      timer = setTimeout(() => {
+        timedOut = true;
+        controller.abort();
+        reject(new Error(`chat request timed out after ${timeoutMs} ms`));
+      }, timeoutMs);
+    });
+    try {
+      return await Promise.race([
+        this.fetchImpl(url, { ...init, signal: controller.signal }),
+        timeout,
+      ]);
+    } catch (error) {
+      if (timedOut) {
+        throw new Error(`chat request timed out after ${timeoutMs} ms`);
+      }
+      throw new Error(`chat request failed: ${errorMessage(error)}`);
+    } finally {
+      if (timer !== null) {
+        clearTimeout(timer);
+      }
+    }
   }
 
   async chat(
@@ -117,7 +161,7 @@ export class OpenAIProvider {
       body.temperature = options.temperature;
     }
 
-    const response = await this.fetchImpl(`${this.config.baseUrl}/chat/completions`, {
+    const response = await this.fetchWithTimeout(`${this.config.baseUrl}/chat/completions`, {
       method: "POST",
       headers: {
         "content-type": "application/json",

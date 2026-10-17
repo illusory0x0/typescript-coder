@@ -1,7 +1,7 @@
 ---
 id: 25
 title: "Provider: request timeout and runLoop error handling"
-status: todo
+status: done
 priority: medium
 milestone: null
 parent: null
@@ -59,3 +59,14 @@ bun run accept --all
 - Timeout tests must use tiny values to stay fast.
 - Non-goals: provider-side retry/backoff for 429/5xx (possible follow-up),
   streaming, request cancellation UX.
+- Validation (2026-10-17): the request timeout races a timer and aborts via
+  `AbortController`, so a hanging fetch rejects even when the injected
+  `fetchImpl` ignores the signal; `OPENAI_TIMEOUT_MS` must be a positive
+  integer (invalid values throw at startup). Provider failures return
+  `provider error: <message>` with the explanation attempt best-effort
+  (`no explanation available: <message>` when the provider is still
+  unreachable). `runMain` and CLI provider construction exit 1 without a
+  stack trace; `commandTimeoutMs` is forwarded from `LoopOptions`.
+  `benchmark/run.ts` now passes `timeoutMs: CHAT_TIMEOUT_MS` explicitly so the
+  library default cannot silently shorten the harness's 5-minute chat
+  deadline. Verified: tsc 0, 438 tests, `accept` 5/5, `accept --all` 6/6.

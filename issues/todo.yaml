@@ -3,14 +3,6 @@
 # Available = deps done (an umbrella also needs all children done).
 # Tie-break by id.
 
-- id: 25
-  title: "Provider: request timeout and runLoop error handling"
-  status: todo
-  priority: medium
-  milestone: null
-  parent: null
-  deps: []
-  file: 0025-provider-timeout-errors.md
 - id: 26
   title: "Hygiene pack: context perf/dedup, tmp skip, diagnostics edges"
   status: todo

@@ -2,7 +2,7 @@ import { helpText, parseArgs } from "./cli";
 import { runLoop } from "./loop";
 import { OpenAIProvider, readConfigFromEnv } from "./openai";
 import type { CliOptions } from "./cli";
-import type { ProviderLike } from "./loop";
+import type { LoopResult, ProviderLike } from "./loop";
 
 export interface MainIo {
   out: (line: string) => void;
@@ -27,13 +27,19 @@ export async function runMain(options: RunMainOptions): Promise<number> {
     io.err("error: no issue provided on stdin");
     return 1;
   }
-  const result = await runLoop({
-    cwd: options.cwd,
-    issue,
-    model: options.model,
-    provider: options.provider,
-    maxRetries: options.maxRetries,
-  });
+  let result: LoopResult;
+  try {
+    result = await runLoop({
+      cwd: options.cwd,
+      issue,
+      model: options.model,
+      provider: options.provider,
+      maxRetries: options.maxRetries,
+    });
+  } catch (error) {
+    io.err(`error: ${error instanceof Error ? error.message : String(error)}`);
+    return 1;
+  }
   if (result.ok) {
     const kind = result.locator?.kind ?? "symbol";
     const name = result.locator?.name ?? "unknown";
@@ -65,7 +71,13 @@ if (import.meta.main) {
     process.exit(0);
   }
   const issue = await Bun.stdin.text();
-  const provider = new OpenAIProvider(readConfigFromEnv(cli.model));
+  let provider: OpenAIProvider;
+  try {
+    provider = new OpenAIProvider(readConfigFromEnv(cli.model));
+  } catch (error) {
+    console.error(`error: ${error instanceof Error ? error.message : String(error)}`);
+    process.exit(1);
+  }
   const code = await runMain({
     issue,
     model: cli.model,

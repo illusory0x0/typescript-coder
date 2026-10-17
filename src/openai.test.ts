@@ -73,6 +73,7 @@ test("readConfigFromEnv reads credentials and trims a trailing slash", () => {
     {
       OPENAI_API_KEY: "key-1",
       OPENAI_BASE_URL: "https://env.example.com/v1/",
+      OPENAI_TIMEOUT_MS: undefined,
     },
     () => {
       expect(readConfigFromEnv("qwen")).toEqual({
@@ -94,6 +95,41 @@ test("readConfigFromEnv throws when OPENAI_BASE_URL is missing", () => {
   withEnv({ OPENAI_API_KEY: "key-1", OPENAI_BASE_URL: undefined }, () => {
     expect(() => readConfigFromEnv("deepseek-v4.1-flash")).toThrow("OPENAI_BASE_URL is not set");
   });
+});
+
+test("readConfigFromEnv reads OPENAI_TIMEOUT_MS as a positive integer", () => {
+  withEnv(
+    {
+      OPENAI_API_KEY: "key-1",
+      OPENAI_BASE_URL: "https://env.example.com/v1",
+      OPENAI_TIMEOUT_MS: "2500",
+    },
+    () => {
+      expect(readConfigFromEnv("qwen")).toEqual({
+        apiKey: "key-1",
+        baseUrl: "https://env.example.com/v1",
+        model: "qwen",
+        timeoutMs: 2500,
+      });
+    },
+  );
+});
+
+test("readConfigFromEnv rejects an invalid OPENAI_TIMEOUT_MS", () => {
+  for (const value of ["abc", "0", "-5", "1.5"]) {
+    withEnv(
+      {
+        OPENAI_API_KEY: "key-1",
+        OPENAI_BASE_URL: "https://env.example.com",
+        OPENAI_TIMEOUT_MS: value,
+      },
+      () => {
+        expect(() => readConfigFromEnv("qwen")).toThrow(
+          `OPENAI_TIMEOUT_MS must be a positive integer (got "${value}")`,
+        );
+      },
+    );
+  }
 });
 
 test("posts chat completions to the configured endpoint with auth headers", async () => {
@@ -243,6 +279,32 @@ test("truncates a long error body", async () => {
 
   await expect(provider.chat([{ role: "user", content: "hi" }])).rejects.toThrow(
     /^chat request failed: 500 x{500}$/,
+  );
+});
+
+test("times out and aborts when fetch never resolves", async () => {
+  const captured: { signal: AbortSignal | null } = { signal: null };
+  const fetchImpl = (async (_input: string | URL | Request, init?: RequestInit) => {
+    captured.signal = init?.signal ?? null;
+    return new Promise<Response>(() => {});
+  }) as unknown as typeof fetch;
+  const provider = new OpenAIProvider({ ...config, timeoutMs: 20 }, fetchImpl);
+
+  await expect(provider.chat([{ role: "user", content: "hi" }])).rejects.toThrow(
+    "chat request timed out after 20 ms",
+  );
+  expect(captured.signal).toBeInstanceOf(AbortSignal);
+  expect(captured.signal?.aborted).toBe(true);
+});
+
+test("wraps fetch failures with the original message", async () => {
+  const fetchImpl = (async () => {
+    throw new Error("connect ECONNREFUSED");
+  }) as unknown as typeof fetch;
+  const provider = new OpenAIProvider(config, fetchImpl);
+
+  await expect(provider.chat([{ role: "user", content: "hi" }])).rejects.toThrow(
+    "chat request failed: connect ECONNREFUSED",
   );
 });
 

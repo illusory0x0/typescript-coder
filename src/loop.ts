@@ -264,6 +264,7 @@ export interface LoopOptions {
   temperature?: number;
   checkCommand?: string[];
   testCommand?: string[];
+  commandTimeoutMs?: number;
 }
 
 export interface LoopAttempt {
@@ -416,9 +417,13 @@ async function explain(
 ): Promise<string> {
   messages.push({ role: "user", content: EXPLANATION_PROMPT });
   const options = temperature === undefined ? undefined : { temperature };
-  const response = await provider.chat(messages, undefined, options);
-  const text = stripCodeFences(response.content ?? "");
-  return text === "" ? "the model did not provide an explanation" : text;
+  try {
+    const response = await provider.chat(messages, undefined, options);
+    const text = stripCodeFences(response.content ?? "");
+    return text === "" ? "the model did not provide an explanation" : text;
+  } catch (error) {
+    return `no explanation available: ${errorMessage(error)}`;
+  }
 }
 
 export async function runLoop(options: LoopOptions): Promise<LoopResult> {
@@ -440,7 +445,22 @@ export async function runLoop(options: LoopOptions): Promise<LoopResult> {
   let selection: Selection | null = null;
   let selectionFailures = 0;
   while (selectionFailures < maxRetries) {
-    const response = await options.provider.chat(messages, undefined, chatOptions);
+    let response: ChatResponse;
+    try {
+      response = await options.provider.chat(messages, undefined, chatOptions);
+    } catch (error) {
+      return {
+        ok: false,
+        locator: null,
+        filePath: null,
+        editedSource: null,
+        attempts,
+        diagnostics: `provider error: ${errorMessage(error)}`,
+        explanation: await explain(options.provider, messages, temperature),
+        messages,
+        skipped,
+      };
+    }
     let candidate: Locator | null = null;
     let resolved: IndexEntry | null = null;
     let appendPath: string | null = null;
@@ -526,7 +546,25 @@ export async function runLoop(options: LoopOptions): Promise<LoopResult> {
 
   let diagnostics: string | null = null;
   for (let editAttempt = 0; editAttempt < maxRetries; editAttempt += 1) {
-    const response = await options.provider.chat(messages, undefined, chatOptions);
+    let response: ChatResponse;
+    try {
+      response = await options.provider.chat(messages, undefined, chatOptions);
+    } catch (error) {
+      // A previous attempt that failed verification ran restoreTarget before this
+      // chat call, so no uncommitted edit remains on disk at this point.
+      return {
+        ok: false,
+        mode: selection.mode,
+        locator: selected,
+        filePath: targetPath,
+        editedSource: null,
+        attempts,
+        diagnostics: `provider error: ${errorMessage(error)}`,
+        explanation: await explain(options.provider, messages, temperature),
+        messages,
+        skipped,
+      };
+    }
     let replacement: string | null = null;
     let newSource: string | null = null;
     let failure: string | null = null;
@@ -563,8 +601,8 @@ export async function runLoop(options: LoopOptions): Promise<LoopResult> {
       continue;
     }
     writeTarget(cwd, targetPath, newSource);
-    const check = await checkTool(cwd, options.checkCommand);
-    const test = await testTool(cwd, options.testCommand);
+    const check = await checkTool(cwd, options.checkCommand, options.commandTimeoutMs);
+    const test = await testTool(cwd, options.testCommand, options.commandTimeoutMs);
     if (check.ok && test.ok) {
       attempts.push({
         attempt: attempts.length + 1,
