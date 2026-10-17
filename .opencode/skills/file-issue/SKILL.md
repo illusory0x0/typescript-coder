@@ -13,7 +13,8 @@ Convert intent into tracked, actionable issues arranged as a **tree**. One issue
 
 ```
 issues/
-  todo.md          # tracker: tree + execution list + status table, single source of truth
+  readme.md        # issue tree (relationships only)
+  todo.yaml        # open issues in picking order, single source of truth
   TEMPLATE.md      # optional, copy for new issues
   0001-<slug>.md   # one file per issue (open: todo/in-progress/review, or wontfix)
   0002-<slug>.md
@@ -26,8 +27,8 @@ issues/
 - New issues are always created directly under `issues/`. Never create a file
   under `issues/done/` by hand — that directory is populated only by the
   `resolve-issue` skill moving an issue there once it is `done`.
-- A `done` issue's file lives at `issues/done/NNNN-<slug>.md`; its id, slug and
-  tracker links must still resolve (links point at the actual location).
+- A `done` issue's file lives at `issues/done/NNNN-<slug>.md` and its
+  `todo.yaml` entry is removed.
 - Next id = `max(existing ids) + 1` across **both** `issues/` and
   `issues/done/`. Never reuse, rename, or delete ids; a cancelled issue stays
   listed and marked `wontfix`.
@@ -51,7 +52,7 @@ Issues form a forest of hierarchies, plus cross-cutting dependency edges:
 
 1. **Gather source.** Read the user's request plus any referenced plan, spec, or
    code. If a planning document exists, mine its goals, risks, and acceptance
-   criteria. Always read `issues/todo.md` and list both `issues/*.md` and
+   criteria. Always read `issues/todo.yaml` and list both `issues/*.md` and
    `issues/done/*.md` first so you never duplicate an existing issue.
 2. **Build the tree.** Split by *independently shippable and verifiable* work.
    Group related leaves under an umbrella parent when they serve one goal.
@@ -65,13 +66,14 @@ Issues form a forest of hierarchies, plus cross-cutting dependency edges:
    verifies it. No vague goals ("improve", "refactor" alone) — state the outcome.
 4. **Write files** to `issues/NNNN-slug.md`. Assign ids in **pre-order** (a
    parent before its children) so the numbers read top-down.
-5. **Update `issues/todo.md`** — rebuild the Graphviz block, re-sort the
-   execution list, and add one table row per new issue. Leave existing rows and
-   statuses untouched; keep the table sorted by id ascending.
+5. **Update the tracker** — add the new nodes and edges to the tree in
+   `issues/readme.md`, and insert one entry per new issue into
+   `issues/todo.yaml` at its picking position. Leave existing entries untouched.
 6. **Report** the created ids, the tree shape, and the tracker path. State any
    assumption you made about scope, priority, or structure.
 
-Create `issues/` and `issues/todo.md` if they do not already exist.
+Create `issues/`, `issues/readme.md`, and `issues/todo.yaml` if they do not
+already exist.
 
 ## Issue template
 
@@ -110,26 +112,20 @@ The exact command(s) or manual steps that prove the criteria are met.
 Dependencies on other issue ids, open questions, non-goals.
 ```
 
-## `issues/todo.md` format
+## `issues/readme.md` — the tree
 
-Keep a `# Todo` header, then a fenced `dot` block describing the issue tree,
-then the execution list, then the status table. Preserve any prose the user
-added.
-
-````markdown
-# Todo
+Keep a `# Issues` header, a pointer to `todo.yaml`, and a fenced `dot` block.
+Structure only — no statuses. Preserve any prose the user added.
 
 ```dot
 digraph issues {
   rankdir=LR;
-  node [shape=box, style="rounded,filled", fontname="Helvetica"];
+  node [shape=box, style=rounded, fontname="Helvetica"];
 
-  // status colors: todo=white, in-progress=lightyellow, review=lightblue,
-  //                done=lightgreen, wontfix=lightgrey
-  "7" [label="#7 Lexer\n(in-progress)", fillcolor="lightyellow"];
-  "8" [label="#8 Strict errors\n(todo)", fillcolor="white"];
-  "9" [label="#9 Comments\n(todo)", fillcolor="white"];
-  "10" [label="#10 Parser\n(todo)", fillcolor="white"];
+  "7"  [label="#7 Lexer"];
+  "8"  [label="#8 Strict errors"];
+  "9"  [label="#9 Comments"];
+  "10" [label="#10 Parser"];
 
   // tree edges (parent -> child), solid
   "7" -> "8";
@@ -140,46 +136,40 @@ digraph issues {
 }
 ```
 
-## Execution order
-
-Open issues (todo, in-progress, review) in picking order. Repeatedly take the
-highest-priority available leaf; once no leaf is available, the
-highest-priority available umbrella. Available = `deps` `done` (an umbrella
-also needs all children `done`). Tie-break by id.
-
-1. #8 Strict errors
-2. #9 Comments
-3. #10 Parser
-4. #7 Lexer
-
-| id  | title         | status      | priority | milestone | parent | deps |
-| --- | ------------- | ----------- | -------- | --------- | ------ | ---- |
-| 7   | Lexer         | in-progress | high     |           |        |      |
-| 8   | Strict errors | todo        | high     |           | 7      |      |
-| 9   | Comments      | todo        | medium   |           | 7      |      |
-| 10  | Parser        | todo        | medium   |           |        | 9    |
-````
-
-- `id` links to the file at its actual location: `[7](0007-short-issue-title.md)`
-  for open issues, `[7](done/0007-short-issue-title.md)` once the issue is `done`
-  and has been moved into `issues/done/`.
-- Graph nodes: one per issue, label `#id title\n(status)`, colored by status.
-  Node ids stay `"7"` regardless of which directory the file lives in.
+- Node ids = issue ids; labels `#id title`.
 - Tree edges: `parent -> child`, **solid**.
 - Dependency edges: `blocker -> blocked`, **dashed** with `label="blocks"`.
-- `parent` and `deps` columns mirror the frontmatter. `deps` lists blocking ids.
-- **The tree maps relationships, the execution list drives picking, the table
-  scans status.** Update the frontmatter, table row, graph, and execution list
-  together whenever status, parent, or deps change.
+
+## `issues/todo.yaml` — open issues
+
+Open issues in picking order: repeatedly take the highest-priority available
+leaf; once no leaf is available, the highest-priority available umbrella.
+Available = `deps` `done` (an umbrella also needs all children `done`).
+Tie-break by id.
+
+```yaml
+- id: 8
+  title: "Strict errors"
+  status: todo
+  priority: high
+  milestone: null
+  parent: 7
+  deps: []
+  file: 0008-strict-errors.md
+```
+
+- Fields mirror the issue frontmatter; `file` names the issue file. Quote every
+  title.
+- Drop the entry when an issue is `done`; `wontfix` entries stay, marked.
+- **The tree maps relationships; `todo.yaml` drives picking and status.**
+  Whenever status, parent, or deps change, update the frontmatter and its
+  `todo.yaml` entry together — plus the tree when parent or deps shift.
 
 ## Rules
 
 - Do not close, delete, renumber, or re-slug existing issues.
 - Do not create or edit anything under `issues/done/`; that directory is owned by
   `resolve-issue`, which moves issues there when they become `done`.
-- When you rebuild the tracker, keep each table link pointing at the issue's
-  current location (`done/NNNN-...md` for completed issues) — never rewrite a
-  moved issue's link back to the root.
 - Do not invent milestones or priorities the source does not support; use `null`
   (milestone/parent) or `medium` (priority) and flag the assumption.
 - One concern per issue. If a draft covers two unrelated changes, split it.

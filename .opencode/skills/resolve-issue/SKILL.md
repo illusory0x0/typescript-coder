@@ -6,11 +6,11 @@ description: Take tracked issues to done.
 # resolve-issue
 
 Take a tracked issue to done. This is the execution counterpart to `file-issue`:
-`file-issue` writes issue files and the `issues/todo.md` tracker (a Graphviz
-tree, an execution list, and a status table), `resolve-issue` consumes them,
-does the work, and moves them through the status lifecycle. When an issue
-reaches `done`, its file is **physically moved** to `issues/done/` and the
-tracker link is updated to match.
+`file-issue` writes issue files, the tree in `issues/readme.md`, and the
+picking order in `issues/todo.yaml`; `resolve-issue` consumes them, does the
+work, and moves them through the status lifecycle. When an issue reaches
+`done`, its file is **physically moved** to `issues/done/` and its `todo.yaml`
+entry is removed.
 
 An issue is only "done" when every acceptance criterion is demonstrably met —
 not when the edits look right. In a tree, that also means an **umbrella is not
@@ -35,13 +35,13 @@ todo ──▶ in-progress ──▶ review ──▶ done
 ## Workflow
 
 1. **Select — ask, never pick silently.** If the user named an id, use it.
-   Otherwise read `issues/todo.md`, build the list of eligible work items, and —
+   Otherwise read `issues/todo.yaml`, build the list of eligible work items, and —
    for **every** invocation where the user did not name an id — **ask via the
    `question` tool** which to resolve. Never auto-pick.
 
    An eligible work item is a `todo` **leaf** (no children) whose `deps` are all
    `done`; an umbrella is not eligible while it has open children. Order
-   candidates by the tracker's execution list. The question must offer, in
+   candidates by the tracker's picking order. The question must offer, in
    order:
 
    - the top candidate, labeled `(Recommended)`;
@@ -56,9 +56,8 @@ todo ──▶ in-progress ──▶ review ──▶ done
    up under `issues/NNNN-*.md` first, then `issues/done/NNNN-*.md`: done
    ancestors and deps have been moved into `issues/done/`. Read the referenced
    code before changing anything.
-3. **Mark `in-progress`.** Update the frontmatter, the table row, and the graph
-   node color before the first edit. This is the signal that the issue is
-   claimed.
+3. **Mark `in-progress`.** Update the frontmatter and the issue's `todo.yaml`
+   entry before the first edit. This is the signal that the issue is claimed.
 4. **Locate the work.** Find the real files and symbols the issue touches. If
    the issue's premises are wrong (missing file, already implemented, blocked by
    an unlisted dependency), stop and report to the user instead of improvising.
@@ -114,10 +113,10 @@ agent alone updates the tracker.
 Only when the user's answer to the selection question is `All eligible, in
 order` (or they explicitly ask for a batch):
 
-- Process issues **sequentially**, one at a time, re-reading `issues/todo.md`
+- Process issues **sequentially**, one at a time, re-reading `issues/todo.yaml`
   before each pick — finishing one issue can make the next eligible (a leaf whose
   `deps` were waiting on it).
-- Take issues in the tracker's execution order.
+- Take issues in the tracker's picking order.
 - After each issue, re-evaluate eligibility and propagate up the tree (step 8).
   If a parent becomes fully `done`, include it.
 - **Stop on the first issue that cannot be closed** (failed verification or a
@@ -127,15 +126,16 @@ order` (or they explicitly ask for a batch):
 
 ## Updating the tracker
 
-Update all three in one move — frontmatter, table row, graph node — plus the
-execution list (format and colors: see `file-issue`). When closing as
-`wontfix`, append a short reason under `## Notes`. Leave the tree edges
-unchanged unless the user asks to restructure.
+Update the frontmatter and the issue's `todo.yaml` entry together, and re-sort
+`todo.yaml` when the change moves it (rule and format: see `file-issue`). When
+closing as `wontfix`, append a short reason under `## Notes`. Leave the tree in
+`issues/readme.md` unchanged unless the user asks to restructure.
 
 ## On `done`: move the file
 
-The moment an issue becomes `done`, move its file into `issues/done/` — this is
-part of the status transition, not an optional cleanup:
+The moment an issue becomes `done`, move its file into `issues/done/` and drop
+its `todo.yaml` entry — this is part of the status transition, not an optional
+cleanup:
 
 1. `mkdir -p issues/done` if needed.
 2. Move the file without changing its name: `git mv issues/0007-slug.md
@@ -143,12 +143,10 @@ part of the status transition, not an optional cleanup:
    renumber, or re-slug.
 3. Fix relative links inside the moved file: references that used to resolve
    from `issues/` need one more `../` (e.g. `../spec.md` → `../../spec.md`).
-   Check links to the spec, the tracker, and any sibling issue files.
-4. Update the table row link to `done/NNNN-slug.md` (the graph node id stays
-   `"7"`; node labels have no paths).
-5. Mark `status: done` in the frontmatter and recolor the graph node to
-   lightgreen — all together with the move.
-6. If the project is a git repo, include the move and the tracker update in the
+   Check links to the spec and any sibling issue files.
+4. Mark `status: done` in the frontmatter and remove the issue's entry from
+   `issues/todo.yaml`.
+5. If the project is a git repo, include the move and the tracker update in the
    commit that closes the issue (do not leave the move uncommitted).
 
 Moving the file is only for `done`. `wontfix` and every in-flight status keep
@@ -168,8 +166,8 @@ the file under `issues/`.
   criteria are wrong, raise it with the user and fix the issue first.
 - Never renumber, re-slug, or delete issues.
 - When an issue becomes `done`, move its file to `issues/done/` (step order and
-  link fixes per "On `done`: move the file") and update the table link. Never
-  move a file for any other status.
+  link fixes per "On `done`: move the file") and remove its `todo.yaml` entry.
+  Never move a file for any other status.
 - Never mark `done` while any acceptance criterion is unverified.
 - Stay within the issue's scope; new discoveries become new `file-issue` items or
   a note on the current issue, not silent extra changes.
