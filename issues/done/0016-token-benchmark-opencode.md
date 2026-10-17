@@ -1,7 +1,7 @@
 ---
 id: 16
 title: Token benchmark vs opencode CLI on generation tasks (G1–G3)
-status: todo
+status: done
 priority: high
 milestone: null
 parent: null
@@ -73,5 +73,24 @@ per-run JSON.
 - Priority `high` because this is the user's active goal; child issues default
   to `medium` unless their own context states otherwise. Milestone left `null`
   (post-spec hardening, not one of M0–M8).
-- Non-goals: cost comparison (always 0), statistical significance, task sets
-  beyond G1–G3.
+- Non-goals: cost comparison (opencode cost is recorded verbatim, not compared),
+  statistical significance, task sets beyond G1–G3.
+- Validation (2026-10-17): children #17/#18/#19 and #27 (parallel harness) are
+  done. Full matrix: 18 runs at concurrency 4, 16/18 passes, `infraErrors: []`,
+  no reruns; the only failures are model-side (`minilisp ts rep1/rep3`,
+  rollback-by-design; the report explains the judged pristine state).
+  `benchmark/results/2026-10-17.json` carries the 18 records, aggregates
+  (byTaskSide/bySide/overall), and metadata (date, concurrency, versions, model,
+  pilot reference); the pilot is a separate file and excluded from aggregates.
+  `benchmark/results/2026-10-17.md` documents frozen specs (fixture + reference
+  paths), token/step definitions per side, per-task and overall tables, and the
+  token-only comparison: equal-success tasks use mean totals (ts ÷ opencode:
+  json 0.38×, sexp 3.67×), differing tasks flag the difference and use tokens
+  per success (minilisp 15.04×; overall 4.21×, success 7/9 vs 9/9).
+  Confinement: benchmark commits (#17, #18, #27, #19) touch only `benchmark/`,
+  the root tsconfig include/exclude, and the issue tracker; the only `src/`
+  change in the workstream is #15. Verified: tsc 0, 446 tests, `accept` 5/5,
+  `benchmark/check.ts` 3 PASS.
+- Update (2026-10-17): opencode `cost` is no longer always 0 on this gateway
+  (session exports report small non-zero values); it is recorded verbatim and
+  not compared, so the token-only comparison stands.
