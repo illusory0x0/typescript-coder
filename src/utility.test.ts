@@ -77,6 +77,28 @@ test("let in a block is not visible in the global scope", () => {
   expect(resolveIn(binder.rootScope, "y", "value")).toBeNull();
 });
 
+test("using names bind as value symbols in the enclosing block", () => {
+  const { program, binder } = bind("{ using r = resource(); }");
+  const block = statementAt(program, 0) as BlockStatement;
+  const blockScope = requireScope(binder, block);
+  const symbol = resolveIn(blockScope, "r", "value");
+  expect(symbol).not.toBeNull();
+  expect(resolveIn(binder.rootScope, "r", "value")).toBeNull();
+});
+
+test("await using names bind as value symbols in the enclosing block", () => {
+  const { program, binder } = bind("async function f() { await using r = resource(); }");
+  const declaration = statementAt(program, 0) as FunctionDeclaration;
+  const functionScope = requireScope(binder, declaration);
+  expect(resolveIn(functionScope, "r", "value")).toBeNull();
+  const body = declaration.body;
+  if (body === null) {
+    throw new Error("expected a function body");
+  }
+  const bodyScope = requireScope(binder, body);
+  expect(resolveIn(bodyScope, "r", "value")).not.toBeNull();
+});
+
 test("var binds to the nearest function scope", () => {
   const { program, binder } = bind("function f() { { var v = 1; } }");
   const declaration = statementAt(program, 0) as FunctionDeclaration;
@@ -247,6 +269,36 @@ test("class members index with dotted member paths", () => {
   const nested = buildIndex([{ path: nestedPath, source: nestedSource }]);
   expect(nested.lookup({ path: nestedPath, name: "N.K.m", kind: "method" })).toHaveLength(1);
   expect(nested.lookup({ path: nestedPath, name: "N.K", kind: "class" }).length).toBeGreaterThan(0);
+});
+
+test("private class members index with their # prefix and stay distinct from public members", () => {
+  const path = "src/private.ts";
+  const source = "class A { #x = 1; #m() {} x = 2; }";
+  const index = buildIndex([{ path, source }]);
+  const field = index.lookup({ path, name: "A.#x", kind: "variable" });
+  const method = index.lookup({ path, name: "A.#m", kind: "method" });
+  expect(field).toHaveLength(1);
+  expect(method).toHaveLength(1);
+  expect(declarationKind(field[0]?.node)).toBe("PropertyDeclaration");
+  expect(declarationKind(method[0]?.node)).toBe("MethodDeclaration");
+  expect(index.lookup({ path, name: "A.x", kind: "variable" })).toHaveLength(1);
+  expect(index.byName("x")).toHaveLength(0);
+  expect(field[0]?.locator.name).toBe("A.#x");
+});
+
+test("buildIndex accepts modern syntax that used to throw", () => {
+  const path = "src/modern.ts";
+  const source = [
+    "class A { #x = 1; }",
+    "function f<const T>(x: T) { return x; }",
+    "using x = resource();",
+    'import data from "./d.json" with { type: "json" };',
+  ].join("\n");
+  const index = buildIndex([{ path, source }]);
+  expect(index.lookup({ path, name: "A.#x", kind: "variable" })).toHaveLength(1);
+  expect(index.lookup({ path, name: "f", kind: "function" })).toHaveLength(1);
+  expect(index.lookup({ path, name: "x", kind: "variable" })).toHaveLength(1);
+  expect(index.lookup({ path, name: "data", kind: "variable" })).toHaveLength(1);
 });
 
 test("overload sets index as a single entry", () => {

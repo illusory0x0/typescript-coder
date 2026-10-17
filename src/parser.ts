@@ -399,6 +399,8 @@ export interface TypeParameter extends Node {
   name: Identifier;
   constraint: Type | null;
   default: Type | null;
+  /** True for the TS 5.0 `const` modifier, e.g. `function f<const T>() {}`. */
+  const?: boolean;
 }
 
 export interface ComputedPropertyName extends Node {
@@ -572,9 +574,16 @@ export interface VariableDeclarator extends Node {
 
 export interface VariableStatement extends Node {
   kind: "VariableStatement";
-  declarationKind: "var" | "let" | "const";
+  /**
+   * `"using"` models ES2024 `using` / `await using` declarations; they are
+   * block-scoped like `let`/`const`, so treating them as a declaration kind
+   * keeps binding and indexing unchanged.
+   */
+  declarationKind: "var" | "let" | "const" | "using";
   declarations: VariableDeclarator[];
   declare?: boolean;
+  /** True only for `await using` (with declarationKind `"using"`). */
+  await?: boolean;
 }
 
 export interface FunctionDeclaration extends Node {
@@ -799,6 +808,12 @@ export interface ImportSpecifier extends Node {
   typeOnly: boolean;
 }
 
+export interface ImportAttribute extends Node {
+  kind: "ImportAttribute";
+  key: Identifier | StringLiteral;
+  value: StringLiteral;
+}
+
 export interface ImportDeclaration extends Node {
   kind: "ImportDeclaration";
   defaultImport: Identifier | null;
@@ -806,6 +821,8 @@ export interface ImportDeclaration extends Node {
   namedImports: ImportSpecifier[];
   source: StringLiteral;
   importKind: "value" | "type";
+  /** Import attributes, e.g. `with { type: "json" }` (TS 5.3). */
+  attributes?: ImportAttribute[];
 }
 
 export interface ImportEqualsDeclaration extends Node {
@@ -834,6 +851,8 @@ export interface ExportNamedDeclaration extends Node {
   specifiers: ExportSpecifier[];
   source: StringLiteral | null;
   exportKind: "value" | "type";
+  /** Import attributes on `export ... from "..." with { ... }`. */
+  attributes?: ImportAttribute[];
 }
 
 export interface ExportDefaultDeclaration extends Node {
@@ -846,6 +865,8 @@ export interface ExportAllDeclaration extends Node {
   source: StringLiteral;
   exported: Identifier | null;
   exportKind: "value" | "type";
+  /** Import attributes on `export * from "..." with { ... }`. */
+  attributes?: ImportAttribute[];
 }
 
 export interface ExportAssignment extends Node {
@@ -1294,6 +1315,10 @@ export class Parser {
     this.advance();
     const parameters: TypeParameter[] = [];
     for (;;) {
+      let constToken: Token | undefined;
+      if (this.isKeyword("const") && this.peek().kind === "identifier") {
+        constToken = this.advance();
+      }
       const token = this.current();
       if (token.kind !== "identifier") {
         throw this.unexpected(token);
@@ -1317,14 +1342,18 @@ export class Parser {
         defaultValue = this.parseType();
         end = defaultValue.end;
       }
-      parameters.push({
+      const parameter: TypeParameter = {
         kind: "TypeParameter",
         name,
         constraint,
         default: defaultValue,
-        start: token.start,
+        start: constToken === undefined ? token.start : constToken.start,
         end,
-      });
+      };
+      if (constToken !== undefined) {
+        parameter.const = true;
+      }
+      parameters.push(parameter);
       if (!this.matchPunct(",")) {
         break;
       }
@@ -1456,6 +1485,12 @@ export class Parser {
       }
     }
     if (token.kind === "identifier") {
+      if (token.value === "using" && this.isUsingDeclarationStart()) {
+        return this.parseUsingDeclaration(false);
+      }
+      if (token.value === "await" && this.isAwaitUsingDeclarationStart()) {
+        return this.parseUsingDeclaration(true);
+      }
       if (token.value === "declare") {
         return this.parseDeclareStatement();
       }
@@ -1530,8 +1565,7 @@ export class Parser {
         start: first.start,
         end: first.end,
       };
-      this.consumeSemicolon();
-      return {
+      const declaration: ImportDeclaration = {
         kind: "ImportDeclaration",
         defaultImport: null,
         namespaceImport: null,
@@ -1541,6 +1575,13 @@ export class Parser {
         start: keyword.start,
         end: this.lastConsumedEnd,
       };
+      const attributes = this.parseImportAttributes();
+      if (attributes !== undefined) {
+        declaration.attributes = attributes;
+      }
+      this.consumeSemicolon();
+      declaration.end = this.lastConsumedEnd;
+      return declaration;
     }
     if (
       first.kind === "identifier" &&
@@ -1598,8 +1639,7 @@ export class Parser {
       start: sourceToken.start,
       end: sourceToken.end,
     };
-    this.consumeSemicolon();
-    return {
+    const declaration: ImportDeclaration = {
       kind: "ImportDeclaration",
       defaultImport,
       namespaceImport,
@@ -1609,6 +1649,68 @@ export class Parser {
       start: keyword.start,
       end: this.lastConsumedEnd,
     };
+    const attributes = this.parseImportAttributes();
+    if (attributes !== undefined) {
+      declaration.attributes = attributes;
+    }
+    this.consumeSemicolon();
+    declaration.end = this.lastConsumedEnd;
+    return declaration;
+  }
+
+  /**
+   * Parses an optional `with { key: "value", ... }` import-attributes clause
+   * (TS 5.3). The deprecated `assert { ... }` spelling is intentionally not
+   * supported. `with` tokenizes as a keyword, so compare it as one.
+   */
+  private parseImportAttributes(): ImportAttribute[] | undefined {
+    if (!this.isKeyword("with")) {
+      return undefined;
+    }
+    this.advance();
+    this.expectPunct("{");
+    const attributes: ImportAttribute[] = [];
+    for (;;) {
+      if (this.isPunct("}")) {
+        break;
+      }
+      const keyToken = this.current();
+      let key: Identifier | StringLiteral;
+      if (keyToken.kind === "identifier" || keyToken.kind === "keyword") {
+        this.advance();
+        key = {
+          kind: "Identifier",
+          name: keyToken.value,
+          start: keyToken.start,
+          end: keyToken.end,
+        };
+      } else if (keyToken.kind === "string") {
+        this.advance();
+        key = {
+          kind: "StringLiteral",
+          value: keyToken.value,
+          raw: keyToken.text,
+          start: keyToken.start,
+          end: keyToken.end,
+        };
+      } else {
+        throw this.unexpected(keyToken);
+      }
+      this.expectPunct(":");
+      const value = this.expectStringLiteral();
+      attributes.push({
+        kind: "ImportAttribute",
+        key,
+        value,
+        start: key.start,
+        end: value.end,
+      });
+      if (!this.matchPunct(",")) {
+        break;
+      }
+    }
+    this.expectPunct("}");
+    return attributes;
   }
 
   private parseImportEqualsDeclaration(keyword: Token): ImportEqualsDeclaration {
@@ -1743,13 +1845,7 @@ export class Parser {
   private parseVariableDeclaration(): VariableStatement {
     const keyword = this.advance();
     const declarationKind = keyword.value as VariableStatement["declarationKind"];
-    const declarations: VariableDeclarator[] = [];
-    for (;;) {
-      declarations.push(this.parseVariableDeclarator());
-      if (!this.matchPunct(",")) {
-        break;
-      }
-    }
+    const declarations = this.parseVariableDeclaratorList();
     const last = declarations[declarations.length - 1];
     return {
       kind: "VariableStatement",
@@ -1758,6 +1854,71 @@ export class Parser {
       start: keyword.start,
       end: last === undefined ? keyword.end : last.end,
     };
+  }
+
+  /**
+   * `using` / `await using` declarations are modeled as VariableStatements
+   * with declarationKind `"using"`; the binder treats any non-`var` kind as
+   * block-scoped, so the names bind in the enclosing block.
+   */
+  private parseUsingDeclaration(isAwait: boolean): VariableStatement {
+    const start = isAwait ? this.advance().start : this.current().start;
+    const keyword = this.advance(); // `using`
+    const statement: VariableStatement = {
+      kind: "VariableStatement",
+      declarationKind: "using",
+      declarations: this.parseVariableDeclaratorList(),
+      start,
+      end: keyword.end,
+    };
+    if (isAwait) {
+      statement.await = true;
+    }
+    this.consumeSemicolon();
+    statement.end = this.lastConsumedEnd;
+    return statement;
+  }
+
+  private parseVariableDeclaratorList(): VariableDeclarator[] {
+    const declarations: VariableDeclarator[] = [];
+    for (;;) {
+      declarations.push(this.parseVariableDeclarator());
+      if (!this.matchPunct(",")) {
+        break;
+      }
+    }
+    return declarations;
+  }
+
+  /** `using` is contextual: only followed by a binding on the same line. */
+  private isUsingDeclarationStart(): boolean {
+    const next = this.peek();
+    return next.line === this.current().line && this.isBindingStartToken(next);
+  }
+
+  private isAwaitUsingDeclarationStart(): boolean {
+    const current = this.current();
+    const using = this.peekAhead(1);
+    if (using.kind !== "identifier" || using.value !== "using") {
+      return false;
+    }
+    if (using.line !== current.line) {
+      return false;
+    }
+    const binding = this.peekAhead(2);
+    return binding.line === using.line && this.isBindingStartToken(binding);
+  }
+
+  /**
+   * A `using` declaration only starts with `using <identifier>` or
+   * `using { ... }`. Like TypeScript, a `using [` stays an expression
+   * (member/index access on a value named `using`), never a declaration.
+   */
+  private isBindingStartToken(token: Token): boolean {
+    if (token.kind === "identifier") {
+      return true;
+    }
+    return token.kind === "punctuator" && token.text === "{";
   }
 
   private parseVariableDeclarator(): VariableDeclarator {
@@ -2245,8 +2406,7 @@ export class Parser {
     }
     this.advance();
     const source = this.expectStringLiteral();
-    this.consumeSemicolon();
-    return {
+    const declaration: ExportAllDeclaration = {
       kind: "ExportAllDeclaration",
       source,
       exported,
@@ -2254,6 +2414,13 @@ export class Parser {
       start: keyword.start,
       end: this.lastConsumedEnd,
     };
+    const attributes = this.parseImportAttributes();
+    if (attributes !== undefined) {
+      declaration.attributes = attributes;
+    }
+    this.consumeSemicolon();
+    declaration.end = this.lastConsumedEnd;
+    return declaration;
   }
 
   private parseExportNamedSpecifiers(
@@ -2277,8 +2444,7 @@ export class Parser {
       this.advance();
       source = this.expectStringLiteral();
     }
-    this.consumeSemicolon();
-    return {
+    const declaration: ExportNamedDeclaration = {
       kind: "ExportNamedDeclaration",
       declaration: null,
       specifiers,
@@ -2287,6 +2453,15 @@ export class Parser {
       start: keyword.start,
       end: this.lastConsumedEnd,
     };
+    if (source !== null) {
+      const attributes = this.parseImportAttributes();
+      if (attributes !== undefined) {
+        declaration.attributes = attributes;
+      }
+    }
+    this.consumeSemicolon();
+    declaration.end = this.lastConsumedEnd;
+    return declaration;
   }
 
   private parseExportSpecifier(allowTypeOnly: boolean): ExportSpecifier {
@@ -3010,7 +3185,7 @@ export class Parser {
     }
     return (
       token.kind === "punctuator" &&
-      (token.text === "[" || token.text === "*" || token.text === "@")
+      (token.text === "[" || token.text === "*" || token.text === "@" || token.text === "#")
     );
   }
 
@@ -3030,7 +3205,7 @@ export class Parser {
     ) {
       return true;
     }
-    return token.kind === "punctuator" && token.text === "[";
+    return token.kind === "punctuator" && (token.text === "[" || token.text === "#");
   }
 
   private isModifierToken(token: Token): boolean {
@@ -4131,8 +4306,27 @@ export class Parser {
     };
   }
 
+  /**
+   * Private names (`#x`) are modeled as ordinary Identifiers whose name keeps
+   * the leading `#` (e.g. `{ kind: "Identifier", name: "#x" }`). No new node
+   * kind is needed: binders, indexers, and renderers already handle
+   * identifiers, and `#x` stays distinct from a same-named public `x`.
+   */
+  private parsePrivateName(): Identifier {
+    const hash = this.expectPunct("#");
+    const token = this.current();
+    if (token.kind !== "identifier") {
+      throw this.unexpected(token);
+    }
+    this.advance();
+    return { kind: "Identifier", name: `#${token.value}`, start: hash.start, end: token.end };
+  }
+
   private parseMemberName(): Identifier | StringLiteral | NumberLiteral {
     const token = this.current();
+    if (token.kind === "punctuator" && token.text === "#") {
+      return this.parsePrivateName();
+    }
     if (token.kind === "identifier" || token.kind === "keyword") {
       this.advance();
       return {
@@ -4644,6 +4838,19 @@ export class Parser {
           };
           continue;
         }
+        if (token.kind === "punctuator" && token.text === "#") {
+          const property = this.parsePrivateName();
+          result = {
+            kind: "MemberExpression",
+            object: result,
+            property,
+            computed: false,
+            optional: true,
+            start: result.start,
+            end: property.end,
+          };
+          continue;
+        }
         if (this.isPunct("[")) {
           this.advance();
           const property = this.parseExpression();
@@ -4725,6 +4932,9 @@ export class Parser {
 
   private parseMemberProperty(): Identifier {
     const token = this.current();
+    if (token.kind === "punctuator" && token.text === "#") {
+      return this.parsePrivateName();
+    }
     if (token.kind !== "identifier" && token.kind !== "keyword") {
       throw this.unexpected(token);
     }

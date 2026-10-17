@@ -81,6 +81,13 @@ export function resolve(scope: Scope, name: string, space?: SymbolSpace): Symbol
   return null;
 }
 
+/**
+ * Class members are keyed by their source name. Private names arrive from the
+ * parser as identifiers whose name keeps the `#` prefix (see Parser's
+ * parsePrivateName), so `#x` and a public `x` stay distinct and index locators
+ * keep the prefix too (e.g. `A.#x`, `A.#m`). Chosen over excluding private
+ * members: it needs no binder special-casing and makes them findable.
+ */
 function memberName(name: MemberName): string | null {
   switch (name.kind) {
     case "Identifier":

@@ -1,7 +1,7 @@
 ---
 id: 20
 title: "Parser: #private fields, using declarations, import attributes, const type parameters"
-status: todo
+status: done
 priority: high
 milestone: null
 parent: null

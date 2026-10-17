@@ -2116,6 +2116,76 @@ test("parses type parameters directly", () => {
   expect(new Parser("x").parseTypeParameters()).toBeNull();
 });
 
+test("parses const type parameters", () => {
+  expect(new Parser("<const T>").parseTypeParameters()).toEqual([
+    {
+      kind: "TypeParameter",
+      name: { kind: "Identifier", name: "T", start: 7, end: 8 },
+      constraint: null,
+      default: null,
+      const: true,
+      start: 1,
+      end: 8,
+    },
+  ]);
+  const mixed = new Parser("<T, const U extends V = W>").parseTypeParameters();
+  expect(mixed).toMatchObject([
+    { kind: "TypeParameter", name: { kind: "Identifier", name: "T" } },
+    {
+      kind: "TypeParameter",
+      name: { kind: "Identifier", name: "U" },
+      constraint: { kind: "TypeReference", name: "V" },
+      default: { kind: "TypeReference", name: "W" },
+      const: true,
+    },
+  ]);
+  expect(mixed?.[0]?.const).toBeUndefined();
+});
+
+test("parses const type parameters on declarations and arrows", () => {
+  expect(parseProgram("function f<const T>(x: T) { return x; }").body[0]).toMatchObject({
+    kind: "FunctionDeclaration",
+    typeParameters: [
+      {
+        kind: "TypeParameter",
+        name: { kind: "Identifier", name: "T", start: 17, end: 18 },
+        const: true,
+        start: 11,
+        end: 18,
+      },
+    ],
+  });
+  expect(
+    parseProgram("class A<const T> { m<const U>(x: U): U { return x; } }").body[0],
+  ).toMatchObject({
+    kind: "ClassDeclaration",
+    typeParameters: [{ name: { kind: "Identifier", name: "T" }, const: true }],
+    members: [
+      {
+        kind: "MethodDeclaration",
+        name: { kind: "Identifier", name: "m" },
+        typeParameters: [{ name: { kind: "Identifier", name: "U" }, const: true }],
+      },
+    ],
+  });
+  expect(parseProgram("const f = <const T>(x: T) => x;").body[0]).toMatchObject({
+    kind: "VariableStatement",
+    declarations: [
+      {
+        initializer: {
+          kind: "ArrowFunctionExpression",
+          typeParameters: [{ name: { kind: "Identifier", name: "T" }, const: true }],
+        },
+      },
+    ],
+  });
+  const plain = parseProgram("function f<T>(x: T) { return x; }").body[0];
+  if (plain === undefined || plain.kind !== "FunctionDeclaration") {
+    throw new Error("expected a function declaration");
+  }
+  expect(plain.typeParameters?.[0]?.const).toBeUndefined();
+});
+
 test("parses parameter lists directly", () => {
   expect(new Parser("()").parseParameters()).toEqual([]);
   expect(new Parser("(a)").parseParameters()).toEqual([
@@ -3224,6 +3294,104 @@ test("parses variable declarations with types and initializers", () => {
     ],
     start: 0,
     end: 20,
+  });
+});
+
+test("parses using and await using declarations as variable statements", () => {
+  expect(parseProgram("using x = resource();").body[0]).toMatchObject({
+    kind: "VariableStatement",
+    declarationKind: "using",
+    declarations: [
+      {
+        kind: "VariableDeclarator",
+        name: { kind: "Identifier", name: "x", start: 6, end: 7 },
+        initializer: { kind: "CallExpression", start: 10, end: 20 },
+        start: 6,
+        end: 20,
+      },
+    ],
+    start: 0,
+    end: 21,
+  });
+  expect(parseProgram("using x = resource();").body[0]).not.toHaveProperty("await");
+  expect(parseProgram("async function f() { await using x = resource(); }").body[0]).toMatchObject({
+    kind: "FunctionDeclaration",
+    body: {
+      body: [
+        {
+          kind: "VariableStatement",
+          declarationKind: "using",
+          await: true,
+          declarations: [{ name: { kind: "Identifier", name: "x", start: 33, end: 34 } }],
+          start: 21,
+          end: 48,
+        },
+      ],
+    },
+  });
+  expect(parseProgram("function f() { using a = 1, b = 2; }").body[0]).toMatchObject({
+    body: {
+      body: [
+        {
+          kind: "VariableStatement",
+          declarationKind: "using",
+          declarations: [
+            { name: { kind: "Identifier", name: "a" } },
+            { name: { kind: "Identifier", name: "b" } },
+          ],
+        },
+      ],
+    },
+  });
+  expect(parseProgram("function f() { using { a, b } = obj; }").body[0]).toMatchObject({
+    body: {
+      body: [
+        {
+          kind: "VariableStatement",
+          declarationKind: "using",
+          declarations: [{ name: { kind: "ObjectPattern" } }],
+        },
+      ],
+    },
+  });
+});
+
+test("keeps using usable as an ordinary identifier", () => {
+  expect(parseProgram("using(1);").body[0]).toMatchObject({
+    kind: "ExpressionStatement",
+    expression: {
+      kind: "CallExpression",
+      callee: { kind: "Identifier", name: "using", start: 0, end: 5 },
+      start: 0,
+      end: 8,
+    },
+  });
+  expect(parseProgram("using = 1;").body[0]).toMatchObject({
+    kind: "ExpressionStatement",
+    expression: {
+      kind: "AssignmentExpression",
+      left: { kind: "Identifier", name: "using" },
+    },
+  });
+  // Like TypeScript, `using [` stays a member expression, not a declaration.
+  expect(parseProgram("using[0] = 1;").body[0]).toMatchObject({
+    kind: "ExpressionStatement",
+    expression: {
+      kind: "AssignmentExpression",
+      left: {
+        kind: "MemberExpression",
+        object: { kind: "Identifier", name: "using", start: 0, end: 5 },
+        property: { kind: "NumberLiteral", value: 0, start: 6, end: 7 },
+        computed: true,
+      },
+    },
+  });
+  const separated = parseProgram("function f() { using\nx = 1; }").body[0];
+  expect(separated).toMatchObject({
+    kind: "FunctionDeclaration",
+    body: {
+      body: [{ kind: "ExpressionStatement" }, { kind: "ExpressionStatement" }],
+    },
   });
 });
 
@@ -5684,6 +5852,94 @@ test("parses string, number, and computed class member names", () => {
   });
 });
 
+test("parses private fields and methods with #-prefixed identifier names", () => {
+  expect(parseProgram("class A { #x = 1; }").body[0]).toMatchObject({
+    members: [
+      {
+        kind: "PropertyDeclaration",
+        name: { kind: "Identifier", name: "#x", start: 10, end: 12 },
+        initializer: { kind: "NumberLiteral", value: 1, raw: "1", start: 15, end: 16 },
+        static: false,
+        readonly: false,
+        start: 10,
+        end: 16,
+      },
+    ],
+  });
+  expect(parseProgram("class A { static #count = 0; }").body[0]).toMatchObject({
+    members: [
+      {
+        kind: "PropertyDeclaration",
+        name: { kind: "Identifier", name: "#count", start: 17, end: 23 },
+        static: true,
+        start: 10,
+        end: 27,
+      },
+    ],
+  });
+  expect(parseProgram("class A { readonly #r = 1; }").body[0]).toMatchObject({
+    members: [
+      {
+        kind: "PropertyDeclaration",
+        name: { kind: "Identifier", name: "#r", start: 19, end: 21 },
+        readonly: true,
+      },
+    ],
+  });
+  expect(parseProgram("class A { #m() {} }").body[0]).toMatchObject({
+    members: [
+      {
+        kind: "MethodDeclaration",
+        name: { kind: "Identifier", name: "#m", start: 10, end: 12 },
+        body: { kind: "BlockStatement", body: [], start: 15, end: 17 },
+        start: 10,
+        end: 17,
+      },
+    ],
+  });
+  expect(parseProgram("class A { get #g() { return 1; } }").body[0]).toMatchObject({
+    members: [
+      {
+        kind: "MethodDeclaration",
+        name: { kind: "Identifier", name: "#g", start: 14, end: 16 },
+        accessor: "get",
+      },
+    ],
+  });
+  expect(parseProgram("class A { #x = 1\n#y = 2 }").body[0]).toMatchObject({
+    members: [
+      { kind: "PropertyDeclaration", name: { kind: "Identifier", name: "#x" } },
+      { kind: "PropertyDeclaration", name: { kind: "Identifier", name: "#y" } },
+    ],
+  });
+});
+
+test("parses private member access with #-prefixed identifier names", () => {
+  expect(parseProgram("class A { m() { return this.#x; } }").body[0]).toMatchObject({
+    members: [
+      {
+        kind: "MethodDeclaration",
+        body: {
+          body: [
+            {
+              kind: "ReturnStatement",
+              argument: {
+                kind: "MemberExpression",
+                object: { kind: "ThisExpression", start: 23, end: 27 },
+                property: { kind: "Identifier", name: "#x", start: 28, end: 30 },
+                computed: false,
+                optional: false,
+                start: 23,
+                end: 30,
+              },
+            },
+          ],
+        },
+      },
+    ],
+  });
+});
+
 test("parses method declarations with bodies and signatures", () => {
   expect(parseProgram("class A { m() {} }").body[0]).toMatchObject({
     members: [
@@ -6543,6 +6799,72 @@ test("parses type-only import declarations and specifiers", () => {
     start: 0,
     end: 29,
   });
+});
+
+test("parses import declarations with with attributes", () => {
+  expect(parseProgram('import data from "./d.json" with { type: "json" };').body[0]).toMatchObject({
+    kind: "ImportDeclaration",
+    defaultImport: { kind: "Identifier", name: "data", start: 7, end: 11 },
+    source: { kind: "StringLiteral", value: "./d.json", raw: '"./d.json"', start: 17, end: 27 },
+    importKind: "value",
+    attributes: [
+      {
+        kind: "ImportAttribute",
+        key: { kind: "Identifier", name: "type", start: 35, end: 39 },
+        value: { kind: "StringLiteral", value: "json", raw: '"json"', start: 41, end: 47 },
+        start: 35,
+        end: 47,
+      },
+    ],
+    start: 0,
+    end: 50,
+  });
+  expect(parseProgram('import "./style.css" with { type: "css" };').body[0]).toMatchObject({
+    kind: "ImportDeclaration",
+    defaultImport: null,
+    source: { kind: "StringLiteral", value: "./style.css", start: 7, end: 20 },
+    attributes: [{ key: { kind: "Identifier", name: "type" }, value: { value: "css" } }],
+  });
+  expect(
+    parseProgram('import * as ns from "./m" with { "resolution-mode": "import" };').body[0],
+  ).toMatchObject({
+    kind: "ImportDeclaration",
+    namespaceImport: { kind: "Identifier", name: "ns" },
+    attributes: [
+      {
+        key: { kind: "StringLiteral", value: "resolution-mode", raw: '"resolution-mode"' },
+        value: { kind: "StringLiteral", value: "import" },
+      },
+    ],
+  });
+});
+
+test("parses with attributes on export-from declarations", () => {
+  expect(parseProgram('export { a } from "./m" with { type: "json" };').body[0]).toMatchObject({
+    kind: "ExportNamedDeclaration",
+    declaration: null,
+    source: { kind: "StringLiteral", value: "./m", start: 18, end: 23 },
+    attributes: [
+      {
+        kind: "ImportAttribute",
+        key: { kind: "Identifier", name: "type", start: 31, end: 35 },
+        value: { kind: "StringLiteral", value: "json", start: 37, end: 43 },
+      },
+    ],
+  });
+  expect(parseProgram('export * from "./m" with { type: "json" };').body[0]).toMatchObject({
+    kind: "ExportAllDeclaration",
+    source: { kind: "StringLiteral", value: "./m", start: 14, end: 19 },
+    attributes: [{ key: { kind: "Identifier", name: "type" }, value: { value: "json" } }],
+  });
+});
+
+test("omits import attributes without a with clause", () => {
+  expect(parseProgram('import a from "m";').body[0]).not.toHaveProperty("attributes");
+  expect(parseProgram('import "m";').body[0]).not.toHaveProperty("attributes");
+  expect(parseProgram('export { a } from "m";').body[0]).not.toHaveProperty("attributes");
+  expect(parseProgram('export * from "m";').body[0]).not.toHaveProperty("attributes");
+  expect(parseProgram("export { a };").body[0]).not.toHaveProperty("attributes");
 });
 
 test("parses import equals declarations", () => {
