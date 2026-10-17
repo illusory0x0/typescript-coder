@@ -1,7 +1,7 @@
 ---
 id: 34
 title: "Spec visibility: include test files and issue-mentioned files in context"
-status: todo
+status: done
 priority: high
 milestone: null
 parent: 28
@@ -62,3 +62,18 @@ markers when needed.
 - If the measured json overhead exceeds the allowance, the fallback decision
   is to scope spec bodies to tasks whose test file exceeds the signature-only
   information need — decide with the final report data.
+- Validation (2026-10-17): `selectSpecFiles(issue, files)` exports the rule
+  (every `*.test.ts` basename + issue-mentioned discovered paths, `./`-stripped,
+  deduped, deterministic order; non-existent mentions ignored);
+  `buildUserPrompt(issue, contextYaml, specFiles = [])` appends `# Spec files`
+  with per-file `## <path>` + fenced source (4-backtick fallback), truncating
+  >8,000 chars to 4,000 head + `// ... [truncated N characters] ...` + 4,000
+  tail; the signature index is unchanged and two-arg callers produce the old
+  prompt byte-for-byte. Assembled minilisp prompt (3,446 chars) contains the
+  full `src/lisp.test.ts` body; `src/lisp.ts` (to be created) correctly absent;
+  marker verified on a synthetic oversized source. Measured initial-prompt
+  input deltas: json 419→2,893 (≈+619 tokens), sexp 404→1,963, minilisp
+  425→3,446 (≈+755) — within the documented json allowance. Tests: +10
+  (selection/dedupe/truncation/assembly + runLoop integration; exact-prompt
+  and replay fixtures updated to include specs). Verified: tsc 0, 481 tests,
+  `accept` 5/5, `benchmark/check.ts` 3 PASS.

@@ -15,6 +15,7 @@ import {
   parseLocatorResponse,
   parseReplacementResponse,
   runLoop,
+  selectSpecFiles,
   stripCodeFences,
 } from "./loop";
 import type { ProviderLike } from "./loop";
@@ -60,6 +61,51 @@ describe("discoverSourceFiles", () => {
     expect(files.map((file) => file.path)).toEqual(["a.ts", "sub/b.ts"]);
     expect(files[0]?.source).toBe("export const a = 1;\n");
     expect(files[1]?.source).toBe("export const b = 2;\n");
+  });
+});
+
+describe("selectSpecFiles", () => {
+  const files: SourceFile[] = [
+    { path: "src/app.ts", source: "export const app = 1;\n" },
+    { path: "src/app.test.ts", source: "test();\n" },
+    { path: "src/helper.ts", source: "export const helper = 1;\n" },
+  ];
+
+  test("includes discovered test files and issue-mentioned files in path order", () => {
+    const issue = "Implement src/helper.ts so that src/app.test.ts passes.";
+    expect(selectSpecFiles(issue, files).map((file) => file.path)).toEqual([
+      "src/app.test.ts",
+      "src/helper.ts",
+    ]);
+  });
+
+  test("ignores mentioned paths that do not exist", () => {
+    const sourceFiles: SourceFile[] = [{ path: "src/app.ts", source: "" }];
+    expect(selectSpecFiles("Implement src/missing.ts.", sourceFiles)).toEqual([]);
+  });
+
+  test("lists a file that is both a test file and mentioned only once", () => {
+    expect(selectSpecFiles("Fix ./src/app.test.ts.", files).map((file) => file.path)).toEqual([
+      "src/app.test.ts",
+    ]);
+  });
+
+  test("normalizes ./ prefixed mentions", () => {
+    const sourceFiles: SourceFile[] = [{ path: "src/helper.ts", source: "" }];
+    expect(
+      selectSpecFiles("Implement ./src/helper.ts.", sourceFiles).map((file) => file.path),
+    ).toEqual(["src/helper.ts"]);
+  });
+
+  test("sorts selected files by path regardless of input order", () => {
+    const reversed: SourceFile[] = [
+      { path: "src/z.test.ts", source: "" },
+      { path: "src/a.test.ts", source: "" },
+    ];
+    expect(selectSpecFiles("", reversed).map((file) => file.path)).toEqual([
+      "src/a.test.ts",
+      "src/z.test.ts",
+    ]);
   });
 });
 
@@ -216,6 +262,46 @@ describe("prompt builders", () => {
     expect(prompt).toContain("# Project context");
     expect(prompt).toContain("```yaml");
     expect(prompt).toContain(context);
+  });
+
+  test("buildUserPrompt appends spec file paths and bodies when given", () => {
+    const context = buildContextYaml([{ path: "src/a.test.ts", source: "test();\n" }]);
+    const specFiles: SourceFile[] = [
+      { path: "src/a.test.ts", source: "expect(answer()).toBe(2);\n" },
+    ];
+    const prompt = buildUserPrompt("fix the failing test", context, specFiles);
+    expect(prompt).toContain("# Project context");
+    expect(prompt).toContain("# Spec files");
+    expect(prompt).toContain("part of the specification; do not modify them");
+    expect(prompt).toContain("## src/a.test.ts");
+    expect(prompt).toContain("expect(answer()).toBe(2);");
+    expect(prompt).toContain("```ts");
+  });
+
+  test("buildUserPrompt omits the spec section when no spec files are given", () => {
+    const context = "files:\n";
+    expect(buildUserPrompt("fix the failing test", context)).not.toContain("# Spec files");
+    expect(buildUserPrompt("fix the failing test", context, [])).toBe(
+      buildUserPrompt("fix the failing test", context),
+    );
+  });
+
+  test("buildUserPrompt truncates an oversized spec file with an explicit marker", () => {
+    const source = `${"h".repeat(5000)}${"z".repeat(1000)}${"t".repeat(5000)}`;
+    const prompt = buildUserPrompt("issue", "files:\n", [{ path: "src/big.test.ts", source }]);
+    expect(prompt).toContain("h".repeat(4000));
+    expect(prompt).toContain("t".repeat(4000));
+    expect(prompt).not.toContain("z");
+    expect(prompt).toContain(`// ... [truncated ${source.length - 8000} characters] ...`);
+    const section = prompt.slice(prompt.indexOf("## src/big.test.ts"));
+    expect(section.length).toBeLessThan(8300);
+  });
+
+  test("buildUserPrompt widens the fence when a spec body contains a fence line", () => {
+    const source = 'const marker = "```";\n```ts\nconst x = 1;\n```\n';
+    const prompt = buildUserPrompt("issue", "files:\n", [{ path: "src/fence.test.ts", source }]);
+    expect(prompt).toContain("````ts");
+    expect(prompt).toContain("const x = 1;");
   });
 
   test("buildReplacementPrompt contains the locator and the symbol source", () => {
@@ -467,6 +553,27 @@ describe("runLoop", () => {
     expect(provider.calls.length).toBe(2);
   }, 30000);
 
+  test("includes spec file bodies in the initial user prompt", async () => {
+    const dir = fixtureDir();
+    const provider = new ScriptedProvider([
+      '{"path":"src/helper.ts","name":"answer","kind":"function"}',
+      "function answer(): number {\n  return 2;\n}\n",
+    ]);
+    const result = await runLoop({
+      cwd: dir,
+      issue: "make the answer test pass",
+      model: "fake",
+      provider,
+      checkCommand: TSC,
+      testCommand: ["bun", "test"],
+    });
+    expect(result.ok).toBe(true);
+    const initial = provider.calls[0]?.[1]?.content ?? "";
+    expect(initial).toContain("# Spec files");
+    expect(initial).toContain("## src/helper.test.ts");
+    expect(initial).toContain("expect(answer()).toBe(2);");
+  }, 30000);
+
   test("accepts a locator delivered through a tool call", async () => {
     const dir = fixtureDir();
     const provider = new ScriptedProvider([
@@ -531,13 +638,14 @@ describe("runLoop", () => {
     expect(result.attempts[0]?.replacement).toBeNull();
     expect(result.attempts[0]?.diagnostics).toContain("invalid locator");
 
+    const files = discoverSourceFiles(dir);
     const initialMessages = provider.calls[0] ?? [];
     expect(initialMessages).toHaveLength(2);
     expect(initialMessages[0]?.role).toBe("system");
     expect(initialMessages[0]?.content).toBe(buildSystemPrompt());
     expect(initialMessages[1]?.role).toBe("user");
     expect(initialMessages[1]?.content).toBe(
-      buildUserPrompt(issue, buildContextYaml(discoverSourceFiles(dir))),
+      buildUserPrompt(issue, buildContextYaml(files), selectSpecFiles(issue, files)),
     );
 
     const retryMessages = provider.calls[1] ?? [];

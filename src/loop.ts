@@ -6,7 +6,7 @@ import {
   statSync,
   writeFileSync,
 } from "node:fs";
-import { dirname, isAbsolute, join, relative, resolve, sep } from "node:path";
+import { basename, dirname, isAbsolute, join, relative, resolve, sep } from "node:path";
 import { applyEdits, formatSource } from "./editor";
 import { buildIndexTolerant, findDefinition } from "./utility";
 import { buildSignatureViewFromEntry } from "./scroll";
@@ -18,6 +18,10 @@ import type { IndexEntry, Locator, SkippedFile, SourceFile, TolerantIndex } from
 const SKIPPED_DIRECTORIES = new Set(["node_modules", ".git", "dist", "tmp"]);
 const CONTEXT_SYMBOL_LIMIT = 500;
 const SIGNATURE_LIMIT = 200;
+const SPEC_FILE_LIMIT = 8000;
+const TEST_FILE_SUFFIX = ".test.ts";
+// Path-like tokens in the issue text, e.g. `src/lisp.ts` inside backticks.
+const ISSUE_PATH_PATTERN = /[\w./-]+\.ts\b/g;
 
 function comparePaths(left: string, right: string): number {
   if (left === right) {
@@ -48,6 +52,20 @@ export function discoverSourceFiles(cwd: string): SourceFile[] {
     .map((path) => relative(cwd, path).split(sep).join("/"))
     .sort(comparePaths)
     .map((path) => ({ path, source: readFileSync(join(cwd, path), "utf8") }));
+}
+
+export function selectSpecFiles(issue: string, files: readonly SourceFile[]): SourceFile[] {
+  const mentioned = new Set<string>();
+  for (const token of issue.match(ISSUE_PATH_PATTERN) ?? []) {
+    mentioned.add(token.startsWith("./") ? token.slice(2) : token);
+  }
+  const selected = new Map<string, SourceFile>();
+  for (const file of files) {
+    if (basename(file.path).endsWith(TEST_FILE_SUFFIX) || mentioned.has(file.path)) {
+      selected.set(file.path, file);
+    }
+  }
+  return [...selected.values()].sort((left, right) => comparePaths(left.path, right.path));
 }
 
 function yamlString(value: string): string {
@@ -131,9 +149,45 @@ export function buildSystemPrompt(): string {
   ].join("\n");
 }
 
-export function buildUserPrompt(issue: string, contextYaml: string): string {
+// Keep the head (declarations and early cases) and the tail (final assertions)
+// of an oversized spec file with an explicit marker in between.
+function truncateSpecSource(source: string): string {
+  if (source.length <= SPEC_FILE_LIMIT) {
+    return source;
+  }
+  const half = SPEC_FILE_LIMIT / 2;
+  const head = source.slice(0, half);
+  const tail = source.slice(source.length - half);
+  const truncated = source.length - SPEC_FILE_LIMIT;
+  return `${head}\n// ... [truncated ${truncated} characters] ...\n${tail}`;
+}
+
+function buildSpecSection(specFiles: readonly SourceFile[]): string {
+  const lines = [
+    "# Spec files",
+    "",
+    "These files are part of the specification; do not modify them.",
+  ];
+  for (const file of specFiles) {
+    const source = truncateSpecSource(file.source);
+    const sourceLines = source.split("\n");
+    const fence = sourceLines.some((line) => line.startsWith("```")) ? "````" : "```";
+    lines.push("", `## ${file.path}`, "", `${fence}ts`, ...sourceLines, fence);
+  }
+  return lines.join("\n");
+}
+
+export function buildUserPrompt(
+  issue: string,
+  contextYaml: string,
+  specFiles: readonly SourceFile[] = [],
+): string {
   const body = contextYaml === "" || contextYaml.endsWith("\n") ? contextYaml : `${contextYaml}\n`;
-  return `# Issue\n\n${issue}\n\n# Project context\n\n\`\`\`yaml\n${body}\`\`\`\n`;
+  const prompt = `# Issue\n\n${issue}\n\n# Project context\n\n\`\`\`yaml\n${body}\`\`\`\n`;
+  if (specFiles.length === 0) {
+    return prompt;
+  }
+  return `${prompt}\n${buildSpecSection(specFiles)}\n`;
 }
 
 export function buildReplacementPrompt(locatorJson: string, symbolSource: string): string {
@@ -481,9 +535,10 @@ export async function runLoop(options: LoopOptions): Promise<LoopResult> {
   const contextYaml = buildContextYaml(files, build);
   const index = build.index;
   const skipped = build.skipped;
+  const specFiles = selectSpecFiles(options.issue, files);
   const messages: ChatMessage[] = [
     { role: "system", content: buildSystemPrompt() },
-    { role: "user", content: buildUserPrompt(options.issue, contextYaml) },
+    { role: "user", content: buildUserPrompt(options.issue, contextYaml, specFiles) },
   ];
   const attempts: LoopAttempt[] = [];
 

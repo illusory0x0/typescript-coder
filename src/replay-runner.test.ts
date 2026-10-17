@@ -8,6 +8,7 @@ import {
   buildSystemPrompt,
   buildUserPrompt,
   discoverSourceFiles,
+  selectSpecFiles,
 } from "./loop";
 import { REPLAY_BUNDLE_FORMAT } from "./replay-format";
 import { parseReplayBundle, ReplayProvider, runReplay, summarizeReplay } from "./replay-runner";
@@ -74,11 +75,12 @@ function fixtureRepo(): { repoRoot: string; fixtureDir: string } {
 }
 
 function recordedCalls(fixtureDir: string): ReplayCall[] {
+  const files = discoverSourceFiles(fixtureDir);
   const initial: ChatMessage[] = [
     { role: "system", content: buildSystemPrompt() },
     {
       role: "user",
-      content: buildUserPrompt(ISSUE, buildContextYaml(discoverSourceFiles(fixtureDir))),
+      content: buildUserPrompt(ISSUE, buildContextYaml(files), selectSpecFiles(ISSUE, files)),
     },
   ];
   return [
