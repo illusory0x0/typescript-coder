@@ -5,8 +5,8 @@ import { basename, join } from "node:path";
 import {
   buildAppendPrompt,
   buildContextYaml,
-  buildDiagnosticsPrompt,
   buildReplacementPrompt,
+  buildRetryPrompt,
   buildSelectionRetryPrompt,
   buildSystemPrompt,
   buildUserPrompt,
@@ -561,12 +561,28 @@ describe("prompt builders", () => {
     expect(prompt).toContain("COMPLETE code");
   });
 
-  test("buildDiagnosticsPrompt reports the failure and includes diagnostics", () => {
+  test("buildRetryPrompt reports the attempt, current source, and diagnostics", () => {
+    const locatorJson = '{"path":"src/a.ts","name":"make","kind":"function"}';
+    const currentSource = 'export function make(): number {\n  return "nope";\n}';
     const diagnostics = "src/a.ts(2,3): error TS2322: Type 'string' is not assignable";
-    const prompt = buildDiagnosticsPrompt(diagnostics);
-    expect(prompt).toContain("failed verification");
+    const prompt = buildRetryPrompt({
+      attemptNumber: 2,
+      maxAttempts: 3,
+      locatorJson,
+      currentSource,
+      diagnostics,
+    });
+    expect(prompt).toContain("Attempt 2 of 3 failed verification.");
+    expect(prompt).toContain("1 attempt(s) remain");
+    expect(prompt).toContain("minimal corrective changes to the current source");
+    expect(prompt).toContain(
+      "Output the COMPLETE corrected text for the selected region, with no markdown fences and no explanations.",
+    );
+    expect(prompt).toContain("```json");
+    expect(prompt).toContain(locatorJson);
+    expect(prompt).toContain("```ts");
+    expect(prompt).toContain(currentSource);
     expect(prompt).toContain(diagnostics);
-    expect(prompt).toContain("COMPLETE replacement");
   });
 
   test("buildSelectionRetryPrompt asks for a corrected locator without replacement wording", () => {
@@ -956,7 +972,7 @@ describe("runLoop", () => {
     expect(explainCall[explainCall.length - 1]?.content).toContain("Explain");
   }, 30000);
 
-  test("rolls back a failing edit and retries with diagnostics", async () => {
+  test("keeps a failing edit on disk and retries with diagnostics", async () => {
     const dir = fixtureDir();
     const provider = new ScriptedProvider([
       '{"path":"src/helper.ts","name":"answer","kind":"function"}',
@@ -983,6 +999,93 @@ describe("runLoop", () => {
           typeof message.content === "string" && message.content.includes("failed verification"),
       ),
     ).toBe(true);
+  }, 30000);
+
+  test("rebuilds a bounded retry history without echoing the previous replacement", async () => {
+    const dir = fixtureDir();
+    const locator = '{"path":"src/helper.ts","name":"answer","kind":"function"}';
+    const badReplacement = 'function answer(): number { return "nope"; }';
+    const provider = new ScriptedProvider([
+      locator,
+      badReplacement,
+      "function answer(): number {\n  return 2;\n}\n",
+    ]);
+    const result = await runLoop({
+      cwd: dir,
+      issue: "make the answer test pass",
+      model: "fake",
+      provider,
+      checkCommand: TSC,
+      testCommand: ["bun", "test"],
+    });
+    expect(result.ok).toBe(true);
+    expect(result.attempts.length).toBe(2);
+    const retryCall = provider.calls[2] ?? [];
+    expect(retryCall).toHaveLength(4);
+    expect(retryCall.map((message) => message.role)).toEqual([
+      "system",
+      "user",
+      "assistant",
+      "user",
+    ]);
+    expect(retryCall[2]).toEqual({ role: "assistant", content: locator });
+    // The previous assistant replacement is not re-echoed as a message; the raw
+    // response text only reappears as reformatted current source in the prompt.
+    expect(retryCall.some((message) => message.content === badReplacement)).toBe(false);
+    const retryPrompt = retryCall[3]?.content ?? "";
+    expect(retryPrompt).toContain("Attempt 2 of 3 failed verification.");
+    expect(retryPrompt).toContain("1 attempt(s) remain");
+    expect(retryPrompt).toContain("not assignable");
+    expect(retryPrompt).toContain("Current source:");
+    expect(retryPrompt).toContain('return "nope";');
+  }, 30000);
+
+  test("keeps the last attempted state on disk after failed verifications (no rollback)", async () => {
+    const failingCommand = ["bun", "-e", "process.exit(1)"];
+    const badReplacement = 'function answer(): number {\n  return "nope";\n}';
+
+    const replaceDir = fixtureDir();
+    const replaceOriginal = helperSource(replaceDir);
+    const replaceResult = await runLoop({
+      cwd: replaceDir,
+      issue: "make the answer test pass",
+      model: "fake",
+      provider: new ScriptedProvider([
+        '{"path":"src/helper.ts","name":"answer","kind":"function"}',
+        badReplacement,
+        badReplacement,
+        badReplacement,
+        "the replacement never verifies",
+      ]),
+      checkCommand: failingCommand,
+      testCommand: failingCommand,
+    });
+    expect(replaceResult.ok).toBe(false);
+    expect(replaceResult.attempts.length).toBe(3);
+    expect(helperSource(replaceDir)).toContain('return "nope";');
+    expect(helperSource(replaceDir)).not.toBe(replaceOriginal);
+
+    const appendDir = passingFixtureDir();
+    const created = join(appendDir, "src", "generated.ts");
+    const badAppend = 'export function make(): number {\n  return "nope";\n}';
+    const appendResult = await runLoop({
+      cwd: appendDir,
+      issue: "create a generated module",
+      model: "fake",
+      provider: new ScriptedProvider([
+        '{"path":"src/generated.ts","name":"make","kind":"function"}',
+        badAppend,
+        badAppend,
+        badAppend,
+        "the generated module never verifies",
+      ]),
+      checkCommand: failingCommand,
+      testCommand: failingCommand,
+    });
+    expect(appendResult.ok).toBe(false);
+    expect(appendResult.attempts.length).toBe(3);
+    expect(existsSync(created)).toBe(true);
+    expect(readFileSync(created, "utf8")).toContain('return "nope";');
   }, 30000);
 
   test("maps a real tsc failure to a replacement line and a tsc-stage label", async () => {
@@ -1093,7 +1196,7 @@ describe("runLoop", () => {
     expect(invocationLog(dir)).toEqual(["src/helper.test.ts", "(full)"]);
   }, 30000);
 
-  test("keeps the prompt prefix append-only and the system prompt stable across runs", async () => {
+  test("keeps the system prompt stable and rebuilds a bounded retry history", async () => {
     const issue = "make the answer test pass";
     const locatorResponse = '{"path":"src/helper.ts","name":"answer","kind":"function"}';
     const goodReplacement = "function answer(): number {\n  return 2;\n}\n";
@@ -1144,14 +1247,18 @@ describe("runLoop", () => {
     expect(retry.ok).toBe(true);
     const beforeRetry = retryProvider.calls[1] ?? [];
     const afterRetry = retryProvider.calls[2] ?? [];
-    expect(afterRetry.slice(0, beforeRetry.length)).toEqual(beforeRetry);
-    expect(afterRetry.length - beforeRetry.length).toBe(2);
-    const tail = afterRetry.slice(beforeRetry.length);
-    expect(tail.map((message) => message.role)).toEqual(["assistant", "user"]);
-    expect(tail[1]?.content).toContain("failed verification");
+    expect(beforeRetry.map((message) => message.role)).toEqual([
+      "system",
+      "user",
+      "assistant",
+      "user",
+    ]);
+    expect(afterRetry).toHaveLength(beforeRetry.length);
+    expect(afterRetry.slice(0, 3)).toEqual(beforeRetry.slice(0, 3));
+    expect(afterRetry[3]?.content).toContain("failed verification");
   }, 30000);
 
-  test("restores the file and explains after exhausting retries", async () => {
+  test("keeps the attempted state and explains after exhausting retries", async () => {
     const issue = "make the answer test pass";
     const dir = fixtureDir();
     const original = helperSource(dir);
@@ -1177,36 +1284,36 @@ describe("runLoop", () => {
     for (const attempt of result.attempts) {
       expect(attempt.replacement).toBe(badReplacement);
       expect(attempt.diagnostics).toContain("stage: tsc");
-      expect(attempt.diagnostics).toContain("replacement line 1: TS2322:");
       expect(attempt.diagnostics).toContain("not assignable");
     }
-    expect(result.diagnostics).toContain("replacement line 1: TS2322:");
+    expect(result.attempts[0]?.diagnostics).toContain("replacement line 1: TS2322:");
     expect(result.diagnostics).toContain("not assignable");
     expect(result.diagnostics).toContain("tests failed:");
     expect(result.editedSource).toBeNull();
     expect(result.filePath).toBe("src/helper.ts");
-    expect(helperSource(dir)).toBe(original);
+    // No rollback (#30): the last attempted text is what stays on disk.
+    const finalSource = helperSource(dir);
+    expect(finalSource).toContain('return "no";');
+    expect(finalSource).not.toBe(original);
     expect(result.explanation).toBe(
       "The symbol cannot satisfy the test without a larger refactor.",
     );
 
     expect(provider.calls.length).toBe(5);
     const attemptsCall = provider.calls[3] ?? [];
-    expect(attemptsCall).toHaveLength(8);
-    expect(attemptsCall[attemptsCall.length - 1]?.content).toContain("failed verification");
-    expect(attemptsCall[attemptsCall.length - 1]?.content).toContain("replacement line 1: TS2322:");
-    expect(attemptsCall[attemptsCall.length - 1]?.content).toContain("not assignable");
-    const explainCall = provider.calls[4] ?? [];
-    expect(explainCall).toHaveLength(11);
-    expect(explainCall[explainCall.length - 1]?.content).toContain("Explain");
-    expect(explainCall.map((message) => message.role)).toEqual([
+    expect(attemptsCall.map((message) => message.role)).toEqual([
       "system",
       "user",
       "assistant",
       "user",
-      "assistant",
-      "user",
-      "assistant",
+    ]);
+    expect(attemptsCall[attemptsCall.length - 1]?.content).toContain("failed verification");
+    expect(attemptsCall[attemptsCall.length - 1]?.content).toContain("not assignable");
+    const explainCall = provider.calls[4] ?? [];
+    expect(explainCall).toHaveLength(5);
+    expect(explainCall[explainCall.length - 1]?.content).toContain("Explain");
+    expect(explainCall.map((message) => message.role)).toEqual([
+      "system",
       "user",
       "assistant",
       "user",
@@ -1267,7 +1374,7 @@ describe("runLoop", () => {
     expect(result.editedSource).toBe(content);
   }, 30000);
 
-  test("rolls back an appended edit before retrying and restores the original bytes", async () => {
+  test("keeps an appended edit on disk before retrying", async () => {
     const dir = passingFixtureDir();
     const original = helperSource(dir);
     const badReplacement = 'export function greet(): number {\n  return "nope";\n}';
@@ -1301,14 +1408,16 @@ describe("runLoop", () => {
     expect(result.attempts.length).toBe(2);
     expect(result.attempts[0]?.diagnostics).not.toBeNull();
     expect(result.attempts[1]?.diagnostics).toBeNull();
-    expect(beforeRetry).toBe(original);
+    expect(beforeRetry).not.toBe(original);
+    expect(beforeRetry).toContain("nope");
+    expect(beforeRetry.startsWith(original)).toBe(true);
     const content = helperSource(dir);
     expect(content).not.toContain("nope");
     expect(content).toContain("return 7;");
     expect(content.startsWith(original)).toBe(true);
   }, 30000);
 
-  test("restores an appended-to file exactly after exhausting retries", async () => {
+  test("keeps the appended declaration after exhausting retries", async () => {
     const dir = passingFixtureDir();
     const original = helperSource(dir);
     const badReplacement = 'export function greet(): number {\n  return "nope";\n}';
@@ -1331,11 +1440,14 @@ describe("runLoop", () => {
     expect(result.mode).toBe("append");
     expect(result.attempts.length).toBe(3);
     expect(result.editedSource).toBeNull();
-    expect(helperSource(dir)).toBe(original);
+    const content = helperSource(dir);
+    expect(content).not.toBe(original);
+    expect(content).toContain("nope");
+    expect(content.startsWith(original)).toBe(true);
     expect(result.explanation).toBe("the appended declaration does not typecheck");
   }, 30000);
 
-  test("deletes a created file on verification failure and recreates it on retry", async () => {
+  test("keeps a created file on verification failure and rewrites it on retry", async () => {
     const dir = passingFixtureDir();
     const created = join(dir, "src", "generated.ts");
     const badReplacement = 'export function make(): number {\n  return "no";\n}';
@@ -1345,13 +1457,13 @@ describe("runLoop", () => {
       badReplacement,
       goodReplacement,
     ]);
-    let beforeRetry = true;
+    let beforeRetry = "";
     let chats = 0;
     const provider: ProviderLike = {
       async chat(messages, tools, options) {
         chats += 1;
         if (chats === 3) {
-          beforeRetry = existsSync(created);
+          beforeRetry = readFileSync(created, "utf8");
         }
         return scripted.chat(messages, tools, options);
       },
@@ -1366,12 +1478,13 @@ describe("runLoop", () => {
     });
     expect(result.ok).toBe(true);
     expect(result.mode).toBe("append");
-    expect(beforeRetry).toBe(false);
-    expect(existsSync(created)).toBe(true);
-    expect(readFileSync(created, "utf8")).toContain("return 1;");
+    expect(beforeRetry).toContain('return "no";');
+    const content = readFileSync(created, "utf8");
+    expect(content).not.toContain('return "no";');
+    expect(content).toContain("return 1;");
   }, 30000);
 
-  test("deletes a created file when verification keeps failing", async () => {
+  test("keeps the created file with the attempted text when verification keeps failing", async () => {
     const dir = passingFixtureDir();
     const created = join(dir, "src", "generated.ts");
     const badReplacement = 'export function make(): number {\n  return "no";\n}';
@@ -1393,7 +1506,8 @@ describe("runLoop", () => {
     expect(result.ok).toBe(false);
     expect(result.mode).toBe("append");
     expect(result.attempts.length).toBe(3);
-    expect(existsSync(created)).toBe(false);
+    expect(existsSync(created)).toBe(true);
+    expect(readFileSync(created, "utf8")).toContain('return "no";');
   }, 30000);
 
   test("rejects path-escaping locators and writes nothing", async () => {
@@ -1562,7 +1676,7 @@ describe("runLoop provider failures", () => {
     expect(helperSource(dir)).toContain("return 1;");
   }, 30000);
 
-  test("rolls back an applied edit and fails when a later call throws", async () => {
+  test("keeps an applied edit and fails when a later call throws", async () => {
     const dir = fixtureDir();
     const original = helperSource(dir);
     const scripted = new ScriptedProvider([
@@ -1605,7 +1719,8 @@ describe("runLoop provider failures", () => {
     expect(result.attempts[0]?.replacement).toContain("nope");
     expect(result.attempts[0]?.diagnostics).not.toBeNull();
     expect(result.explanation ?? "").toContain("no explanation available");
-    expect(helperSource(dir)).toBe(original);
+    expect(helperSource(dir)).toContain('return "nope";');
+    expect(helperSource(dir)).not.toBe(original);
   }, 30000);
 });
 
@@ -1759,13 +1874,15 @@ describe("attempt observability", () => {
     }
   }, 60000);
 
-  test("records the provider finish reason on success", async () => {
+  test("classifies a truncated completion as truncated and asks for a compact retry", async () => {
     const dir = fixtureDir();
-    let calls = 0;
+    const truncated = 'function answer(): number {\n  return "cut off';
+    const calls: ChatMessage[][] = [];
+    let beforeRetry = "";
     const provider: ProviderLike = {
-      async chat() {
-        calls += 1;
-        if (calls === 1) {
+      async chat(messages) {
+        calls.push(structuredClone(messages));
+        if (calls.length === 1) {
           return {
             content: '{"path":"src/helper.ts","name":"answer","kind":"function"}',
             toolCalls: [],
@@ -1773,10 +1890,16 @@ describe("attempt observability", () => {
             raw: {},
           };
         }
+        if (calls.length === 2) {
+          return { content: truncated, toolCalls: [], finishReason: "length", raw: {} };
+        }
+        if (calls.length === 3) {
+          beforeRetry = helperSource(dir);
+        }
         return {
           content: "function answer(): number {\n  return 2;\n}",
           toolCalls: [],
-          finishReason: "length",
+          finishReason: "stop",
           raw: {},
         };
       },
@@ -1790,7 +1913,20 @@ describe("attempt observability", () => {
       testCommand: ["bun", "test"],
     });
     expect(result.ok).toBe(true);
+    expect(result.attempts.map((attempt) => attempt.outcome)).toEqual(["truncated", "ok"]);
     expect(result.attempts[0]?.finishReason).toBe("length");
+    expect(result.attempts[0]?.replacement).toBe(truncated);
+    expect(result.attempts[0]?.diagnostics).toContain("stage: truncated");
+    expect(helperSource(dir)).toContain("return 2;");
+    // The truncated partial output is never applied or written.
+    expect(beforeRetry).not.toContain("cut off");
+
+    const retryCall = calls[2] ?? [];
+    expect(retryCall).toHaveLength(4);
+    const retryPrompt = retryCall[3]?.content ?? "";
+    expect(retryPrompt).toContain("stage: truncated");
+    expect(retryPrompt).toContain("more compact replacement");
+    expect(retryPrompt).toContain("Attempt 2 of 3 failed verification.");
   }, 30000);
 });
 

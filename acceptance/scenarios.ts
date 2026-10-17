@@ -291,9 +291,9 @@ export const scenarios: Scenario[] = [
     ],
   },
   {
-    id: "rollback-retry",
-    title: "type-invalid replacement rolls back and retries",
-    fixture: "rollback-retry",
+    id: "keep-progress-retry",
+    title: "type-invalid replacement stays on disk and the retry builds on it",
+    fixture: "keep-progress-retry",
     issue: TEST_ISSUE,
     responses: [LOCATOR_JSON, BAD_REPLACEMENT, GOOD_REPLACEMENT],
     assertions: [
@@ -306,7 +306,7 @@ export const scenarios: Scenario[] = [
   },
   {
     id: "persistent-failure",
-    title: "exhausted retries restore the file and explain",
+    title: "exhausted retries keep the attempted state and explain",
     fixture: "persistent-failure",
     issue: TEST_ISSUE,
     responses: [
@@ -323,7 +323,7 @@ export const scenarios: Scenario[] = [
       explanationEquals(
         "The replacement could not satisfy the type checker; the next step is to review the return type.",
       ),
-      fileEqualsOriginal("src/helper.ts"),
+      fileContains("src/helper.ts", 'return "no";'),
       diagnosticsContains("not assignable"),
     ],
   },

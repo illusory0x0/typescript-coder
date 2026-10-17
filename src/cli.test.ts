@@ -188,7 +188,9 @@ describe("runMain", () => {
     expect(captured.err.join("\n")).not.toContain(explanation);
     expect(captured.out[captured.out.length - 1]).toBe(explanation);
     expect(captured.out.filter((line) => line === explanation)).toHaveLength(1);
-    expect(readFileSync(join(dir, "src", "helper.ts"), "utf8")).toContain("return 1;");
+    const finalSource = readFileSync(join(dir, "src", "helper.ts"), "utf8");
+    expect(finalSource).toContain('return "no";');
+    expect(finalSource).not.toContain("return 1;");
   }, 60000);
 
   test("rejects an empty issue without calling the provider", async () => {

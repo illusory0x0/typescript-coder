@@ -1,7 +1,7 @@
 ---
 id: 30
 title: "Retry convergence: keep progress, reset context, guard truncation"
-status: todo
+status: done
 priority: high
 milestone: null
 parent: 28
@@ -64,6 +64,34 @@ replacement echo.
 - Provider-error paths: with rollback removed, update the stale comment at
   src/loop.ts:560; a provider error after a failed attempt now leaves the
   attempted state in place (this is intended).
+- Validation (2026-10-18): keep-progress implemented — the verification-failure
+  path no longer restores the target; replace-mode attempts >= 2 apply against
+  the re-read current file (attempt 0 uses the run-start source) and append-mode
+  retries rewrite the first appended region (`appendPrefix`) instead of
+  appending again; `formatDiagnostics` receives the per-attempt `sourceBefore`.
+  Retries rebuild a bounded 4-message history (system + issue/context +
+  assistant locator + `buildRetryPrompt`, which replaces `buildDiagnosticsPrompt`)
+  — previous replacements are not re-echoed; the prompt is attempt-aware
+  ("Attempt N of 3 failed verification. M attempt(s) remain."), instructs
+  minimal corrective changes, and carries the current on-disk source
+  (re-resolved via `buildIndexTolerant` + `findDefinition`, whole-file fallback,
+  8,000-char head+tail truncation). `finishReason === "length"` records outcome
+  `truncated` with a compact-output diagnostic, never applies/writes the partial
+  content, and feeds the retry prompt.
+- Semantics/docs: acceptance scenario `rollback-retry` renamed to
+  `keep-progress-retry` (fixture dir renamed; `persistent-failure` and
+  `src/cli.test.ts` now assert the attempted text remains); acceptance README
+  table, benchmark README (failure workspaces are no longer pristine), the
+  historical `benchmark/results/2026-10-17.md` (dated Update note), and
+  `spec.md` (§1, §4, §6, §10-13, R7) updated to the new semantics.
+- Mocked-loop evidence (required): `keeps the last attempted state on disk
+  after failed verifications (no rollback)` (replace + append/create) and
+  `rebuilds a bounded retry history without echoing the previous replacement`
+  (retry call = exactly 4 messages, no bad-replacement echo, prompt carries the
+  on-disk source) plus the truncated classification test (retry prompt contains
+  `stage: truncated`, partial output never written).
+- Validation gates: tsc 0, 504 → 506 tests, `accept` 5/5,
+  `benchmark/check.ts` 3 PASS.
 - Depends on #36 for progress-based attempt extension and budget caps; #30
   keeps the attempt loop structure that #36 extends.
 - Non-goals: best-state selection (user declined), sampling/temperature

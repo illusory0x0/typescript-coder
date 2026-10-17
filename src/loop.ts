@@ -3,7 +3,6 @@ import {
   mkdirSync,
   readdirSync,
   readFileSync,
-  rmSync,
   statSync,
   writeFileSync,
 } from "node:fs";
@@ -156,9 +155,10 @@ export function buildSystemPrompt(): string {
   ].join("\n");
 }
 
-// Keep the head (declarations and early cases) and the tail (final assertions)
-// of an oversized spec file with an explicit marker in between.
-function truncateSpecSource(source: string): string {
+// Keep the head (declarations and early cases) and the tail (final assertions,
+// or the current source of the edited region) of an oversized source with an
+// explicit marker in between.
+function truncateSource(source: string): string {
   if (source.length <= SPEC_FILE_LIMIT) {
     return source;
   }
@@ -176,7 +176,7 @@ function buildSpecSection(specFiles: readonly SourceFile[]): string {
     "These files are part of the specification; do not modify them.",
   ];
   for (const file of specFiles) {
-    const source = truncateSpecSource(file.source);
+    const source = truncateSource(file.source);
     const sourceLines = source.split("\n");
     const fence = sourceLines.some((line) => line.startsWith("```")) ? "````" : "```";
     lines.push("", `## ${file.path}`, "", `${fence}ts`, ...sourceLines, fence);
@@ -233,16 +233,40 @@ ${locatorJson}
 `;
 }
 
-export function buildDiagnosticsPrompt(diagnostics: string): string {
-  return `The previous replacement failed verification.
+export interface RetryPromptInput {
+  /** 1-based number of the retry this prompt requests. */
+  attemptNumber: number;
+  maxAttempts: number;
+  locatorJson: string;
+  /** Current on-disk source of the selected region (whole file in append mode). */
+  currentSource: string;
+  diagnostics: string;
+}
+
+export function buildRetryPrompt(input: RetryPromptInput): string {
+  const { attemptNumber, maxAttempts, locatorJson, currentSource, diagnostics } = input;
+  const remaining = maxAttempts - attemptNumber;
+  const body = currentSource.endsWith("\n") ? currentSource : `${currentSource}\n`;
+  return `Attempt ${attemptNumber} of ${maxAttempts} failed verification. ${remaining} attempt(s) remain.
+
+Make minimal corrective changes to the current source of the selected region. Output the COMPLETE corrected text for the selected region, with no markdown fences and no explanations.
+
+Locator:
+
+\`\`\`json
+${locatorJson}
+\`\`\`
+
+Current source:
+
+\`\`\`ts
+${body}\`\`\`
 
 Diagnostics:
 
 \`\`\`
 ${diagnostics}
 \`\`\`
-
-Output a corrected COMPLETE replacement for the selected symbol, with no markdown fences and no explanations.
 `;
 }
 
@@ -334,7 +358,8 @@ export type AttemptOutcome =
   | "empty-output"
   | "format"
   | "tsc"
-  | "tests";
+  | "tests"
+  | "truncated";
 
 export interface LoopAttempt {
   attempt: number;
@@ -472,13 +497,23 @@ function writeTarget(cwd: string, path: string, source: string): void {
   writeFileSync(target, source);
 }
 
-function restoreTarget(cwd: string, path: string, original: string | null): void {
-  const target = join(cwd, path);
-  if (original === null) {
-    rmSync(target, { force: true });
-    return;
+// Re-resolve the locator against the current on-disk source so retry prompts
+// show what is actually there; fall back to the whole file when it no longer
+// resolves (for example after a corrupting attempt).
+function currentSourceForPrompt(
+  mode: "replace" | "append",
+  targetPath: string,
+  locator: Locator,
+  currentSource: string,
+): string {
+  if (mode === "replace") {
+    const build = buildIndexTolerant([{ path: targetPath, source: currentSource }]);
+    const entry = findDefinition(build.index, locator);
+    if (entry !== null) {
+      return currentSource.slice(entry.node.start, entry.node.end);
+    }
   }
-  writeFileSync(target, original);
+  return currentSource;
 }
 
 // Run the sibling test file first for fast feedback; a targeted failure is the
@@ -720,10 +755,12 @@ export async function runLoop(options: LoopOptions): Promise<LoopResult> {
   const index = build.index;
   const skipped = build.skipped;
   const specFiles = selectSpecFiles(options.issue, files);
-  const messages: ChatMessage[] = [
-    { role: "system", content: buildSystemPrompt() },
-    { role: "user", content: buildUserPrompt(options.issue, contextYaml, specFiles) },
-  ];
+  const systemMessage: ChatMessage = { role: "system", content: buildSystemPrompt() };
+  const issueMessage: ChatMessage = {
+    role: "user",
+    content: buildUserPrompt(options.issue, contextYaml, specFiles),
+  };
+  let messages: ChatMessage[] = [systemMessage, issueMessage];
   const attempts: LoopAttempt[] = [];
 
   let selection: Selection | null = null;
@@ -813,11 +850,12 @@ export async function runLoop(options: LoopOptions): Promise<LoopResult> {
   }
 
   const selected = selection.locator;
+  const selectionMode = selection.mode;
   const locatorJson = JSON.stringify(selected);
   let targetPath: string;
   let original: string | null;
   messages.push({ role: "assistant", content: locatorJson });
-  if (selection.mode === "replace") {
+  if (selectionMode === "replace") {
     const fileEntry = sourceFileFor(files, selected.path);
     const symbolSource = fileEntry.source.slice(
       selection.entry.node.start,
@@ -832,9 +870,41 @@ export async function runLoop(options: LoopOptions): Promise<LoopResult> {
     messages.push({ role: "user", content: buildAppendPrompt(locatorJson, targetPath) });
   }
   const baseSource = original ?? "";
+  // A retry rewrites the first appended region instead of appending again.
+  const appendPrefix = selectionMode === "append" ? baseSource : "";
+
+  // Retries rebuild a bounded history from the stable prefix: the previous
+  // assistant replacement is not re-echoed and the prompt carries the current
+  // on-disk source of the target.
+  const buildRetryMessages = (
+    mode: "replace" | "append",
+    path: string,
+    retryAttempt: number,
+    promptDiagnostics: string,
+  ): ChatMessage[] => {
+    const diskSource = readFileIfExists(join(cwd, path)) ?? "";
+    const currentSource = currentSourceForPrompt(mode, path, selected, diskSource);
+    const prompt = buildRetryPrompt({
+      attemptNumber: retryAttempt,
+      maxAttempts: maxRetries,
+      locatorJson,
+      currentSource: truncateSource(currentSource),
+      diagnostics: promptDiagnostics,
+    });
+    return [
+      systemMessage,
+      issueMessage,
+      { role: "assistant", content: locatorJson },
+      { role: "user", content: prompt },
+    ];
+  };
 
   let diagnostics: string | null = null;
   for (let editAttempt = 0; editAttempt < maxRetries; editAttempt += 1) {
+    const failedAttempt = editAttempt + 1;
+    // The prompt describes the retry it requests, clamped to the budget once
+    // the last attempt has been used.
+    const retryAttempt = Math.min(failedAttempt + 1, maxRetries);
     let response: ChatResponse;
     try {
       // Staged reasoning policy (#35): generation starts at the provider default;
@@ -843,11 +913,11 @@ export async function runLoop(options: LoopOptions): Promise<LoopResult> {
         editAttempt === 0 ? chatOptions : withEffort(chatOptions, "medium");
       response = await options.provider.chat(messages, undefined, editOptions);
     } catch (error) {
-      // A previous attempt that failed verification ran restoreTarget before this
-      // chat call, so no uncommitted edit remains on disk at this point.
+      // Failed attempts keep their applied state on disk (#30), so a provider
+      // error after one leaves the attempted content in the target file.
       return {
         ok: false,
-        mode: selection.mode,
+        mode: selectionMode,
         locator: selected,
         filePath: targetPath,
         editedSource: null,
@@ -858,6 +928,26 @@ export async function runLoop(options: LoopOptions): Promise<LoopResult> {
         skipped,
       };
     }
+    if (response.finishReason === "length") {
+      diagnostics =
+        "stage: truncated\nthe completion was cut off at the output limit; emit a shorter, more compact replacement";
+      attempts.push(
+        recordAttempt({
+          attempt: attempts.length + 1,
+          locator: selected,
+          replacement: response.content ?? null,
+          diagnostics,
+          outcome: "truncated",
+          finishReason: response.finishReason,
+        }),
+      );
+      messages = buildRetryMessages(selectionMode, targetPath, retryAttempt, diagnostics);
+      continue;
+    }
+    // The first attempt edits the run-start source; later attempts edit what is
+    // on disk now (the state left by the previous failed attempt).
+    const sourceBefore =
+      editAttempt === 0 ? baseSource : (readFileIfExists(join(cwd, targetPath)) ?? baseSource);
     let replacement: string | null = null;
     let newSource: string | null = null;
     let failure: string | null = null;
@@ -870,11 +960,11 @@ export async function runLoop(options: LoopOptions): Promise<LoopResult> {
     if (replacement !== null) {
       failureOutcome = "format";
       try {
-        if (selection.mode === "append") {
-          newSource = await formatSource(targetPath, appendText(baseSource, replacement));
+        if (selectionMode === "append") {
+          newSource = await formatSource(targetPath, appendText(appendPrefix, replacement));
         } else {
           newSource = await applyEdits(
-            baseSource,
+            sourceBefore,
             [{ locator: selected, llmOutput: replacement }],
             targetPath,
           );
@@ -895,8 +985,7 @@ export async function runLoop(options: LoopOptions): Promise<LoopResult> {
           finishReason: response.finishReason,
         }),
       );
-      messages.push({ role: "assistant", content: replacement ?? response.content ?? "" });
-      messages.push({ role: "user", content: buildDiagnosticsPrompt(diagnostics) });
+      messages = buildRetryMessages(selectionMode, targetPath, retryAttempt, diagnostics);
       continue;
     }
     writeTarget(cwd, targetPath, newSource);
@@ -915,7 +1004,7 @@ export async function runLoop(options: LoopOptions): Promise<LoopResult> {
       );
       return {
         ok: true,
-        mode: selection.mode,
+        mode: selectionMode,
         locator: selected,
         filePath: targetPath,
         editedSource: newSource,
@@ -926,8 +1015,15 @@ export async function runLoop(options: LoopOptions): Promise<LoopResult> {
         skipped,
       };
     }
-    restoreTarget(cwd, targetPath, original);
-    diagnostics = formatDiagnostics({ check, test, targetPath, baseSource, newSource });
+    // No rollback (#30): the attempted state stays on disk for the next attempt
+    // to refine.
+    diagnostics = formatDiagnostics({
+      check,
+      test,
+      targetPath,
+      baseSource: sourceBefore,
+      newSource,
+    });
     attempts.push(
       recordAttempt({
         attempt: attempts.length + 1,
@@ -938,13 +1034,12 @@ export async function runLoop(options: LoopOptions): Promise<LoopResult> {
         finishReason: response.finishReason,
       }),
     );
-    messages.push({ role: "assistant", content: replacement });
-    messages.push({ role: "user", content: buildDiagnosticsPrompt(diagnostics) });
+    messages = buildRetryMessages(selectionMode, targetPath, retryAttempt, diagnostics);
   }
 
   return {
     ok: false,
-    mode: selection.mode,
+    mode: selectionMode,
     locator: selected,
     filePath: targetPath,
     editedSource: null,

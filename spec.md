@@ -6,8 +6,9 @@ A self-contained TypeScript coding agent. It reads an issue from **stdin**, uses
 hand-written TypeScript frontend plus a symbol index to select a target symbol
 (`Locator`), asks an OpenAI-compatible LLM to emit a **complete replacement** for
 that symbol, applies it via span replacement + `oxfmt`, and accepts the result
-only if `tsc --noEmit` and `bun test` pass. On failure it rolls back, retries up
-to **3** times, then reports an explanation for the planning main agent.
+only if `tsc --noEmit` and `bun test` pass. On failure it keeps the attempted
+state, retries up to **3** times with a rebuilt bounded context, then reports an
+explanation for the planning main agent.
 
 ## 2. Language & runtime
 
@@ -65,9 +66,10 @@ When a `Locator` names a symbol that is not in the index, the locator enters
 declaring the symbol, appended to the locator's file — created together with
 any missing parent directories when absent — newline-normalized and separated
 from existing content by one blank line, then the whole result is formatted
-with `oxfmt` and verified by the same check + test gate. On failure the exact
-pre-edit state is restored: an existing file is rewritten byte-for-byte, a
-created file is deleted.
+with `oxfmt` and verified by the same check + test gate. On failure the attempted
+state stays on disk (keep-progress): an existing file keeps the failed attempt's
+content, a created file stays, and the next attempt rewrites the first appended
+region.
 
 A path is appendable only when it is relative, has no `..` segment, resolves
 inside `cwd`, and does not point under `node_modules`, `.git`, `dist`, or a
@@ -115,13 +117,18 @@ harness:
 - **append/create:** the LLM output is the complete declaration of the missing
   symbol; the harness appends it to the locator's file (creating file and parent
   directories when absent), formats with `oxfmt`, and runs the same check + test
-  gate. Rollback is exact: an existing file is restored byte-for-byte, a created
-  file is deleted.
-- **on-failure:** report diagnostic message → rollback → retry.
-- **max-retries:** 3.
+  gate. Keep-progress on failure: an existing file keeps the failed attempt's
+  content, a created file stays, and a retry rewrites the first appended region.
+- **on-failure:** report staged diagnostics (format/tsc/tests) → keep the
+  attempted state → retry with a rebuilt bounded context (system + issue/context
+  + locator + attempt-aware retry prompt carrying the current source).
+- **truncation:** `finishReason: "length"` is classified as `truncated`, never
+  applied, and the retry asks for a more compact replacement.
+- **max-retries:** 3; prompts are attempt-aware (attempt number + remaining
+  budget).
 - **exit:** LLM explains the failure reason for the main agent.
-- **optimization:** prompt prefix invariant — stable system + context
-  prefix, variable tail (cache-friendly).
+- **optimization:** stable system + issue/context prefix (cache-friendly);
+  retries rebuild a bounded history and do not re-echo previous replacements.
 
 ## 7. Tools
 
@@ -164,7 +171,8 @@ Edit is accepted only if both pass:
 
 1. On a fixture repo with a failing `bun test`, the agent applies a symbol
    replacement that turns tests green and keeps `tsc --noEmit` clean.
-2. A deliberately-bad edit triggers rollback + retry and a final explanation.
+2. A deliberately-bad edit keeps its state on disk, the retry builds on it, and
+   a final explanation follows.
 3. Frontend passes the fixture corpus and a self-host smoke (after the agent
    edits its own `src/`, `tsc` / `bun test` still pass).
 
@@ -187,8 +195,9 @@ Edit is accepted only if both pass:
   `scroll`, `rename`), not offered to the model in v1.
   _Gate:_ per-tool unit tests.
 - **M7 · `loop.ts`** — context YAML → symbol select JSON → replacement text →
-  apply → verify → rollback/retry(3) → explanation; prefix-invariant ordering.
-  _Gate:_ end-to-end fix-a-failing-test fixture; bad-edit rollback test.
+  apply → verify → keep-progress retry(3) → explanation; bounded rebuilt retry
+  context.
+  _Gate:_ end-to-end fix-a-failing-test fixture; bad-edit keep-progress test.
 - **M8 · `cli.ts` + `main.ts`** — stdin issue reader, `--model`, `--help`.
   _Gate:_ self-host smoke test.
 
@@ -202,11 +211,12 @@ Edit is accepted only if both pass:
 | R4  | whole-project `tsc` per retry is slow                       | incremental / changed-files scope, timeouts                       |
 | R5  | overload / namespace Locator ambiguity                      | `kind` + signature disambiguation; find-definition corpus         |
 | R6  | multiple edits shift spans                                  | apply bottom-up; one symbol per iteration in v1                   |
-| R7  | "prompt prefix invariant" undefined                         | stable prefix + variable tail; golden-prompt test                 |
+| R7  | retry context growth / prompt drift                         | stable system + issue/context prefix; bounded rebuilt context     |
 
 ## 13. Open items (defaults)
 
-- Rollback granularity: per-issue snapshot rollback, per-attempt retry, 3 total.
+- Failure handling: keep-progress (attempted state stays on disk), per-attempt
+  retry with a rebuilt bounded context, 3 total.
 - One symbol per iteration in v1.
 - `scroll` = signatures + N-line on-demand expand.
 - Context/token budget: unbounded in v1.

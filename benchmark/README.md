@@ -26,10 +26,13 @@ and anomaly notes.
 Each run gets a fresh workspace under `tmp/benchmark/<stamp>/` (fixture copy plus
 its own git repo, so the agent cannot reach this repository's
 `benchmark/references/`). The judge is `bun test` + `tsc --noEmit` + byte
-equality of the fixture's `src/*.test.ts` and `tsconfig.json`. The task × side ×
-rep matrix runs through a bounded worker pool (`--concurrency`, default 4); each
-run keeps its own workspace, git repo, session, and logs, and `report.runs`
-stays in matrix order even though runs finish in arbitrary order.
+equality of the fixture's `src/*.test.ts` and `tsconfig.json`. On failure the
+loop keeps the attempted state in the workspace (no rollback), so a failing
+run's judged workspace holds the last attempted content rather than the pristine
+fixture. The task × side × rep matrix runs through a bounded worker pool
+(`--concurrency`, default 4); each run keeps its own workspace, git repo,
+session, and logs, and `report.runs` stays in matrix order even though runs
+finish in arbitrary order.
 
 ## Metrics per record
 
