@@ -37,13 +37,13 @@ afterEach(() => {
 });
 
 describe("parseArgs", () => {
-  test("defaults to no help and the deepseek model", () => {
-    expect(parseArgs([])).toEqual({ help: false, model: "deepseek" });
+  test("defaults to no help and the deepseek-v4.1-flash model", () => {
+    expect(parseArgs([])).toEqual({ help: false, model: "deepseek-v4.1-flash" });
   });
 
   test("recognizes --help and -h", () => {
-    expect(parseArgs(["--help"])).toEqual({ help: true, model: "deepseek" });
-    expect(parseArgs(["-h"])).toEqual({ help: true, model: "deepseek" });
+    expect(parseArgs(["--help"])).toEqual({ help: true, model: "deepseek-v4.1-flash" });
+    expect(parseArgs(["-h"])).toEqual({ help: true, model: "deepseek-v4.1-flash" });
   });
 
   test("reads --model with a separate value", () => {
@@ -65,8 +65,8 @@ describe("parseArgs", () => {
   });
 
   test("keeps the last --model", () => {
-    expect(parseArgs(["--model", "qwen", "--model", "deepseek"]).model).toBe("deepseek");
-    expect(parseArgs(["--model=qwen", "--model=deepseek"]).model).toBe("deepseek");
+    expect(parseArgs(["--model", "qwen", "--model", "deepseek-v4.1-flash"]).model).toBe("deepseek-v4.1-flash");
+    expect(parseArgs(["--model=qwen", "--model=deepseek-v4.1-flash"]).model).toBe("deepseek-v4.1-flash");
     expect(parseArgs(["--help", "--model", "qwen"])).toEqual({ help: true, model: "qwen" });
   });
 });

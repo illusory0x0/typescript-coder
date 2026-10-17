@@ -3,7 +3,7 @@ export interface CliOptions {
   model: string;
 }
 
-const DEFAULT_MODEL = "deepseek";
+const DEFAULT_MODEL = "deepseek-v4.1-flash";
 
 export function parseArgs(argv: string[]): CliOptions {
   let help = false;
@@ -47,7 +47,7 @@ export function helpText(): string {
     "  bun run src/main.ts [--model <id>] < issue.txt",
     "",
     "Options:",
-    "  --model <id>    model id for the OpenAI-compatible provider (default: deepseek)",
+    "  --model <id>    model id for the OpenAI-compatible provider (default: deepseek-v4.1-flash)",
     "  -h, --help      show this help and exit",
     "",
     "Environment:",

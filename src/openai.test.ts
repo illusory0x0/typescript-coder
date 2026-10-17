@@ -5,7 +5,7 @@ import type { ChatMessage, OpenAIConfig, ToolDefinition } from "./openai";
 const config: OpenAIConfig = {
   apiKey: "test-key",
   baseUrl: "https://api.example.com/v1",
-  model: "deepseek",
+  model: "deepseek-v4.1-flash",
 };
 
 interface CapturedRequest {
@@ -86,13 +86,13 @@ test("readConfigFromEnv reads credentials and trims a trailing slash", () => {
 
 test("readConfigFromEnv throws when OPENAI_API_KEY is missing", () => {
   withEnv({ OPENAI_API_KEY: undefined, OPENAI_BASE_URL: "https://env.example.com" }, () => {
-    expect(() => readConfigFromEnv("deepseek")).toThrow("OPENAI_API_KEY is not set");
+    expect(() => readConfigFromEnv("deepseek-v4.1-flash")).toThrow("OPENAI_API_KEY is not set");
   });
 });
 
 test("readConfigFromEnv throws when OPENAI_BASE_URL is missing", () => {
   withEnv({ OPENAI_API_KEY: "key-1", OPENAI_BASE_URL: undefined }, () => {
-    expect(() => readConfigFromEnv("deepseek")).toThrow("OPENAI_BASE_URL is not set");
+    expect(() => readConfigFromEnv("deepseek-v4.1-flash")).toThrow("OPENAI_BASE_URL is not set");
   });
 });
 
@@ -115,7 +115,7 @@ test("posts chat completions to the configured endpoint with auth headers", asyn
   expect(headers["authorization"]).toBe("Bearer test-key");
 
   const body = requestBody(request);
-  expect(body["model"]).toBe("deepseek");
+  expect(body["model"]).toBe("deepseek-v4.1-flash");
   expect(body["messages"]).toEqual([
     { role: "system", content: "be brief" },
     { role: "user", content: "hello" },

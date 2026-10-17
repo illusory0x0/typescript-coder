@@ -1,7 +1,7 @@
 ---
 id: 22
 title: "CLI: default model deepseek-v4.1-flash instead of rejected deepseek"
-status: todo
+status: done
 priority: high
 milestone: null
 parent: null
@@ -49,4 +49,6 @@ bun run accept
 
 - Priority `high` (Eisenhower Q1: out-of-the-box failure).
 - Optional live confirmation (already the acceptance default):
-  `bun run accept --live --model deepseek-v4.1-flash`.
+  `bun run accept --live --model deepseek-v4.1-flash` (ran: 6/6, 2026-10-17).
+- Related discovery (not in scope): `scripts/openai-smoke.ts:8` still defaults
+  to the bare `"deepseek"`; candidate follow-up.
