@@ -15,5 +15,3 @@ typecheck with `bunx tsc --noEmit`.
 - `bun run typecheck` — `tsc --noEmit`
 - `bun test` — full test suite
 - `bun run accept` — harness acceptance suite (see `acceptance/README.md`)
-- `cd .opencode/skills && bun test` — skills project tests (standalone Bun
-  project under `.opencode/skills/`; also `bun run typecheck` there)
