@@ -13,7 +13,7 @@ Convert intent into tracked, actionable issues arranged as a **tree**. One issue
 
 ```
 issues/
-  todo.md          # tracker: Graphviz tree + status table, single source of truth
+  todo.md          # tracker: tree + execution list + status table, single source of truth
   TEMPLATE.md      # optional, copy for new issues
   0001-<slug>.md   # one file per issue (open: todo/in-progress/review, or wontfix)
   0002-<slug>.md
@@ -65,9 +65,9 @@ Issues form a forest of hierarchies, plus cross-cutting dependency edges:
    verifies it. No vague goals ("improve", "refactor" alone) — state the outcome.
 4. **Write files** to `issues/NNNN-slug.md`. Assign ids in **pre-order** (a
    parent before its children) so the numbers read top-down.
-5. **Update `issues/todo.md`** — rebuild the Graphviz block and add one table
-   row per new issue. Leave existing rows and statuses untouched; keep the table
-   sorted by id ascending.
+5. **Update `issues/todo.md`** — rebuild the Graphviz block, re-sort the
+   execution list, and add one table row per new issue. Leave existing rows and
+   statuses untouched; keep the table sorted by id ascending.
 6. **Report** the created ids, the tree shape, and the tracker path. State any
    assumption you made about scope, priority, or structure.
 
@@ -113,7 +113,8 @@ Dependencies on other issue ids, open questions, non-goals.
 ## `issues/todo.md` format
 
 Keep a `# Todo` header, then a fenced `dot` block describing the issue tree,
-then the status table. Preserve any prose the user added.
+then the execution list, then the status table. Preserve any prose the user
+added.
 
 ````markdown
 # Todo
@@ -139,11 +140,24 @@ digraph issues {
 }
 ```
 
+## Execution order
+
+Open issues (todo, in-progress, review) in picking order. Repeatedly take the
+highest-priority available leaf; once no leaf is available, the
+highest-priority available umbrella. Available = `deps` `done` (an umbrella
+also needs all children `done`). Tie-break by id.
+
+1. #8 Strict errors
+2. #9 Comments
+3. #10 Parser
+4. #7 Lexer
+
 | id  | title         | status      | priority | milestone | parent | deps |
 | --- | ------------- | ----------- | -------- | --------- | ------ | ---- |
 | 7   | Lexer         | in-progress | high     |           |        |      |
 | 8   | Strict errors | todo        | high     |           | 7      |      |
 | 9   | Comments      | todo        | medium   |           | 7      |      |
+| 10  | Parser        | todo        | medium   |           |        | 9    |
 ````
 
 - `id` links to the file at its actual location: `[7](0007-short-issue-title.md)`
@@ -154,9 +168,9 @@ digraph issues {
 - Tree edges: `parent -> child`, **solid**.
 - Dependency edges: `blocker -> blocked`, **dashed** with `label="blocks"`.
 - `parent` and `deps` columns mirror the frontmatter. `deps` lists blocking ids.
-- **The table is authoritative for scanning; the graph is authoritative for
-  structure.** Whenever status, parent, or deps change, update **both** the
-  frontmatter, the table row, and the graph.
+- **The tree maps relationships, the execution list drives picking, the table
+  scans status.** Update the frontmatter, table row, graph, and execution list
+  together whenever status, parent, or deps change.
 
 ## Rules
 
