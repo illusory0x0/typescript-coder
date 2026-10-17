@@ -6,32 +6,17 @@ description: Turn requests into tracked issues under issues/.
 # file-issue
 
 Convert intent into tracked, actionable issues arranged as a **tree**. One issue
-= one independently verifiable unit of work. This skill only writes files under
-`issues/`; it never edits the surrounding project's code.
+= one independently verifiable unit of work. This skill only files issues; it
+never edits the surrounding project's code.
 
-## Layout
+Every mechanical tracker write goes through the shared script (owned by
+`which-skill`; referenced as `../which-skill/scripts/issue-tracker.ts` from this
+skill's directory):
 
-```
-issues/
-  readme.md        # issue tree (relationships only)
-  todo.yaml        # open issues in picking order, single source of truth
-  TEMPLATE.md      # optional, copy for new issues
-  0001-<slug>.md   # one file per issue (open: todo/in-progress/review, or wontfix)
-  0002-<slug>.md
-  done/            # completed issues are MOVED here by resolve-issue
-    0003-<slug>.md
-```
+    bun .opencode/skills/which-skill/scripts/issue-tracker.ts <cmd>
 
-- Issue file name: zero-padded 4-digit id + kebab-case slug, e.g.
-  `0007-lexer-strict-errors.md`.
-- New issues are always created directly under `issues/`. Never create a file
-  under `issues/done/` by hand — that directory is populated only by the
-  `resolve-issue` skill moving an issue there once it is `done`.
-- A `done` issue's file lives at `issues/done/NNNN-<slug>.md` and its
-  `todo.yaml` entry is removed.
-- Next id = `max(existing ids) + 1` across **both** `issues/` and
-  `issues/done/`. Never reuse, rename, or delete ids; a cancelled issue stays
-  listed and marked `wontfix`.
+Never hand-edit `issues/todo.yaml`, the dot block in `issues/readme.md`, or issue
+frontmatter — the script owns them.
 
 ## Issue tree
 
@@ -43,17 +28,23 @@ Issues form a forest of hierarchies, plus cross-cutting dependency edges:
 - **`deps`** — blocking edges between any two issues, independent of the tree.
   `deps: [7]` means "7 must be `done` before this starts".
 - An issue **with children** is an umbrella. Its acceptance criteria describe
-  the whole and it is only `done` when **all** its children are `done`. Umbrella
-  issues usually hold no direct implementation work; the leaves do.
+  the whole and it is only `done` when **all** its children are done or
+  formally superseded (`wontfix`). Umbrella issues usually hold no direct
+  implementation work; the leaves do.
 - The structure must stay a **DAG**: no issue may be its own ancestor, and
-  `deps` must not form a cycle.
+  `deps` must not form a cycle. `add` and `set` reject violations.
+
+Open issues live at `issues/NNNN-slug.md`; `done` issues are moved to
+`issues/done/` by `resolve-issue`. Never create, rename, renumber, or delete
+issue files by hand — `add` allocates `max(id) + 1` across both directories and
+derives the slug from the title.
 
 ## Workflow
 
 1. **Gather source.** Read the user's request plus any referenced plan, spec, or
    code. If a planning document exists, mine its goals, risks, and acceptance
-   criteria. Always read `issues/todo.yaml` and list both `issues/*.md` and
-   `issues/done/*.md` first so you never duplicate an existing issue.
+   criteria. Run the tracker's `list` first so you never duplicate an existing
+   issue.
 2. **Build the tree.** Split by _independently shippable and verifiable_ work.
    Group related leaves under an umbrella parent when they serve one goal.
    Attach cross-cutting prerequisites via `deps`, not by inventing a parent.
@@ -61,19 +52,26 @@ Issues form a forest of hierarchies, plus cross-cutting dependency edges:
    request is one atomic change, produce a single root issue. If the total new
    issue count exceeds 5, confirm the shape with the user via the `question`
    tool before writing.
-3. **Draft each issue** using the template below. Every issue needs at least one
-   checkable acceptance criterion and the exact command or observable step that
-   verifies it. No vague goals ("improve", "refactor" alone) — state the outcome.
-4. **Write files** to `issues/NNNN-slug.md`. Assign ids in **pre-order** (a
-   parent before its children) so the numbers read top-down.
-5. **Update the tracker** — add the new nodes and edges to the tree in
-   `issues/readme.md`, and insert one entry per new issue into
-   `issues/todo.yaml` at its picking position. Leave existing entries untouched.
+3. **Draft each body** using the template below and write it to a scratch file
+   (e.g. `tmp/body-<slug>.md`): plain markdown, no frontmatter. Every issue
+   needs at least one checkable acceptance criterion and the exact command or
+   observable step that verifies it. No vague goals ("improve", "refactor"
+   alone) — state the outcome.
+4. **Add the issues** in pre-order — a parent before its children — one call per
+   issue, taking the parent id from the previous call's output:
+
+       bun .opencode/skills/which-skill/scripts/issue-tracker.ts add \
+         --title "Short imperative title" --body tmp/body-my-slug.md \
+         [--parent 28] [--deps 42,43] [--priority high] \
+         [--milestone M9] [--labels harness,benchmark]
+
+   `--title` and `--body` are required; `--deps`/`--labels` are
+   comma-separated; `--priority` defaults to `medium`. New issues are always
+   created `todo`. Each call replies with `{"id": …, "file": …}`.
+5. **Check.** Run `check`; `{"ok":true}` means the tracker is consistent. Fix and
+   re-run until clean, then delete the scratch body files.
 6. **Report** the created ids, the tree shape, and the tracker path. State any
    assumption you made about scope, priority, or structure.
-
-Create `issues/`, `issues/readme.md`, and `issues/todo.yaml` if they do not
-already exist.
 
 ## Issue template
 
@@ -112,58 +110,23 @@ The exact command(s) or manual steps that prove the criteria are met.
 Dependencies on other issue ids, open questions, non-goals.
 ```
 
-## `issues/readme.md` — the tree
+The script fills in every frontmatter field from its flags and the body file;
+only the body sections are yours to author.
 
-Keep a `# Issues` header, a pointer to `todo.yaml`, and a fenced `dot` block.
-Structure only — no statuses. Preserve any prose the user added.
+## Tracker files
 
-```dot
-digraph issues {
-  rankdir=LR;
-  node [shape=box, style=rounded, fontname="Helvetica"];
+- `issues/NNNN-slug.md` — one issue per file; its **frontmatter is the source
+  of truth** for every derived view.
+- `issues/todo.yaml` — generated index of open issues in **picking order**
+  (repeatedly take the highest-priority available leaf, then the highest-
+  priority available umbrella; available = deps done; tie-break by id), with
+  `wontfix` entries kept at the bottom.
+- `issues/readme.md` — generated `dot` block: node per issue (`#id title`),
+  solid parent edges, dashed `blocks` dependency edges. Preserve any prose
+  around it.
 
-  "7"  [label="#7 Lexer"];
-  "8"  [label="#8 Strict errors"];
-  "9"  [label="#9 Comments"];
-  "10" [label="#10 Parser"];
-
-  // tree edges (parent -> child), solid
-  "7" -> "8";
-  "7" -> "9";
-
-  // dependency edges (blocker -> blocked), dashed
-  "9" -> "10" [style=dashed, label="blocks"];
-}
-```
-
-- Node ids = issue ids; labels `#id title`.
-- Tree edges: `parent -> child`, **solid**.
-- Dependency edges: `blocker -> blocked`, **dashed** with `label="blocks"`.
-
-## `issues/todo.yaml` — open issues
-
-Open issues in picking order: repeatedly take the highest-priority available
-leaf; once no leaf is available, the highest-priority available umbrella.
-Available = `deps` `done` (an umbrella also needs all children `done`).
-Tie-break by id.
-
-```yaml
-- id: 8
-  title: "Strict errors"
-  status: todo
-  priority: high
-  milestone: null
-  parent: 7
-  deps: []
-  file: 0008-strict-errors.md
-```
-
-- Fields mirror the issue frontmatter; `file` names the issue file. Quote every
-  title.
-- Drop the entry when an issue is `done`; `wontfix` entries stay, marked.
-- **The tree maps relationships; `todo.yaml` drives picking and status.**
-  Whenever status, parent, or deps change, update the frontmatter and its
-  `todo.yaml` entry together — plus the tree when parent or deps shift.
+Run `setup` once if `issues/` does not exist; it bootstraps the tracker and
+converges these files, and `check` detects any drift. Never hand-edit them.
 
 ## Rules
 
@@ -174,6 +137,8 @@ Tie-break by id.
   (milestone/parent) or `medium` (priority) and flag the assumption.
 - One concern per issue. If a draft covers two unrelated changes, split it.
 - Keep the structure acyclic and every `parent`/`deps` id pointing at a real
-  issue.
+  issue — `check` proves it.
 - Keep issue bodies self-contained: a reader must not need to open another
   document to understand the goal and how to verify it.
+- Never hand-edit tracker files (`todo.yaml`, the dot block, frontmatter); all
+  writes go through the script.

@@ -21,3 +21,14 @@ Match a request to one skill.
 - Read-only: never run the chosen skill's work.
 - Recommend only skills visible in this session.
 - One recommendation, not a list; nothing fits? Say so.
+
+## Shared tooling
+
+`file-issue` and `resolve-issue` drive `scripts/issue-tracker.ts` (this skill's
+directory; in-repo `.opencode/skills/which-skill/scripts/issue-tracker.ts`) for
+every mechanical tracker operation — ids, file names, frontmatter,
+`issues/todo.yaml`, the `readme.md` dot block, status transitions, and
+`done`-file moves. Issue frontmatter is the source of truth: `setup` converges
+the generated files, `check` validates them, `add`/`set` mutate. The tracker is
+never hand-edited. Tests live beside the script
+(`bun test ./.opencode/skills/which-skill/scripts/`).

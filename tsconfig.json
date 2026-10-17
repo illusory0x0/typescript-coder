@@ -17,6 +17,6 @@
     "skipLibCheck": true,
     "noEmit": true
   },
-  "include": ["src", "acceptance", "benchmark"],
+  "include": ["src", "acceptance", "benchmark", ".opencode/skills/which-skill/scripts"],
   "exclude": ["benchmark/fixtures"]
 }

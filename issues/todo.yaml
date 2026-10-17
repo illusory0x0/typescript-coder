@@ -37,7 +37,7 @@
   deps: []
   file: 0028-consumption-below-opencode.md
 
-# Superseded by the v2 redesign (#42/#43); kept for the record.
+# wontfix entries, kept for the record.
 - id: 32
   title: "Locator robustness: tolerant extraction, kind fallback, append guard"
   status: wontfix

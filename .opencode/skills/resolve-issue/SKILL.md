@@ -6,15 +6,20 @@ description: Take tracked issues to done.
 # resolve-issue
 
 Take a tracked issue to done. This is the execution counterpart to `file-issue`:
-`file-issue` writes issue files, the tree in `issues/readme.md`, and the
-picking order in `issues/todo.yaml`; `resolve-issue` consumes them, does the
-work, and moves them through the status lifecycle. When an issue reaches
-`done`, its file is **physically moved** to `issues/done/` and its `todo.yaml`
-entry is removed.
+`file-issue` files issues; `resolve-issue` consumes them, does the work, and
+moves them through the status lifecycle. Every tracker write goes through the
+shared script (owned by `which-skill`; referenced as
+`../which-skill/scripts/issue-tracker.ts` from this skill's directory):
+
+    bun .opencode/skills/which-skill/scripts/issue-tracker.ts <cmd>
+
+Never hand-edit frontmatter, `issues/todo.yaml`, or the dot block in
+`issues/readme.md` — the script owns them. Append findings to an issue's prose
+(its `## Notes`) directly; that is not tracker bookkeeping.
 
 An issue is only "done" when every acceptance criterion is demonstrably met —
 not when the edits look right. In a tree, that also means an **umbrella is not
-done until all its children are done**.
+done until all its children are done or `wontfix`**.
 
 ## Status lifecycle
 
@@ -27,33 +32,33 @@ todo ──▶ in-progress ──▶ review ──▶ done
 - `todo`: not started.
 - `in-progress`: actively being worked. Move here _before_ editing code.
 - `review`: implementation and verification pass, awaiting human sign-off.
-- `done`: signed off / accepted. The issue file is moved to `issues/done/` (see
-  "On `done`: move the file").
-- `wontfix`: deliberately abandoned, with a reason appended to Notes. The file
-  stays where it is — only `done` issues move.
+- `done`: signed off / accepted. `set --status done` moves the file to
+  `issues/done/`, rebases its links, and re-derives the tracker; it refuses
+  while any dep is not `done` or any child is open.
+- `wontfix`: deliberately abandoned; `set --status wontfix --reason "…"`
+  appends the reason to Notes. The file stays under `issues/`.
 
 ## Workflow
 
 1. **Select — ask, never pick silently.** If the user named a target — an id, a
    list, or a set — take it as given; "all" means the whole tracker. Otherwise
-   read `issues/todo.yaml`, build the eligible list and the topic sets, and
-   **ask via the `question` tool** what to resolve. Never auto-pick.
+   run the tracker's `list` and **ask via the `question` tool** what to
+   resolve. Never auto-pick.
 
-   An eligible work item is a `todo` **leaf** (no children) whose `deps` are all
-   `done`; an umbrella is not eligible while it has open children. A **topic**
-   is an umbrella holding open work; its **set** is every `todo` descendant
-   plus the umbrella itself — a member blocked today joins as its deps land. A
-   picked set is fixed. Options are ranked by the tracker's picking order (a
-   set ranks as its highest member); the first carries `(Recommended)`. The
-   question offers, in order:
+   `list` returns the full state: `order` (picking order), `eligibleLeaves`
+   (a `todo` leaf whose deps are all `done`), `eligibleUmbrellas` (an umbrella
+   whose children are all decided), `sets` (topics: each open umbrella with its
+   open descendants), and `blockers` (unmet deps / unfinished children). A
+   picked set is fixed. Options are ranked by picking order (a set ranks as its
+   highest member); the first carries `(Recommended)`. Offer, in order:
 
    - one **set** option per open topic, top topic first — e.g.
      `Set #28: #42 → #43 → #44`;
    - each eligible leaf as a **single** option;
    - `All open, in order` — the whole tracker (see "Batch mode" below).
 
-   If no issue is eligible, report what is blocking (unmet `deps`, unfinished
-   children) and stop — do not ask an empty question.
+   If nothing is eligible, report what is blocking and stop — do not ask an
+   empty question.
 
 2. **Load.** Read the issue file fully — Context, Goal, Acceptance criteria,
    Verification, Notes — plus its full ancestor chain (`parent` up to the root)
@@ -61,8 +66,8 @@ todo ──▶ in-progress ──▶ review ──▶ done
    up under `issues/NNNN-*.md` first, then `issues/done/NNNN-*.md`: done
    ancestors and deps have been moved into `issues/done/`. Read the referenced
    code before changing anything.
-3. **Mark `in-progress`.** Update the frontmatter and the issue's `todo.yaml`
-   entry before the first edit. This is the signal that the issue is claimed.
+3. **Mark `in-progress`.** `set <id> --status in-progress`. This is the signal
+   that the issue is claimed.
 4. **Locate the work.** Find the real files and symbols the issue touches. If
    the issue's premises are wrong (missing file, already implemented, blocked by
    an unlisted dependency), stop and report to the user instead of improvising.
@@ -78,21 +83,22 @@ todo ──▶ in-progress ──▶ review ──▶ done
    passing result. If the sub-agent reports failure or the diff is wrong,
    re-delegate with the failure output appended (at most two re-delegations),
    or stop and report.
-7. **Move to `review`.** Report: issue id, what changed (file:line), the
-   verification output, and any criterion you could **not** confirm. If the
-   project requires human sign-off, hold at `review` and let the user promote to
-   `done`. If the user's request was "resolve and close", and all criteria pass
-   with no ambiguity, move straight to `done` — and perform the file move
-   described in "On `done`: move the file".
-8. **Propagate up the tree.** After a child reaches `done`, check its siblings
-   and its parent's own acceptance criteria. If every child of a parent is now
-   `done` and the parent's criteria are satisfied, surface the parent as ready to
-   close (or close it if the user asked to auto-close) — moving the umbrella's
-   file to `issues/done/` as well. Never auto-close an umbrella whose own
-   criteria are unmet.
+7. **Move to `review`.** `set <id> --status review`, then report: issue id, what
+   changed (file:line), the verification output, and any criterion you could
+   **not** confirm. If the project requires human sign-off, hold at `review`
+   and let the user promote to `done`. If the user's request was "resolve and
+   close", and all criteria pass with no ambiguity, move straight to `done`:
+   `set <id> --status done` performs the file move.
+8. **Propagate up the tree.** After a child reaches `done` or `wontfix`, check
+   its siblings and its parent's own acceptance criteria. If every child of a
+   parent is now decided and the parent's criteria are satisfied, surface the
+   parent as ready to close (or close it — `set <id> --status done` — if the
+   user asked to auto-close). Never auto-close an umbrella whose own criteria
+   are unmet.
 9. **If verification still fails.** After two failed re-delegations, if you
    cannot satisfy the criteria, leave the issue `in-progress`, append the
-   blocker to Notes, and report — never mark `done` on a failing check.
+   blocker under `## Notes` in the issue file, and report — never mark `done` on
+   a failing check.
 
 ## Sub-agent brief
 
@@ -117,47 +123,29 @@ agent alone updates the tracker.
 
 When the user's answer is a topic set or `All open, in order`:
 
-- Process issues **sequentially**, one at a time, re-reading `issues/todo.yaml`
-  before each pick — finishing one issue can make the next eligible (a leaf whose
-  `deps` were waiting on it).
-- Take issues in the tracker's picking order.
+- Process issues **sequentially**, one at a time, re-running `list` before each
+  pick — finishing one issue can make the next eligible (a leaf whose `deps`
+  were waiting on it). Take issues in `order`.
 - A **set** is a fixed queue: only its members are started, and the run stops
   when the set is exhausted.
 - `All open` keeps draining the tracker — picking up newly eligible issues —
   until no `todo` issue remains.
 - After each issue, re-evaluate eligibility and propagate up the tree (step 8).
-  If a parent becomes fully `done`, include it.
+  If a parent becomes fully decided, close it per step 8.
 - **Stop on the first issue that cannot be closed** (failed verification or a
   blocker) and report the remaining queue — do not skip ahead, because the
   blocked issue may gate the rest.
 
-## Updating the tracker
+## Tracker commands
 
-Update the frontmatter and the issue's `todo.yaml` entry together, and re-sort
-`todo.yaml` when the change moves it (rule and format: see `file-issue`). When
-closing as `wontfix`, append a short reason under `## Notes`. Leave the tree in
-`issues/readme.md` unchanged unless the user asks to restructure.
-
-## On `done`: move the file
-
-The moment an issue becomes `done`, move its file into `issues/done/` and drop
-its `todo.yaml` entry — this is part of the status transition, not an optional
-cleanup:
-
-1. `mkdir -p issues/done` if needed.
-2. Move the file without changing its name: `git mv issues/0007-slug.md
-   issues/done/0007-slug.md` in a git repo, plain `mv` otherwise. Never rename,
-   renumber, or re-slug.
-3. Fix relative links inside the moved file: references that used to resolve
-   from `issues/` need one more `../` (e.g. `../spec.md` → `../../spec.md`).
-   Check links to the spec and any sibling issue files.
-4. Mark `status: done` in the frontmatter and remove the issue's entry from
-   `issues/todo.yaml`.
-5. If the project is a git repo, include the move and the tracker update in the
-   commit that closes the issue (do not leave the move uncommitted).
-
-Moving the file is only for `done`. `wontfix` and every in-flight status keep
-the file under `issues/`.
+- `list` — full state plus derived selection data, as JSON.
+- `set <id> --status in-progress|review|done` — drive the lifecycle; `done`
+  moves the file and refuses unready issues.
+- `set <id> --status wontfix --reason "…"` — formal abandonment.
+- `set <id> --priority high|medium|low` (also `--title`, `--parent`, `--deps`,
+  `--labels`, `--milestone`) — field edits.
+- `check` — validate the tracker after a batch; `setup` — repair derived-file
+  drift.
 
 ## Rules
 
@@ -173,9 +161,8 @@ the file under `issues/`.
 - Never edit an issue's Goal or Acceptance criteria to make it pass. If the
   criteria are wrong, raise it with the user and fix the issue first.
 - Never renumber, re-slug, or delete issues.
-- When an issue becomes `done`, move its file to `issues/done/` (step order and
-  link fixes per "On `done`: move the file") and remove its `todo.yaml` entry.
-  Never move a file for any other status.
+- Never hand-edit tracker files (frontmatter, `todo.yaml`, the dot block); every
+  status change and field edit goes through the script.
 - Never mark `done` while any acceptance criterion is unverified.
 - Stay within the issue's scope; new discoveries become new `file-issue` items or
   a note on the current issue, not silent extra changes.
