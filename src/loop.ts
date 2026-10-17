@@ -262,7 +262,6 @@ export interface LoopOptions {
   provider: ProviderLike;
   maxRetries?: number;
   temperature?: number;
-  tools?: ToolDefinition[];
   checkCommand?: string[];
   testCommand?: string[];
 }
@@ -413,12 +412,11 @@ function formatDiagnostics(
 async function explain(
   provider: ProviderLike,
   messages: ChatMessage[],
-  tools: ToolDefinition[] | undefined,
   temperature: number | undefined,
 ): Promise<string> {
   messages.push({ role: "user", content: EXPLANATION_PROMPT });
   const options = temperature === undefined ? undefined : { temperature };
-  const response = await provider.chat(messages, tools, options);
+  const response = await provider.chat(messages, undefined, options);
   const text = stripCodeFences(response.content ?? "");
   return text === "" ? "the model did not provide an explanation" : text;
 }
@@ -442,7 +440,7 @@ export async function runLoop(options: LoopOptions): Promise<LoopResult> {
   let selection: Selection | null = null;
   let selectionFailures = 0;
   while (selectionFailures < maxRetries) {
-    const response = await options.provider.chat(messages, options.tools, chatOptions);
+    const response = await options.provider.chat(messages, undefined, chatOptions);
     let candidate: Locator | null = null;
     let resolved: IndexEntry | null = null;
     let appendPath: string | null = null;
@@ -499,7 +497,7 @@ export async function runLoop(options: LoopOptions): Promise<LoopResult> {
       editedSource: null,
       attempts,
       diagnostics: "could not select a symbol",
-      explanation: await explain(options.provider, messages, options.tools, temperature),
+      explanation: await explain(options.provider, messages, temperature),
       messages,
       skipped,
     };
@@ -528,7 +526,7 @@ export async function runLoop(options: LoopOptions): Promise<LoopResult> {
 
   let diagnostics: string | null = null;
   for (let editAttempt = 0; editAttempt < maxRetries; editAttempt += 1) {
-    const response = await options.provider.chat(messages, options.tools, chatOptions);
+    const response = await options.provider.chat(messages, undefined, chatOptions);
     let replacement: string | null = null;
     let newSource: string | null = null;
     let failure: string | null = null;
@@ -607,7 +605,7 @@ export async function runLoop(options: LoopOptions): Promise<LoopResult> {
     editedSource: null,
     attempts,
     diagnostics,
-    explanation: await explain(options.provider, messages, options.tools, temperature),
+    explanation: await explain(options.provider, messages, temperature),
     messages,
     skipped,
   };

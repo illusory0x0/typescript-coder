@@ -306,15 +306,17 @@ type ScriptedResponse = string | { toolCall: { name: string; arguments: string }
 
 class ScriptedProvider implements ProviderLike {
   readonly calls: ChatMessage[][] = [];
+  readonly toolsArgs: (ToolDefinition[] | undefined)[] = [];
 
   constructor(private readonly responses: ScriptedResponse[]) {}
 
   async chat(
     messages: ChatMessage[],
-    _tools?: ToolDefinition[],
+    tools?: ToolDefinition[],
     _options?: { temperature?: number },
   ): Promise<ChatResponse> {
     this.calls.push(structuredClone(messages));
+    this.toolsArgs.push(tools);
     const response = this.responses.shift();
     if (response === undefined) {
       throw new Error("no scripted response");
@@ -440,6 +442,25 @@ describe("runLoop", () => {
     expect(result.ok).toBe(true);
     expect(result.attempts.length).toBe(1);
     expect(helperSource(dir)).toContain("return 2;");
+  }, 30000);
+
+  test("sends no tools to the provider", async () => {
+    const dir = fixtureDir();
+    const provider = new ScriptedProvider([
+      '{"path":"src/helper.ts","name":"answer","kind":"function"}',
+      "function answer(): number {\n  return 2;\n}\n",
+    ]);
+    const result = await runLoop({
+      cwd: dir,
+      issue: "make the answer test pass",
+      model: "fake",
+      provider,
+      checkCommand: TSC,
+      testCommand: ["bun", "test"],
+    });
+    expect(result.ok).toBe(true);
+    expect(provider.calls.length).toBe(2);
+    expect(provider.toolsArgs).toEqual([undefined, undefined]);
   }, 30000);
 
   test("retries selection after an invalid locator and records the failure", async () => {

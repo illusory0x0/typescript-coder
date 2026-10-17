@@ -1,7 +1,7 @@
 ---
 id: 24
 title: "Spec: declare tools internal-only for v1 (remove loop tools plumbing)"
-status: todo
+status: done
 priority: medium
 milestone: null
 parent: null
@@ -55,3 +55,9 @@ bun run accept
   here.
 - `explain()` receives the tools list only because `runLoop` forwards it;
   update its signature accordingly.
+- Validation (2026-10-17): the loop now calls
+  `provider.chat(messages, undefined, ...)`; a new witness test asserts the
+  provider's tools argument is `undefined` on every call ("sends no tools to
+  the provider"); the locator tool-call parsing test is kept; `src/openai.ts`
+  untouched. Supersedes the #23 tool-call echo edge: with no tools offered, a
+  tool-call locator can no longer arise in loop runs.

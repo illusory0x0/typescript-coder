@@ -3,14 +3,6 @@
 # Available = deps done (an umbrella also needs all children done).
 # Tie-break by id.
 
-- id: 24
-  title: "Spec: declare tools internal-only for v1 (remove loop tools plumbing)"
-  status: todo
-  priority: medium
-  milestone: null
-  parent: null
-  deps: []
-  file: 0024-tools-internal-only.md
 - id: 25
   title: "Provider: request timeout and runLoop error handling"
   status: todo

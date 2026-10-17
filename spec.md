@@ -120,16 +120,17 @@ harness:
 - **on-failure:** report diagnostic message → rollback → retry.
 - **max-retries:** 3.
 - **exit:** LLM explains the failure reason for the main agent.
-- **optimization:** prompt prefix invariant — stable system + tools + context
+- **optimization:** prompt prefix invariant — stable system + context
   prefix, variable tail (cache-friendly).
 
 ## 7. Tools
 
-- `rename`
-- `scroll`
-- `find-definition`
-- `check`
-- `test`
+Tools are **internal library APIs** in v1 (`src/tools.ts`): `rename`, `scroll`,
+`find-definition`, `check`, `test`. The harness uses them directly; they are
+covered by per-tool unit tests and are **never offered to the model**. v1 has no
+agentic tool-execution loop: the loop sends no `tools` to the provider, and a
+provider tool-call response is only ever parsed as a locator. Provider-level
+`tools` parameter support stays (§8).
 
 ## 8. Provider
 
@@ -182,7 +183,8 @@ Edit is accepted only if both pass:
   _Gate:_ before/after unit tests.
 - **M5 · `openai.ts`** — OpenAI-compatible chat + `tools`, env creds, model arg.
   _Gate:_ mocked-HTTP tests; optional live smoke.
-- **M6 · Tools** — `find-definition`, `check`, `test`, `scroll`, `rename`.
+- **M6 · Tools** — internal library APIs (`find-definition`, `check`, `test`,
+  `scroll`, `rename`), not offered to the model in v1.
   _Gate:_ per-tool unit tests.
 - **M7 · `loop.ts`** — context YAML → symbol select JSON → replacement text →
   apply → verify → rollback/retry(3) → explanation; prefix-invariant ordering.
