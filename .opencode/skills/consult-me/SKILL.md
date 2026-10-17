@@ -1,6 +1,6 @@
 ---
 name: consult-me
-description: Consult before acting on vague or high-stakes requests. Infers premises, scopes the problem, fills gaps, picks a decision model, asks specifics, then plans. Trigger on "consult-me".
+description: Consult before acting on vague or high-stakes requests.
 ---
 
 # consult-me

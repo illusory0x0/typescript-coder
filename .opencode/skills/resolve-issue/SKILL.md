@@ -1,6 +1,6 @@
 ---
 name: resolve-issue
-description: Pick up a tracked issue from issues/, implement it via a sub-agent, verify the acceptance criteria, and update its status in issues/todo.md (table and Graphviz tree). Always confirms which issue(s) to work on with the user. The counterpart to file-issue. Use when the user says "resolve-issue", "work on issue <id>", "pick up the next issue", "do the todo", or asks to implement and close a tracked work item.
+description: Take tracked issues to done.
 ---
 
 # resolve-issue

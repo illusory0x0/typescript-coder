@@ -1,6 +1,6 @@
 ---
 name: file-issue
-description: Turn a request, plan, bug report, or spec section into concrete issue files (as a tree of parents and sub-issues) under issues/ and keep issues/todo.md in sync, including its Graphviz tree. Use when the user says "file-issue", "to-issue", "file an issue", "break this into issues", "track this", or asks to capture work items.
+description: Turn requests into tracked issues under issues/.
 ---
 
 # file-issue
