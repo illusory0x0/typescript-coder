@@ -83,14 +83,6 @@
   parent: 28
   deps: []
   file: 0039-provider-backoff.md
-- id: 40
-  title: "Replay runner: offline iteration on recorded bundles"
-  status: todo
-  priority: high
-  milestone: null
-  parent: 28
-  deps: [29]
-  file: 0040-replay-runner.md
 - id: 41
   title: "Create-mode repair: keep partial files and iterate with anchors"
   status: todo

@@ -56,4 +56,20 @@ stays in matrix order even though runs finish in arbitrary order.
 - `durationMs`: model work only (the judge runs afterwards and is not counted).
 - `ok`: judge verdict; `sideOk` is the side's own result.
 
+## Replay runner
+
+    bun run benchmark/replay.ts <bundle.json> [--keep]
+
+Replays a recorded bundle (`--replay-dir`, above) through the current loop in a
+fresh copy of the bundle's fixture under `tmp/replay/<stamp>/`, with no network
+calls. The summary reports the calls consumed against the recorded count,
+per-attempt outcomes and diagnostics, prompt mismatches against the recorded
+requests, and where the loop stopped; exit codes: 0 = loop ok, 1 = loop failed,
+2 = usage or IO error. `--keep` leaves the workspace for inspection (removed
+otherwise).
+
+Limitation: the recorded responses were produced for the prompts current at
+recording time, so the runner validates mechanics (parsing, matching, state
+flow) — not model behavior under new prompts.
+
 Token conventions differ between the sides; compare like for like.

@@ -1,7 +1,7 @@
 ---
 id: 40
 title: "Replay runner: offline iteration on recorded bundles"
-status: todo
+status: done
 priority: high
 milestone: null
 parent: 28
@@ -53,3 +53,16 @@ bun benchmark/replay.ts tmp/replays/<bundle>.json
 
 - Depends on #29 (bundle format). Used as evidence vehicle by #30/#31/#33/#38.
 - Non-goals: synthesizing new responses, live fallbacks, parallel replays.
+- Validation (2026-10-17): `bun run benchmark/replay.ts <bundle.json> [--keep]`
+  replays offline via `ReplayProvider` (src/replay-runner.ts), copying the
+  bundle fixture to `tmp/replay/<stamp>/` (removed unless `--keep`); the
+  summary lists result/mode/filePath, `calls X/N`, exhaustion, prompt
+  mismatches, and per-attempt outcomes; exit 0 ok, 1 loop fail, 2 usage/IO.
+  Real bundle replay (`tmp/replays2/json-parser-ts-rep1.json`, recorded from
+  a passing run): `result: ok`, `calls: 3/3`, `prompt mismatches: none`,
+  `attempt 1: outcome=selection-invalid`, `attempt 2: outcome=ok` —
+  deterministically reproduced with zero network. Exhaustion path verified
+  (1-call bundle → fail, `bundle exhausted after 1 call(s)`, exit 1).
+  Unit tests: 6 (in-order replay through the real loop, exhaustion + cleanup,
+  parse validation, provider order/mismatch, summary text). Verified: tsc 0,
+  461 tests, `accept` 5/5, `benchmark/check.ts` 3 PASS.
