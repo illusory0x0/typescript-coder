@@ -1,8 +1,9 @@
 import { afterEach, describe, expect, test } from "bun:test";
-import { mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
-import { join } from "node:path";
+import { basename, join } from "node:path";
 import {
+  buildAppendPrompt,
   buildContextYaml,
   buildDiagnosticsPrompt,
   buildReplacementPrompt,
@@ -132,6 +133,11 @@ describe("prompt builders", () => {
     expect(buildSystemPrompt()).toContain("COMPLETE replacement text");
   });
 
+  test("buildSystemPrompt describes append/create for a missing symbol", () => {
+    expect(buildSystemPrompt()).toContain("may not exist yet");
+    expect(buildSystemPrompt()).toContain("appends your complete output");
+  });
+
   test("buildUserPrompt contains the issue and a yaml fence", () => {
     const context = buildContextYaml([{ path: "src/a.ts", source: "export const a = 1;\n" }]);
     const prompt = buildUserPrompt("fix the failing test", context);
@@ -149,6 +155,15 @@ describe("prompt builders", () => {
     expect(prompt).toContain(locatorJson);
     expect(prompt).toContain(symbolSource);
     expect(prompt).toContain("```ts");
+  });
+
+  test("buildAppendPrompt asks for the complete declaration and notes the file may be missing", () => {
+    const locatorJson = '{"path":"src/new.ts","name":"make","kind":"function"}';
+    const prompt = buildAppendPrompt(locatorJson, "src/new.ts");
+    expect(prompt).toContain(locatorJson);
+    expect(prompt).toContain("src/new.ts");
+    expect(prompt).toContain("may not exist yet");
+    expect(prompt).toContain("COMPLETE code");
   });
 
   test("buildDiagnosticsPrompt reports the failure and includes diagnostics", () => {
@@ -318,6 +333,15 @@ function helperSource(dir: string): string {
   return readFileSync(join(dir, "src", "helper.ts"), "utf8");
 }
 
+function passingFixtureDir(): string {
+  const dir = fixtureDir();
+  writeFileSync(
+    join(dir, "src", "helper.ts"),
+    "export function answer(): number {\n  return 2;\n}\n",
+  );
+  return dir;
+}
+
 describe("runLoop", () => {
   test("applies, verifies, and returns a successful text response", async () => {
     const dir = fixtureDir();
@@ -409,8 +433,8 @@ describe("runLoop", () => {
   test("gives up with an explanation when no locator can be selected", async () => {
     const dir = fixtureDir();
     const provider = new ScriptedProvider([
-      '{"path":"src/helper.ts","name":"nope","kind":"function"}',
-      '{"path":"src/helper.ts","name":"nope","kind":"function"}',
+      '{"path":"../escape.ts","name":"nope","kind":"function"}',
+      '{"path":"../escape.ts","name":"nope","kind":"function"}',
       "the symbol does not exist in the project",
     ]);
     const result = await runLoop({
@@ -577,5 +601,221 @@ describe("runLoop", () => {
       "user",
       "user",
     ]);
+  }, 30000);
+
+  test("appends the replacement when the locator's symbol is missing", async () => {
+    const dir = passingFixtureDir();
+    const original = helperSource(dir);
+    const provider = new ScriptedProvider([
+      '{"path":"src/helper.ts","name":"greet","kind":"function"}',
+      "export   function greet ( name : string ) : string { return `hello ${name}` }",
+    ]);
+    const result = await runLoop({
+      cwd: dir,
+      issue: "add a greet function to helper.ts",
+      model: "fake",
+      provider,
+      checkCommand: TSC,
+      testCommand: ["bun", "test"],
+    });
+    expect(result.ok).toBe(true);
+    expect(result.mode).toBe("append");
+    expect(result.locator).toEqual({ path: "src/helper.ts", name: "greet", kind: "function" });
+    expect(result.filePath).toBe("src/helper.ts");
+    expect(result.attempts.length).toBe(1);
+    const expected =
+      "export function answer(): number {\n  return 2;\n}\n\n" +
+      "export function greet(name: string): string {\n  return `hello ${name}`;\n}\n";
+    const content = helperSource(dir);
+    expect(content).toBe(expected);
+    expect(content.startsWith(original)).toBe(true);
+    expect(result.editedSource).toBe(content);
+    expect(result.messages[3]?.content).toContain("may not exist yet");
+    expect(result.messages[3]?.content).toContain('"name":"greet"');
+  }, 30000);
+
+  test("creates a missing file and its parent directories in append mode", async () => {
+    const dir = passingFixtureDir();
+    const provider = new ScriptedProvider([
+      '{"path":"src/nested/greeting.ts","name":"greet","kind":"function"}',
+      'export   function greet ( ) : string { return "hi" }',
+    ]);
+    const result = await runLoop({
+      cwd: dir,
+      issue: "create a greeting module",
+      model: "fake",
+      provider,
+      checkCommand: TSC,
+      testCommand: ["bun", "test"],
+    });
+    expect(result.ok).toBe(true);
+    expect(result.mode).toBe("append");
+    expect(result.filePath).toBe("src/nested/greeting.ts");
+    const content = readFileSync(join(dir, "src", "nested", "greeting.ts"), "utf8");
+    expect(content).toBe('export function greet(): string {\n  return "hi";\n}\n');
+    expect(result.editedSource).toBe(content);
+  }, 30000);
+
+  test("rolls back an appended edit before retrying and restores the original bytes", async () => {
+    const dir = passingFixtureDir();
+    const original = helperSource(dir);
+    const badReplacement = 'export function greet(): number {\n  return "nope";\n}';
+    const goodReplacement = "export function greet(): number {\n  return 7;\n}";
+    const scripted = new ScriptedProvider([
+      '{"path":"src/helper.ts","name":"greet","kind":"function"}',
+      badReplacement,
+      goodReplacement,
+    ]);
+    let beforeRetry = "";
+    let chats = 0;
+    const provider: ProviderLike = {
+      async chat(messages, tools, options) {
+        chats += 1;
+        if (chats === 3) {
+          beforeRetry = helperSource(dir);
+        }
+        return scripted.chat(messages, tools, options);
+      },
+    };
+    const result = await runLoop({
+      cwd: dir,
+      issue: "add a greet function to helper.ts",
+      model: "fake",
+      provider,
+      checkCommand: TSC,
+      testCommand: ["bun", "test"],
+    });
+    expect(result.ok).toBe(true);
+    expect(result.mode).toBe("append");
+    expect(result.attempts.length).toBe(2);
+    expect(result.attempts[0]?.diagnostics).not.toBeNull();
+    expect(result.attempts[1]?.diagnostics).toBeNull();
+    expect(beforeRetry).toBe(original);
+    const content = helperSource(dir);
+    expect(content).not.toContain("nope");
+    expect(content).toContain("return 7;");
+    expect(content.startsWith(original)).toBe(true);
+  }, 30000);
+
+  test("restores an appended-to file exactly after exhausting retries", async () => {
+    const dir = passingFixtureDir();
+    const original = helperSource(dir);
+    const badReplacement = 'export function greet(): number {\n  return "nope";\n}';
+    const provider = new ScriptedProvider([
+      '{"path":"src/helper.ts","name":"greet","kind":"function"}',
+      badReplacement,
+      badReplacement,
+      badReplacement,
+      "the appended declaration does not typecheck",
+    ]);
+    const result = await runLoop({
+      cwd: dir,
+      issue: "add a greet function to helper.ts",
+      model: "fake",
+      provider,
+      checkCommand: TSC,
+      testCommand: ["bun", "test"],
+    });
+    expect(result.ok).toBe(false);
+    expect(result.mode).toBe("append");
+    expect(result.attempts.length).toBe(3);
+    expect(result.editedSource).toBeNull();
+    expect(helperSource(dir)).toBe(original);
+    expect(result.explanation).toBe("the appended declaration does not typecheck");
+  }, 30000);
+
+  test("deletes a created file on verification failure and recreates it on retry", async () => {
+    const dir = passingFixtureDir();
+    const created = join(dir, "src", "generated.ts");
+    const badReplacement = 'export function make(): number {\n  return "no";\n}';
+    const goodReplacement = "export function make(): number {\n  return 1;\n}";
+    const scripted = new ScriptedProvider([
+      '{"path":"src/generated.ts","name":"make","kind":"function"}',
+      badReplacement,
+      goodReplacement,
+    ]);
+    let beforeRetry = true;
+    let chats = 0;
+    const provider: ProviderLike = {
+      async chat(messages, tools, options) {
+        chats += 1;
+        if (chats === 3) {
+          beforeRetry = existsSync(created);
+        }
+        return scripted.chat(messages, tools, options);
+      },
+    };
+    const result = await runLoop({
+      cwd: dir,
+      issue: "create a generated module",
+      model: "fake",
+      provider,
+      checkCommand: TSC,
+      testCommand: ["bun", "test"],
+    });
+    expect(result.ok).toBe(true);
+    expect(result.mode).toBe("append");
+    expect(beforeRetry).toBe(false);
+    expect(existsSync(created)).toBe(true);
+    expect(readFileSync(created, "utf8")).toContain("return 1;");
+  }, 30000);
+
+  test("deletes a created file when verification keeps failing", async () => {
+    const dir = passingFixtureDir();
+    const created = join(dir, "src", "generated.ts");
+    const badReplacement = 'export function make(): number {\n  return "no";\n}';
+    const provider = new ScriptedProvider([
+      '{"path":"src/generated.ts","name":"make","kind":"function"}',
+      badReplacement,
+      badReplacement,
+      badReplacement,
+      "the generated module never typechecked",
+    ]);
+    const result = await runLoop({
+      cwd: dir,
+      issue: "create a generated module",
+      model: "fake",
+      provider,
+      checkCommand: TSC,
+      testCommand: ["bun", "test"],
+    });
+    expect(result.ok).toBe(false);
+    expect(result.mode).toBe("append");
+    expect(result.attempts.length).toBe(3);
+    expect(existsSync(created)).toBe(false);
+  }, 30000);
+
+  test("rejects path-escaping locators and writes nothing", async () => {
+    const dir = passingFixtureDir();
+    const original = helperSource(dir);
+    const escapedName = `escape-${basename(dir)}.ts`;
+    const escaped = join(dir, "..", escapedName);
+    const absolute = join(dir, "..", `escape-absolute-${basename(dir)}.ts`);
+    const inside = join(dir, "escape-inside.ts");
+    const provider = new ScriptedProvider([
+      `{"path":"../${escapedName}","name":"greet","kind":"function"}`,
+      `{"path":${JSON.stringify(absolute)},"name":"greet","kind":"function"}`,
+      '{"path":"src/../escape-inside.ts","name":"greet","kind":"function"}',
+      "cannot write outside the project",
+    ]);
+    const result = await runLoop({
+      cwd: dir,
+      issue: "add a greet function to helper.ts",
+      model: "fake",
+      provider,
+      maxRetries: 3,
+      checkCommand: TSC,
+      testCommand: ["bun", "test"],
+    });
+    expect(result.ok).toBe(false);
+    expect(result.locator).toBeNull();
+    expect(result.attempts.length).toBe(3);
+    for (const attempt of result.attempts) {
+      expect(attempt.diagnostics).toContain("invalid locator");
+    }
+    expect(existsSync(escaped)).toBe(false);
+    expect(existsSync(absolute)).toBe(false);
+    expect(existsSync(inside)).toBe(false);
+    expect(helperSource(dir)).toBe(original);
   }, 30000);
 });

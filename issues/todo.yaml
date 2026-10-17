@@ -3,14 +3,6 @@
 # Available = deps done (an umbrella also needs all children done).
 # Tie-break by id.
 
-- id: 15
-  title: "Append or create files when a locator's symbol is missing"
-  status: todo
-  priority: high
-  milestone: null
-  parent: null
-  deps: []
-  file: 0015-append-create-missing-symbol.md
 - id: 20
   title: "Parser: #private fields, using declarations, import attributes, const type parameters"
   status: todo

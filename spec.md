@@ -58,6 +58,22 @@ Replaces each symbol's source range with the LLM text, applying edits
 **bottom-up by offset** so spans stay valid, then formats with `oxfmt`. Returns
 the new source.
 
+### append/create (missing symbol)
+
+When a `Locator` names a symbol that is not in the index, the locator enters
+**append mode** instead of failing: the LLM output is the complete code
+declaring the symbol, appended to the locator's file — created together with
+any missing parent directories when absent — newline-normalized and separated
+from existing content by one blank line, then the whole result is formatted
+with `oxfmt` and verified by the same check + test gate. On failure the exact
+pre-edit state is restored: an existing file is rewritten byte-for-byte, a
+created file is deleted.
+
+A path is appendable only when it is relative, has no `..` segment, resolves
+inside `cwd`, and does not point under `node_modules`, `.git`, `dist`, or a
+hidden directory. Absolute or escaping paths stay invalid locators and nothing
+outside `cwd` is ever written.
+
 ## 5. Source layout
 
 | file          | responsibility                                                  |
@@ -88,11 +104,19 @@ model:
   - LLM outputs complete replacement text# text
 
 harness:
-  - apply edits
+  - apply edits          # replace the symbol range, or append/create when missing
   - run TypeScript checker   (tsc --noEmit)
   - run TypeScript tests     (bun test)
 ```
 
+- **selection:** a locator whose symbol is not in the index enters append mode
+  when its path is safe (see §4); otherwise it stays an invalid locator and the
+  model is asked to select again.
+- **append/create:** the LLM output is the complete declaration of the missing
+  symbol; the harness appends it to the locator's file (creating file and parent
+  directories when absent), formats with `oxfmt`, and runs the same check + test
+  gate. Rollback is exact: an existing file is restored byte-for-byte, a created
+  file is deleted.
 - **on-failure:** report diagnostic message → rollback → retry.
 - **max-retries:** 3.
 - **exit:** LLM explains the failure reason for the main agent.

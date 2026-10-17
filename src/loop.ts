@@ -1,6 +1,13 @@
-import { readdirSync, readFileSync, writeFileSync } from "node:fs";
-import { join, relative, sep } from "node:path";
-import { applyEdits } from "./editor";
+import {
+  mkdirSync,
+  readdirSync,
+  readFileSync,
+  rmSync,
+  statSync,
+  writeFileSync,
+} from "node:fs";
+import { dirname, isAbsolute, join, relative, resolve, sep } from "node:path";
+import { applyEdits, formatSource } from "./editor";
 import { buildIndex, findDefinition } from "./utility";
 import { buildSignatureView } from "./scroll";
 import { checkTool, testTool } from "./tools";
@@ -112,6 +119,8 @@ export function buildSystemPrompt(): string {
     "",
     "Then you will be asked to output the COMPLETE replacement text for the selected symbol. Keep the same declaration kind and name unless the task requires otherwise. No markdown fences and no explanations.",
     "",
+    "The selected symbol may not exist yet. When it is missing, the harness appends your complete output to the target file (creating the file and any parent directories when needed) instead of replacing a symbol range.",
+    "",
   ].join("\n");
 }
 
@@ -134,6 +143,25 @@ Current source of the symbol:
 
 \`\`\`ts
 ${body}\`\`\`
+`;
+}
+
+export function buildAppendPrompt(locatorJson: string, path: string): string {
+  return `The symbol identified by this locator does not exist yet. Output the COMPLETE code that declares the symbol, with no markdown fences and no explanations.
+
+The target file may not exist yet. The harness appends your output to it, creating the file and any parent directories when needed.
+
+Target file:
+
+\`\`\`
+${path}
+\`\`\`
+
+Locator:
+
+\`\`\`json
+${locatorJson}
+\`\`\`
 `;
 }
 
@@ -228,6 +256,7 @@ export interface LoopAttempt {
 
 export interface LoopResult {
   ok: boolean;
+  mode?: "replace" | "append";
   locator: Locator | null;
   filePath: string | null;
   editedSource: string | null;
@@ -236,6 +265,10 @@ export interface LoopResult {
   explanation: string | null;
   messages: ChatMessage[];
 }
+
+type Selection =
+  | { mode: "replace"; locator: Locator; entry: IndexEntry }
+  | { mode: "append"; locator: Locator; path: string };
 
 const EMPTY_LOCATOR: Locator = { path: "", name: "", kind: "" };
 const DIAGNOSTICS_LIMIT = 4000;
@@ -266,6 +299,66 @@ function sourceFileFor(files: SourceFile[], path: string): SourceFile {
     throw new Error(`no source file ${path}`);
   }
   return file;
+}
+
+function safeAppendPath(cwd: string, path: string): string | null {
+  if (path === "" || isAbsolute(path)) {
+    return null;
+  }
+  const segments = path.split("/");
+  if (segments.some((segment) => segment === "" || segment === "..")) {
+    return null;
+  }
+  const directories = segments.slice(0, -1).filter((segment) => segment !== ".");
+  if (
+    directories.some(
+      (segment) => segment.startsWith(".") || SKIPPED_DIRECTORIES.has(segment),
+    )
+  ) {
+    return null;
+  }
+  const root = resolve(cwd);
+  const target = resolve(root, path);
+  if (target !== root && !target.startsWith(`${root}${sep}`)) {
+    return null;
+  }
+  const stats = statSync(target, { throwIfNoEntry: false });
+  if (stats !== undefined && !stats.isFile()) {
+    return null;
+  }
+  return path;
+}
+
+function readFileIfExists(path: string): string | null {
+  const stats = statSync(path, { throwIfNoEntry: false });
+  if (stats === undefined || !stats.isFile()) {
+    return null;
+  }
+  return readFileSync(path, "utf8");
+}
+
+function appendText(existing: string, replacement: string): string {
+  const body = replacement.trim();
+  if (existing.trim() === "") {
+    return `${body}\n`;
+  }
+  const base = existing.endsWith("\n") ? existing : `${existing}\n`;
+  return `${base}\n${body}\n`;
+}
+
+function writeTarget(cwd: string, path: string, source: string): void {
+  const target = join(cwd, path);
+  mkdirSync(dirname(target), { recursive: true });
+  writeFileSync(target, source);
+}
+
+function restoreTarget(cwd: string, path: string, original: string | null): void {
+  const target = join(cwd, path);
+  if (original === null) {
+    rmSync(target, { force: true });
+    return;
+  }
+  writeFileSync(target, original);
 }
 
 function formatDiagnostics(
@@ -323,13 +416,13 @@ export async function runLoop(options: LoopOptions): Promise<LoopResult> {
   ];
   const attempts: LoopAttempt[] = [];
 
-  let locator: Locator | null = null;
-  let entry: IndexEntry | null = null;
+  let selection: Selection | null = null;
   let selectionFailures = 0;
   while (selectionFailures < maxRetries) {
     const response = await options.provider.chat(messages, options.tools, chatOptions);
     let candidate: Locator | null = null;
     let resolved: IndexEntry | null = null;
+    let appendPath: string | null = null;
     let diagnostic: string | null = null;
     try {
       candidate = locatorFromResponse(response);
@@ -339,7 +432,10 @@ export async function runLoop(options: LoopOptions): Promise<LoopResult> {
     if (candidate !== null && diagnostic === null) {
       resolved = findDefinition(index, candidate);
       if (resolved === null) {
-        diagnostic = `invalid locator: no symbol ${candidate.kind} ${candidate.name} in ${candidate.path}`;
+        appendPath = safeAppendPath(cwd, candidate.path);
+        if (appendPath === null) {
+          diagnostic = `invalid locator: no symbol ${candidate.kind} ${candidate.name} in ${candidate.path}`;
+        }
       }
     }
     if (diagnostic !== null) {
@@ -357,13 +453,16 @@ export async function runLoop(options: LoopOptions): Promise<LoopResult> {
       continue;
     }
     if (candidate !== null) {
-      locator = candidate;
-      entry = resolved;
+      if (resolved !== null) {
+        selection = { mode: "replace", locator: candidate, entry: resolved };
+      } else if (appendPath !== null) {
+        selection = { mode: "append", locator: candidate, path: appendPath };
+      }
     }
     break;
   }
 
-  if (locator === null || entry === null) {
+  if (selection === null) {
     return {
       ok: false,
       locator: null,
@@ -376,13 +475,26 @@ export async function runLoop(options: LoopOptions): Promise<LoopResult> {
     };
   }
 
-  const selected = locator;
-  const selectedEntry = entry;
-  const fileEntry = sourceFileFor(files, selected.path);
+  const selected = selection.locator;
   const locatorJson = JSON.stringify(selected);
-  const symbolSource = fileEntry.source.slice(selectedEntry.node.start, selectedEntry.node.end);
+  let targetPath: string;
+  let original: string | null;
   messages.push({ role: "assistant", content: locatorJson });
-  messages.push({ role: "user", content: buildReplacementPrompt(locatorJson, symbolSource) });
+  if (selection.mode === "replace") {
+    const fileEntry = sourceFileFor(files, selected.path);
+    const symbolSource = fileEntry.source.slice(
+      selection.entry.node.start,
+      selection.entry.node.end,
+    );
+    targetPath = selected.path;
+    original = fileEntry.source;
+    messages.push({ role: "user", content: buildReplacementPrompt(locatorJson, symbolSource) });
+  } else {
+    targetPath = selection.path;
+    original = readFileIfExists(join(cwd, targetPath));
+    messages.push({ role: "user", content: buildAppendPrompt(locatorJson, targetPath) });
+  }
+  const baseSource = original ?? "";
 
   let diagnostics: string | null = null;
   for (let editAttempt = 0; editAttempt < maxRetries; editAttempt += 1) {
@@ -397,11 +509,15 @@ export async function runLoop(options: LoopOptions): Promise<LoopResult> {
     }
     if (replacement !== null) {
       try {
-        newSource = await applyEdits(
-          fileEntry.source,
-          [{ locator: selected, llmOutput: replacement }],
-          selected.path,
-        );
+        if (selection.mode === "append") {
+          newSource = await formatSource(targetPath, appendText(baseSource, replacement));
+        } else {
+          newSource = await applyEdits(
+            baseSource,
+            [{ locator: selected, llmOutput: replacement }],
+            targetPath,
+          );
+        }
       } catch (error) {
         failure = errorMessage(error);
       }
@@ -418,7 +534,7 @@ export async function runLoop(options: LoopOptions): Promise<LoopResult> {
       messages.push({ role: "user", content: buildDiagnosticsPrompt(diagnostics) });
       continue;
     }
-    writeFileSync(join(cwd, selected.path), newSource);
+    writeTarget(cwd, targetPath, newSource);
     const check = await checkTool(cwd, options.checkCommand);
     const test = await testTool(cwd, options.testCommand);
     if (check.ok && test.ok) {
@@ -430,8 +546,9 @@ export async function runLoop(options: LoopOptions): Promise<LoopResult> {
       });
       return {
         ok: true,
+        mode: selection.mode,
         locator: selected,
-        filePath: selected.path,
+        filePath: targetPath,
         editedSource: newSource,
         attempts,
         diagnostics: null,
@@ -439,7 +556,7 @@ export async function runLoop(options: LoopOptions): Promise<LoopResult> {
         messages,
       };
     }
-    writeFileSync(join(cwd, selected.path), fileEntry.source);
+    restoreTarget(cwd, targetPath, original);
     diagnostics = formatDiagnostics(check, test);
     attempts.push({
       attempt: attempts.length + 1,
@@ -453,8 +570,9 @@ export async function runLoop(options: LoopOptions): Promise<LoopResult> {
 
   return {
     ok: false,
+    mode: selection.mode,
     locator: selected,
-    filePath: selected.path,
+    filePath: targetPath,
     editedSource: null,
     attempts,
     diagnostics,

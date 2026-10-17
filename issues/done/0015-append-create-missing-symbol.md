@@ -1,7 +1,7 @@
 ---
 id: 15
 title: Append or create files when a locator's symbol is missing
-status: todo
+status: done
 priority: high
 milestone: null
 parent: null

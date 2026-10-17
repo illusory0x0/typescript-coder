@@ -14,6 +14,15 @@ interface Replacement {
   name: string;
 }
 
+export async function formatSource(fileName: string, source: string): Promise<string> {
+  const { code, errors } = await format(fileName, source, {});
+  const firstError = errors[0];
+  if (firstError !== undefined) {
+    throw new Error(`oxfmt failed: ${firstError.message}`);
+  }
+  return code;
+}
+
 export async function applyEdits(
   source: string,
   edits: Edit[],
@@ -63,10 +72,5 @@ export async function applyEdits(
       updated.slice(0, replacement.start) + replacement.text + updated.slice(replacement.end);
   }
 
-  const { code, errors } = await format(fileName, updated, {});
-  const firstError = errors[0];
-  if (firstError !== undefined) {
-    throw new Error(`oxfmt failed: ${firstError.message}`);
-  }
-  return code;
+  return formatSource(fileName, updated);
 }
