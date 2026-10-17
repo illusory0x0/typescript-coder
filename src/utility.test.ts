@@ -12,7 +12,7 @@ import type {
   Program,
   Statement,
 } from "./parser";
-import { Binder, buildIndex, findDefinition, resolve } from "./utility";
+import { Binder, buildIndex, buildIndexTolerant, findDefinition, resolve } from "./utility";
 import type { Scope, SourceFile, Symbol, SymbolIndex, SymbolSpace } from "./utility";
 
 function bind(source: string): { program: Program; binder: Binder } {
@@ -332,6 +332,40 @@ test("index kinds disambiguate declarations and lookup is exact", () => {
   }
   expect(index.lookup({ path: "src/other.ts", name: "X", kind: "interface" })).toHaveLength(0);
   expect(index.lookup({ path, name: "X", kind: "enum" })).toHaveLength(0);
+});
+
+describe("buildIndexTolerant", () => {
+  test("indexes valid files and reports unparseable ones with path and message", () => {
+    const files: SourceFile[] = [
+      { path: "src/broken.ts", source: "function broken( {\n" },
+      { path: "src/ok.ts", source: "export function fix(): number {\n  return 1;\n}\n" },
+    ];
+    const { index, skipped } = buildIndexTolerant(files);
+    expect(index.lookup({ path: "src/ok.ts", name: "fix", kind: "function" })).toHaveLength(1);
+    expect(index.lookup({ path: "src/broken.ts", name: "broken", kind: "function" })).toHaveLength(0);
+    expect(skipped).toEqual([
+      { path: "src/broken.ts", message: "unexpected end of input (line 2, column 1)" },
+    ]);
+  });
+
+  test("keeps strict buildIndex throwing on the same input", () => {
+    const files: SourceFile[] = [
+      { path: "src/broken.ts", source: "function broken( {\n" },
+      { path: "src/ok.ts", source: "export const ok = 1;\n" },
+    ];
+    expect(() => buildIndex(files)).toThrow("unexpected end of input");
+  });
+
+  test("skips every unparseable file and keeps the valid entries sorted", () => {
+    const files: SourceFile[] = [
+      { path: "src/a.ts", source: "export const a = 1;\n" },
+      { path: "src/b.ts", source: ")" },
+      { path: "src/c.ts", source: "export const c = 3;\n" },
+    ];
+    const { index, skipped } = buildIndexTolerant(files);
+    expect(skipped.map((file) => file.path)).toEqual(["src/b.ts"]);
+    expect(index.entries.map((entry) => entry.locator.path)).toEqual(["src/a.ts", "src/c.ts"]);
+  });
 });
 
 test("byName spans files and lookup filters by path", () => {

@@ -108,7 +108,7 @@ class ScriptedProvider implements ProviderLike {
   }
 }
 
-function fixtureDir(): string {
+function fixtureDir(include: string[] = ["src"]): string {
   const dir = tempDir();
   mkdirSync(join(dir, "src"));
   writeFileSync(
@@ -122,7 +122,7 @@ function fixtureDir(): string {
           moduleResolution: "bundler",
           types: [],
         },
-        include: ["src"],
+        include,
         exclude: ["src/**/*.test.ts"],
       },
       null,
@@ -203,6 +203,49 @@ describe("runMain", () => {
     expect(code).toBe(1);
     expect(captured.err.join("\n")).toContain("no issue");
   });
+
+  test("tolerates an unparseable file elsewhere in the project", async () => {
+    const dir = fixtureDir(["src/helper.ts"]);
+    writeFileSync(join(dir, "src", "broken.ts"), "function broken( {\n");
+    const provider = new ScriptedProvider([
+      LOCATOR,
+      "function answer(): number {\n  return 2;\n}\n",
+    ]);
+    const captured = captureIo();
+    const code = await runMain({
+      issue: "make the answer test pass",
+      model: "fake",
+      cwd: dir,
+      provider,
+      io: captured.io,
+    });
+    expect(code).toBe(0);
+    expect(captured.out.join("\n")).toContain("applied");
+    expect(captured.out.join("\n")).toContain("src/helper.ts");
+    expect(readFileSync(join(dir, "src", "helper.ts"), "utf8")).toContain("return 2;");
+    expect(readFileSync(join(dir, "src", "broken.ts"), "utf8")).toBe("function broken( {\n");
+  }, 60000);
+
+  test("fails cleanly when the intended target is unparseable", async () => {
+    const dir = fixtureDir(["src/helper.ts"]);
+    writeFileSync(join(dir, "src", "broken.ts"), "function broken( {\n");
+    const provider = new ScriptedProvider([
+      '{"path":"src/broken.ts","name":"broken","kind":"function"}',
+      "the broken file cannot be selected",
+    ]);
+    const captured = captureIo();
+    const code = await runMain({
+      issue: "fix the broken file",
+      model: "fake",
+      cwd: dir,
+      provider,
+      io: captured.io,
+      maxRetries: 1,
+    });
+    expect(code).toBe(1);
+    expect(captured.err.join("\n")).toContain("could not select a symbol");
+    expect(readFileSync(join(dir, "src", "broken.ts"), "utf8")).toBe("function broken( {\n");
+  }, 60000);
 });
 
 function spawnHelp(script: string): { code: number | null; stdout: string; stderr: string } {

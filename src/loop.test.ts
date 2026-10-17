@@ -124,6 +124,28 @@ describe("buildContextYaml", () => {
     expect(yaml).not.toContain('name: "f500"');
     expect(yaml.trimEnd().endsWith("truncated: true")).toBe(true);
   });
+
+  test("reports unparseable files in a skipped section", () => {
+    const files: SourceFile[] = [
+      { path: "src/broken.ts", source: "function broken( {\n" },
+      { path: "src/ok.ts", source: "export function fix(): number {\n  return 1;\n}\n" },
+    ];
+    const expected = [
+      "files:",
+      '  - path: "src/broken.ts"',
+      "    symbols: []",
+      '  - path: "src/ok.ts"',
+      "    symbols:",
+      '      - name: "fix"',
+      '        kind: "function"',
+      '        signature: "function fix(): number"',
+      "skipped:",
+      '  - path: "src/broken.ts"',
+      '    message: "unexpected end of input (line 2, column 1)"',
+      "",
+    ].join("\n");
+    expect(buildContextYaml(files)).toBe(expected);
+  });
 });
 
 describe("prompt builders", () => {
@@ -297,7 +319,7 @@ class ScriptedProvider implements ProviderLike {
   }
 }
 
-function fixtureDir(): string {
+function fixtureDir(extraExclude: string[] = []): string {
   const dir = tempDir();
   mkdirSync(join(dir, "src"));
   writeFileSync(
@@ -312,7 +334,7 @@ function fixtureDir(): string {
           types: [],
         },
         include: ["src"],
-        exclude: ["src/**/*.test.ts"],
+        exclude: ["src/**/*.test.ts", ...extraExclude],
       },
       null,
       2,
@@ -333,12 +355,24 @@ function helperSource(dir: string): string {
   return readFileSync(join(dir, "src", "helper.ts"), "utf8");
 }
 
-function passingFixtureDir(): string {
-  const dir = fixtureDir();
+function passingFixtureDir(extraExclude: string[] = []): string {
+  const dir = fixtureDir(extraExclude);
   writeFileSync(
     join(dir, "src", "helper.ts"),
     "export function answer(): number {\n  return 2;\n}\n",
   );
+  return dir;
+}
+
+function brokenFixtureDir(): string {
+  const dir = fixtureDir(["src/broken.ts"]);
+  writeFileSync(join(dir, "src", "broken.ts"), "function broken( {\n");
+  return dir;
+}
+
+function passingBrokenFixtureDir(): string {
+  const dir = passingFixtureDir(["src/broken.ts"]);
+  writeFileSync(join(dir, "src", "broken.ts"), "function broken( {\n");
   return dir;
 }
 
@@ -817,5 +851,90 @@ describe("runLoop", () => {
     expect(existsSync(absolute)).toBe(false);
     expect(existsSync(inside)).toBe(false);
     expect(helperSource(dir)).toBe(original);
+  }, 30000);
+});
+
+describe("runLoop with unparseable files", () => {
+  test("fixes a valid target while reporting the skipped file", async () => {
+    const dir = brokenFixtureDir();
+    const provider = new ScriptedProvider([
+      '{"path":"src/helper.ts","name":"answer","kind":"function"}',
+      "function answer(): number {\n  return 2;\n}\n",
+    ]);
+    const result = await runLoop({
+      cwd: dir,
+      issue: "make the answer test pass",
+      model: "fake",
+      provider,
+      checkCommand: TSC,
+      testCommand: ["bun", "test"],
+    });
+    expect(result.ok).toBe(true);
+    expect(result.locator).toEqual({
+      path: "src/helper.ts",
+      name: "answer",
+      kind: "function",
+    });
+    expect(result.attempts.length).toBe(1);
+    expect(helperSource(dir)).toContain("return 2;");
+    expect(result.skipped).toEqual([
+      { path: "src/broken.ts", message: "unexpected end of input (line 2, column 1)" },
+    ]);
+    const context = provider.calls[0]?.[1]?.content ?? "";
+    expect(context).toContain("skipped:");
+    expect(context).toContain('"src/broken.ts"');
+    expect(context).toContain("unexpected end of input");
+    expect(readFileSync(join(dir, "src", "broken.ts"), "utf8")).toBe("function broken( {\n");
+  }, 30000);
+
+  test("rejects a skipped file as a target without appending or writing", async () => {
+    const dir = brokenFixtureDir();
+    const brokenPath = join(dir, "src", "broken.ts");
+    const original = readFileSync(brokenPath, "utf8");
+    const provider = new ScriptedProvider([
+      '{"path":"src/broken.ts","name":"broken","kind":"function"}',
+      "the broken file cannot be selected",
+    ]);
+    const result = await runLoop({
+      cwd: dir,
+      issue: "fix the broken file",
+      model: "fake",
+      provider,
+      maxRetries: 1,
+      checkCommand: TSC,
+      testCommand: ["bun", "test"],
+    });
+    expect(result.ok).toBe(false);
+    expect(result.locator).toBeNull();
+    expect(result.attempts.length).toBe(1);
+    expect(result.attempts[0]?.diagnostics).toContain("invalid locator");
+    expect(result.attempts[0]?.diagnostics).toContain("src/broken.ts");
+    expect(result.attempts[0]?.diagnostics).toContain("unexpected end of input");
+    expect(result.diagnostics).toBe("could not select a symbol");
+    expect(readFileSync(brokenPath, "utf8")).toBe(original);
+    expect(result.explanation).toBe("the broken file cannot be selected");
+    expect(provider.calls.length).toBe(2);
+  }, 30000);
+
+  test("keeps append mode for a missing file while another file is skipped", async () => {
+    const dir = passingBrokenFixtureDir();
+    const provider = new ScriptedProvider([
+      '{"path":"src/greeting.ts","name":"greet","kind":"function"}',
+      'export function greet(): string { return "hi" }',
+    ]);
+    const result = await runLoop({
+      cwd: dir,
+      issue: "add a greeting module",
+      model: "fake",
+      provider,
+      checkCommand: TSC,
+      testCommand: ["bun", "test"],
+    });
+    expect(result.ok).toBe(true);
+    expect(result.mode).toBe("append");
+    expect(result.filePath).toBe("src/greeting.ts");
+    expect(result.skipped?.map((file) => file.path)).toEqual(["src/broken.ts"]);
+    const content = readFileSync(join(dir, "src", "greeting.ts"), "utf8");
+    expect(content).toBe('export function greet(): string {\n  return "hi";\n}\n');
   }, 30000);
 });

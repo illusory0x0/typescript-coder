@@ -8,12 +8,12 @@ import {
 } from "node:fs";
 import { dirname, isAbsolute, join, relative, resolve, sep } from "node:path";
 import { applyEdits, formatSource } from "./editor";
-import { buildIndex, findDefinition } from "./utility";
+import { buildIndexTolerant, findDefinition } from "./utility";
 import { buildSignatureView } from "./scroll";
 import { checkTool, testTool } from "./tools";
 import type { ChatMessage, ChatResponse, ToolDefinition } from "./openai";
 import type { CheckDiagnostic, CommandResult } from "./tools";
-import type { IndexEntry, Locator, SourceFile } from "./utility";
+import type { IndexEntry, Locator, SkippedFile, SourceFile, TolerantIndex } from "./utility";
 
 const SKIPPED_DIRECTORIES = new Set(["node_modules", ".git", "dist"]);
 const CONTEXT_SYMBOL_LIMIT = 500;
@@ -61,8 +61,8 @@ function yamlSignature(signature: string): string {
   return yamlString(shown);
 }
 
-export function buildContextYaml(files: SourceFile[]): string {
-  const index = buildIndex(files);
+export function buildContextYaml(files: SourceFile[], build?: TolerantIndex): string {
+  const { index, skipped } = build ?? buildIndexTolerant(files);
   const groups = new Map<string, IndexEntry[]>();
   for (const entry of index.entries) {
     const group = groups.get(entry.locator.path);
@@ -103,6 +103,13 @@ export function buildContextYaml(files: SourceFile[]): string {
       lines.push(`        kind: ${yamlString(entry.locator.kind)}`);
       lines.push(`        signature: ${yamlSignature(signature)}`);
       emitted += 1;
+    }
+  }
+  if (skipped.length > 0) {
+    lines.push("skipped:");
+    for (const file of skipped) {
+      lines.push(`  - path: ${yamlString(file.path)}`);
+      lines.push(`    message: ${yamlString(file.message)}`);
     }
   }
   if (truncated) {
@@ -264,6 +271,7 @@ export interface LoopResult {
   diagnostics: string | null;
   explanation: string | null;
   messages: ChatMessage[];
+  skipped?: SkippedFile[];
 }
 
 type Selection =
@@ -408,8 +416,10 @@ export async function runLoop(options: LoopOptions): Promise<LoopResult> {
   const chatOptions = temperature === undefined ? undefined : { temperature };
   const cwd = options.cwd;
   const files = discoverSourceFiles(cwd);
-  const contextYaml = buildContextYaml(files);
-  const index = buildIndex(files);
+  const build = buildIndexTolerant(files);
+  const contextYaml = buildContextYaml(files, build);
+  const index = build.index;
+  const skipped = build.skipped;
   const messages: ChatMessage[] = [
     { role: "system", content: buildSystemPrompt() },
     { role: "user", content: buildUserPrompt(options.issue, contextYaml) },
@@ -432,9 +442,14 @@ export async function runLoop(options: LoopOptions): Promise<LoopResult> {
     if (candidate !== null && diagnostic === null) {
       resolved = findDefinition(index, candidate);
       if (resolved === null) {
-        appendPath = safeAppendPath(cwd, candidate.path);
-        if (appendPath === null) {
-          diagnostic = `invalid locator: no symbol ${candidate.kind} ${candidate.name} in ${candidate.path}`;
+        const skippedFile = skipped.find((file) => file.path === candidate.path);
+        if (skippedFile !== undefined) {
+          diagnostic = `invalid locator: no symbol ${candidate.kind} ${candidate.name} in ${candidate.path} (skipped file: ${skippedFile.message})`;
+        } else {
+          appendPath = safeAppendPath(cwd, candidate.path);
+          if (appendPath === null) {
+            diagnostic = `invalid locator: no symbol ${candidate.kind} ${candidate.name} in ${candidate.path}`;
+          }
         }
       }
     }
@@ -472,6 +487,7 @@ export async function runLoop(options: LoopOptions): Promise<LoopResult> {
       diagnostics: "could not select a symbol",
       explanation: await explain(options.provider, messages, options.tools, temperature),
       messages,
+      skipped,
     };
   }
 
@@ -554,6 +570,7 @@ export async function runLoop(options: LoopOptions): Promise<LoopResult> {
         diagnostics: null,
         explanation: null,
         messages,
+        skipped,
       };
     }
     restoreTarget(cwd, targetPath, original);
@@ -578,5 +595,6 @@ export async function runLoop(options: LoopOptions): Promise<LoopResult> {
     diagnostics,
     explanation: await explain(options.provider, messages, options.tools, temperature),
     messages,
+    skipped,
   };
 }

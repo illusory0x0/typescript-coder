@@ -1,7 +1,7 @@
 ---
 id: 21
 title: "Loop: tolerate unparseable files instead of crashing"
-status: todo
+status: done
 priority: high
 milestone: null
 parent: null

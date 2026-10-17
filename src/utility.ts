@@ -1,4 +1,4 @@
-import { Parser } from "./parser";
+import { ParseError, Parser } from "./parser";
 import type {
   BindingName,
   BlockStatement,
@@ -466,6 +466,16 @@ export interface SourceFile {
   source: string;
 }
 
+export interface SkippedFile {
+  path: string;
+  message: string;
+}
+
+export interface TolerantIndex {
+  index: SymbolIndex;
+  skipped: SkippedFile[];
+}
+
 export class SymbolIndex {
   readonly entries: IndexEntry[];
 
@@ -569,46 +579,75 @@ function scopePrefix(scope: Scope, root: Scope, cache: Map<Scope, string | null>
   return prefix;
 }
 
-export function buildIndex(files: SourceFile[]): SymbolIndex {
+function indexEntriesForFile(file: SourceFile): IndexEntry[] {
   const entries: IndexEntry[] = [];
-  for (const file of files) {
-    const program = new Parser(file.source).parseProgram();
-    const binder = new Binder(program);
-    const cache = new Map<Scope, string | null>();
-    for (const scope of binder.scopes) {
-      const prefix = scopePrefix(scope, binder.rootScope, cache);
-      if (prefix === null) {
-        continue;
-      }
-      for (const symbols of scope.bindings.values()) {
-        for (const symbol of symbols) {
-          const node = symbol.declarations[0];
-          if (node === undefined) {
-            continue;
-          }
-          if (scope.kind === "class" && node === scope.node) {
-            continue;
-          }
-          const kind = declarationKind(node);
-          if (kind === null) {
-            continue;
-          }
-          entries.push({
-            locator: { path: file.path, name: `${prefix}${symbol.name}`, kind },
-            symbol,
-            node,
-          });
+  const program = new Parser(file.source).parseProgram();
+  const binder = new Binder(program);
+  const cache = new Map<Scope, string | null>();
+  for (const scope of binder.scopes) {
+    const prefix = scopePrefix(scope, binder.rootScope, cache);
+    if (prefix === null) {
+      continue;
+    }
+    for (const symbols of scope.bindings.values()) {
+      for (const symbol of symbols) {
+        const node = symbol.declarations[0];
+        if (node === undefined) {
+          continue;
         }
+        if (scope.kind === "class" && node === scope.node) {
+          continue;
+        }
+        const kind = declarationKind(node);
+        if (kind === null) {
+          continue;
+        }
+        entries.push({
+          locator: { path: file.path, name: `${prefix}${symbol.name}`, kind },
+          symbol,
+          node,
+        });
       }
     }
   }
-  entries.sort((left, right) => {
+  return entries;
+}
+
+function sortedEntries(entries: IndexEntry[]): IndexEntry[] {
+  return entries.sort((left, right) => {
     if (left.locator.path !== right.locator.path) {
       return left.locator.path < right.locator.path ? -1 : 1;
     }
     return left.node.start - right.node.start;
   });
-  return new SymbolIndex(entries);
+}
+
+export function buildIndex(files: SourceFile[]): SymbolIndex {
+  const entries: IndexEntry[] = [];
+  for (const file of files) {
+    entries.push(...indexEntriesForFile(file));
+  }
+  return new SymbolIndex(sortedEntries(entries));
+}
+
+function parseFailureMessage(error: unknown): string {
+  if (error instanceof ParseError) {
+    return `${error.message} (line ${error.line}, column ${error.column})`;
+  }
+  return error instanceof Error ? error.message : String(error);
+}
+
+export function buildIndexTolerant(files: SourceFile[]): TolerantIndex {
+  const entries: IndexEntry[] = [];
+  const skipped: SkippedFile[] = [];
+  for (const file of files) {
+    try {
+      entries.push(...indexEntriesForFile(file));
+    } catch (error) {
+      skipped.push({ path: file.path, message: parseFailureMessage(error) });
+    }
+  }
+  return { index: new SymbolIndex(sortedEntries(entries)), skipped };
 }
 
 export function findDefinition(index: SymbolIndex, locator: Locator): IndexEntry | null {
