@@ -1,14 +1,17 @@
 ---
 id: 42
 title: "Edit protocol v2: composite locator × matcher, modes, syntax gate"
-status: todo
+status: in-progress
 priority: high
 milestone: null
 parent: 28
-deps: []
+deps: [45]
 labels: [harness]
 created: 2026-10-18
 ---
+
+
+
 
 ## Context
 
@@ -94,3 +97,8 @@ bun benchmark/replay.ts <bundle-with-v2-edit>
   protocol lands first (#43 depends on this issue).
 - Non-goals: multiple matchers per response (serial Edit rounds instead),
   on-demand context fetching, `.tsx`.
+- Blocker (2026-10-18): `bun test` is red before any #42 work. The
+  `src/cli.test.ts` self-host smoke times out because `runLoop`'s verification
+  command timeout (30s, `src/tools.ts:34`) is below this repo's copied suite
+  runtime (~33s); tracked as #45 and added to this issue's deps. "Gates green"
+  cannot be met until #45 lands.
