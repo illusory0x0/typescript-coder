@@ -82,13 +82,13 @@ A selection carries one of three modes (default `modify`):
 
 ### Edit
 
-| field         | type    | description                                                                       |
-| ------------- | ------- | --------------------------------------------------------------------------------- |
-| `path`        | string  | address echo, must equal the pinned selection                                     |
-| `symbol`      | string  | address echo, must equal the pinned selection                                     |
-| `kind`        | string  | address echo, must equal the pinned selection                                     |
+| field         | type    | description                                                                                                             |
+| ------------- | ------- | ----------------------------------------------------------------------------------------------------------------------- |
+| `path`        | string  | address echo, must equal the pinned selection                                                                           |
+| `symbol`      | string  | address echo, must equal the pinned selection                                                                           |
+| `kind`        | string  | address echo, must equal the pinned selection                                                                           |
 | `matcher`     | string? | optional snippet copied from the current source, structurally matched inside the symbol; omitted = whole-symbol rewrite |
-| `replacement` | string  | the text spliced over exactly the matched (or whole-symbol) range                 |
+| `replacement` | string  | the text spliced over exactly the matched (or whole-symbol) range                                                       |
 
 One flat payload per edit. The address is echoed back (`mode` is never echoed)
 and any mismatch fails the exchange with `stage: echo`, with one exception: in a
@@ -176,24 +176,24 @@ or unparseable kept file is removed and the create re-runs.
 
 ## 5. Source layout
 
-| file         | responsibility                                                  |
-| ------------ | --------------------------------------------------------------- |
-| `lexer.ts`   | full TypeScript lexer, **no error tolerance** (throws with loc) |
-| `parser.ts`  | full TypeScript grammar parser, recursive descent → AST + spans |
-| `utility.ts` | shared helpers + binder / symbol index                          |
-| `anchor.ts`  | matcher fragment parse, structural match, splice                |
-| `editor.ts`  | `oxfmt` formatting for the write path (`formatSource`)          |
-| `tools.ts`   | bounded `check`/`test` commands + located diagnostics           |
-| `failure-artifact.ts` | renders + writes `failures/` artifacts for terminated runs |
-| `openai.ts`  | OpenAI-compatible provider, `tools` param                       |
-| `loop.ts`    | main agent loop                                                 |
-| `scroll.ts`  | signature view + on-demand expand                               |
-| `replay-format.ts` | replay bundle format (`typescript-coder-replay@1`) + recorder |
-| `replay-runner.ts` | offline replay provider + run comparison                     |
-| `benchmark-pricing.ts` | official rate card + per-run USD cost                     |
-| `cli.ts`     | entry point (currently `--help` only)                           |
-| `main.ts`    | wires stdin → loop                                              |
-| `index.ts`   | scaffold placeholder (`greet`), self-host acceptance target     |
+| file                   | responsibility                                                  |
+| ---------------------- | --------------------------------------------------------------- |
+| `lexer.ts`             | full TypeScript lexer, **no error tolerance** (throws with loc) |
+| `parser.ts`            | full TypeScript grammar parser, recursive descent → AST + spans |
+| `utility.ts`           | shared helpers + binder / symbol index                          |
+| `anchor.ts`            | matcher fragment parse, structural match, splice                |
+| `editor.ts`            | `oxfmt` formatting for the write path (`formatSource`)          |
+| `tools.ts`             | bounded `check`/`test` commands + located diagnostics           |
+| `failure-artifact.ts`  | renders + writes `failures/` artifacts for terminated runs      |
+| `openai.ts`            | OpenAI-compatible provider, `tools` param                       |
+| `loop.ts`              | main agent loop                                                 |
+| `scroll.ts`            | signature view + on-demand expand                               |
+| `replay-format.ts`     | replay bundle format (`typescript-coder-replay@1`) + recorder   |
+| `replay-runner.ts`     | offline replay provider + run comparison                        |
+| `benchmark-pricing.ts` | official rate card + per-run USD cost                           |
+| `cli.ts`               | entry point (currently `--help` only)                           |
+| `main.ts`              | wires stdin → loop                                              |
+| `index.ts`             | scaffold placeholder (`greet`), self-host acceptance target     |
 
 ## 6. Agent loop
 
@@ -502,15 +502,15 @@ round-tripping must fail the suite before any measured number can move.
 
 ## 12. Risks & mitigations
 
-| #   | risk                                                   | mitigation                                                       |
-| --- | ------------------------------------------------------ | ---------------------------------------------------------------- |
-| R1  | Full TS grammar + binder is enormous                   | freeze an app-TS subset via fixtures; gate per milestone         |
-| R2  | `oxfmt` native `@oxfmt/binding` may not load under Bun | spike in M0; fall back to `bunx oxfmt` subprocess / prettier     |
-| R3  | LLM tool-call / JSON flakiness (gateway models)        | strict JSON schema, low temperature, bounded re-asks             |
-| R4  | whole-project `tsc` per iteration is slow              | incremental / changed-files scope; check/test commands bounded at 120s by default (`commandTimeoutMs`) |
-| R5  | overload / namespace address ambiguity                 | strict-AND `path × symbol × kind` lookup; ambiguity diagnostics list every candidate instead of picking one |
+| #   | risk                                                   | mitigation                                                                                                             |
+| --- | ------------------------------------------------------ | ---------------------------------------------------------------------------------------------------------------------- |
+| R1  | Full TS grammar + binder is enormous                   | freeze an app-TS subset via fixtures; gate per milestone                                                               |
+| R2  | `oxfmt` native `@oxfmt/binding` may not load under Bun | spike in M0; fall back to `bunx oxfmt` subprocess / prettier                                                           |
+| R3  | LLM tool-call / JSON flakiness (gateway models)        | strict JSON schema, low temperature, bounded re-asks                                                                   |
+| R4  | whole-project `tsc` per iteration is slow              | incremental / changed-files scope; check/test commands bounded at 120s by default (`commandTimeoutMs`)                 |
+| R5  | overload / namespace address ambiguity                 | strict-AND `path × symbol × kind` lookup; ambiguity diagnostics list every candidate instead of picking one            |
 | R6  | repeated / ambiguous matchers inside a symbol          | one matcher per edit with an exactly-one-match rule and an extend-the-matcher hint; omit it for a whole-symbol rewrite |
-| R7  | re-ask context growth / prompt drift                   | stable system + issue/context prefix; bounded rebuilt context    |
+| R7  | re-ask context growth / prompt drift                   | stable system + issue/context prefix; bounded rebuilt context                                                          |
 
 ## 13. Open items (defaults)
 

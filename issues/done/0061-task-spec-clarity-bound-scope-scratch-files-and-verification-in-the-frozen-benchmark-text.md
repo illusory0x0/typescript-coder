@@ -12,7 +12,7 @@ created: 2026-10-19
 
 ## Context
 
-The frozen task text (`TASK_ISSUES` in `benchmark/run.ts`, ~line 211) is the *entire* prompt for the oc side and is embedded at the head of the user message in *every* tc-side model call (replay evidence: `tmp/replays-49-context2/json-parser-ts-rep1.json` -> `.issue` and `calls[*].messages[1]`). It currently says only: implement `src/<file>.ts`, pass the test file, keep tsc clean, do not modify test/tsconfig.
+The frozen task text (`TASK_ISSUES` in `benchmark/run.ts`, ~line 211) is the _entire_ prompt for the oc side and is embedded at the head of the user message in _every_ tc-side model call (replay evidence: `tmp/replays-49-context2/json-parser-ts-rep1.json` -> `.issue` and `calls[*].messages[1]`). It currently says only: implement `src/<file>.ts`, pass the test file, keep tsc clean, do not modify test/tsconfig.
 
 User report (2026-10-19): opencode burns usage on aimless exploration of the fixture folder; the task requirements must be stated explicitly. Evidence from the 2026-10-18 opencode-none baseline (9/9; kept bundle `tmp/benchmark/2026-10-18T08-26-46-841Z-9b0813ff/logs/*/side.log`; report `benchmark/results/2026-10-18-opencode-none.{json,md}`):
 
@@ -53,7 +53,9 @@ The frozen task text (identical verbatim for both sides) states scope, non-goals
   The test file is the specification; implement what it requires, nothing more.
   Verify with `bun test` and `bunx tsc --noEmit` only.
   ```
+
   (~500 chars)
+
 - `bunx tsc --noEmit` is verified working inside the fixture workspace (opencode used it successfully in the baseline runs).
 - Protocol-neutral: the tc side cannot explore or run commands; the constraints are task requirements, not harness instructions.
 - Nothing in the codebase parses the issue text (grep: only prompt construction and report rendering consume it), so the edit is low-risk.

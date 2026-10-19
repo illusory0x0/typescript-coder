@@ -66,23 +66,23 @@ recorded verbatim but not compared.
 
 ## Per-task results
 
-| Task | Side | Success | Mean in | Mean out | Mean total | Mean dur (s) | Mean steps |
-| --- | --- | ---: | ---: | ---: | ---: | ---: | ---: |
-| json-parser | ts | 3/3 | 2,982 | 1,663 | 4,645 | 138.0 | 3.0 |
-| sexp-parser | ts | 3/3 | 2,442 | 553 | 2,995 | 15.7 | 3.0 |
-| minilisp | ts | 2/3 | 43,743 | 7,121 | 50,863 | 110.4 | 24.3 |
+| Task        | Side | Success | Mean in | Mean out | Mean total | Mean dur (s) | Mean steps |
+| ----------- | ---- | ------: | ------: | -------: | ---------: | -----------: | ---------: |
+| json-parser | ts   |     3/3 |   2,982 |    1,663 |      4,645 |        138.0 |        3.0 |
+| sexp-parser | ts   |     3/3 |   2,442 |      553 |      2,995 |         15.7 |        3.0 |
+| minilisp    | ts   |     2/3 |  43,743 |    7,121 |     50,863 |        110.4 |       24.3 |
 
 ## Overall comparison
 
 | Side | Success | Mean in | Mean out | Mean total | Total tokens | Mean dur (s) | Mean steps |
-| --- | --- | ---: | ---: | ---: | ---: | ---: | ---: |
-| ts | 8/9 | 16,389 | 3,112 | 19,501 | 175,509 | 88.1 | 10.1 |
+| ---- | ------- | ------: | -------: | ---------: | -----------: | -----------: | ---------: |
+| ts   | 8/9     |  16,389 |    3,112 |     19,501 |      175,509 |         88.1 |       10.1 |
 
 Tokens per success (usage-run token sums divided by successful runs):
 
-| Side | Input | Output | Total |
-| --- | ---: | ---: | ---: |
-| ts | 18,438 | 3,501 | 21,939 |
+| Side |  Input | Output |  Total |
+| ---- | -----: | -----: | -----: |
+| ts   | 18,438 |  3,501 | 21,939 |
 
 Only one side ran: ts 8/9 (88.9%).
 
@@ -110,15 +110,14 @@ Reruns:
 
 ## Raw runs
 
-| Task | Side | Rep | OK | Input | Output | Total | Steps | Dur (s) |
-| --- | --- | ---: | --- | ---: | ---: | ---: | ---: | ---: |
-| json-parser | ts | 1 | yes | 2,982 | 1,611 | 4,593 | 3 | 391.9 |
-| json-parser | ts | 2 | yes | 2,982 | 1,747 | 4,729 | 3 | 10.8 |
-| json-parser | ts | 3 | yes | 2,982 | 1,631 | 4,613 | 3 | 11.4 |
-| sexp-parser | ts | 1 | yes | 2,442 | 550 | 2,992 | 3 | 34.3 |
-| sexp-parser | ts | 2 | yes | 2,442 | 559 | 3,001 | 3 | 7.3 |
-| sexp-parser | ts | 3 | yes | 2,442 | 549 | 2,991 | 3 | 5.6 |
-| minilisp | ts | 1 | yes | 9,068 | 2,144 | 11,212 | 6 | 15.6 |
-| minilisp | ts | 2 | no | 110,009 | 14,908 | 124,917 | 60 | 144.9 |
-| minilisp | ts | 3 | yes | 12,151 | 4,310 | 16,461 | 7 | 170.8 |
-
+| Task        | Side | Rep | OK  |   Input | Output |   Total | Steps | Dur (s) |
+| ----------- | ---- | --: | --- | ------: | -----: | ------: | ----: | ------: |
+| json-parser | ts   |   1 | yes |   2,982 |  1,611 |   4,593 |     3 |   391.9 |
+| json-parser | ts   |   2 | yes |   2,982 |  1,747 |   4,729 |     3 |    10.8 |
+| json-parser | ts   |   3 | yes |   2,982 |  1,631 |   4,613 |     3 |    11.4 |
+| sexp-parser | ts   |   1 | yes |   2,442 |    550 |   2,992 |     3 |    34.3 |
+| sexp-parser | ts   |   2 | yes |   2,442 |    559 |   3,001 |     3 |     7.3 |
+| sexp-parser | ts   |   3 | yes |   2,442 |    549 |   2,991 |     3 |     5.6 |
+| minilisp    | ts   |   1 | yes |   9,068 |  2,144 |  11,212 |     6 |    15.6 |
+| minilisp    | ts   |   2 | no  | 110,009 | 14,908 | 124,917 |    60 |   144.9 |
+| minilisp    | ts   |   3 | yes |  12,151 |  4,310 |  16,461 |     7 |   170.8 |

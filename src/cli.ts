@@ -56,7 +56,7 @@ export function helpText(): string {
     "Options:",
     "  --model <id>       model id for the OpenAI-compatible provider (default: deepseek-v4.1-flash)",
     "  --multi-payload    opt in to multi-payload exchanges (#69): a modify reply may",
-    "                     batch path-independent edits in one {\"payloads\": [...]} object",
+    '                     batch path-independent edits in one {"payloads": [...]} object',
     "                     (default: off, one flat payload per exchange)",
     "  -h, --help         show this help and exit",
     "",

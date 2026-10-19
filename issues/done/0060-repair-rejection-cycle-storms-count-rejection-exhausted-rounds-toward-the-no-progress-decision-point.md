@@ -55,8 +55,7 @@ chain, with success preserved.
       existing chain (one summary, failure artifact, `edit-exhausted`).
 - [ ] No hard cap is added: a run with a recovering rejection cycle (the rep1
       shape) can still continue and succeed (scripted test).
-- [ ] Live evidence in the next tc-side matrix: json 3/3, sexp 3/3, minilisp
-      >=2/3; the minilisp replay bundles show the ask firing in rejection cycles
+- [ ] Live evidence in the next tc-side matrix: json 3/3, sexp 3/3, minilisp >=2/3; the minilisp replay bundles show the ask firing in rejection cycles
       (or no such cycle reaching 8); every storm-like run either resolves below
       the 2026-10-19 totals (89,716 / 126,822) or ends through the decision
       chain rather than the bare token budget; tokens and the
@@ -112,11 +111,11 @@ plus: replay inspection of the minilisp bundles for ask events
   5 / no-op 2 / matcher-unparseable 2 (scratch: `tmp/analyze-60.ts`,
   `tmp/forensic-60.ts`).
 - Outcome bar NOT met on this sample: json 3/3, sexp 3/3, minilisp 1/3 (bar
-  >=2/3). rep2 resolved at 67,809 tokens (below the 89,716 bar); rep1 (124,846)
-  and rep3 (126,832) answered both asks with already-applied / stale-matcher /
-  address-loop attempts and ended via the bare token budget (46 steps each;
-  neither ends through the decision chain). Counting alone fires the ask but
-  does not change storm outcomes; the residual is split to #65.
+  > =2/3). rep2 resolved at 67,809 tokens (below the 89,716 bar); rep1 (124,846)
+  > and rep3 (126,832) answered both asks with already-applied / stale-matcher /
+  > address-loop attempts and ended via the bare token budget (46 steps each;
+  > neither ends through the decision chain). Counting alone fires the ask but
+  > does not change storm outcomes; the residual is split to #65.
 - USD (off-peak, from `aggregates`): json $0.00106 (3/3), sexp $0.00034 (3/3),
   minilisp $0.04295 (1/3), overall $0.00674 (7/9); row appended to
   `benchmark/results/consumption.md`. vs the oc pressure baseline: json/sexp

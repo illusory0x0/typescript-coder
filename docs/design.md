@@ -52,6 +52,7 @@ These are the load-bearing choices; most smaller decisions follow from them.
    continuation prompt (the iteration cap ends the run), the token budget
    ends the run immediately, and a stall milestone opens the no-progress
    ask. Nothing loops silently.
+
 4. **Reject without writing; keep progress.** The syntax gate must pass
    before a byte is written, so a rejected edit leaves the file untouched. A
    change that passes the gate but fails verification is **kept**

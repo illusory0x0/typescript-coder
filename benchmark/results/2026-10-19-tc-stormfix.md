@@ -86,27 +86,27 @@ rate. A run that crosses a peak/off-peak boundary splits by elapsed-time share
 
 ## Per-task results
 
-| Task | Side | Success | Mean in | Mean out | Mean total | Mean $ | $/success | Mean dur (s) | Mean steps |
-| --- | --- | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: |
-| json-parser | tc | 3/3 | 3,073 | 1,610 | 4,683 | $0.00106 | $0.00106 | 10.1 | 3.0 |
-| sexp-parser | tc | 3/3 | 2,540 | 521 | 3,061 | $0.00034 | $0.00034 | 6.7 | 3.0 |
-| minilisp | tc | 1/3 | 97,262 | 9,234 | 106,496 | $0.01432 | $0.04295 | 103.0 | 40.0 |
+| Task        | Side | Success | Mean in | Mean out | Mean total |   Mean $ | $/success | Mean dur (s) | Mean steps |
+| ----------- | ---- | ------: | ------: | -------: | ---------: | -------: | --------: | -----------: | ---------: |
+| json-parser | tc   |     3/3 |   3,073 |    1,610 |      4,683 | $0.00106 |  $0.00106 |         10.1 |        3.0 |
+| sexp-parser | tc   |     3/3 |   2,540 |      521 |      3,061 | $0.00034 |  $0.00034 |          6.7 |        3.0 |
+| minilisp    | tc   |     1/3 |  97,262 |    9,234 |    106,496 | $0.01432 |  $0.04295 |        103.0 |       40.0 |
 
 ## Overall comparison
 
-| Side | Success | Mean in | Mean out | Mean total | Total tokens | Mean $ | Total $ | $/success | Mean dur (s) | Mean steps |
-| --- | --- | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: |
-| tc | 7/9 | 34,292 | 3,788 | 38,080 | 342,719 | $0.00524 | $0.04715 | $0.00674 | 39.9 | 15.3 |
+| Side | Success | Mean in | Mean out | Mean total | Total tokens |   Mean $ |  Total $ | $/success | Mean dur (s) | Mean steps |
+| ---- | ------- | ------: | -------: | ---------: | -----------: | -------: | -------: | --------: | -----------: | ---------: |
+| tc   | 7/9     |  34,292 |    3,788 |     38,080 |      342,719 | $0.00524 | $0.04715 |  $0.00674 |         39.9 |       15.3 |
 
 Per success (usage-run sums divided by successful runs):
 
-| Side | Input | Output | Total | Cost |
-| --- | ---: | ---: | ---: | ---: |
-| tc | 44,089 | 4,871 | 48,960 | $0.00674 |
+| Side |  Input | Output |  Total |     Cost |
+| ---- | -----: | -----: | -----: | -------: |
+| tc   | 44,089 |  4,871 | 48,960 | $0.00674 |
 
 Only one side ran: tc 7/9 (77.8%).
 
-*Pricing footnote:* USD costs use the official DeepSeek V4.1-Flash peak/off-peak
+_Pricing footnote:_ USD costs use the official DeepSeek V4.1-Flash peak/off-peak
 rates (fetched 2026-10-19 from https://api-docs.deepseek.com/quick_start/pricing; USD per 1M tokens):
 cache-hit input $0.006 peak / $0.003 off-peak; cache-miss input $0.30 / $0.15;
 output $1.20 / $0.60. Peak hours are Mon-Fri 01:00-04:00 and 06:00-10:00 UTC,
@@ -138,15 +138,14 @@ Reruns:
 
 ## Raw runs
 
-| Task | Side | Rep | OK | Input | Output | Total | Cost | Rate | Steps | Dur (s) |
-| --- | --- | ---: | --- | ---: | ---: | ---: | ---: | --- | ---: | ---: |
-| json-parser | tc | 1 | yes | 3,073 | 1,685 | 4,758 | $0.00125 | off-peak | 3 | 11.5 |
-| json-parser | tc | 2 | yes | 3,073 | 1,623 | 4,696 | $0.00100 | off-peak | 3 | 8.6 |
-| json-parser | tc | 3 | yes | 3,073 | 1,523 | 4,596 | $0.00094 | off-peak | 3 | 10.2 |
-| sexp-parser | tc | 1 | yes | 2,539 | 514 | 3,053 | $0.00033 | off-peak | 3 | 6.8 |
-| sexp-parser | tc | 2 | yes | 2,539 | 524 | 3,063 | $0.00034 | off-peak | 3 | 4.9 |
-| sexp-parser | tc | 3 | yes | 2,541 | 525 | 3,066 | $0.00034 | off-peak | 3 | 8.4 |
-| minilisp | tc | 1 | no | 116,220 | 8,626 | 124,846 | $0.01391 | off-peak | 46 | 106.1 |
-| minilisp | tc | 2 | yes | 55,564 | 12,245 | 67,809 | $0.01258 | off-peak | 28 | 82.9 |
-| minilisp | tc | 3 | no | 120,002 | 6,830 | 126,832 | $0.01646 | off-peak | 46 | 120.0 |
-
+| Task        | Side | Rep | OK  |   Input | Output |   Total |     Cost | Rate     | Steps | Dur (s) |
+| ----------- | ---- | --: | --- | ------: | -----: | ------: | -------: | -------- | ----: | ------: |
+| json-parser | tc   |   1 | yes |   3,073 |  1,685 |   4,758 | $0.00125 | off-peak |     3 |    11.5 |
+| json-parser | tc   |   2 | yes |   3,073 |  1,623 |   4,696 | $0.00100 | off-peak |     3 |     8.6 |
+| json-parser | tc   |   3 | yes |   3,073 |  1,523 |   4,596 | $0.00094 | off-peak |     3 |    10.2 |
+| sexp-parser | tc   |   1 | yes |   2,539 |    514 |   3,053 | $0.00033 | off-peak |     3 |     6.8 |
+| sexp-parser | tc   |   2 | yes |   2,539 |    524 |   3,063 | $0.00034 | off-peak |     3 |     4.9 |
+| sexp-parser | tc   |   3 | yes |   2,541 |    525 |   3,066 | $0.00034 | off-peak |     3 |     8.4 |
+| minilisp    | tc   |   1 | no  | 116,220 |  8,626 | 124,846 | $0.01391 | off-peak |    46 |   106.1 |
+| minilisp    | tc   |   2 | yes |  55,564 | 12,245 |  67,809 | $0.01258 | off-peak |    28 |    82.9 |
+| minilisp    | tc   |   3 | no  | 120,002 |  6,830 | 126,832 | $0.01646 | off-peak |    46 |   120.0 |

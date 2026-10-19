@@ -227,7 +227,15 @@ describe("runMain", () => {
     // Iteration 1: a verified-failing edit. Iteration 2: the shared ≤3 budget
     // runs out on protocol failures; the STOP reply ends the run and the
     // summary is the final call.
-    const provider = new ScriptedProvider([LOCATOR, bad, "junk", "junk", "junk", "STOP", explanation]);
+    const provider = new ScriptedProvider([
+      LOCATOR,
+      bad,
+      "junk",
+      "junk",
+      "junk",
+      "STOP",
+      explanation,
+    ]);
     const captured = captureIo();
     const code = await runMain({
       issue: "make the answer test pass",

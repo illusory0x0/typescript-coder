@@ -1432,7 +1432,11 @@ describe("parseEditResponseList (#69)", () => {
       ok: true,
       batch: false,
       payloads: [
-        { locator: { path: "src/a.ts", name: "make", kind: "function" }, matcher: null, replacement: "y" },
+        {
+          locator: { path: "src/a.ts", name: "make", kind: "function" },
+          matcher: null,
+          replacement: "y",
+        },
       ],
     });
   });
@@ -1442,7 +1446,13 @@ describe("parseEditResponseList (#69)", () => {
       JSON.stringify({
         [MULTI_PAYLOAD_KEY]: [
           { path: "src/a.ts", symbol: "make", kind: "function", replacement: "1" },
-          { path: "src/b.ts", symbol: "other", kind: "function", matcher: "return 1;", replacement: "2" },
+          {
+            path: "src/b.ts",
+            symbol: "other",
+            kind: "function",
+            matcher: "return 1;",
+            replacement: "2",
+          },
         ],
       }),
     );
@@ -5902,8 +5912,20 @@ describe("multi-payload exchanges (#69)", () => {
     const provider = new ScriptedProvider([
       selectionResponse({ path: "src/a.ts", symbol: "one", kind: "function" }),
       batchResponse([
-        { path: "src/a.ts", symbol: "one", kind: "function", matcher: "return 1;", replacement: "return 2;" },
-        { path: "src/b.ts", symbol: "two", kind: "function", matcher: "return 1;", replacement: "return 3;" },
+        {
+          path: "src/a.ts",
+          symbol: "one",
+          kind: "function",
+          matcher: "return 1;",
+          replacement: "return 2;",
+        },
+        {
+          path: "src/b.ts",
+          symbol: "two",
+          kind: "function",
+          matcher: "return 1;",
+          replacement: "return 3;",
+        },
       ]),
     ]);
     const result = await runLoop({
@@ -5933,12 +5955,36 @@ describe("multi-payload exchanges (#69)", () => {
     const provider = new ScriptedProvider([
       selectionResponse({ path: "src/a.ts", symbol: "one", kind: "function" }),
       batchResponse([
-        { path: "src/a.ts", symbol: "one", kind: "function", matcher: "return 1;", replacement: "return 2;" },
-        { path: "src/b.ts", symbol: "two", kind: "function", matcher: "return 999;", replacement: "return 3;" },
+        {
+          path: "src/a.ts",
+          symbol: "one",
+          kind: "function",
+          matcher: "return 1;",
+          replacement: "return 2;",
+        },
+        {
+          path: "src/b.ts",
+          symbol: "two",
+          kind: "function",
+          matcher: "return 999;",
+          replacement: "return 3;",
+        },
       ]),
       batchResponse([
-        { path: "src/a.ts", symbol: "one", kind: "function", matcher: "return 1;", replacement: "return 2;" },
-        { path: "src/b.ts", symbol: "two", kind: "function", matcher: "return 1;", replacement: "return 3;" },
+        {
+          path: "src/a.ts",
+          symbol: "one",
+          kind: "function",
+          matcher: "return 1;",
+          replacement: "return 2;",
+        },
+        {
+          path: "src/b.ts",
+          symbol: "two",
+          kind: "function",
+          matcher: "return 1;",
+          replacement: "return 3;",
+        },
       ]),
     ]);
     const result = await runLoop({
@@ -5952,7 +5998,9 @@ describe("multi-payload exchanges (#69)", () => {
     });
     expect(result.ok).toBe(true);
     // The failed batch wrote neither file; the retry applied both.
-    const rejected = result.records.find((record) => record.outcome !== "applied" && record.kind === "exchange" && record.row === 2);
+    const rejected = result.records.find(
+      (record) => record.outcome !== "applied" && record.kind === "exchange" && record.row === 2,
+    );
     expect(rejected?.payloads).toBe(2);
     expect(rejected?.diagnostics).toContain("stage: multi");
     expect(rejected?.diagnostics).toContain("payload 2");
@@ -5973,8 +6021,20 @@ describe("multi-payload exchanges (#69)", () => {
         { path: "src/a.ts", symbol: "x", kind: "function", replacement: "return 9;" },
       ]),
       batchResponse([
-        { path: "src/a.ts", symbol: "one", kind: "function", matcher: "return 1;", replacement: "return 2;" },
-        { path: "src/b.ts", symbol: "two", kind: "function", matcher: "return 1;", replacement: "return 3;" },
+        {
+          path: "src/a.ts",
+          symbol: "one",
+          kind: "function",
+          matcher: "return 1;",
+          replacement: "return 2;",
+        },
+        {
+          path: "src/b.ts",
+          symbol: "two",
+          kind: "function",
+          matcher: "return 1;",
+          replacement: "return 3;",
+        },
       ]),
     ]);
     const result = await runLoop({
@@ -6002,7 +6062,13 @@ describe("multi-payload exchanges (#69)", () => {
       // A batch reply is parsed as a classic payload when the flag is off, so
       // it is a protocol rejection; the next flat reply applies.
       batchResponse([
-        { path: "src/helper.ts", symbol: "answer", kind: "function", matcher: "return 1;", replacement: "return 2;" },
+        {
+          path: "src/helper.ts",
+          symbol: "answer",
+          kind: "function",
+          matcher: "return 1;",
+          replacement: "return 2;",
+        },
       ]),
       editResponse("return 1;", "return 2;"),
     ]);

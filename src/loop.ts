@@ -386,11 +386,12 @@ export function buildRetryPrompt(input: RetryPromptInput): string {
     stalled !== undefined || input.continuation !== undefined
       ? ""
       : `Edit exchange ${exchangeNumber} of ${maxExchanges} ${label}. ${remaining} exchange(s) remain in this iteration. `;
-  const modifyInstruction = input.multiPayload === true
-    ? multiModifyInstruction(modifyLead, status, repin, modifierNote)
-    : repin
-      ? `${modifyLead} ${status}Output ONLY one flat JSON object {"path": ..., "symbol": ..., "kind": ..., "matcher": ..., "replacement": ...}: return the full address of the declaration you are fixing — either the pinned selection or a different declaration in the same file to re-pin and edit it (it must resolve uniquely in the current source). "matcher" is optional: a snippet copied from the current source, or omit it for a whole-symbol rewrite; "replacement" replaces the matched range (empty removes it). ${modifierNote} No markdown fences and no explanations.`
-      : `${modifyLead} ${status}Output ONLY one flat JSON object {"path": ..., "symbol": ..., "kind": ..., "matcher": ..., "replacement": ...}: echo the pinned selection in the address. "matcher" is optional: a snippet copied from the current source, or omit it for a whole-symbol rewrite; "replacement" replaces the matched range (empty removes it). ${modifierNote} No markdown fences and no explanations.`;
+  const modifyInstruction =
+    input.multiPayload === true
+      ? multiModifyInstruction(modifyLead, status, repin, modifierNote)
+      : repin
+        ? `${modifyLead} ${status}Output ONLY one flat JSON object {"path": ..., "symbol": ..., "kind": ..., "matcher": ..., "replacement": ...}: return the full address of the declaration you are fixing — either the pinned selection or a different declaration in the same file to re-pin and edit it (it must resolve uniquely in the current source). "matcher" is optional: a snippet copied from the current source, or omit it for a whole-symbol rewrite; "replacement" replaces the matched range (empty removes it). ${modifierNote} No markdown fences and no explanations.`
+        : `${modifyLead} ${status}Output ONLY one flat JSON object {"path": ..., "symbol": ..., "kind": ..., "matcher": ..., "replacement": ...}: echo the pinned selection in the address. "matcher" is optional: a snippet copied from the current source, or omit it for a whole-symbol rewrite; "replacement" replaces the matched range (empty removes it). ${modifierNote} No markdown fences and no explanations.`;
   const instruction =
     mode === "modify"
       ? modifyInstruction
@@ -3931,7 +3932,8 @@ export async function runLoop(options: LoopOptions): Promise<LoopResult> {
       }
       if (failure !== null || newSource === null) {
         const diagnostics = failure ?? "stage: protocol\nmodel did not return replacement text";
-        const cause = failureCause ?? classifyRejection({ stage: failureStage, matcherCause, formatMessage });
+        const cause =
+          failureCause ?? classifyRejection({ stage: failureStage, matcherCause, formatMessage });
         records.push(
           recordRow({
             row: records.length + 1,

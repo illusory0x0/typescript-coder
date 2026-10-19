@@ -17,7 +17,7 @@ opencode2, context pressure is handled by compaction: before a step the
 session may generate a structured checkpoint summary and keep only a small
 recent tail verbatim (`packages/core/src/session/compaction.ts:41-47,153-160`);
 repeated provider overflow shrinks the target (SHRINK_STEPS 0.7/0.5/0.35,
-compaction.ts:94-95); a later compaction *updates* the existing checkpoint
+compaction.ts:94-95); a later compaction _updates_ the existing checkpoint
 instead of re-summarizing (`runner/llm.ts:220-225,263-271`).
 
 Our repair chains fail the opposite way: attempts are dropped entirely

@@ -99,7 +99,10 @@ export function recordOutcomes(expected: string[]): ScenarioAssertion {
       if (JSON.stringify(actual) === JSON.stringify(expected)) {
         return { ok: true };
       }
-      return { ok: false, detail: `expected ${JSON.stringify(expected)} but got ${JSON.stringify(actual)}` };
+      return {
+        ok: false,
+        detail: `expected ${JSON.stringify(expected)} but got ${JSON.stringify(actual)}`,
+      };
     },
   };
 }
@@ -386,15 +389,7 @@ export const scenarios: Scenario[] = [
     assertions: [
       hasOk(false),
       hasRecords(7),
-      recordOutcomes([
-        "selected",
-        "applied",
-        "tsc",
-        "protocol",
-        "protocol",
-        "protocol",
-        "stopped",
-      ]),
+      recordOutcomes(["selected", "applied", "tsc", "protocol", "protocol", "protocol", "stopped"]),
       hasTerminationReason("edit-exhausted"),
       hasCallCount(7),
       messageContains(6, "The run is over"),

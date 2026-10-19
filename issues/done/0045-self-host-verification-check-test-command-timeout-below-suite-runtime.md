@@ -10,9 +10,6 @@ labels: [harness]
 created: 2026-10-18
 ---
 
-
-
-
 ## Context
 
 `bun test` is currently red on master, independent of #42-#44: the self-host

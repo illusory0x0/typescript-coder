@@ -89,9 +89,9 @@ Two scheduled matrices (`benchmark/results/2026-10-19-tc-storm65-a.json` /
 `tmp/live-65/forensics.log`, `tmp/live-65/fail-sequences.txt`):
 
 - json 3/3 and sexp 3/3 in both samples; minilisp 1/3 (a) / 2/3 (b) — the
-  >=2/3 bar is met on sample b but missed on sample a; no storm run ended
-  through the decision chain (a rep1 124,369 token-budget; a rep2 120,021 via
-  the 32-round cap, no STOP; b rep1 124,125 token-budget). Criterion 3: NOT met.
+  > =2/3 bar is met on sample b but missed on sample a; no storm run ended
+  > through the decision chain (a rep1 124,369 token-budget; a rep2 120,021 via
+  > the 32-round cap, no STOP; b rep1 124,125 token-budget). Criterion 3: NOT met.
 - Levers fired as designed: every milestone ask carried the digest and the
   digest's ruled-out lines quote the escalation text; repeat-class attempts
   collapsed (`repeat`+`duplicate` 17+5 -> 3+1 / 1+1, `address` gone) — #57's

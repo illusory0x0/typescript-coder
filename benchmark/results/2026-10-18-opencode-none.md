@@ -66,23 +66,23 @@ recorded verbatim but not compared.
 
 ## Per-task results
 
-| Task | Side | Success | Mean in | Mean out | Mean total | Mean dur (s) | Mean steps |
-| --- | --- | ---: | ---: | ---: | ---: | ---: | ---: |
-| json-parser | opencode | 3/3 | 13,707 | 2,256 | 15,963 | 50.8 | 5.7 |
-| sexp-parser | opencode | 3/3 | 10,254 | 1,516 | 11,770 | 111.8 | 6.7 |
-| minilisp | opencode | 3/3 | 24,028 | 6,370 | 30,398 | 419.0 | 13.3 |
+| Task        | Side     | Success | Mean in | Mean out | Mean total | Mean dur (s) | Mean steps |
+| ----------- | -------- | ------: | ------: | -------: | ---------: | -----------: | ---------: |
+| json-parser | opencode |     3/3 |  13,707 |    2,256 |     15,963 |         50.8 |        5.7 |
+| sexp-parser | opencode |     3/3 |  10,254 |    1,516 |     11,770 |        111.8 |        6.7 |
+| minilisp    | opencode |     3/3 |  24,028 |    6,370 |     30,398 |        419.0 |       13.3 |
 
 ## Overall comparison
 
-| Side | Success | Mean in | Mean out | Mean total | Total tokens | Mean dur (s) | Mean steps |
-| --- | --- | ---: | ---: | ---: | ---: | ---: | ---: |
-| opencode | 9/9 | 15,996 | 3,381 | 19,377 | 174,393 | 193.9 | 8.6 |
+| Side     | Success | Mean in | Mean out | Mean total | Total tokens | Mean dur (s) | Mean steps |
+| -------- | ------- | ------: | -------: | ---------: | -----------: | -----------: | ---------: |
+| opencode | 9/9     |  15,996 |    3,381 |     19,377 |      174,393 |        193.9 |        8.6 |
 
 Tokens per success (usage-run token sums divided by successful runs):
 
-| Side | Input | Output | Total |
-| --- | ---: | ---: | ---: |
-| opencode | 15,996 | 3,381 | 19,377 |
+| Side     |  Input | Output |  Total |
+| -------- | -----: | -----: | -----: |
+| opencode | 15,996 |  3,381 | 19,377 |
 
 Only one side ran: opencode 9/9 (100.0%).
 
@@ -110,15 +110,14 @@ Reruns:
 
 ## Raw runs
 
-| Task | Side | Rep | OK | Input | Output | Total | Steps | Dur (s) |
-| --- | --- | ---: | --- | ---: | ---: | ---: | ---: | ---: |
-| json-parser | opencode | 1 | yes | 14,316 | 2,314 | 16,630 | 6 | 28.2 |
-| json-parser | opencode | 2 | yes | 14,063 | 2,222 | 16,285 | 5 | 52.7 |
-| json-parser | opencode | 3 | yes | 12,742 | 2,233 | 14,975 | 6 | 71.6 |
-| sexp-parser | opencode | 1 | yes | 6,227 | 1,622 | 7,849 | 5 | 222.1 |
-| sexp-parser | opencode | 2 | yes | 13,096 | 1,740 | 14,836 | 10 | 42.8 |
-| sexp-parser | opencode | 3 | yes | 11,438 | 1,186 | 12,624 | 5 | 70.6 |
-| minilisp | opencode | 1 | yes | 21,889 | 9,317 | 31,206 | 16 | 471.7 |
-| minilisp | opencode | 2 | yes | 16,310 | 3,183 | 19,493 | 5 | 31.3 |
-| minilisp | opencode | 3 | yes | 33,884 | 6,611 | 40,495 | 19 | 753.9 |
-
+| Task        | Side     | Rep | OK  |  Input | Output |  Total | Steps | Dur (s) |
+| ----------- | -------- | --: | --- | -----: | -----: | -----: | ----: | ------: |
+| json-parser | opencode |   1 | yes | 14,316 |  2,314 | 16,630 |     6 |    28.2 |
+| json-parser | opencode |   2 | yes | 14,063 |  2,222 | 16,285 |     5 |    52.7 |
+| json-parser | opencode |   3 | yes | 12,742 |  2,233 | 14,975 |     6 |    71.6 |
+| sexp-parser | opencode |   1 | yes |  6,227 |  1,622 |  7,849 |     5 |   222.1 |
+| sexp-parser | opencode |   2 | yes | 13,096 |  1,740 | 14,836 |    10 |    42.8 |
+| sexp-parser | opencode |   3 | yes | 11,438 |  1,186 | 12,624 |     5 |    70.6 |
+| minilisp    | opencode |   1 | yes | 21,889 |  9,317 | 31,206 |    16 |   471.7 |
+| minilisp    | opencode |   2 | yes | 16,310 |  3,183 | 19,493 |     5 |    31.3 |
+| minilisp    | opencode |   3 | yes | 33,884 |  6,611 | 40,495 |    19 |   753.9 |

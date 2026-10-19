@@ -56,11 +56,11 @@ plus: replay commands over the recorded bundles before/after.
 - Sweep evidence: none/low/high = 0 repair conversions; max = 3/3 minilisp but at
   83,899 minilisp tokens per success and json 24,738 — blows the json budget.
 - Diagnosis (2026-10-18, from `tmp/replays-44-final2/minilisp-ts-rep{1,2,3}.json`
-  + `failures/2026-10-18T07-57-*.md`): all three runs share one shape — the round-1
-  create writes a multi-declaration file, verification fails (tsc type-model
-  errors: `LispValue` lacks `string`; `Closure`/`Expr`/`LispValue` mismatches;
-  rep2 also misses builtin dispatch), then the repair round (fresh ≤3 exchanges)
-  burns all three exchanges on *mechanical* rejections with zero applied edits:
+  - `failures/2026-10-18T07-57-*.md`): all three runs share one shape — the round-1
+    create writes a multi-declaration file, verification fails (tsc type-model
+    errors: `LispValue` lacks `string`; `Closure`/`Expr`/`LispValue` mismatches;
+    rep2 also misses builtin dispatch), then the repair round (fresh ≤3 exchanges)
+    burns all three exchanges on _mechanical_ rejections with zero applied edits:
   1. The model tries to fix a declaration outside the pinned symbol (the
      `LispValue` alias / the `Closure` type) with a matcher — `findAnchor` only
      searches inside the pinned `run` node → `stage: matcher` not-found. Repairs
@@ -100,13 +100,13 @@ plus: replay commands over the recorded bundles before/after.
 - Round-2 fix set (supersedes "stays in #50" for the modifier case — the evidence
   promoted it to a #48 blocker; #50 keeps the broader taxonomy/ergonomics):
   (a) tolerate a leading `export`/`export default` in matchers and whole-symbol
-      replacements when the declaration already carries that modifier (shared
-      splice path);
+  replacements when the declaration already carries that modifier (shared
+  splice path);
   (b) on matcher not-found, search the file's other declarations and, on a unique
-      match, name it in the diagnostic together with its re-pin address;
+  match, name it in the diagnostic together with its re-pin address;
   (c) reword the retry/system prompts with an explicit per-round `repin` flag:
-      echo the pin, unless this round repairs a failed verification — then return
-      the address of the declaration being fixed (a re-pin must resolve uniquely);
+  echo the pin, unless this round repairs a failed verification — then return
+  the address of the declaration being fixed (a re-pin must resolve uniquely);
   (d) unit tests for (a)–(c).
 - Round-3 fix set landed (2026-10-18; 567 tests): resubmission guard `stage:
   repeat` (a modify payload byte-identical to the previous modify submission is

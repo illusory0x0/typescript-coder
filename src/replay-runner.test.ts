@@ -203,14 +203,20 @@ describe("runReplay", () => {
     expect(run.callsTotal).toBe(2);
     expect(run.exhaustion).toBeNull();
     expect(run.promptMismatches).toEqual([]);
-    expect(run.result.records.map((record) => record.outcome)).toEqual(["selected", "applied", "ok"]);
+    expect(run.result.records.map((record) => record.outcome)).toEqual([
+      "selected",
+      "applied",
+      "ok",
+    ]);
     expect(run.workspace.startsWith(join(repoRoot, "tmp", "replay"))).toBe(true);
     expect(readFileSync(join(run.workspace, "src", "helper.ts"), "utf8")).toContain("return 2;");
     const summary = summarizeReplay(run);
     expect(summary).toContain("result: ok");
     expect(summary).toContain("calls: 2/2");
     expect(summary).toContain("prompt mismatches: none");
-    expect(summary).toContain("record 1: kind=exchange outcome=selected exchange=1 diagnostics=none");
+    expect(summary).toContain(
+      "record 1: kind=exchange outcome=selected exchange=1 diagnostics=none",
+    );
     expect(summary).toContain("record 3: kind=verification outcome=ok exchange=- diagnostics=none");
   }, 60000);
 
@@ -235,7 +241,9 @@ describe("runReplay", () => {
     expect(summary).toContain("exhaustion: bundle exhausted after 1 call(s)");
     expect(summary).toContain("stopped: provider error: bundle exhausted after 1 call(s)");
     // The pick consumed the only recorded call before exhaustion.
-    expect(summary).toContain("record 1: kind=exchange outcome=selected exchange=1 diagnostics=none");
+    expect(summary).toContain(
+      "record 1: kind=exchange outcome=selected exchange=1 diagnostics=none",
+    );
   }, 60000);
 });
 

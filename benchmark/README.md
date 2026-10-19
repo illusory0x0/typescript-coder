@@ -142,11 +142,12 @@ The splice is gated: an edit whose result does not parse is discarded with a
 `gate` failure and nothing is written; a payload identical to the previous
 modify submission is discarded as `repeat`, and a candidate adding a duplicate
 top-level function/class/type name as `duplicate`. Then `oxfmt` formats and tsc
-+ tests verify. `create` rejects a `matcher`, requires a safe parseable path,
-and appends the complete declaration; a failed create whose kept file parses
-continues as a `modify` repair round, and an unparseable kept file is removed
-before the create re-runs. `delete` needs no payload and splices the resolved
-declaration out directly.
+
+- tests verify. `create` rejects a `matcher`, requires a safe parseable path,
+  and appends the complete declaration; a failed create whose kept file parses
+  continues as a `modify` repair round, and an unparseable kept file is removed
+  before the create re-runs. `delete` needs no payload and splices the resolved
+  declaration out directly.
 
 ## Run budget (tc side)
 

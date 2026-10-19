@@ -23,6 +23,7 @@ Live evidence: the minilisp storm of `2026-10-18-ts-context` burned the full
 every rejection got the identical treatment: rebuild the corrective prompt, up
 to 3 exchanges per round, up to 32 rounds. Rejection texts across all recorded
 matrices (`2026-10-18-ts*`, see `tmp/analysis-50-evidence.json`):
+
 - `matcher` not found inside the pinned symbol (17; mostly anchors that wrap
   the pinned declaration's own header, which lies outside the symbol range),
 - `matcher` unparseable as a single statement/member/expression (19; sliced
@@ -38,7 +39,8 @@ Every edit-apply rejection is classified by cause with an explicit retry
 policy per class instead of the uniform grind: model-fault classes retry with
 a class-specific correction (escalating after repeats), harness-fault classes
 terminate immediately through the existing failure chain (diagnostics artifact
-+ one summary call + exit).
+
+- one summary call + exit).
 
 ## Acceptance criteria
 
