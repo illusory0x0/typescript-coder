@@ -83,6 +83,14 @@
   parent: null
   deps: []
   file: 0046-harness-optimization-v3-agent-loop-context-structure-editor.md
+- id: 74
+  title: "Provider: retry timed-out chat requests (max 5 additional attempts)"
+  status: todo
+  priority: medium
+  milestone: null
+  parent: null
+  deps: []
+  file: 0074-provider-retry-timed-out-chat-requests-max-5-additional-attempts.md
 
 # wontfix entries, kept for the record.
 - id: 28

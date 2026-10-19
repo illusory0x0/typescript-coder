@@ -78,6 +78,7 @@ digraph issues {
   "71" [label="#71 Repair verification-cycle storms: surface a non-converging failing set in the retry chain"];
   "72" [label="#72 Edit protocol: add a (line,column) position selector as a matcher alternative"];
   "73" [label="#73 Repair self-verification: let the model request one bounded read or check per repair round"];
+  "74" [label="#74 Provider: retry timed-out chat requests (max 5 additional attempts)"];
 
   // parent edges (parent -> child), solid
   "1" -> "2";
