@@ -1,7 +1,6 @@
 # Open issues in picking order. This order is authoritative: `reorder`
 # rewrites it; `add` appends; other writes keep it. `check` enforces it.
 # A dep, and every child of an umbrella, must be listed before its dependent.
-# wontfix entries stay listed (not pickable) at the bottom, by id.
 
 - id: 75
   title: "Storm compliance: the model ignores the sharpened no-progress ask and never STOPs (help wanted)"
@@ -27,37 +26,3 @@
   parent: null
   deps: []
   file: 0046-harness-optimization-v3-agent-loop-context-structure-editor.md
-
-# wontfix entries, kept for the record.
-- id: 28
-  title: "Cut harness token consumption below the opencode baseline"
-  status: wontfix
-  priority: high
-  milestone: null
-  parent: null
-  deps: []
-  file: 0028-consumption-below-opencode.md
-- id: 32
-  title: "Locator robustness: tolerant extraction, kind fallback, append guard"
-  status: wontfix
-  priority: high
-  milestone: null
-  parent: 28
-  deps: [29]
-  file: 0032-locator-robustness.md
-- id: 41
-  title: "Create-mode repair: keep partial files and iterate with anchors"
-  status: wontfix
-  priority: high
-  milestone: null
-  parent: 28
-  deps: [30, 31]
-  file: 0041-create-mode-repair.md
-- id: 53
-  title: "Edit protocol: try json_object mode; document json_schema upgrade path"
-  status: wontfix
-  priority: medium
-  milestone: null
-  parent: 46
-  deps: [52]
-  file: 0053-edit-protocol-try-json-object-mode-document-json-schema-upgrade-path.md
