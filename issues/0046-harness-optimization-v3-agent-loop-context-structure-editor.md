@@ -120,3 +120,21 @@ plus: read the new report's aggregates against the #47 baseline figures.
   16:45:54): `bunx tsc --noEmit` 0, `bun test` pass, `bun run accept` 5/5,
   `bun benchmark/check.ts` 3 PASS. The closure package touches docs/issues
   only.
+
+## Status (2026-10-19, post-#65 cadence + held-out baseline)
+
+- **#65 cadence fix measured (e/f):** e clean 9/9 (overall $0.00207, minilisp
+  $0.00475); f minilisp 2/3 with one bare-budget storm (125,046) where the
+  round-9 first ask AND the round-13 sharpened `repeated ask 2` **did fire** but
+  the model answered each with another edit and never `STOP`s. #65's criterion 3
+  is still unmet; the blocker is now model compliance, filed as **#75**
+  (help-wanted child of #65). #65 stays in-progress.
+- **Held-out baseline landed (#67):** the four-task matrix
+  (`2026-10-19-tc-holdout.json`) is 12/12 — csv-parser 3/3 $0.00300, json 3/3
+  $0.00111, sexp 3/3 $0.00035, minilisp 3/3 $0.00348, overall $0.00199. The
+  harness generalizes to a fixture it was never tuned on.
+- **Children:** #47/#48/#49/#50/#57/#60/#71 closed; #65 open (criterion 3),
+  gated by #75. This issue closes when #65 resolves (or is closed wontfix with a
+  written reason) and the final row lands.
+- Gates at this state: `bunx tsc --noEmit` 0, 812 tests pass, `bun run accept`
+  5/5, `bun benchmark/check.ts` 4 PASS (csv frontend added).
