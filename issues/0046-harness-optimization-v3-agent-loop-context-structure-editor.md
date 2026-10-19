@@ -168,3 +168,30 @@ plus: read the new report's aggregates against the #47 baseline figures.
   until that gap closes and the final row lands.
 - Gates at this state: `bunx tsc --noEmit` 0, 820 tests pass, `bun run accept`
   5/5, `bun benchmark/check.ts` 4 PASS.
+
+## Status (2026-10-20, post-#76 verdict): close-out attempt — goal met on the clean path, not reliably
+
+- **#76 (opencode2 checkpoint directive) is closed wontfix.** It was implemented
+  (a bounded `Next move:` line in the repair digest, unit-tested, gates green),
+  measured over 2 full matrices and 48 pressure runs
+  (`2026-10-19-tc-checkpoint-{1,2}`, `-checkpoint-mini-{1..8}`; replays
+  `tmp/replays-76-*`), and **reverted**: it produced no measurable change in
+  storm rate (4/48 pressure storms vs the #75 campaign's 1/96 and 0/24) or repair
+  tokens, while adding characters to every checkpoint render. Recorded per the
+  series rule that improvements stay measured. (Its `checkpoint-2` did post the
+  best-ever single sample — 12/12, overall $0.00184 — but on code that was then
+  reverted, so it is not a final row.)
+- **Final-code evidence** (committed #75 state; rows in `consumption.md`):
+  json and sexp beat the #47 baseline (15,963 / 11,770) on **every** sample
+  (~4.8k / ~3.2k); the overall beats it on the clean samples (c 11,638, e 13,287,
+  final-1 17,636 vs 19,377); **minilisp tokens per success is 26,328 (e) / 30,112
+  (c)** — at/under the 30,398 baseline — but flaps above on an ordinary sample
+  (final-1 38,027) and blows up on the ~1-3% storms (d/f/final-2 64k-82k).
+- **Verdict.** #46's explicit criteria are met (all children decided; the
+  post-improvement runs are committed and compared; gates green), but the goal
+  ("beats ... per task") is **not met reliably** because of the minilisp
+  repair-cost variance. The two available levers are exhausted (#75 landed,
+  #76 reverted-negative). A help-wanted child (**#77**) owns the remaining gap.
+  #46 stays **in-progress** rather than close on an overclaim.
+- Gates at this state: `bunx tsc --noEmit` 0, 820 tests pass, `bun run accept`
+  5/5, `bun benchmark/check.ts` 4 PASS.
