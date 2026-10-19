@@ -1,0 +1,2437 @@
+{
+  "generatedAt": "2026-10-19T19:39:38.636Z",
+  "date": "2026-10-19",
+  "mode": "full",
+  "tasks": [
+    "minilisp"
+  ],
+  "sides": [
+    "tc"
+  ],
+  "reps": 6,
+  "concurrency": 4,
+  "model": "deepseek-v4.1-flash",
+  "effort": null,
+  "multiPayload": false,
+  "tokenBudget": null,
+  "bunVersion": "1.3.13",
+  "opencodeVersion": null,
+  "pilotReference": null,
+  "infraErrors": [],
+  "runs": [
+    {
+      "task": "minilisp",
+      "side": "tc",
+      "rep": 1,
+      "ok": true,
+      "sideOk": true,
+      "tokens": {
+        "input": 59009,
+        "output": 2970,
+        "cacheRead": 8448,
+        "cacheWrite": null,
+        "reasoning": 0,
+        "total": 61979
+      },
+      "usageAvailable": true,
+      "usageSource": "chat-completions",
+      "rawUsage": [
+        {
+          "prompt_tokens": 1752,
+          "completion_tokens": 28,
+          "total_tokens": 1780,
+          "prompt_tokens_details": {
+            "cached_tokens": 1536
+          },
+          "completion_tokens_details": {
+            "reasoning_tokens": 0
+          }
+        },
+        {
+          "prompt_tokens": 1906,
+          "completion_tokens": 1610,
+          "total_tokens": 3516,
+          "prompt_tokens_details": {
+            "cached_tokens": 1792
+          },
+          "completion_tokens_details": {
+            "reasoning_tokens": 0
+          }
+        },
+        {
+          "prompt_tokens": 4002,
+          "completion_tokens": 6,
+          "total_tokens": 4008,
+          "prompt_tokens_details": {
+            "cached_tokens": 0
+          },
+          "completion_tokens_details": {
+            "reasoning_tokens": 0
+          }
+        },
+        {
+          "prompt_tokens": 5779,
+          "completion_tokens": 256,
+          "total_tokens": 6035,
+          "prompt_tokens_details": {
+            "cached_tokens": 0
+          },
+          "completion_tokens_details": {
+            "reasoning_tokens": 0
+          }
+        },
+        {
+          "prompt_tokens": 3848,
+          "completion_tokens": 257,
+          "total_tokens": 4105,
+          "prompt_tokens_details": {
+            "cached_tokens": 0
+          },
+          "completion_tokens_details": {
+            "reasoning_tokens": 0
+          }
+        },
+        {
+          "prompt_tokens": 3940,
+          "completion_tokens": 264,
+          "total_tokens": 4204,
+          "prompt_tokens_details": {
+            "cached_tokens": 2048
+          },
+          "completion_tokens_details": {
+            "reasoning_tokens": 0
+          }
+        },
+        {
+          "prompt_tokens": 4028,
+          "completion_tokens": 5,
+          "total_tokens": 4033,
+          "prompt_tokens_details": {
+            "cached_tokens": 2304
+          },
+          "completion_tokens_details": {
+            "reasoning_tokens": 0
+          }
+        },
+        {
+          "prompt_tokens": 6038,
+          "completion_tokens": 133,
+          "total_tokens": 6171,
+          "prompt_tokens_details": {
+            "cached_tokens": 0
+          },
+          "completion_tokens_details": {
+            "reasoning_tokens": 0
+          }
+        },
+        {
+          "prompt_tokens": 3660,
+          "completion_tokens": 5,
+          "total_tokens": 3665,
+          "prompt_tokens_details": {
+            "cached_tokens": 0
+          },
+          "completion_tokens_details": {
+            "reasoning_tokens": 0
+          }
+        },
+        {
+          "prompt_tokens": 5674,
+          "completion_tokens": 73,
+          "total_tokens": 5747,
+          "prompt_tokens_details": {
+            "cached_tokens": 0
+          },
+          "completion_tokens_details": {
+            "reasoning_tokens": 0
+          }
+        },
+        {
+          "prompt_tokens": 3556,
+          "completion_tokens": 73,
+          "total_tokens": 3629,
+          "prompt_tokens_details": {
+            "cached_tokens": 0
+          },
+          "completion_tokens_details": {
+            "reasoning_tokens": 0
+          }
+        },
+        {
+          "prompt_tokens": 3669,
+          "completion_tokens": 5,
+          "total_tokens": 3674,
+          "prompt_tokens_details": {
+            "cached_tokens": 768
+          },
+          "completion_tokens_details": {
+            "reasoning_tokens": 0
+          }
+        },
+        {
+          "prompt_tokens": 5683,
+          "completion_tokens": 73,
+          "total_tokens": 5756,
+          "prompt_tokens_details": {
+            "cached_tokens": 0
+          },
+          "completion_tokens_details": {
+            "reasoning_tokens": 0
+          }
+        },
+        {
+          "prompt_tokens": 1703,
+          "completion_tokens": 120,
+          "total_tokens": 1823,
+          "prompt_tokens_details": {
+            "cached_tokens": 0
+          },
+          "completion_tokens_details": {
+            "reasoning_tokens": 0
+          }
+        },
+        {
+          "prompt_tokens": 3771,
+          "completion_tokens": 62,
+          "total_tokens": 3833,
+          "prompt_tokens_details": {
+            "cached_tokens": 0
+          },
+          "completion_tokens_details": {
+            "reasoning_tokens": 0
+          }
+        }
+      ],
+      "durationMs": 35406,
+      "startedAt": "2026-10-19T19:39:38.657Z",
+      "finishedAt": "2026-10-19T19:40:14.063Z",
+      "cost": 0.009391493999999998,
+      "rateClass": "off-peak",
+      "steps": 23,
+      "records": [
+        {
+          "row": 1,
+          "iteration": 1,
+          "kind": "exchange",
+          "exchange": 1,
+          "outcome": "selected",
+          "diagnosticsHead": null,
+          "replacementChars": null,
+          "finishReason": "stop",
+          "cause": null,
+          "payloads": 0,
+          "toolCalls": 0
+        },
+        {
+          "row": 2,
+          "iteration": 1,
+          "kind": "exchange",
+          "exchange": 2,
+          "outcome": "applied",
+          "diagnosticsHead": null,
+          "replacementChars": 4628,
+          "finishReason": "stop",
+          "cause": null,
+          "payloads": 1,
+          "toolCalls": 0
+        },
+        {
+          "row": 3,
+          "iteration": 1,
+          "kind": "verification",
+          "exchange": null,
+          "outcome": "tsc",
+          "diagnosticsHead": "stage: tsc replacement line 53: TS2677: A type predicate's type must be assignable to its parameter's type. Type 'Form[]' is not assignable to type 'Form'. Type 'Form[]' is not assignable to type 'Lis",
+          "replacementChars": 4628,
+          "finishReason": "stop",
+          "cause": null,
+          "payloads": 0,
+          "toolCalls": 0
+        },
+        {
+          "row": 4,
+          "iteration": 2,
+          "kind": "exchange",
+          "exchange": 1,
+          "outcome": "self-check",
+          "diagnosticsHead": "Self-check (read): src/lisp.ts (142 line(s), truncated at 8000 characters). 1 | export type LispValue = number | boolean | LispValue[] | null; 2 | 3 | type Env = Map<string, LispValue>; 4 | 5 | type B",
+          "replacementChars": null,
+          "finishReason": "stop",
+          "cause": null,
+          "payloads": 0,
+          "toolCalls": 0
+        },
+        {
+          "row": 5,
+          "iteration": 2,
+          "kind": "exchange",
+          "exchange": 2,
+          "outcome": "applied",
+          "diagnosticsHead": null,
+          "replacementChars": 424,
+          "finishReason": "stop",
+          "cause": null,
+          "payloads": 1,
+          "toolCalls": 0
+        },
+        {
+          "row": 6,
+          "iteration": 2,
+          "kind": "verification",
+          "exchange": null,
+          "outcome": "tsc",
+          "diagnosticsHead": "stage: tsc elsewhere in file: src/lisp.ts(53,32): error TS2677: A type predicate's type must be assignable to its parameter's type. Type 'Form[]' is not assignable to type 'Form'. Type 'Form[]' is not",
+          "replacementChars": 424,
+          "finishReason": "stop",
+          "cause": null,
+          "payloads": 0,
+          "toolCalls": 0
+        },
+        {
+          "row": 7,
+          "iteration": 3,
+          "kind": "exchange",
+          "exchange": 1,
+          "outcome": "applied",
+          "diagnosticsHead": null,
+          "replacementChars": 431,
+          "finishReason": "stop",
+          "cause": null,
+          "payloads": 1,
+          "toolCalls": 0
+        },
+        {
+          "row": 8,
+          "iteration": 3,
+          "kind": "verification",
+          "exchange": null,
+          "outcome": "tsc",
+          "diagnosticsHead": "stage: tsc elsewhere in file: src/lisp.ts(53,32): error TS2677: A type predicate's type must be assignable to its parameter's type. Type 'Form[]' is not assignable to type 'Form'. Type 'Form[]' is not",
+          "replacementChars": 431,
+          "finishReason": "stop",
+          "cause": null,
+          "payloads": 0,
+          "toolCalls": 0
+        },
+        {
+          "row": 9,
+          "iteration": 4,
+          "kind": "exchange",
+          "exchange": 1,
+          "outcome": "applied",
+          "diagnosticsHead": null,
+          "replacementChars": 449,
+          "finishReason": "stop",
+          "cause": null,
+          "payloads": 1,
+          "toolCalls": 0
+        },
+        {
+          "row": 10,
+          "iteration": 4,
+          "kind": "verification",
+          "exchange": null,
+          "outcome": "tsc",
+          "diagnosticsHead": "stage: tsc elsewhere in file: src/lisp.ts(53,32): error TS2677: A type predicate's type must be assignable to its parameter's type. Type 'Form[]' is not assignable to type 'Form'. Type 'Form[]' is not",
+          "replacementChars": 449,
+          "finishReason": "stop",
+          "cause": null,
+          "payloads": 0,
+          "toolCalls": 0
+        },
+        {
+          "row": 11,
+          "iteration": 5,
+          "kind": "exchange",
+          "exchange": 1,
+          "outcome": "self-check",
+          "diagnosticsHead": "Self-check (read): src/lisp.ts (163 line(s), truncated at 8000 characters). 1 | export type LispValue = number | boolean | LispValue[] | null; 2 | 3 | type Env = Map<string, LispValue>; 4 | 5 | type B",
+          "replacementChars": null,
+          "finishReason": "stop",
+          "cause": null,
+          "payloads": 0,
+          "toolCalls": 0
+        },
+        {
+          "row": 12,
+          "iteration": 5,
+          "kind": "exchange",
+          "exchange": 2,
+          "outcome": "applied",
+          "diagnosticsHead": null,
+          "replacementChars": 149,
+          "finishReason": "stop",
+          "cause": null,
+          "payloads": 1,
+          "toolCalls": 0
+        },
+        {
+          "row": 13,
+          "iteration": 5,
+          "kind": "verification",
+          "exchange": null,
+          "outcome": "tsc",
+          "diagnosticsHead": "stage: tsc elsewhere in file: src/lisp.ts(53,32): error TS2677: A type predicate's type must be assignable to its parameter's type. Type 'Form[]' is not assignable to type 'Form'. Type 'Form[]' is not",
+          "replacementChars": 149,
+          "finishReason": "stop",
+          "cause": null,
+          "payloads": 0,
+          "toolCalls": 0
+        },
+        {
+          "row": 14,
+          "iteration": 6,
+          "kind": "exchange",
+          "exchange": 1,
+          "outcome": "self-check",
+          "diagnosticsHead": "Self-check (read): src/lisp.ts (163 line(s), truncated at 8000 characters). 1 | export type LispValue = number | boolean | LispValue[] | null; 2 | 3 | type Env = Map<string, LispValue>; 4 | 5 | type B",
+          "replacementChars": null,
+          "finishReason": "stop",
+          "cause": null,
+          "payloads": 0,
+          "toolCalls": 0
+        },
+        {
+          "row": 15,
+          "iteration": 6,
+          "kind": "exchange",
+          "exchange": 2,
+          "outcome": "applied",
+          "diagnosticsHead": null,
+          "replacementChars": 73,
+          "finishReason": "stop",
+          "cause": null,
+          "payloads": 1,
+          "toolCalls": 0
+        },
+        {
+          "row": 16,
+          "iteration": 6,
+          "kind": "verification",
+          "exchange": null,
+          "outcome": "tsc",
+          "diagnosticsHead": "stage: tsc elsewhere in file: src/lisp.ts(67,7): error TS2367: This comparison appears to be unintentional because the types 'number | boolean | LispValue[] | null' and 'string' have no overlap. src/l",
+          "replacementChars": 73,
+          "finishReason": "stop",
+          "cause": null,
+          "payloads": 0,
+          "toolCalls": 0
+        },
+        {
+          "row": 17,
+          "iteration": 7,
+          "kind": "exchange",
+          "exchange": 1,
+          "outcome": "applied",
+          "diagnosticsHead": null,
+          "replacementChars": 68,
+          "finishReason": "stop",
+          "cause": null,
+          "payloads": 1,
+          "toolCalls": 0
+        },
+        {
+          "row": 18,
+          "iteration": 7,
+          "kind": "verification",
+          "exchange": null,
+          "outcome": "tsc",
+          "diagnosticsHead": "stage: tsc replacement line 1: TS2677: A type predicate's type must be assignable to its parameter's type. Type 'Form[]' is not assignable to type 'Form'. Type 'Form[]' is not assignable to type 'Lisp",
+          "replacementChars": 68,
+          "finishReason": "stop",
+          "cause": null,
+          "payloads": 0,
+          "toolCalls": 0
+        },
+        {
+          "row": 19,
+          "iteration": 8,
+          "kind": "exchange",
+          "exchange": 1,
+          "outcome": "self-check",
+          "diagnosticsHead": "Self-check (read): src/lisp.ts (163 line(s), truncated at 8000 characters). 1 | export type LispValue = number | boolean | LispValue[] | null; 2 | 3 | type Env = Map<string, LispValue>; 4 | 5 | type B",
+          "replacementChars": null,
+          "finishReason": "stop",
+          "cause": null,
+          "payloads": 0,
+          "toolCalls": 0
+        },
+        {
+          "row": 20,
+          "iteration": 8,
+          "kind": "exchange",
+          "exchange": 2,
+          "outcome": "applied",
+          "diagnosticsHead": null,
+          "replacementChars": 73,
+          "finishReason": "stop",
+          "cause": null,
+          "payloads": 1,
+          "toolCalls": 0
+        },
+        {
+          "row": 21,
+          "iteration": 8,
+          "kind": "verification",
+          "exchange": null,
+          "outcome": "tsc",
+          "diagnosticsHead": "stage: tsc elsewhere in file: src/lisp.ts(67,7): error TS2367: This comparison appears to be unintentional because the types 'number | boolean | LispValue[] | null' and 'string' have no overlap. src/l",
+          "replacementChars": 73,
+          "finishReason": "stop",
+          "cause": null,
+          "payloads": 0,
+          "toolCalls": 0
+        },
+        {
+          "row": 22,
+          "iteration": 9,
+          "kind": "exchange",
+          "exchange": 2,
+          "outcome": "applied",
+          "diagnosticsHead": null,
+          "replacementChars": 71,
+          "finishReason": "stop",
+          "cause": null,
+          "payloads": 1,
+          "toolCalls": 0
+        },
+        {
+          "row": 23,
+          "iteration": 9,
+          "kind": "verification",
+          "exchange": null,
+          "outcome": "ok",
+          "diagnosticsHead": null,
+          "replacementChars": 71,
+          "finishReason": "stop",
+          "cause": null,
+          "payloads": 0,
+          "toolCalls": 0
+        }
+      ],
+      "exchangeStats": {
+        "turns": 14,
+        "payloads": 9,
+        "toolCalls": 0,
+        "applied": 9,
+        "rejected": 0,
+        "selected": 1,
+        "stopped": 0,
+        "selfChecks": 4
+      },
+      "loopDiagnostics": null,
+      "terminationReason": null,
+      "model": "deepseek-v4.1-flash",
+      "workspace": "tmp/benchmark/2026-10-19T19-39-38-641Z-49261cbb/minilisp-tc-rep1",
+      "logs": {
+        "side": "tmp/benchmark/2026-10-19T19-39-38-641Z-49261cbb/logs/minilisp-tc-rep1/side.log",
+        "judge": "tmp/benchmark/2026-10-19T19-39-38-641Z-49261cbb/logs/minilisp-tc-rep1/judge.log",
+        "session": null,
+        "stats": null
+      },
+      "versions": {
+        "bun": "1.3.13",
+        "opencode": null
+      },
+      "judge": {
+        "testsOk": true,
+        "tscOk": true,
+        "fixtureOk": true,
+        "detail": null
+      },
+      "error": null,
+      "infraError": null
+    },
+    {
+      "task": "minilisp",
+      "side": "tc",
+      "rep": 2,
+      "ok": false,
+      "sideOk": false,
+      "tokens": {
+        "input": 108831,
+        "output": 4423,
+        "cacheRead": 25728,
+        "cacheWrite": null,
+        "reasoning": 483,
+        "total": 113254
+      },
+      "usageAvailable": true,
+      "usageSource": "chat-completions",
+      "rawUsage": [
+        {
+          "prompt_tokens": 1752,
+          "completion_tokens": 27,
+          "total_tokens": 1779,
+          "prompt_tokens_details": {
+            "cached_tokens": 1664
+          },
+          "completion_tokens_details": {
+            "reasoning_tokens": 0
+          }
+        },
+        {
+          "prompt_tokens": 1906,
+          "completion_tokens": 1537,
+          "total_tokens": 3443,
+          "prompt_tokens_details": {
+            "cached_tokens": 1792
+          },
+          "completion_tokens_details": {
+            "reasoning_tokens": 0
+          }
+        },
+        {
+          "prompt_tokens": 3987,
+          "completion_tokens": 6,
+          "total_tokens": 3993,
+          "prompt_tokens_details": {
+            "cached_tokens": 0
+          },
+          "completion_tokens_details": {
+            "reasoning_tokens": 0
+          }
+        },
+        {
+          "prompt_tokens": 5766,
+          "completion_tokens": 153,
+          "total_tokens": 5919,
+          "prompt_tokens_details": {
+            "cached_tokens": 0
+          },
+          "completion_tokens_details": {
+            "reasoning_tokens": 0
+          }
+        },
+        {
+          "prompt_tokens": 3692,
+          "completion_tokens": 152,
+          "total_tokens": 3844,
+          "prompt_tokens_details": {
+            "cached_tokens": 0
+          },
+          "completion_tokens_details": {
+            "reasoning_tokens": 0
+          }
+        },
+        {
+          "prompt_tokens": 3851,
+          "completion_tokens": 5,
+          "total_tokens": 3856,
+          "prompt_tokens_details": {
+            "cached_tokens": 2048
+          },
+          "completion_tokens_details": {
+            "reasoning_tokens": 0
+          }
+        },
+        {
+          "prompt_tokens": 5630,
+          "completion_tokens": 57,
+          "total_tokens": 5687,
+          "prompt_tokens_details": {
+            "cached_tokens": 0
+          },
+          "completion_tokens_details": {
+            "reasoning_tokens": 0
+          }
+        },
+        {
+          "prompt_tokens": 4203,
+          "completion_tokens": 97,
+          "total_tokens": 4300,
+          "prompt_tokens_details": {
+            "cached_tokens": 2048
+          },
+          "completion_tokens_details": {
+            "reasoning_tokens": 0
+          }
+        },
+        {
+          "prompt_tokens": 4291,
+          "completion_tokens": 97,
+          "total_tokens": 4388,
+          "prompt_tokens_details": {
+            "cached_tokens": 768
+          },
+          "completion_tokens_details": {
+            "reasoning_tokens": 0
+          }
+        },
+        {
+          "prompt_tokens": 4275,
+          "completion_tokens": 58,
+          "total_tokens": 4333,
+          "prompt_tokens_details": {
+            "cached_tokens": 0
+          },
+          "completion_tokens_details": {
+            "reasoning_tokens": 0
+          }
+        },
+        {
+          "prompt_tokens": 4528,
+          "completion_tokens": 5,
+          "total_tokens": 4533,
+          "prompt_tokens_details": {
+            "cached_tokens": 768
+          },
+          "completion_tokens_details": {
+            "reasoning_tokens": 0
+          }
+        },
+        {
+          "prompt_tokens": 5939,
+          "completion_tokens": 58,
+          "total_tokens": 5997,
+          "prompt_tokens_details": {
+            "cached_tokens": 2048
+          },
+          "completion_tokens_details": {
+            "reasoning_tokens": 0
+          }
+        },
+        {
+          "prompt_tokens": 4275,
+          "completion_tokens": 5,
+          "total_tokens": 4280,
+          "prompt_tokens_details": {
+            "cached_tokens": 4224
+          },
+          "completion_tokens_details": {
+            "reasoning_tokens": 0
+          }
+        },
+        {
+          "prompt_tokens": 4529,
+          "completion_tokens": 97,
+          "total_tokens": 4626,
+          "prompt_tokens_details": {
+            "cached_tokens": 0
+          },
+          "completion_tokens_details": {
+            "reasoning_tokens": 0
+          }
+        },
+        {
+          "prompt_tokens": 4291,
+          "completion_tokens": 97,
+          "total_tokens": 4388,
+          "prompt_tokens_details": {
+            "cached_tokens": 4224
+          },
+          "completion_tokens_details": {
+            "reasoning_tokens": 0
+          }
+        },
+        {
+          "prompt_tokens": 4275,
+          "completion_tokens": 97,
+          "total_tokens": 4372,
+          "prompt_tokens_details": {
+            "cached_tokens": 4224
+          },
+          "completion_tokens_details": {
+            "reasoning_tokens": 0
+          }
+        },
+        {
+          "prompt_tokens": 4499,
+          "completion_tokens": 65,
+          "total_tokens": 4564,
+          "prompt_tokens_details": {
+            "cached_tokens": 0
+          },
+          "completion_tokens_details": {
+            "reasoning_tokens": 0
+          }
+        },
+        {
+          "prompt_tokens": 4518,
+          "completion_tokens": 86,
+          "total_tokens": 4604,
+          "prompt_tokens_details": {
+            "cached_tokens": 0
+          },
+          "completion_tokens_details": {
+            "reasoning_tokens": 0
+          }
+        },
+        {
+          "prompt_tokens": 4225,
+          "completion_tokens": 86,
+          "total_tokens": 4311,
+          "prompt_tokens_details": {
+            "cached_tokens": 0
+          },
+          "completion_tokens_details": {
+            "reasoning_tokens": 0
+          }
+        },
+        {
+          "prompt_tokens": 4295,
+          "completion_tokens": 73,
+          "total_tokens": 4368,
+          "prompt_tokens_details": {
+            "cached_tokens": 0
+          },
+          "completion_tokens_details": {
+            "reasoning_tokens": 0
+          }
+        },
+        {
+          "prompt_tokens": 4235,
+          "completion_tokens": 185,
+          "total_tokens": 4420,
+          "prompt_tokens_details": {
+            "cached_tokens": 0
+          },
+          "completion_tokens_details": {
+            "reasoning_tokens": 0
+          }
+        },
+        {
+          "prompt_tokens": 4331,
+          "completion_tokens": 145,
+          "total_tokens": 4476,
+          "prompt_tokens_details": {
+            "cached_tokens": 1152
+          },
+          "completion_tokens_details": {
+            "reasoning_tokens": 0
+          }
+        },
+        {
+          "prompt_tokens": 4403,
+          "completion_tokens": 97,
+          "total_tokens": 4500,
+          "prompt_tokens_details": {
+            "cached_tokens": 768
+          },
+          "completion_tokens_details": {
+            "reasoning_tokens": 0
+          }
+        },
+        {
+          "prompt_tokens": 4419,
+          "completion_tokens": 97,
+          "total_tokens": 4516,
+          "prompt_tokens_details": {
+            "cached_tokens": 0
+          },
+          "completion_tokens_details": {
+            "reasoning_tokens": 0
+          }
+        },
+        {
+          "prompt_tokens": 2609,
+          "completion_tokens": 2,
+          "total_tokens": 2611,
+          "prompt_tokens_details": {
+            "cached_tokens": 0
+          },
+          "completion_tokens_details": {
+            "reasoning_tokens": 0
+          }
+        },
+        {
+          "prompt_tokens": 4107,
+          "completion_tokens": 1039,
+          "total_tokens": 5146,
+          "prompt_tokens_details": {
+            "cached_tokens": 0
+          },
+          "completion_tokens_details": {
+            "reasoning_tokens": 483
+          }
+        }
+      ],
+      "durationMs": 63399,
+      "startedAt": "2026-10-19T19:39:38.684Z",
+      "finishedAt": "2026-10-19T19:40:42.083Z",
+      "cost": 0.015486233999999998,
+      "rateClass": "off-peak",
+      "steps": 33,
+      "records": [
+        {
+          "row": 1,
+          "iteration": 1,
+          "kind": "exchange",
+          "exchange": 1,
+          "outcome": "selected",
+          "diagnosticsHead": null,
+          "replacementChars": null,
+          "finishReason": "stop",
+          "cause": null,
+          "payloads": 0,
+          "toolCalls": 0
+        },
+        {
+          "row": 2,
+          "iteration": 1,
+          "kind": "exchange",
+          "exchange": 2,
+          "outcome": "applied",
+          "diagnosticsHead": null,
+          "replacementChars": 4428,
+          "finishReason": "stop",
+          "cause": null,
+          "payloads": 1,
+          "toolCalls": 0
+        },
+        {
+          "row": 3,
+          "iteration": 1,
+          "kind": "verification",
+          "exchange": null,
+          "outcome": "tsc",
+          "diagnosticsHead": "stage: tsc replacement line 63: TS2677: A type predicate's type must be assignable to its parameter's type. Type 'Procedure' is not assignable to type 'LispValue'. 62 | 63 | function isProcedure(value",
+          "replacementChars": 4428,
+          "finishReason": "stop",
+          "cause": null,
+          "payloads": 0,
+          "toolCalls": 0
+        },
+        {
+          "row": 4,
+          "iteration": 2,
+          "kind": "exchange",
+          "exchange": 1,
+          "outcome": "self-check",
+          "diagnosticsHead": "Self-check (read): src/lisp.ts (172 line(s), truncated at 8000 characters). 1 | export type LispValue = number | boolean | LispValue[] | null; 2 | 3 | type Env = Map<string, LispValue>; 4 | 5 | type B",
+          "replacementChars": null,
+          "finishReason": "stop",
+          "cause": null,
+          "payloads": 0,
+          "toolCalls": 0
+        },
+        {
+          "row": 5,
+          "iteration": 2,
+          "kind": "exchange",
+          "exchange": 2,
+          "outcome": "applied",
+          "diagnosticsHead": null,
+          "replacementChars": 121,
+          "finishReason": "stop",
+          "cause": null,
+          "payloads": 1,
+          "toolCalls": 0
+        },
+        {
+          "row": 6,
+          "iteration": 2,
+          "kind": "verification",
+          "exchange": null,
+          "outcome": "tsc",
+          "diagnosticsHead": "stage: tsc elsewhere in file: src/lisp.ts(63,50): error TS2677: A type predicate's type must be assignable to its parameter's type. Type 'Procedure' is not assignable to type 'LispValue'. src/lisp.ts(",
+          "replacementChars": 121,
+          "finishReason": "stop",
+          "cause": null,
+          "payloads": 0,
+          "toolCalls": 0
+        },
+        {
+          "row": 7,
+          "iteration": 3,
+          "kind": "exchange",
+          "exchange": 1,
+          "outcome": "applied",
+          "diagnosticsHead": null,
+          "replacementChars": 224,
+          "finishReason": "stop",
+          "cause": null,
+          "payloads": 1,
+          "toolCalls": 0
+        },
+        {
+          "row": 8,
+          "iteration": 3,
+          "kind": "verification",
+          "exchange": null,
+          "outcome": "tsc",
+          "diagnosticsHead": "stage: tsc elsewhere in file: src/lisp.ts(63,50): error TS2677: A type predicate's type must be assignable to its parameter's type. Type 'Procedure' is not assignable to type 'LispValue'. src/lisp.ts(",
+          "replacementChars": 224,
+          "finishReason": "stop",
+          "cause": null,
+          "payloads": 0,
+          "toolCalls": 0
+        },
+        {
+          "row": 9,
+          "iteration": 4,
+          "kind": "exchange",
+          "exchange": 1,
+          "outcome": "self-check",
+          "diagnosticsHead": "Self-check (read): src/lisp.ts (172 line(s), truncated at 8000 characters). 1 | export type LispValue = number | boolean | LispValue[] | null; 2 | 3 | type Env = Map<string, LispValue>; 4 | 5 | type B",
+          "replacementChars": null,
+          "finishReason": "stop",
+          "cause": null,
+          "payloads": 0,
+          "toolCalls": 0
+        },
+        {
+          "row": 10,
+          "iteration": 4,
+          "kind": "exchange",
+          "exchange": 2,
+          "outcome": "applied",
+          "diagnosticsHead": null,
+          "replacementChars": 100,
+          "finishReason": "stop",
+          "cause": null,
+          "payloads": 1,
+          "toolCalls": 0
+        },
+        {
+          "row": 11,
+          "iteration": 4,
+          "kind": "verification",
+          "exchange": null,
+          "outcome": "tsc",
+          "diagnosticsHead": "stage: tsc elsewhere in file: src/lisp.ts(63,50): error TS2677: A type predicate's type must be assignable to its parameter's type. Type 'Procedure' is not assignable to type 'LispValue'. src/lisp.ts(",
+          "replacementChars": 100,
+          "finishReason": "stop",
+          "cause": null,
+          "payloads": 0,
+          "toolCalls": 0
+        },
+        {
+          "row": 12,
+          "iteration": 5,
+          "kind": "exchange",
+          "exchange": 1,
+          "outcome": "gate",
+          "diagnosticsHead": "stage: gate the edit was discarded because the resulting source does not parse; nothing was written unexpected token \"...\" (line 120, column 27) replacement line 1, column 27: 1 | function makeBuiltin",
+          "replacementChars": 106,
+          "finishReason": "stop",
+          "cause": "gate",
+          "payloads": 1,
+          "toolCalls": 0
+        },
+        {
+          "row": 13,
+          "iteration": 5,
+          "kind": "exchange",
+          "exchange": 2,
+          "outcome": "repeat",
+          "diagnosticsHead": "stage: repeat this exact edit was just rejected (stage: gate); resending it verbatim cannot succeed — change the payload",
+          "replacementChars": 106,
+          "finishReason": "stop",
+          "cause": "repeat",
+          "payloads": 1,
+          "toolCalls": 0
+        },
+        {
+          "row": 14,
+          "iteration": 5,
+          "kind": "exchange",
+          "exchange": 3,
+          "outcome": "gate",
+          "diagnosticsHead": "stage: gate the edit was discarded because the resulting source does not parse; nothing was written unexpected token \"...\" (line 120, column 27) replacement line 1, column 27: 1 | function makeBuiltin",
+          "replacementChars": 106,
+          "finishReason": "stop",
+          "cause": "gate",
+          "payloads": 1,
+          "toolCalls": 0
+        },
+        {
+          "row": 15,
+          "iteration": 6,
+          "kind": "exchange",
+          "exchange": 1,
+          "outcome": "self-check",
+          "diagnosticsHead": "Self-check (read): src/lisp.ts (169 line(s), truncated at 8000 characters). 1 | export type LispValue = number | boolean | LispValue[] | null; 2 | 3 | type Env = Map<string, LispValue>; 4 | 5 | type B",
+          "replacementChars": null,
+          "finishReason": "stop",
+          "cause": null,
+          "payloads": 0,
+          "toolCalls": 0
+        },
+        {
+          "row": 16,
+          "iteration": 6,
+          "kind": "exchange",
+          "exchange": 2,
+          "outcome": "repeat",
+          "diagnosticsHead": "stage: repeat this exact edit was just rejected (stage: gate); resending it verbatim cannot succeed — change the payload",
+          "replacementChars": 106,
+          "finishReason": "stop",
+          "cause": "repeat",
+          "payloads": 1,
+          "toolCalls": 0
+        },
+        {
+          "row": 17,
+          "iteration": 6,
+          "kind": "exchange",
+          "exchange": 3,
+          "outcome": "protocol",
+          "diagnosticsHead": "stage: protocol the round already used its one self-verification request; return an edit payload now (the harness runs at most one request per round)",
+          "replacementChars": null,
+          "finishReason": "stop",
+          "cause": "protocol",
+          "payloads": 0,
+          "toolCalls": 0
+        },
+        {
+          "row": 18,
+          "iteration": 7,
+          "kind": "exchange",
+          "exchange": 1,
+          "outcome": "gate",
+          "diagnosticsHead": "stage: gate the edit was discarded because the resulting source does not parse; nothing was written unexpected token \"...\" (line 120, column 27) replacement line 1, column 27: 1 | function makeBuiltin",
+          "replacementChars": 106,
+          "finishReason": "stop",
+          "cause": "gate",
+          "payloads": 1,
+          "toolCalls": 0
+        },
+        {
+          "row": 19,
+          "iteration": 7,
+          "kind": "exchange",
+          "exchange": 2,
+          "outcome": "repeat",
+          "diagnosticsHead": "stage: repeat this exact edit was just rejected (stage: gate); resending it verbatim cannot succeed — change the payload",
+          "replacementChars": 106,
+          "finishReason": "stop",
+          "cause": "repeat",
+          "payloads": 1,
+          "toolCalls": 0
+        },
+        {
+          "row": 20,
+          "iteration": 7,
+          "kind": "exchange",
+          "exchange": 3,
+          "outcome": "repeat",
+          "diagnosticsHead": "stage: repeat this exact edit was just rejected (stage: repeat); resending it verbatim cannot succeed — change the payload",
+          "replacementChars": 106,
+          "finishReason": "stop",
+          "cause": "repeat",
+          "payloads": 1,
+          "toolCalls": 0
+        },
+        {
+          "row": 21,
+          "iteration": 8,
+          "kind": "exchange",
+          "exchange": 1,
+          "outcome": "applied",
+          "diagnosticsHead": null,
+          "replacementChars": 84,
+          "finishReason": "stop",
+          "cause": null,
+          "payloads": 1,
+          "toolCalls": 0
+        },
+        {
+          "row": 22,
+          "iteration": 8,
+          "kind": "verification",
+          "exchange": null,
+          "outcome": "tsc",
+          "diagnosticsHead": "stage: tsc elsewhere in file: src/lisp.ts(98,43): error TS2322: Type 'Form' is not assignable to type 'LispValue'. Type 'string' is not assignable to type 'LispValue'. src/lisp.ts(106,7): error TS2322",
+          "replacementChars": 84,
+          "finishReason": "stop",
+          "cause": null,
+          "payloads": 0,
+          "toolCalls": 0
+        },
+        {
+          "row": 23,
+          "iteration": 9,
+          "kind": "exchange",
+          "exchange": 1,
+          "outcome": "applied",
+          "diagnosticsHead": null,
+          "replacementChars": 121,
+          "finishReason": "stop",
+          "cause": null,
+          "payloads": 1,
+          "toolCalls": 0
+        },
+        {
+          "row": 24,
+          "iteration": 9,
+          "kind": "verification",
+          "exchange": null,
+          "outcome": "tsc",
+          "diagnosticsHead": "stage: tsc elsewhere in file: src/lisp.ts(100,43): error TS2322: Type 'Form' is not assignable to type 'LispValue'. Type 'string' is not assignable to type 'LispValue'. src/lisp.ts(108,7): error TS232",
+          "replacementChars": 121,
+          "finishReason": "stop",
+          "cause": null,
+          "payloads": 0,
+          "toolCalls": 0
+        },
+        {
+          "row": 25,
+          "iteration": 10,
+          "kind": "exchange",
+          "exchange": 1,
+          "outcome": "duplicate",
+          "diagnosticsHead": "stage: duplicate the edit was discarded: it would add a second top-level type \"Form\" (src/lisp.ts already declares it at line 11); replace the existing declaration instead of adding another copy",
+          "replacementChars": 133,
+          "finishReason": "stop",
+          "cause": "duplicate",
+          "payloads": 1,
+          "toolCalls": 0
+        },
+        {
+          "row": 26,
+          "iteration": 10,
+          "kind": "exchange",
+          "exchange": 2,
+          "outcome": "applied",
+          "diagnosticsHead": null,
+          "replacementChars": 93,
+          "finishReason": "stop",
+          "cause": null,
+          "payloads": 1,
+          "toolCalls": 0
+        },
+        {
+          "row": 27,
+          "iteration": 10,
+          "kind": "verification",
+          "exchange": null,
+          "outcome": "tsc",
+          "diagnosticsHead": "stage: tsc elsewhere in file: src/lisp.ts(117,21): error TS2345: Argument of type 'LispValue' is not assignable to parameter of type 'Form'. Type 'null' is not assignable to type 'Form'. src/lisp.ts(1",
+          "replacementChars": 93,
+          "finishReason": "stop",
+          "cause": null,
+          "payloads": 0,
+          "toolCalls": 0
+        },
+        {
+          "row": 28,
+          "iteration": 11,
+          "kind": "exchange",
+          "exchange": 1,
+          "outcome": "applied",
+          "diagnosticsHead": null,
+          "replacementChars": 317,
+          "finishReason": "stop",
+          "cause": null,
+          "payloads": 1,
+          "toolCalls": 0
+        },
+        {
+          "row": 29,
+          "iteration": 11,
+          "kind": "verification",
+          "exchange": null,
+          "outcome": "tsc",
+          "diagnosticsHead": "stage: tsc elsewhere in file: src/lisp.ts(117,21): error TS2345: Argument of type 'LispValue' is not assignable to parameter of type 'Form'. Type 'null' is not assignable to type 'Form'. src/lisp.ts(1",
+          "replacementChars": 317,
+          "finishReason": "stop",
+          "cause": null,
+          "payloads": 0,
+          "toolCalls": 0
+        },
+        {
+          "row": 30,
+          "iteration": 12,
+          "kind": "exchange",
+          "exchange": 1,
+          "outcome": "duplicate",
+          "diagnosticsHead": "stage: duplicate the edit was discarded: it would add a second top-level function \"builtin2\" (src/lisp.ts already declares it at line 126); replace the existing declaration instead of adding another c",
+          "replacementChars": 317,
+          "finishReason": "stop",
+          "cause": "duplicate",
+          "payloads": 1,
+          "toolCalls": 0
+        },
+        {
+          "row": 31,
+          "iteration": 12,
+          "kind": "exchange",
+          "exchange": 2,
+          "outcome": "gate",
+          "diagnosticsHead": "stage: gate the edit was discarded because the resulting source does not parse; nothing was written unexpected token \"...\" (line 122, column 27) replacement line 1, column 27: 1 | function makeBuiltin",
+          "replacementChars": 106,
+          "finishReason": "stop",
+          "cause": "gate",
+          "payloads": 1,
+          "toolCalls": 0
+        },
+        {
+          "row": 32,
+          "iteration": 12,
+          "kind": "exchange",
+          "exchange": 3,
+          "outcome": "repeat",
+          "diagnosticsHead": "stage: repeat this exact edit was just rejected (stage: gate); resending it verbatim cannot succeed — change the payload",
+          "replacementChars": 106,
+          "finishReason": "stop",
+          "cause": "repeat",
+          "payloads": 1,
+          "toolCalls": 0
+        },
+        {
+          "row": 33,
+          "iteration": 13,
+          "kind": "exchange",
+          "exchange": 1,
+          "outcome": "stopped",
+          "diagnosticsHead": "edit-exhausted: the model replied STOP after 12 consecutive failed rounds stage: tsc elsewhere in file: src/lisp.ts(117,21): error TS2345: Argument of type 'LispValue' is not assignable to parameter o",
+          "replacementChars": 4,
+          "finishReason": "stop",
+          "cause": null,
+          "payloads": 0,
+          "toolCalls": 0
+        }
+      ],
+      "exchangeStats": {
+        "turns": 25,
+        "payloads": 19,
+        "toolCalls": 0,
+        "applied": 8,
+        "rejected": 12,
+        "selected": 1,
+        "stopped": 1,
+        "selfChecks": 3
+      },
+      "loopDiagnostics": "edit-exhausted: the model replied STOP after 12 consecutive failed rounds\n\nstage: tsc\nelsewhere in file:\nsrc/lisp.ts(117,21): error TS2345: Argument of type 'LispValue' is not assignable to parameter of type 'Form'. Type 'null' is not assignable to type 'Form'.\nsrc/lisp.ts(138,17): error TS2345: Argument of type '(a: any, b: any) => number' is not assignable to parameter of type '(args: LispValue[]) => LispValue'. Target signature provides too few arguments. Expected 2 or more, but got 1.\nsrc/lisp.ts(138,18): error TS7006: Parameter 'a' implicitly has an 'any' type.\nsrc/lisp.ts(138,21): error TS7006: Parameter 'b' implicitly has an 'any' type.\nsrc/lisp.ts(142,17): error TS2345: Argument of type '(a: any, b: any) => number' is not assignable to parameter of type '(args: LispValue[]) => LispValue'. Target signature provides too few arguments. Expected 2 or more, but got 1.\nsrc/lisp.ts(142,18): error TS7006: Parameter 'a' implicitly has an 'any' type.\nsrc/lisp.ts(142,21): error TS7006: Parameter 'b' implicitly has an 'any' type.\nsrc/lisp.ts(146,17): error TS2345: Argument of type '(a: any, b: any) => number' is not assignable to parameter of type '(args: LispValue[]) => LispValue'. Target signature provides too few arguments. Expected 2 or more, but got 1.\nsrc/lisp.ts(146,18): error TS7006: Parameter 'a' implicitly has an 'any' type.\nsrc/lisp.ts(146,21): error TS7006: Parameter 'b' implicitly has an 'any' type.\nsrc/lisp.ts(150,17): error TS2345: Argument of type '(a: any, b: any) => number' is not assignable to parameter of type '(args: LispValue[]) => LispValue'. Target signature provides too few arguments. Expected 2 or more, but got 1.\nsrc/lisp.ts(150,18): error TS7006: Parameter 'a' implicitly has an 'any' type.\nsrc/lisp.ts(150,21): error TS7006: Parameter 'b' implicitly has an 'any' type.\nsrc/lisp.ts(154,17): error TS2345: Argument of type '(a: any, b: any) => boolean' is not assignable to parameter of type '(args: LispValue[]) => LispValue'. Target signature provides too few arguments. Expected 2 or more, but got 1.\nsrc/lisp.ts(154,18):... [1101 characters truncated] ...o/typescript-coder/tmp/benchmark/2026-10-19T19-39-38-641Z-49261cbb/minilisp-tc-rep2/src/lisp.ts:112:30)\n      at map (1:11)\n      at evaluate (/home/illu/repo/typescript-coder/tmp/benchmark/2026-10-19T19-39-38-641Z-49261cbb/minilisp-tc-rep2/src/lisp.ts:112:30)\n      at map (1:11)\n      at evaluate (/home/illu/repo/typescript-coder/tmp/benchmark/2026-10-19T19-39-38-641Z-49261cbb/minilisp-tc-rep2/src/lisp.ts:112:30)\n      at map (1:11)\n      at evaluate (/home/illu/repo/typescript-coder/tmp/benchmark/2026-10-19T19-39-38-641Z-49261cbb/minilisp-tc-rep2/src/lisp.ts:112:30)\n      at map (1:11)\n(fail) minilisp special forms > recursion [63.00ms]\n81 |   });\n82 | });\n83 | \n84 | describe(\"minilisp pairs\", () => {\n85 |   test(\"cons builds a pair\", () => {\n86 |     expect(evaluate(\"(cons 1 (cons 2 3))\")).toEqual([1, [2, 3]]);\n                                                 ^\nerror: expect(received).toEqual(expected)\n\n  [\n-   1,\n    [\n-     2,\n-     3,\n+     1,\n+     [\n+       [\n+         2,\n+         3,\n+       ],\n+       undefined,\n+     ],\n    ],\n+   undefined,\n  ]\n\n- Expected  - 3\n+ Received  + 9\n\n      at <anonymous> (/home/illu/repo/typescript-coder/tmp/benchmark/2026-10-19T19-39-38-641Z-49261cbb/minilisp-tc-rep2/src/lisp.test.ts:86:45)\n(fail) minilisp pairs > cons builds a pair [1.00ms]\n85 |   test(\"cons builds a pair\", () => {\n86 |     expect(evaluate(\"(cons 1 (cons 2 3))\")).toEqual([1, [2, 3]]);\n87 |   });\n88 | \n89 |   test(\"car and cdr select pair parts\", () => {\n90 |     expect(evaluate(\"(car (cons 1 (cons 2 3)))\")).toBe(1);\n                                                       ^\nerror: expect(received).toBe(expected)\n\nExpected: 1\nReceived: [\n  [ 1, [\n      [ 2, 3 ], undefined\n    ] ], undefined\n]\n\n      at <anonymous> (/home/illu/repo/typescript-coder/tmp/benchmark/2026-10-19T19-39-38-641Z-49261cbb/minilisp-tc-rep2/src/lisp.test.ts:90:51)\n(fail) minilisp pairs > car and cdr select pair parts\n\n 5 pass\n 11 fail\n 21 expect() calls\nRan 16 tests across 1 file. [78.00ms]\n\nstage: repeat\nthis exact edit was just rejected (stage: gate); resending it verbatim cannot succeed — change the payload",
+      "terminationReason": "edit-exhausted",
+      "model": "deepseek-v4.1-flash",
+      "workspace": "tmp/benchmark/2026-10-19T19-39-38-641Z-49261cbb/minilisp-tc-rep2",
+      "logs": {
+        "side": "tmp/benchmark/2026-10-19T19-39-38-641Z-49261cbb/logs/minilisp-tc-rep2/side.log",
+        "judge": "tmp/benchmark/2026-10-19T19-39-38-641Z-49261cbb/logs/minilisp-tc-rep2/judge.log",
+        "session": null,
+        "stats": null
+      },
+      "versions": {
+        "bun": "1.3.13",
+        "opencode": null
+      },
+      "judge": {
+        "testsOk": false,
+        "tscOk": false,
+        "fixtureOk": true,
+        "detail": "tsc failed: src/lisp.ts(117,21): error TS2345: Argument of type 'LispValue' is not assignable to parameter of type 'Form'.\n  Type 'null' is not assignable to type 'Form'.\nsrc/lisp.ts(138,17): error TS2345: Argument of type '(a: any, b: any) => number' is not assignable to parameter of type '(args: LispValue[]) => LispValue'.\n  Target signature provides too few arguments. Expected 2 or more, but got 1.\nsrc/lis...; bun test failed: bun test v1.3.13 (bf2e2cec)\n\nsrc/lisp.test.ts:\n25 |   });\n26 | });\n27 | \n28 | describe(\"minilisp builtins\", () => {\n29 |   test(\"arithmetic\", () => {\n30 |     expect(evaluate(\"(+ 1 2)\")).toBe(3);\n                                     ^\nerror: expect(received).toBe(expected)\n\nExpected: 3\nReceived: \"1,2undefined\"\n\n      at <anonymous> (/home/illu/repo/typescript-coder/tmp/benchmark/2026-10-19T19-39-3..."
+      },
+      "error": null,
+      "infraError": null
+    },
+    {
+      "task": "minilisp",
+      "side": "tc",
+      "rep": 3,
+      "ok": true,
+      "sideOk": true,
+      "tokens": {
+        "input": 14620,
+        "output": 3749,
+        "cacheRead": 3456,
+        "cacheWrite": null,
+        "reasoning": 0,
+        "total": 18369
+      },
+      "usageAvailable": true,
+      "usageSource": "chat-completions",
+      "rawUsage": [
+        {
+          "prompt_tokens": 1752,
+          "completion_tokens": 27,
+          "total_tokens": 1779,
+          "prompt_tokens_details": {
+            "cached_tokens": 1664
+          },
+          "completion_tokens_details": {
+            "reasoning_tokens": 0
+          }
+        },
+        {
+          "prompt_tokens": 1906,
+          "completion_tokens": 2039,
+          "total_tokens": 3945,
+          "prompt_tokens_details": {
+            "cached_tokens": 1792
+          },
+          "completion_tokens_details": {
+            "reasoning_tokens": 0
+          }
+        },
+        {
+          "prompt_tokens": 3586,
+          "completion_tokens": 820,
+          "total_tokens": 4406,
+          "prompt_tokens_details": {
+            "cached_tokens": 0
+          },
+          "completion_tokens_details": {
+            "reasoning_tokens": 0
+          }
+        },
+        {
+          "prompt_tokens": 3678,
+          "completion_tokens": 56,
+          "total_tokens": 3734,
+          "prompt_tokens_details": {
+            "cached_tokens": 0
+          },
+          "completion_tokens_details": {
+            "reasoning_tokens": 0
+          }
+        },
+        {
+          "prompt_tokens": 3698,
+          "completion_tokens": 807,
+          "total_tokens": 4505,
+          "prompt_tokens_details": {
+            "cached_tokens": 0
+          },
+          "completion_tokens_details": {
+            "reasoning_tokens": 0
+          }
+        }
+      ],
+      "durationMs": 19117,
+      "startedAt": "2026-10-19T19:39:38.694Z",
+      "finishedAt": "2026-10-19T19:39:57.811Z",
+      "cost": 0.003934368,
+      "rateClass": "off-peak",
+      "steps": 7,
+      "records": [
+        {
+          "row": 1,
+          "iteration": 1,
+          "kind": "exchange",
+          "exchange": 1,
+          "outcome": "selected",
+          "diagnosticsHead": null,
+          "replacementChars": null,
+          "finishReason": "stop",
+          "cause": null,
+          "payloads": 0,
+          "toolCalls": 0
+        },
+        {
+          "row": 2,
+          "iteration": 1,
+          "kind": "exchange",
+          "exchange": 2,
+          "outcome": "applied",
+          "diagnosticsHead": null,
+          "replacementChars": 6166,
+          "finishReason": "stop",
+          "cause": null,
+          "payloads": 1,
+          "toolCalls": 0
+        },
+        {
+          "row": 3,
+          "iteration": 1,
+          "kind": "verification",
+          "exchange": null,
+          "outcome": "tsc",
+          "diagnosticsHead": "stage: tsc replacement line 113: TS2322: Type 'Form' is not assignable to type 'LispValue'. Type 'string' is not assignable to type 'LispValue'. 112 | if (form.length !== 3) throw new Error(\"define ex",
+          "replacementChars": 6166,
+          "finishReason": "stop",
+          "cause": null,
+          "payloads": 0,
+          "toolCalls": 0
+        },
+        {
+          "row": 4,
+          "iteration": 2,
+          "kind": "exchange",
+          "exchange": 1,
+          "outcome": "matcher",
+          "diagnosticsHead": "stage: matcher the matcher could not be parsed as TypeScript: expected \"}\" (line 1, column 53); a matcher must be a single copied statement or expression, or a contiguous run of statements copied from",
+          "replacementChars": 2600,
+          "finishReason": "stop",
+          "cause": "matcher-unparseable",
+          "payloads": 1,
+          "toolCalls": 0
+        },
+        {
+          "row": 5,
+          "iteration": 2,
+          "kind": "exchange",
+          "exchange": 2,
+          "outcome": "matcher",
+          "diagnosticsHead": "stage: matcher the matcher could not be parsed as TypeScript: expected \"}\" (line 1, column 53); a matcher must be a single copied statement or expression, or a contiguous run of statements copied from",
+          "replacementChars": 52,
+          "finishReason": "stop",
+          "cause": "matcher-unparseable",
+          "payloads": 1,
+          "toolCalls": 0
+        },
+        {
+          "row": 6,
+          "iteration": 2,
+          "kind": "exchange",
+          "exchange": 3,
+          "outcome": "applied",
+          "diagnosticsHead": null,
+          "replacementChars": 2621,
+          "finishReason": "stop",
+          "cause": null,
+          "payloads": 1,
+          "toolCalls": 0
+        },
+        {
+          "row": 7,
+          "iteration": 2,
+          "kind": "verification",
+          "exchange": null,
+          "outcome": "ok",
+          "diagnosticsHead": null,
+          "replacementChars": 2621,
+          "finishReason": "stop",
+          "cause": null,
+          "payloads": 0,
+          "toolCalls": 0
+        }
+      ],
+      "exchangeStats": {
+        "turns": 5,
+        "payloads": 4,
+        "toolCalls": 0,
+        "applied": 2,
+        "rejected": 2,
+        "selected": 1,
+        "stopped": 0,
+        "selfChecks": 0
+      },
+      "loopDiagnostics": null,
+      "terminationReason": null,
+      "model": "deepseek-v4.1-flash",
+      "workspace": "tmp/benchmark/2026-10-19T19-39-38-641Z-49261cbb/minilisp-tc-rep3",
+      "logs": {
+        "side": "tmp/benchmark/2026-10-19T19-39-38-641Z-49261cbb/logs/minilisp-tc-rep3/side.log",
+        "judge": "tmp/benchmark/2026-10-19T19-39-38-641Z-49261cbb/logs/minilisp-tc-rep3/judge.log",
+        "session": null,
+        "stats": null
+      },
+      "versions": {
+        "bun": "1.3.13",
+        "opencode": null
+      },
+      "judge": {
+        "testsOk": true,
+        "tscOk": true,
+        "fixtureOk": true,
+        "detail": null
+      },
+      "error": null,
+      "infraError": null
+    },
+    {
+      "task": "minilisp",
+      "side": "tc",
+      "rep": 4,
+      "ok": true,
+      "sideOk": true,
+      "tokens": {
+        "input": 25903,
+        "output": 2458,
+        "cacheRead": 3456,
+        "cacheWrite": null,
+        "reasoning": 0,
+        "total": 28361
+      },
+      "usageAvailable": true,
+      "usageSource": "chat-completions",
+      "rawUsage": [
+        {
+          "prompt_tokens": 1752,
+          "completion_tokens": 27,
+          "total_tokens": 1779,
+          "prompt_tokens_details": {
+            "cached_tokens": 1664
+          },
+          "completion_tokens_details": {
+            "reasoning_tokens": 0
+          }
+        },
+        {
+          "prompt_tokens": 1906,
+          "completion_tokens": 1868,
+          "total_tokens": 3774,
+          "prompt_tokens_details": {
+            "cached_tokens": 1792
+          },
+          "completion_tokens_details": {
+            "reasoning_tokens": 0
+          }
+        },
+        {
+          "prompt_tokens": 3858,
+          "completion_tokens": 169,
+          "total_tokens": 4027,
+          "prompt_tokens_details": {
+            "cached_tokens": 0
+          },
+          "completion_tokens_details": {
+            "reasoning_tokens": 0
+          }
+        },
+        {
+          "prompt_tokens": 3964,
+          "completion_tokens": 128,
+          "total_tokens": 4092,
+          "prompt_tokens_details": {
+            "cached_tokens": 0
+          },
+          "completion_tokens_details": {
+            "reasoning_tokens": 0
+          }
+        },
+        {
+          "prompt_tokens": 3990,
+          "completion_tokens": 63,
+          "total_tokens": 4053,
+          "prompt_tokens_details": {
+            "cached_tokens": 0
+          },
+          "completion_tokens_details": {
+            "reasoning_tokens": 0
+          }
+        },
+        {
+          "prompt_tokens": 3819,
+          "completion_tokens": 65,
+          "total_tokens": 3884,
+          "prompt_tokens_details": {
+            "cached_tokens": 0
+          },
+          "completion_tokens_details": {
+            "reasoning_tokens": 0
+          }
+        },
+        {
+          "prompt_tokens": 3371,
+          "completion_tokens": 73,
+          "total_tokens": 3444,
+          "prompt_tokens_details": {
+            "cached_tokens": 0
+          },
+          "completion_tokens_details": {
+            "reasoning_tokens": 0
+          }
+        },
+        {
+          "prompt_tokens": 3243,
+          "completion_tokens": 65,
+          "total_tokens": 3308,
+          "prompt_tokens_details": {
+            "cached_tokens": 0
+          },
+          "completion_tokens_details": {
+            "reasoning_tokens": 0
+          }
+        }
+      ],
+      "durationMs": 22054,
+      "startedAt": "2026-10-19T19:39:38.704Z",
+      "finishedAt": "2026-10-19T19:40:00.758Z",
+      "cost": 0.004852218,
+      "rateClass": "off-peak",
+      "steps": 13,
+      "records": [
+        {
+          "row": 1,
+          "iteration": 1,
+          "kind": "exchange",
+          "exchange": 1,
+          "outcome": "selected",
+          "diagnosticsHead": null,
+          "replacementChars": null,
+          "finishReason": "stop",
+          "cause": null,
+          "payloads": 0,
+          "toolCalls": 0
+        },
+        {
+          "row": 2,
+          "iteration": 1,
+          "kind": "exchange",
+          "exchange": 2,
+          "outcome": "applied",
+          "diagnosticsHead": null,
+          "replacementChars": 5593,
+          "finishReason": "stop",
+          "cause": null,
+          "payloads": 1,
+          "toolCalls": 0
+        },
+        {
+          "row": 3,
+          "iteration": 1,
+          "kind": "verification",
+          "exchange": null,
+          "outcome": "tsc",
+          "diagnosticsHead": "stage: tsc replacement line 63: TS2677: A type predicate's type must be assignable to its parameter's type. Type 'Closure' is not assignable to type 'LispValue'. 62 | 63 | function isClosure(value: Li",
+          "replacementChars": 5593,
+          "finishReason": "stop",
+          "cause": null,
+          "payloads": 0,
+          "toolCalls": 0
+        },
+        {
+          "row": 4,
+          "iteration": 2,
+          "kind": "exchange",
+          "exchange": 1,
+          "outcome": "no-op",
+          "diagnosticsHead": "stage: no-op the edit does not change the file: the replacement is identical to the text it replaces; change the code so the diagnostics are actually addressed",
+          "replacementChars": 225,
+          "finishReason": "stop",
+          "cause": "no-op",
+          "payloads": 1,
+          "toolCalls": 0
+        },
+        {
+          "row": 5,
+          "iteration": 2,
+          "kind": "exchange",
+          "exchange": 2,
+          "outcome": "no-op",
+          "diagnosticsHead": "stage: no-op the edit does not change the file: the replacement is identical to the text it replaces; change the code so the diagnostics are actually addressed",
+          "replacementChars": 180,
+          "finishReason": "stop",
+          "cause": "no-op",
+          "payloads": 1,
+          "toolCalls": 0
+        },
+        {
+          "row": 6,
+          "iteration": 2,
+          "kind": "exchange",
+          "exchange": 3,
+          "outcome": "applied",
+          "diagnosticsHead": null,
+          "replacementChars": 156,
+          "finishReason": "stop",
+          "cause": null,
+          "payloads": 1,
+          "toolCalls": 0
+        },
+        {
+          "row": 7,
+          "iteration": 2,
+          "kind": "verification",
+          "exchange": null,
+          "outcome": "tsc",
+          "diagnosticsHead": "stage: tsc elsewhere in file: src/lisp.ts(67,48): error TS2677: A type predicate's type must be assignable to its parameter's type. Type 'Builtin' is not assignable to type 'LispValue'. src/lisp.ts(10",
+          "replacementChars": 156,
+          "finishReason": "stop",
+          "cause": null,
+          "payloads": 0,
+          "toolCalls": 0
+        },
+        {
+          "row": 8,
+          "iteration": 3,
+          "kind": "exchange",
+          "exchange": 1,
+          "outcome": "applied",
+          "diagnosticsHead": null,
+          "replacementChars": 82,
+          "finishReason": "stop",
+          "cause": null,
+          "payloads": 1,
+          "toolCalls": 0
+        },
+        {
+          "row": 9,
+          "iteration": 3,
+          "kind": "verification",
+          "exchange": null,
+          "outcome": "tsc",
+          "diagnosticsHead": "stage: tsc elsewhere in file: src/lisp.ts(102,46): error TS2322: Type 'Form' is not assignable to type 'LispValue'. Type 'string' is not assignable to type 'LispValue'. src/lisp.ts(116,9): error TS232",
+          "replacementChars": 82,
+          "finishReason": "stop",
+          "cause": null,
+          "payloads": 0,
+          "toolCalls": 0
+        },
+        {
+          "row": 10,
+          "iteration": 4,
+          "kind": "exchange",
+          "exchange": 1,
+          "outcome": "applied",
+          "diagnosticsHead": null,
+          "replacementChars": 91,
+          "finishReason": "stop",
+          "cause": null,
+          "payloads": 1,
+          "toolCalls": 0
+        },
+        {
+          "row": 11,
+          "iteration": 4,
+          "kind": "verification",
+          "exchange": null,
+          "outcome": "tsc",
+          "diagnosticsHead": "stage: tsc elsewhere in file: src/lisp.ts(127,21): error TS2345: Argument of type 'LispValue' is not assignable to parameter of type 'Form'. Type 'null' is not assignable to type 'Form'.",
+          "replacementChars": 91,
+          "finishReason": "stop",
+          "cause": null,
+          "payloads": 0,
+          "toolCalls": 0
+        },
+        {
+          "row": 12,
+          "iteration": 5,
+          "kind": "exchange",
+          "exchange": 1,
+          "outcome": "applied",
+          "diagnosticsHead": null,
+          "replacementChars": 58,
+          "finishReason": "stop",
+          "cause": null,
+          "payloads": 1,
+          "toolCalls": 0
+        },
+        {
+          "row": 13,
+          "iteration": 5,
+          "kind": "verification",
+          "exchange": null,
+          "outcome": "ok",
+          "diagnosticsHead": null,
+          "replacementChars": 58,
+          "finishReason": "stop",
+          "cause": null,
+          "payloads": 0,
+          "toolCalls": 0
+        }
+      ],
+      "exchangeStats": {
+        "turns": 8,
+        "payloads": 7,
+        "toolCalls": 0,
+        "applied": 5,
+        "rejected": 2,
+        "selected": 1,
+        "stopped": 0,
+        "selfChecks": 0
+      },
+      "loopDiagnostics": null,
+      "terminationReason": null,
+      "model": "deepseek-v4.1-flash",
+      "workspace": "tmp/benchmark/2026-10-19T19-39-38-641Z-49261cbb/minilisp-tc-rep4",
+      "logs": {
+        "side": "tmp/benchmark/2026-10-19T19-39-38-641Z-49261cbb/logs/minilisp-tc-rep4/side.log",
+        "judge": "tmp/benchmark/2026-10-19T19-39-38-641Z-49261cbb/logs/minilisp-tc-rep4/judge.log",
+        "session": null,
+        "stats": null
+      },
+      "versions": {
+        "bun": "1.3.13",
+        "opencode": null
+      },
+      "judge": {
+        "testsOk": true,
+        "tscOk": true,
+        "fixtureOk": true,
+        "detail": null
+      },
+      "error": null,
+      "infraError": null
+    },
+    {
+      "task": "minilisp",
+      "side": "tc",
+      "rep": 5,
+      "ok": true,
+      "sideOk": true,
+      "tokens": {
+        "input": 19639,
+        "output": 2922,
+        "cacheRead": 4224,
+        "cacheWrite": null,
+        "reasoning": 0,
+        "total": 22561
+      },
+      "usageAvailable": true,
+      "usageSource": "chat-completions",
+      "rawUsage": [
+        {
+          "prompt_tokens": 1752,
+          "completion_tokens": 27,
+          "total_tokens": 1779,
+          "prompt_tokens_details": {
+            "cached_tokens": 1664
+          },
+          "completion_tokens_details": {
+            "reasoning_tokens": 0
+          }
+        },
+        {
+          "prompt_tokens": 1906,
+          "completion_tokens": 2003,
+          "total_tokens": 3909,
+          "prompt_tokens_details": {
+            "cached_tokens": 1792
+          },
+          "completion_tokens_details": {
+            "reasoning_tokens": 0
+          }
+        },
+        {
+          "prompt_tokens": 3455,
+          "completion_tokens": 66,
+          "total_tokens": 3521,
+          "prompt_tokens_details": {
+            "cached_tokens": 0
+          },
+          "completion_tokens_details": {
+            "reasoning_tokens": 0
+          }
+        },
+        {
+          "prompt_tokens": 3572,
+          "completion_tokens": 750,
+          "total_tokens": 4322,
+          "prompt_tokens_details": {
+            "cached_tokens": 0
+          },
+          "completion_tokens_details": {
+            "reasoning_tokens": 0
+          }
+        },
+        {
+          "prompt_tokens": 3392,
+          "completion_tokens": 5,
+          "total_tokens": 3397,
+          "prompt_tokens_details": {
+            "cached_tokens": 768
+          },
+          "completion_tokens_details": {
+            "reasoning_tokens": 0
+          }
+        },
+        {
+          "prompt_tokens": 5562,
+          "completion_tokens": 71,
+          "total_tokens": 5633,
+          "prompt_tokens_details": {
+            "cached_tokens": 0
+          },
+          "completion_tokens_details": {
+            "reasoning_tokens": 0
+          }
+        }
+      ],
+      "durationMs": 14941,
+      "startedAt": "2026-10-19T19:39:57.953Z",
+      "finishedAt": "2026-10-19T19:40:12.894Z",
+      "cost": 0.004078122,
+      "rateClass": "off-peak",
+      "steps": 9,
+      "records": [
+        {
+          "row": 1,
+          "iteration": 1,
+          "kind": "exchange",
+          "exchange": 1,
+          "outcome": "selected",
+          "diagnosticsHead": null,
+          "replacementChars": null,
+          "finishReason": "stop",
+          "cause": null,
+          "payloads": 0,
+          "toolCalls": 0
+        },
+        {
+          "row": 2,
+          "iteration": 1,
+          "kind": "exchange",
+          "exchange": 2,
+          "outcome": "applied",
+          "diagnosticsHead": null,
+          "replacementChars": 5794,
+          "finishReason": "stop",
+          "cause": null,
+          "payloads": 1,
+          "toolCalls": 0
+        },
+        {
+          "row": 3,
+          "iteration": 1,
+          "kind": "verification",
+          "exchange": null,
+          "outcome": "tsc",
+          "diagnosticsHead": "stage: tsc replacement line 105: TS2322: Type 'Expr' is not assignable to type 'LispValue'. Type 'string' is not assignable to type 'LispValue'. 104 | }); 105 | const closure: Closure = { params, body",
+          "replacementChars": 5794,
+          "finishReason": "stop",
+          "cause": null,
+          "payloads": 0,
+          "toolCalls": 0
+        },
+        {
+          "row": 4,
+          "iteration": 2,
+          "kind": "exchange",
+          "exchange": 1,
+          "outcome": "matcher",
+          "diagnosticsHead": "stage: matcher the matcher was not found inside function \"evalExpr\" in src/lisp.ts (line 79, column 1); copy a complete snippet from the current source, or omit \"matcher\" for a whole-symbol rewrite no",
+          "replacementChars": 58,
+          "finishReason": "stop",
+          "cause": "matcher-not-found",
+          "payloads": 1,
+          "toolCalls": 0
+        },
+        {
+          "row": 5,
+          "iteration": 2,
+          "kind": "exchange",
+          "exchange": 2,
+          "outcome": "applied",
+          "diagnosticsHead": null,
+          "replacementChars": 2258,
+          "finishReason": "stop",
+          "cause": null,
+          "payloads": 1,
+          "toolCalls": 0
+        },
+        {
+          "row": 6,
+          "iteration": 2,
+          "kind": "verification",
+          "exchange": null,
+          "outcome": "tsc",
+          "diagnosticsHead": "stage: tsc replacement line 1: TS2322: Type 'Expr' is not assignable to type 'LispValue'. Type 'string' is not assignable to type 'LispValue'. 104 | }); 105 | const closure: Closure = { params, body: ",
+          "replacementChars": 2258,
+          "finishReason": "stop",
+          "cause": null,
+          "payloads": 0,
+          "toolCalls": 0
+        },
+        {
+          "row": 7,
+          "iteration": 3,
+          "kind": "exchange",
+          "exchange": 1,
+          "outcome": "self-check",
+          "diagnosticsHead": "Self-check (read): src/lisp.ts (180 line(s), truncated at 8000 characters). 1 | export type LispValue = number | boolean | LispValue[] | null; 2 | 3 | type Env = Map<string, LispValue>; 4 | 5 | type B",
+          "replacementChars": null,
+          "finishReason": "stop",
+          "cause": null,
+          "payloads": 0,
+          "toolCalls": 0
+        },
+        {
+          "row": 8,
+          "iteration": 3,
+          "kind": "exchange",
+          "exchange": 2,
+          "outcome": "applied",
+          "diagnosticsHead": null,
+          "replacementChars": 88,
+          "finishReason": "stop",
+          "cause": null,
+          "payloads": 1,
+          "toolCalls": 0
+        },
+        {
+          "row": 9,
+          "iteration": 3,
+          "kind": "verification",
+          "exchange": null,
+          "outcome": "ok",
+          "diagnosticsHead": null,
+          "replacementChars": 88,
+          "finishReason": "stop",
+          "cause": null,
+          "payloads": 0,
+          "toolCalls": 0
+        }
+      ],
+      "exchangeStats": {
+        "turns": 6,
+        "payloads": 4,
+        "toolCalls": 0,
+        "applied": 3,
+        "rejected": 1,
+        "selected": 1,
+        "stopped": 0,
+        "selfChecks": 1
+      },
+      "loopDiagnostics": null,
+      "terminationReason": null,
+      "model": "deepseek-v4.1-flash",
+      "workspace": "tmp/benchmark/2026-10-19T19-39-38-641Z-49261cbb/minilisp-tc-rep5",
+      "logs": {
+        "side": "tmp/benchmark/2026-10-19T19-39-38-641Z-49261cbb/logs/minilisp-tc-rep5/side.log",
+        "judge": "tmp/benchmark/2026-10-19T19-39-38-641Z-49261cbb/logs/minilisp-tc-rep5/judge.log",
+        "session": null,
+        "stats": null
+      },
+      "versions": {
+        "bun": "1.3.13",
+        "opencode": null
+      },
+      "judge": {
+        "testsOk": true,
+        "tscOk": true,
+        "fixtureOk": true,
+        "detail": null
+      },
+      "error": null,
+      "infraError": null
+    },
+    {
+      "task": "minilisp",
+      "side": "tc",
+      "rep": 6,
+      "ok": true,
+      "sideOk": true,
+      "tokens": {
+        "input": 14504,
+        "output": 2198,
+        "cacheRead": 3456,
+        "cacheWrite": null,
+        "reasoning": 0,
+        "total": 16702
+      },
+      "usageAvailable": true,
+      "usageSource": "chat-completions",
+      "rawUsage": [
+        {
+          "prompt_tokens": 1752,
+          "completion_tokens": 27,
+          "total_tokens": 1779,
+          "prompt_tokens_details": {
+            "cached_tokens": 1664
+          },
+          "completion_tokens_details": {
+            "reasoning_tokens": 0
+          }
+        },
+        {
+          "prompt_tokens": 1906,
+          "completion_tokens": 1966,
+          "total_tokens": 3872,
+          "prompt_tokens_details": {
+            "cached_tokens": 1792
+          },
+          "completion_tokens_details": {
+            "reasoning_tokens": 0
+          }
+        },
+        {
+          "prompt_tokens": 3967,
+          "completion_tokens": 66,
+          "total_tokens": 4033,
+          "prompt_tokens_details": {
+            "cached_tokens": 0
+          },
+          "completion_tokens_details": {
+            "reasoning_tokens": 0
+          }
+        },
+        {
+          "prompt_tokens": 3504,
+          "completion_tokens": 73,
+          "total_tokens": 3577,
+          "prompt_tokens_details": {
+            "cached_tokens": 0
+          },
+          "completion_tokens_details": {
+            "reasoning_tokens": 0
+          }
+        },
+        {
+          "prompt_tokens": 3375,
+          "completion_tokens": 66,
+          "total_tokens": 3441,
+          "prompt_tokens_details": {
+            "cached_tokens": 0
+          },
+          "completion_tokens_details": {
+            "reasoning_tokens": 0
+          }
+        }
+      ],
+      "durationMs": 12318,
+      "startedAt": "2026-10-19T19:40:00.890Z",
+      "finishedAt": "2026-10-19T19:40:13.209Z",
+      "cost": 0.002986368,
+      "rateClass": "off-peak",
+      "steps": 9,
+      "records": [
+        {
+          "row": 1,
+          "iteration": 1,
+          "kind": "exchange",
+          "exchange": 1,
+          "outcome": "selected",
+          "diagnosticsHead": null,
+          "replacementChars": null,
+          "finishReason": "stop",
+          "cause": null,
+          "payloads": 0,
+          "toolCalls": 0
+        },
+        {
+          "row": 2,
+          "iteration": 1,
+          "kind": "exchange",
+          "exchange": 2,
+          "outcome": "applied",
+          "diagnosticsHead": null,
+          "replacementChars": 5690,
+          "finishReason": "stop",
+          "cause": null,
+          "payloads": 1,
+          "toolCalls": 0
+        },
+        {
+          "row": 3,
+          "iteration": 1,
+          "kind": "verification",
+          "exchange": null,
+          "outcome": "tsc",
+          "diagnosticsHead": "stage: tsc replacement line 70: TS2677: A type predicate's type must be assignable to its parameter's type. Type 'Closure' is not assignable to type 'LispValue'. 69 | 70 | function isClosure(value: Li",
+          "replacementChars": 5690,
+          "finishReason": "stop",
+          "cause": null,
+          "payloads": 0,
+          "toolCalls": 0
+        },
+        {
+          "row": 4,
+          "iteration": 2,
+          "kind": "exchange",
+          "exchange": 1,
+          "outcome": "applied",
+          "diagnosticsHead": null,
+          "replacementChars": 82,
+          "finishReason": "stop",
+          "cause": null,
+          "payloads": 1,
+          "toolCalls": 0
+        },
+        {
+          "row": 5,
+          "iteration": 2,
+          "kind": "verification",
+          "exchange": null,
+          "outcome": "tsc",
+          "diagnosticsHead": "stage: tsc elsewhere in file: src/lisp.ts(119,44): error TS2322: Type 'Expr' is not assignable to type 'LispValue'. Type 'string' is not assignable to type 'LispValue'. src/lisp.ts(136,7): error TS232",
+          "replacementChars": 82,
+          "finishReason": "stop",
+          "cause": null,
+          "payloads": 0,
+          "toolCalls": 0
+        },
+        {
+          "row": 6,
+          "iteration": 3,
+          "kind": "exchange",
+          "exchange": 1,
+          "outcome": "applied",
+          "diagnosticsHead": null,
+          "replacementChars": 91,
+          "finishReason": "stop",
+          "cause": null,
+          "payloads": 1,
+          "toolCalls": 0
+        },
+        {
+          "row": 7,
+          "iteration": 3,
+          "kind": "verification",
+          "exchange": null,
+          "outcome": "tsc",
+          "diagnosticsHead": "stage: tsc elsewhere in file: src/lisp.ts(149,21): error TS2345: Argument of type 'LispValue' is not assignable to parameter of type 'Expr'. Type 'null' is not assignable to type 'Expr'.",
+          "replacementChars": 91,
+          "finishReason": "stop",
+          "cause": null,
+          "payloads": 0,
+          "toolCalls": 0
+        },
+        {
+          "row": 8,
+          "iteration": 4,
+          "kind": "exchange",
+          "exchange": 1,
+          "outcome": "applied",
+          "diagnosticsHead": null,
+          "replacementChars": 58,
+          "finishReason": "stop",
+          "cause": null,
+          "payloads": 1,
+          "toolCalls": 0
+        },
+        {
+          "row": 9,
+          "iteration": 4,
+          "kind": "verification",
+          "exchange": null,
+          "outcome": "ok",
+          "diagnosticsHead": null,
+          "replacementChars": 58,
+          "finishReason": "stop",
+          "cause": null,
+          "payloads": 0,
+          "toolCalls": 0
+        }
+      ],
+      "exchangeStats": {
+        "turns": 5,
+        "payloads": 4,
+        "toolCalls": 0,
+        "applied": 4,
+        "rejected": 0,
+        "selected": 1,
+        "stopped": 0,
+        "selfChecks": 0
+      },
+      "loopDiagnostics": null,
+      "terminationReason": null,
+      "model": "deepseek-v4.1-flash",
+      "workspace": "tmp/benchmark/2026-10-19T19-39-38-641Z-49261cbb/minilisp-tc-rep6",
+      "logs": {
+        "side": "tmp/benchmark/2026-10-19T19-39-38-641Z-49261cbb/logs/minilisp-tc-rep6/side.log",
+        "judge": "tmp/benchmark/2026-10-19T19-39-38-641Z-49261cbb/logs/minilisp-tc-rep6/judge.log",
+        "session": null,
+        "stats": null
+      },
+      "versions": {
+        "bun": "1.3.13",
+        "opencode": null
+      },
+      "judge": {
+        "testsOk": true,
+        "tscOk": true,
+        "fixtureOk": true,
+        "detail": null
+      },
+      "error": null,
+      "infraError": null
+    }
+  ],
+  "aggregates": {
+    "byTaskSide": [
+      {
+        "task": "minilisp",
+        "side": "tc",
+        "runs": 6,
+        "ok": 5,
+        "failed": 1,
+        "successRate": 0.8333333333333334,
+        "usageRuns": 6,
+        "tokens": {
+          "input": {
+            "mean": 40417.666666666664,
+            "total": 242506
+          },
+          "output": {
+            "mean": 3120,
+            "total": 18720
+          },
+          "total": {
+            "mean": 43537.666666666664,
+            "total": 261226
+          }
+        },
+        "cost": {
+          "mean": 0.006788133999999999,
+          "total": 0.04072880399999999
+        },
+        "durationMsMean": 27872.5,
+        "stepsMean": 15.666666666666666,
+        "tokensPerSuccess": {
+          "input": 48501.2,
+          "output": 3744,
+          "total": 52245.2
+        },
+        "costPerSuccess": 0.008145760799999999
+      }
+    ],
+    "bySide": [
+      {
+        "task": null,
+        "side": "tc",
+        "runs": 6,
+        "ok": 5,
+        "failed": 1,
+        "successRate": 0.8333333333333334,
+        "usageRuns": 6,
+        "tokens": {
+          "input": {
+            "mean": 40417.666666666664,
+            "total": 242506
+          },
+          "output": {
+            "mean": 3120,
+            "total": 18720
+          },
+          "total": {
+            "mean": 43537.666666666664,
+            "total": 261226
+          }
+        },
+        "cost": {
+          "mean": 0.006788133999999999,
+          "total": 0.04072880399999999
+        },
+        "durationMsMean": 27872.5,
+        "stepsMean": 15.666666666666666,
+        "tokensPerSuccess": {
+          "input": 48501.2,
+          "output": 3744,
+          "total": 52245.2
+        },
+        "costPerSuccess": 0.008145760799999999
+      }
+    ],
+    "overall": {
+      "task": null,
+      "side": null,
+      "runs": 6,
+      "ok": 5,
+      "failed": 1,
+      "successRate": 0.8333333333333334,
+      "usageRuns": 6,
+      "tokens": {
+        "input": {
+          "mean": 40417.666666666664,
+          "total": 242506
+        },
+        "output": {
+          "mean": 3120,
+          "total": 18720
+        },
+        "total": {
+          "mean": 43537.666666666664,
+          "total": 261226
+        }
+      },
+      "cost": {
+        "mean": 0.006788133999999999,
+        "total": 0.04072880399999999
+      },
+      "durationMsMean": 27872.5,
+      "stepsMean": 15.666666666666666,
+      "tokensPerSuccess": {
+        "input": 48501.2,
+        "output": 3744,
+        "total": 52245.2
+      },
+      "costPerSuccess": 0.008145760799999999
+    }
+  },
+  "provenance": {
+    "inputs": {
+      "model": "eb1394ac7fc44dc30655e16d1ca9bc59b8549b0f3144076e0e467982d17b4474",
+      "taskIssue": "377474aaaf634fe28c8e9bb36bbd63f2186151931b7bba8b7379fb4533a5b43d",
+      "fixture": "77c8545d1e0cc5eb7af124dc04e77e0d44fe9b8b92d3e85a35f49dff71f9cd1b",
+      "systemPrompt": "cdd21ce09270b89e9ae01ac4bde7417226789419a618155f02ed401e4e82f5c4",
+      "loopConfig": "68426bcaaaca045a03c97d78df1b0814f5ab84470f4e64ac3a43e974a37eceeb",
+      "pricing": "aab6f45ac055bdc46329be2c46279a8ce322bfa62c0c61f0ef177d8b67766560"
+    },
+    "inputHash": "caf3012482b510fe28c68446186a858cb93bd337042521ba3e90041f7551b1a1",
+    "computedAt": "2026-10-19T19:39:38.636Z"
+  }
+}
