@@ -1679,7 +1679,6 @@ describe("edit range selector (#72)", () => {
     const result = await runLoop({
       cwd: dir,
       issue: "make the answer test pass",
-      model: "fake",
       provider,
       checkCommand: TSC,
       testCommand: ["bun", "test"],
@@ -1702,7 +1701,6 @@ describe("edit range selector (#72)", () => {
     const result = await runLoop({
       cwd: dir,
       issue: "make the answer test pass",
-      model: "fake",
       provider,
       checkCommand: TSC,
       testCommand: ["bun", "test"],
@@ -1727,7 +1725,6 @@ describe("edit range selector (#72)", () => {
     const result = await runLoop({
       cwd: dir,
       issue: "make the answer test pass",
-      model: "fake",
       provider,
       checkCommand: TSC,
       testCommand: ["bun", "test"],
@@ -1749,7 +1746,6 @@ describe("edit range selector (#72)", () => {
     const result = await runLoop({
       cwd: dir,
       issue: "make the answer test pass",
-      model: "fake",
       provider,
       checkCommand: TSC,
       testCommand: ["bun", "test"],
@@ -1771,7 +1767,6 @@ describe("edit range selector (#72)", () => {
     const result = await runLoop({
       cwd: dir,
       issue: "make the answer test pass",
-      model: "fake",
       provider,
       checkCommand: TSC,
       testCommand: ["bun", "test"],
@@ -1806,7 +1801,6 @@ describe("edit range selector (#72)", () => {
     const result = await runLoop({
       cwd: dir,
       issue: "make the answer test pass",
-      model: "fake",
       provider,
       checkCommand: TSC,
       testCommand: ["bun", "test"],
@@ -1842,7 +1836,6 @@ describe("edit range selector (#72)", () => {
     const result = await runLoop({
       cwd: dir,
       issue: "make the answer test pass",
-      model: "fake",
       provider,
       checkCommand: signatureCheckCommand(dir, [1, 0]),
       testCommand: passingCommand,
@@ -1873,7 +1866,6 @@ describe("edit range selector (#72)", () => {
     const result = await runLoop({
       cwd: dir,
       issue: "make the answer test pass",
-      model: "fake",
       provider,
       checkCommand: TSC,
       testCommand: ["bun", "test"],
@@ -2073,7 +2065,6 @@ describe("self-verification request (#73)", () => {
     const result = await runLoop({
       cwd: dir,
       issue: "make the answer test pass",
-      model: "fake",
       provider,
       checkCommand: signatureCheckCommand(dir, [1, 0]),
       testCommand: passingCommand,
@@ -2107,7 +2098,6 @@ describe("self-verification request (#73)", () => {
     const result = await runLoop({
       cwd: dir,
       issue: "make the answer test pass",
-      model: "fake",
       provider,
       checkCommand: signatureCheckCommand(dir, [1, 0]),
       testCommand: passingCommand,
@@ -2145,7 +2135,6 @@ describe("self-verification request (#73)", () => {
     const result = await runLoop({
       cwd: dir,
       issue: "make the answer test pass",
-      model: "fake",
       provider,
       checkCommand: signatureCheckCommand(dir, [1, 0]),
       testCommand: passingCommand,
@@ -2177,7 +2166,6 @@ describe("self-verification request (#73)", () => {
     const result = await runLoop({
       cwd: dir,
       issue: "make the answer test pass",
-      model: "fake",
       provider,
       checkCommand: TSC,
       testCommand: ["bun", "test"],
@@ -2206,7 +2194,6 @@ describe("self-verification request (#73)", () => {
     const result = await runLoop({
       cwd: dir,
       issue: "make the answer test pass",
-      model: "fake",
       provider,
       checkCommand: signatureCheckCommand(dir, [1, 0]),
       testCommand: passingCommand,
@@ -2325,7 +2312,6 @@ describe("sharpened repeated no-progress ask (#65)", () => {
     const result = await runLoop({
       cwd: dir,
       issue: "make the answer test pass",
-      model: "fake",
       provider,
       checkCommand: stallingCheckCommand(dir, MAX_STALLED_ROUNDS * 2),
       testCommand: passingCommand,
@@ -2365,7 +2351,6 @@ describe("sharpened repeated no-progress ask (#65)", () => {
     const result = await runLoop({
       cwd: dir,
       issue: "make the answer test pass",
-      model: "fake",
       provider,
       tokenBudget: 120_000,
       checkCommand: stallingCheckCommand(dir, 40),
@@ -2399,7 +2384,6 @@ describe("sharpened repeated no-progress ask (#65)", () => {
     const result = await runLoop({
       cwd: dir,
       issue: "make the answer test pass",
-      model: "fake",
       provider,
       checkCommand: stallingCheckCommand(dir, MAX_STALLED_ROUNDS * 2),
       testCommand: passingCommand,
@@ -2678,7 +2662,6 @@ describe("runLoop", () => {
     const result = await runLoop({
       cwd: dir,
       issue: "make the answer test pass",
-      model: "fake",
       provider,
       checkCommand: TSC,
       testCommand: ["bun", "test"],
@@ -2719,7 +2702,6 @@ describe("runLoop", () => {
     const result = await runLoop({
       cwd: dir,
       issue: "make the answer test pass",
-      model: "fake",
       provider,
       checkCommand: TSC,
       testCommand: ["bun", "test"],
@@ -2745,7 +2727,6 @@ describe("runLoop", () => {
     const result = await runLoop({
       cwd: dir,
       issue: "make the answer test pass",
-      model: "fake",
       provider,
       checkCommand: TSC,
       testCommand: ["bun", "test"],
@@ -2764,7 +2745,6 @@ describe("runLoop", () => {
     const result = await runLoop({
       cwd: dir,
       issue: "make the answer test pass",
-      model: "fake",
       provider,
       checkCommand: TSC,
       testCommand: ["bun", "test"],
@@ -2784,7 +2764,6 @@ describe("runLoop", () => {
     const result = await runLoop({
       cwd: dir,
       issue: "make the answer test pass",
-      model: "fake",
       provider,
       checkCommand: TSC,
       testCommand: ["bun", "test"],
@@ -2813,7 +2792,6 @@ describe("runLoop", () => {
     const result = await runLoop({
       cwd: dir,
       issue,
-      model: "fake",
       provider,
       checkCommand: TSC,
       testCommand: ["bun", "test"],
@@ -2864,7 +2842,6 @@ describe("runLoop", () => {
     const result = await runLoop({
       cwd: dir,
       issue: "make the answer test pass",
-      model: "fake",
       provider,
       checkCommand: TSC,
       testCommand: ["bun", "test"],
@@ -2914,7 +2891,6 @@ describe("runLoop", () => {
     const result = await runLoop({
       cwd: dir,
       issue: "make the answer test pass",
-      model: "fake",
       provider,
       checkCommand: TSC,
       testCommand: ["bun", "test"],
@@ -2960,7 +2936,6 @@ describe("runLoop", () => {
     const result = await runLoop({
       cwd: dir,
       issue: "make the answer test pass",
-      model: "fake",
       provider,
       checkCommand: TSC,
       testCommand: ["bun", "test"],
@@ -3009,7 +2984,6 @@ describe("runLoop", () => {
     const result = await runLoop({
       cwd: dir,
       issue: "make the answer test pass",
-      model: "fake",
       provider,
       checkCommand: TSC,
       testCommand: ["bun", "test"],
@@ -3076,7 +3050,6 @@ describe("runLoop", () => {
     const result = await runLoop({
       cwd: dir,
       issue: "make the answer test pass",
-      model: "fake",
       provider,
       checkCommand: TSC,
       testCommand: ["bun", "test"],
@@ -3114,7 +3087,6 @@ describe("runLoop", () => {
     const result = await runLoop({
       cwd: dir,
       issue: "make the answer test pass",
-      model: "fake",
       provider,
       checkCommand: failingCommand,
       testCommand: passingCommand,
@@ -3152,7 +3124,6 @@ describe("runLoop", () => {
     const result = await runLoop({
       cwd: dir,
       issue: "make the answer test pass",
-      model: "fake",
       provider,
       checkCommand: TSC,
       testCommand: ["bun", "test"],
@@ -3181,7 +3152,6 @@ describe("runLoop", () => {
     const result = await runLoop({
       cwd: dir,
       issue: "make the answer test pass",
-      model: "fake",
       provider,
       checkCommand: stallingCheckCommand(dir, MAX_STALLED_ROUNDS),
       testCommand: passingCommand,
@@ -3227,7 +3197,6 @@ describe("runLoop", () => {
     const result = await runLoop({
       cwd: dir,
       issue: "make the answer test pass",
-      model: "fake",
       provider,
       checkCommand: stallingCheckCommand(dir, MAX_STALLED_ROUNDS),
       testCommand: passingCommand,
@@ -3271,7 +3240,6 @@ describe("runLoop", () => {
     const result = await runLoop({
       cwd: dir,
       issue: "make the answer test pass",
-      model: "fake",
       provider,
       checkCommand: stallingCheckCommand(dir, MAX_STALLED_ROUNDS * 2),
       testCommand: passingCommand,
@@ -3297,7 +3265,6 @@ describe("runLoop", () => {
     const result = await runLoop({
       cwd: dir,
       issue: "make the answer test pass",
-      model: "fake",
       provider,
       checkCommand: stallingCheckCommand(dir, MAX_STALLED_ROUNDS - 1),
       testCommand: passingCommand,
@@ -3322,7 +3289,6 @@ describe("runLoop", () => {
     const result = await runLoop({
       cwd: dir,
       issue: "make the answer test pass",
-      model: "fake",
       provider,
       checkCommand: stallingCheckCommand(dir, MAX_STALLED_ROUNDS),
       testCommand: passingCommand,
@@ -3353,7 +3319,6 @@ describe("runLoop", () => {
     const result = await runLoop({
       cwd: dir,
       issue: "make the answer test pass",
-      model: "fake",
       provider,
       checkCommand: stallingCheckCommand(dir, MAX_STALLED_ROUNDS),
       testCommand: passingCommand,
@@ -3384,7 +3349,6 @@ describe("runLoop", () => {
     const result = await runLoop({
       cwd: dir,
       issue: "make the answer test pass",
-      model: "fake",
       provider,
       checkCommand: stallingCheckCommand(dir, MAX_STALLED_ROUNDS),
       testCommand: passingCommand,
@@ -3416,7 +3380,6 @@ describe("runLoop", () => {
     const result = await runLoop({
       cwd: dir,
       issue: "make the answer test pass",
-      model: "fake",
       provider,
       checkCommand: stallingCheckCommand(dir, 7),
       testCommand: passingCommand,
@@ -3454,7 +3417,6 @@ describe("runLoop", () => {
     const result = await runLoop({
       cwd: dir,
       issue: "make the answer test pass",
-      model: "fake",
       provider,
       checkCommand: TSC,
       testCommand: ["bun", "test"],
@@ -3509,7 +3471,6 @@ describe("runLoop", () => {
     const result = await runLoop({
       cwd: dir,
       issue: "make the answer test pass",
-      model: "fake",
       provider,
       checkCommand: TSC,
       testCommand: ["bun", "test"],
@@ -3543,7 +3504,6 @@ describe("runLoop", () => {
     const result = await runLoop({
       cwd: dir,
       issue: "make the answer test pass",
-      model: "fake",
       provider,
       checkCommand: TSC,
       testCommand: ["bun", "test"],
@@ -3580,7 +3540,6 @@ describe("runLoop", () => {
     const result = await runLoop({
       cwd: dir,
       issue: "make the answer test pass",
-      model: "fake",
       provider,
       checkCommand: TSC,
       testCommand: ["bun", "test"],
@@ -3632,7 +3591,6 @@ describe("runLoop", () => {
     const result = await runLoop({
       cwd: dir,
       issue: "make the answer test pass",
-      model: "fake",
       provider,
       checkCommand: TSC,
       testCommand: ["bun", "test"],
@@ -3692,7 +3650,6 @@ describe("runLoop", () => {
     const result = await runLoop({
       cwd: dir,
       issue: "make the answer test pass",
-      model: "fake",
       provider,
       checkCommand: TSC,
       testCommand: ["bun", "test"],
@@ -3733,7 +3690,6 @@ describe("runLoop", () => {
     const result = await runLoop({
       cwd: dir,
       issue: "make the answer test pass",
-      model: "fake",
       provider,
       checkCommand: TSC,
       testCommand: ["bun", "test"],
@@ -3764,7 +3720,6 @@ describe("runLoop", () => {
     const result = await runLoop({
       cwd: dir,
       issue: "make the answer test pass",
-      model: "fake",
       provider,
       checkCommand: stallingCheckCommand(dir, MAX_STALLED_ROUNDS),
       testCommand: passingCommand,
@@ -3799,7 +3754,6 @@ describe("runLoop", () => {
     const result = await runLoop({
       cwd: dir,
       issue: "make the answer test pass",
-      model: "fake",
       provider,
       checkCommand: TSC,
       testCommand: ["bun", "test"],
@@ -3850,7 +3804,6 @@ describe("runLoop", () => {
     const result = await runLoop({
       cwd: dir,
       issue: "make the answer test pass",
-      model: "fake",
       provider,
       checkCommand: TSC,
       testCommand: ["bun", "test"],
@@ -3897,7 +3850,6 @@ describe("runLoop", () => {
     const result = await runLoop({
       cwd: dir,
       issue,
-      model: "fake",
       provider,
       checkCommand: signatureCheckCommand(dir, [1, 0]),
       testCommand: passingCommand,
@@ -3939,7 +3891,6 @@ describe("runLoop", () => {
     const result = await runLoop({
       cwd: dir,
       issue,
-      model: "fake",
       provider,
       checkCommand: passingCommand,
       testCommand: ["bun", "test"],
@@ -3977,7 +3928,6 @@ describe("runLoop", () => {
     const result = await runLoop({
       cwd: dir,
       issue,
-      model: "fake",
       provider,
       checkCommand: signatureCheckCommand(dir, [1, 0]),
       testCommand: passingCommand,
@@ -4023,7 +3973,6 @@ describe("runLoop", () => {
     const result = await runLoop({
       cwd: dir,
       issue: "make the answer test pass",
-      model: "fake",
       provider,
       checkCommand: TSC,
       testCommand: ["bun", "test"],
@@ -4063,7 +4012,6 @@ describe("runLoop", () => {
     const result = await runLoop({
       cwd: dir,
       issue: "make the answer test pass",
-      model: "fake",
       provider,
       checkCommand: TSC,
       testCommand: ["bun", "test"],
@@ -4100,7 +4048,6 @@ describe("runLoop", () => {
     const result = await runLoop({
       cwd: dir,
       issue: "make the answer test pass",
-      model: "fake",
       provider,
       checkCommand: signatureCheckCommand(dir, [1, 0]),
       testCommand: passingCommand,
@@ -4146,7 +4093,6 @@ describe("runLoop", () => {
     const result = await runLoop({
       cwd: dir,
       issue: "make the answer test pass",
-      model: "fake",
       provider,
       checkCommand: signatureCheckCommand(dir, [1, 0]),
       testCommand: passingCommand,
@@ -4197,7 +4143,6 @@ describe("runLoop", () => {
     const result = await runLoop({
       cwd: dir,
       issue: "make the answer test pass",
-      model: "fake",
       provider,
       checkCommand: signatureCheckCommand(dir, [1, 0]),
       testCommand: passingCommand,
@@ -4238,7 +4183,6 @@ describe("runLoop", () => {
     const result = await runLoop({
       cwd: dir,
       issue: "make the answer test pass",
-      model: "fake",
       provider,
       checkCommand: signatureCheckCommand(dir, [1, 0]),
       testCommand: passingCommand,
@@ -4270,7 +4214,6 @@ describe("runLoop", () => {
     const result = await runLoop({
       cwd: dir,
       issue: "make the answer test pass",
-      model: "fake",
       provider,
       checkCommand: TSC,
       testCommand: ["bun", "test"],
@@ -4293,7 +4236,6 @@ describe("runLoop", () => {
     const result = await runLoop({
       cwd: dir,
       issue: "make the answer test pass",
-      model: "fake",
       provider,
       checkCommand: TSC,
       testCommand: ["bun", "test"],
@@ -4316,7 +4258,6 @@ describe("runLoop", () => {
     const result = await runLoop({
       cwd: dir,
       issue: "make the answer test pass",
-      model: "fake",
       provider,
       checkCommand: TSC,
       testCommand: ["bun", "test"],
@@ -4337,7 +4278,6 @@ describe("runLoop", () => {
     const result = await runLoop({
       cwd: dir,
       issue: "make the answer test pass",
-      model: "fake",
       provider,
       checkCommand: TSC,
       testCommand: ["bun", "test"],
@@ -4374,7 +4314,6 @@ describe("runLoop", () => {
       const result = await runLoop({
         cwd: dir,
         issue: "make the answer test pass",
-        model: "fake",
         provider,
         checkCommand: TSC,
         testCommand: ["bun", "test"],
@@ -4396,7 +4335,6 @@ describe("runLoop", () => {
     const result = await runLoop({
       cwd: dir,
       issue: "make the answer test pass",
-      model: "fake",
       provider,
       checkCommand: TSC,
       testCommand: ["bun", "test"],
@@ -4430,7 +4368,6 @@ describe("runLoop", () => {
     const result = await runLoop({
       cwd: dir,
       issue: "make the answer test pass",
-      model: "fake",
       provider,
       checkCommand: TSC,
       testCommand: ["bun", "test"],
@@ -4470,7 +4407,6 @@ describe("runLoop", () => {
     const result = await runLoop({
       cwd: dir,
       issue: "make the answer test pass",
-      model: "fake",
       provider,
       checkCommand: TSC,
       testCommand: ["bun", "test"],
@@ -4501,7 +4437,6 @@ describe("runLoop", () => {
     const result = await runLoop({
       cwd: dir,
       issue: "make the answer test pass",
-      model: "fake",
       provider,
       checkCommand: signatureCheckCommand(dir, [1, 0]),
       testCommand: passingCommand,
@@ -4537,7 +4472,6 @@ describe("runLoop", () => {
     const result = await runLoop({
       cwd: dir,
       issue: "make the answer test pass",
-      model: "fake",
       provider,
       checkCommand: signatureCheckCommand(dir, [1, 0]),
       testCommand: passingCommand,
@@ -4574,7 +4508,6 @@ describe("runLoop", () => {
     const result = await runLoop({
       cwd: dir,
       issue: "make the answer test pass",
-      model: "fake",
       provider,
       checkCommand: signatureCheckCommand(dir, [1, 0]),
       testCommand: passingCommand,
@@ -4613,7 +4546,6 @@ describe("runLoop", () => {
     const result = await runLoop({
       cwd: dir,
       issue: "make the answer test pass",
-      model: "fake",
       provider,
       checkCommand: TSC,
       testCommand: ["bun", "test"],
@@ -4646,7 +4578,6 @@ describe("runLoop", () => {
     const newResult = await runLoop({
       cwd: newDir,
       issue: "make the answer test pass",
-      model: "fake",
       provider: newProvider,
       checkCommand: TSC,
       testCommand: ["bun", "test"],
@@ -4662,7 +4593,6 @@ describe("runLoop", () => {
     const rangeResult = await runLoop({
       cwd: rangeDir,
       issue: "make the answer test pass",
-      model: "fake",
       provider: rangeProvider,
       checkCommand: TSC,
       testCommand: ["bun", "test"],
@@ -4685,7 +4615,6 @@ describe("runLoop", () => {
     const result = await runLoop({
       cwd: dir,
       issue: "add a fresh function",
-      model: "fake",
       provider,
       checkCommand: passingCommand,
       testCommand: passingCommand,
@@ -4718,7 +4647,6 @@ describe("runLoop", () => {
     const result = await runLoop({
       cwd: dir,
       issue: "make the answer test pass",
-      model: "fake",
       provider,
       checkCommand: signatureCheckCommand(dir, [1, 0]),
       testCommand: passingCommand,
@@ -4762,7 +4690,6 @@ describe("runLoop", () => {
     const result = await runLoop({
       cwd: dir,
       issue: "make the answer test pass",
-      model: "fake",
       provider,
       checkCommand: failingCommand,
       testCommand: failingCommand,
@@ -4812,7 +4739,6 @@ describe("runLoop", () => {
     const result = await runLoop({
       cwd: dir,
       issue: "make the answer test pass",
-      model: "fake",
       provider,
       checkCommand: signatureCheckCommand(dir, [3, 2]),
       testCommand: failingCommand,
@@ -4835,7 +4761,6 @@ describe("runLoop", () => {
     const result = await runLoop({
       cwd: dir,
       issue: "make the answer test pass",
-      model: "fake",
       provider,
       tokenBudget: 50,
       checkCommand: TSC,
@@ -4873,7 +4798,6 @@ describe("runLoop", () => {
     const result = await runLoop({
       cwd: dir,
       issue: "make the answer test pass",
-      model: "fake",
       provider,
       tokenBudget: 100,
       checkCommand: TSC,
@@ -4910,7 +4834,6 @@ describe("runLoop", () => {
     const result = await runLoop({
       cwd: dir,
       issue: "make the answer test pass",
-      model: "fake",
       provider,
       tokenBudget: 100,
       checkCommand: TSC,
@@ -4940,7 +4863,6 @@ describe("runLoop", () => {
     const result = await runLoop({
       cwd: dir,
       issue: "make the answer test pass",
-      model: "fake",
       provider,
       tokenBudget: 100,
       checkCommand: TSC,
@@ -4966,7 +4888,6 @@ describe("runLoop", () => {
     const result = await runLoop({
       cwd: dir,
       issue: "remove the unused legacy helper",
-      model: "fake",
       provider,
       checkCommand: TSC,
       testCommand: passingCommand,
@@ -4995,7 +4916,6 @@ describe("runLoop", () => {
     const result = await runLoop({
       cwd: dir,
       issue: "remove the unused legacy helper",
-      model: "fake",
       provider,
       checkCommand: failingCommand,
       testCommand: failingCommand,
@@ -5045,7 +4965,6 @@ describe("runLoop", () => {
     const result = await runLoop({
       cwd: dir,
       issue: "make the answer test pass",
-      model: "fake",
       provider,
       checkCommand: TSC,
       testCommand: ["bun", "test"],
@@ -5080,7 +4999,6 @@ describe("runLoop", () => {
     const result = await runLoop({
       cwd: dir,
       issue: "add a greet function to helper.ts",
-      model: "fake",
       provider,
       checkCommand: TSC,
       testCommand: ["bun", "test"],
@@ -5111,7 +5029,6 @@ describe("runLoop", () => {
     const result = await runLoop({
       cwd: dir,
       issue: "create a greeting module",
-      model: "fake",
       provider,
       checkCommand: TSC,
       testCommand: ["bun", "test"],
@@ -5137,7 +5054,6 @@ describe("runLoop", () => {
     const result = await runLoop({
       cwd: dir,
       issue: "create a generated module",
-      model: "fake",
       provider,
       checkCommand: TSC,
       testCommand: ["bun", "test"],
@@ -5192,7 +5108,6 @@ describe("runLoop", () => {
     const result = await runLoop({
       cwd: dir,
       issue: "create a generated module",
-      model: "fake",
       provider,
       checkCommand: corruptOnceCheckCommand(dir, "src/generated.ts"),
       testCommand: passingCommand,
@@ -5228,7 +5143,6 @@ describe("runLoop", () => {
     const result = await runLoop({
       cwd: dir,
       issue: "add an extra helper",
-      model: "fake",
       provider,
       checkCommand: passingCommand,
       testCommand: passingCommand,
@@ -5264,7 +5178,6 @@ describe("runLoop", () => {
     const result = await runLoop({
       cwd: dir,
       issue: "add a greet function to helper.ts",
-      model: "fake",
       provider,
       checkCommand: TSC,
       testCommand: ["bun", "test"],
@@ -5304,7 +5217,6 @@ describe("runLoop", () => {
     const result = await runLoop({
       cwd: dir,
       issue: "make the answer test pass",
-      model: "fake",
       provider,
       checkCommand: TSC,
       testCommand: ["bun", "test"],
@@ -5340,7 +5252,6 @@ describe("runLoop", () => {
     const result = await runLoop({
       cwd: dir,
       issue: "make the answer test pass",
-      model: "fake",
       provider,
       checkCommand: TSC,
       testCommand: ["bun", "test"],
@@ -5371,7 +5282,6 @@ describe("runLoop", () => {
     const result = await runLoop({
       cwd: dir,
       issue: "make the answer test pass",
-      model: "fake",
       provider,
       checkCommand: TSC,
       testCommand: ["bun", "test"],
@@ -5410,7 +5320,6 @@ describe("runLoop", () => {
     const result = await runLoop({
       cwd: dir,
       issue: "make the answer test pass",
-      model: "fake",
       provider,
       checkCommand: TSC,
       testCommand: ["bun", "test"],
@@ -5445,7 +5354,6 @@ describe("runLoop", () => {
     const result = await runLoop({
       cwd: dir,
       issue: "make the answer test pass",
-      model: "fake",
       provider,
       checkCommand: TSC,
       testCommand: ["bun", "test"],
@@ -5486,7 +5394,6 @@ describe("runLoop", () => {
     const result = await runLoop({
       cwd: dir,
       issue: "make the answer test pass",
-      model: "fake",
       provider,
       checkCommand: TSC,
       testCommand: ["bun", "test"],
@@ -5531,7 +5438,6 @@ describe("runLoop", () => {
     const result = await runLoop({
       cwd: dir,
       issue: "make the answer test pass",
-      model: "fake",
       provider,
       checkCommand: TSC,
       testCommand: ["bun", "test"],
@@ -5598,7 +5504,6 @@ describe("runLoop", () => {
     const result = await runLoop({
       cwd: dir,
       issue: "make the answer test pass",
-      model: "fake",
       provider,
       checkCommand: TSC,
       testCommand: ["bun", "test"],
@@ -5638,7 +5543,6 @@ describe("runLoop", () => {
     const result = await runLoop({
       cwd: dir,
       issue: "make the answer test pass",
-      model: "fake",
       provider,
       checkCommand: TSC,
       testCommand: ["bun", "test"],
@@ -5670,7 +5574,6 @@ describe("runLoop", () => {
     const result = await runLoop({
       cwd: dir,
       issue: "make the answer test pass",
-      model: "fake",
       provider,
       checkCommand: TSC,
       testCommand: ["bun", "test"],
@@ -5692,7 +5595,6 @@ describe("runLoop", () => {
     const result = await runLoop({
       cwd: dir,
       issue: "make the answer test pass",
-      model: "fake",
       provider,
       checkCommand: TSC,
       testCommand: ["bun", "test"],
@@ -5720,7 +5622,6 @@ describe("runLoop", () => {
     const result = await runLoop({
       cwd: dir,
       issue: "make the answer test pass",
-      model: "fake",
       provider,
       checkCommand: TSC,
       testCommand: ["bun", "test"],
@@ -5746,7 +5647,6 @@ describe("runLoop", () => {
     const result = await runLoop({
       cwd: dir,
       issue: "make the answer test pass",
-      model: "fake",
       provider,
       checkCommand: TSC,
       testCommand: ["bun", "test"],
@@ -5799,7 +5699,6 @@ describe("runLoop", () => {
     const result = await runLoop({
       cwd: dir,
       issue: "make the answer test pass",
-      model: "fake",
       provider,
       checkCommand: TSC,
       testCommand: ["bun", "test"],
@@ -5958,7 +5857,6 @@ describe("runLoop", () => {
       const result = await runLoop({
         cwd: dir,
         issue: "make the answer test pass",
-        model: "fake",
         provider,
         checkCommand: TSC,
         testCommand: ["bun", "test"],
@@ -5994,7 +5892,6 @@ describe("runLoop", () => {
       const result = await runLoop({
         cwd: dir,
         issue: "make the answer test pass",
-        model: "fake",
         provider,
         checkCommand: signatureCheckCommand(dir, [1, 0]),
         testCommand: passingCommand,
@@ -6037,7 +5934,6 @@ describe("runLoop", () => {
       const result = await runLoop({
         cwd: dir,
         issue: "make the answer test pass",
-        model: "fake",
         provider,
         checkCommand: signatureCheckCommand(dir, [1, 0]),
         testCommand: passingCommand,
@@ -6078,7 +5974,6 @@ describe("runLoop", () => {
       const result = await runLoop({
         cwd: dir,
         issue: "make the answer test pass",
-        model: "fake",
         provider,
         // Iteration 1 applies but fails; iteration 2 rejects twice then applies
         // and fails again; iteration 3 rejects once then applies and passes.
@@ -6124,7 +6019,6 @@ describe("runLoop", () => {
       const result = await runLoop({
         cwd: dir,
         issue: "make the answer test pass",
-        model: "fake",
         provider,
         // Round 1 applies the resend and fails; round 2 resends it twice
         // (repeat, then repeat again) before a differing edit passes.
@@ -6175,7 +6069,6 @@ describe("runLoop", () => {
       const result = await runLoop({
         cwd: dir,
         issue: "make the answer test pass",
-        model: "fake",
         provider,
         checkCommand: signatureCheckCommand(dir, [1, 0]),
         testCommand: passingCommand,
@@ -6219,7 +6112,6 @@ describe("runLoop", () => {
       const result = await runLoop({
         cwd: dir,
         issue: "make the answer test pass",
-        model: "fake",
         provider,
         // Round 1 applies and fails; the repair round re-pins twice to a name
         // the file does not declare, then returns a resolvable edit.
@@ -6283,7 +6175,6 @@ describe("runLoop", () => {
       const result = await runLoop({
         cwd: dir,
         issue: "make the answer test pass",
-        model: "fake",
         provider,
         checkCommand: TSC,
         testCommand: ["bun", "test"],
@@ -6316,7 +6207,6 @@ describe("runLoop", () => {
     const result = await runLoop({
       cwd: dir,
       issue: "make the answer test pass",
-      model: "fake",
       provider,
       checkCommand: TSC,
       testCommand: ["bun", "test"],
@@ -6338,7 +6228,6 @@ describe("runLoop", () => {
     const result = await runLoop({
       cwd: dir,
       issue: "make the answer test pass",
-      model: "fake",
       provider,
       checkCommand: TSC,
       testCommand: ["bun", "test"],
@@ -6367,7 +6256,6 @@ describe("runLoop", () => {
     const result = await runLoop({
       cwd: dir,
       issue: "make the answer test pass",
-      model: "fake",
       provider,
       checkCommand: passingCommand,
       testCommand: invocationScript(dir, true),
@@ -6389,7 +6277,6 @@ describe("runLoop", () => {
     const result = await runLoop({
       cwd: dir,
       issue: "make the answer test pass",
-      model: "fake",
       provider,
       checkCommand: passingCommand,
       testCommand: invocationScript(dir, false),
@@ -6408,7 +6295,6 @@ describe("runLoop", () => {
     const result = await runLoop({
       cwd: dir,
       issue: "make the answer test pass",
-      model: "fake",
       provider,
       checkCommand: TSC,
       testCommand: ["bun", "test"],
@@ -6432,7 +6318,6 @@ describe("runLoop", () => {
     const longResult = await runLoop({
       cwd: longDir,
       issue: "make the answer test pass",
-      model: "fake",
       provider: longProvider,
       checkCommand: TSC,
       testCommand: ["bun", "test"],
@@ -6465,7 +6350,6 @@ describe("runLoop", () => {
     const result = await runLoop({
       cwd: dir,
       issue: "make the answer test pass",
-      model: "fake",
       provider,
       temperature: 0,
       checkCommand: failingCommand,
@@ -6493,7 +6377,6 @@ describe("runLoop", () => {
     const result = await runLoop({
       cwd: dir,
       issue: "make the answer test pass",
-      model: "fake",
       provider,
       temperature: 0,
       effortOverride: "max",
@@ -6519,7 +6402,6 @@ describe("runLoop", () => {
     const result = await runLoop({
       cwd: dir,
       issue: "make the answer test pass",
-      model: "fake",
       provider,
       temperature: 0,
     });
@@ -6546,7 +6428,6 @@ describe("runLoop with unparseable files", () => {
     const result = await runLoop({
       cwd: dir,
       issue: "make the answer test pass",
-      model: "fake",
       provider,
       checkCommand: TSC,
       testCommand: ["bun", "test"],
@@ -6583,7 +6464,6 @@ describe("runLoop with unparseable files", () => {
     const result = await runLoop({
       cwd: dir,
       issue: "fix the broken file",
-      model: "fake",
       provider,
       checkCommand: TSC,
       testCommand: ["bun", "test"],
@@ -6616,7 +6496,6 @@ describe("runLoop with unparseable files", () => {
     const result = await runLoop({
       cwd: dir,
       issue: "add a greeting module",
-      model: "fake",
       provider,
       checkCommand: TSC,
       testCommand: ["bun", "test"],
@@ -6661,7 +6540,6 @@ describe("runLoop provider failures", () => {
       runLoop({
         cwd: dir,
         issue: "make the answer test pass",
-        model: "fake",
         provider,
         checkCommand: TSC,
         testCommand: ["bun", "test"],
@@ -6710,7 +6588,6 @@ describe("runLoop provider failures", () => {
       runLoop({
         cwd: dir,
         issue: "make the answer test pass",
-        model: "fake",
         provider,
         checkCommand: failing,
         testCommand: failing,
@@ -6756,7 +6633,6 @@ describe("failure history wiring (#71)", () => {
     const result = await runLoop({
       cwd: dir,
       issue: "make the answer test pass",
-      model: "fake",
       provider,
       checkCommand: stallingCheckCommand(dir, MAX_STALLED_ROUNDS),
       testCommand: passingCommand,
@@ -6863,7 +6739,6 @@ describe("multi-payload exchanges (#69)", () => {
     const result = await runLoop({
       cwd: dir,
       issue: "make both declarations satisfy the pair test",
-      model: "fake",
       provider,
       checkCommand: TSC,
       testCommand: ["bun", "test"],
@@ -6922,7 +6797,6 @@ describe("multi-payload exchanges (#69)", () => {
     const result = await runLoop({
       cwd: dir,
       issue: "make both declarations satisfy the pair test",
-      model: "fake",
       provider,
       checkCommand: TSC,
       testCommand: ["bun", "test"],
@@ -6986,7 +6860,6 @@ describe("multi-payload exchanges (#69)", () => {
     const result = await runLoop({
       cwd: dir,
       issue: "make both declarations satisfy the pair test",
-      model: "fake",
       provider,
       checkCommand: TSC,
       testCommand: ["bun", "test"],
@@ -7035,7 +6908,6 @@ describe("multi-payload exchanges (#69)", () => {
     const result = await runLoop({
       cwd: dir,
       issue: "make both declarations satisfy the pair test",
-      model: "fake",
       provider,
       checkCommand: TSC,
       testCommand: ["bun", "test"],
@@ -7070,7 +6942,6 @@ describe("multi-payload exchanges (#69)", () => {
     const result = await runLoop({
       cwd: dir,
       issue: "make the answer test pass",
-      model: "fake",
       provider,
       checkCommand: TSC,
       testCommand: ["bun", "test"],

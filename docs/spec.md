@@ -22,9 +22,11 @@ through a **continuation prompt** (the model replies `STOP` to end the run, or a
 corrected edit/selection opens a fresh round), a round that opens on 8
 consecutive no-progress rounds (failed verifications plus rounds that end with
 no applied edit, e.g. rejection-exhausted ones) asks the model to decide through
-the **no-progress ask** (reply `STOP`, or continue with a materially different
-approach; its second and later occurrences name the unchanged/cycling failing
-set and demand the reply address it or `STOP`), while a token-budget overrun, a
+the **no-progress ask** when a target is pinned (a selection-only storm keeps
+the selection continuation's own `STOP` framing; reply `STOP`, or continue with
+a materially different approach; its second and later occurrences name the
+unchanged/cycling failing set and demand the reply address it or `STOP`), while
+a token-budget overrun, a
 failed delete verification, a target
 that stops parsing, a harness fault, or the 32-round cap ends the run, and the
 LLM writes exactly one summary in the four labeled sections (accomplished /
@@ -458,6 +460,16 @@ harness:
   example after an external modification), the run ends with `prev-broken`.
 - **truncation:** `finishReason: "length"` is classified as `truncated`, never
   applied, and the re-ask requests a more compact replacement.
+- **diagnostics shaping:** the failing-diagnostics block a prompt carries is
+  bounded. The assembled text is capped at 4,000 characters, keeping the head
+  (the earliest `tsc` errors, i.e. the root causes) and the tail (the test
+  summary) with an explicit `... [N characters truncated] ...` marker between
+  them; at most 10 replacement-mapped diagnostics render, followed by
+  `... N more in the replacement` inside the shown block; and the test-output
+  tail is capped at 2,000 characters with an
+  `[N earlier characters omitted]` marker. The caps shape the prompt only —
+  they change nothing about what is written or which exchange outcome is
+  recorded.
 - **exit:** success ends the run; every termination-matrix failure ends with the
   four-section LLM summary as the final action.
 - **failure artifacts:** the outer layer (CLI, benchmark runner) writes
@@ -529,6 +541,13 @@ unchanged.
   embedding only)
 - credentials: `OPENAI_API_KEY`, `OPENAI_BASE_URL` (standard env vars)
 - model selection: `--model` flag only
+- timeout / retries: the per-attempt HTTP timeout defaults to 120 s
+  (`DEFAULT_TIMEOUT_MS`) and is overridden by `OPENAI_TIMEOUT_MS`; `retries`
+  (default 2) re-sends on a network error or a retryable HTTP status (429, 5xx),
+  honoring `Retry-After` when present, while a per-attempt timeout is re-sent
+  under its own `timeoutRetries` budget (default 5, overridden by
+  `OPENAI_TIMEOUT_RETRIES`) and never consumes `retries` (#74). Backoff is
+  exponential (1 s base) with the two budgets tracked independently.
 - entry: issue via stdin; `cli.ts` currently provides `--help` only
 
 ## 9. Frontend decisions
@@ -546,6 +565,13 @@ Edit is accepted only if both pass:
 
 - `tsc --noEmit`
 - `bun test`
+
+The test leg runs the target's **sibling test file** first for fast feedback:
+when the pinned path is `foo.ts` and a `foo.test.ts` sits beside it, `bun test
+foo.test.ts` runs before the full suite. A targeted failure is the round's test
+verdict and the full suite is skipped; a targeted pass still runs the full
+`bun test`, so the gate is unchanged and only a round that would fail anyway
+returns sooner.
 
 **End-to-end fixtures:**
 
@@ -578,6 +604,8 @@ in `bun test`: a judge change that flips a verdict or a frontend that stops
 round-tripping must fail the suite before any measured number can move.
 
 ## 11. Milestones (work backwards, gated)
+
+**Status: all landed (M0–M8).** The gates below are the tests that pin each one.
 
 - **M0 · Scaffold** — `package.json` (bun, oxfmt, typescript), `tsconfig.json`
   (strict, ESM), `src/`, `bun test` wired. _Gate:_ clean `tsc --noEmit`.

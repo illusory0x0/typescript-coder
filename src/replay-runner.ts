@@ -204,7 +204,6 @@ export async function runReplay(options: ReplayRunOptions): Promise<ReplayRun> {
     const result = await runLoop({
       cwd: workspace,
       issue: options.bundle.issue,
-      model: options.bundle.model,
       provider,
       temperature: 0,
       checkCommand: ["bun", options.tscBin, "--noEmit"],

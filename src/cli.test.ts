@@ -206,7 +206,6 @@ describe("runMain", () => {
     const captured = captureIo();
     const code = await runMain({
       issue: "make the answer test pass",
-      model: "fake",
       cwd: dir,
       provider,
       io: captured.io,
@@ -239,7 +238,6 @@ describe("runMain", () => {
     const captured = captureIo();
     const code = await runMain({
       issue: "make the answer test pass",
-      model: "fake",
       cwd: dir,
       provider,
       io: captured.io,
@@ -273,7 +271,6 @@ describe("runMain", () => {
     const provider = new ScriptedProvider([]);
     const code = await runMain({
       issue: "   \n\t ",
-      model: "fake",
       cwd: fixtureDir(),
       provider,
       io: captured.io,
@@ -289,7 +286,6 @@ describe("runMain", () => {
     const captured = captureIo();
     const code = await runMain({
       issue: "make the answer test pass",
-      model: "fake",
       cwd: dir,
       provider,
       io: captured.io,
@@ -315,7 +311,6 @@ describe("runMain", () => {
     const captured = captureIo();
     const code = await runMain({
       issue: "fix the broken file",
-      model: "fake",
       cwd: dir,
       provider,
       io: captured.io,
@@ -337,7 +332,6 @@ describe("runMain", () => {
     const captured = captureIo();
     const code = await runMain({
       issue: "make the answer test pass",
-      model: "fake",
       cwd: dir,
       provider,
       io: captured.io,
@@ -355,7 +349,6 @@ describe("runMain", () => {
     const captured = captureIo();
     const code = await runMain({
       issue: "make the answer test pass",
-      model: "fake",
       cwd: join(tempDir(), "missing"),
       provider: new ScriptedProvider([]),
       io: captured.io,
@@ -416,7 +409,6 @@ test.skipIf(nestedSmoke)(
     const code = await runMain({
       issue:
         "Rewrite greet to store the greeting in a local variable, keeping its behavior identical.",
-      model: "fake",
       cwd: dir,
       provider,
       io: captured.io,

@@ -12,7 +12,6 @@ export interface MainIo {
 
 export interface RunMainOptions {
   issue: string;
-  model: string;
   cwd: string;
   provider: ProviderLike;
   io?: MainIo;
@@ -34,7 +33,6 @@ export async function runMain(options: RunMainOptions): Promise<number> {
     result = await runLoop({
       cwd: options.cwd,
       issue,
-      model: options.model,
       provider: options.provider,
       multiPayload: options.multiPayload === true,
     });
@@ -85,7 +83,6 @@ if (import.meta.main) {
   }
   const code = await runMain({
     issue,
-    model: cli.model,
     cwd: process.cwd(),
     provider,
     io: { out: console.log, err: console.error },

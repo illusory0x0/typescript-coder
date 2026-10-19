@@ -65,8 +65,9 @@ These are the load-bearing choices; most smaller decisions follow from them.
    cause (protocol, address, echo, matcher, range, repeat, duplicate, gate, format,
    truncated, …), corrections escalate when the same cause repeats, and the
    harness adds structure as a run stalls: a **continuation prompt** when a
-   round burns its exchanges, a **no-progress ask** at every 8-consecutive-
-   no-progress milestone, and a bounded **attempt digest** of prior failed
+   round burns its exchanges, a **no-progress ask** at the 8-streak
+   no-progress milestone and every 4 further failed rounds (#65), and a bounded
+   **attempt digest** of prior failed
    attempts; a non-converging repair chain additionally gets a **failure
    history** note naming the unchanged failing set or the two cycling states
    (#71). A **repair exchange** may also make one bounded self-verification
@@ -150,7 +151,8 @@ These are the load-bearing choices; most smaller decisions follow from them.
   runs the loop and prints the summary. The repo itself is the self-host
   acceptance target.
 - `src/openai.ts` — OpenAI-compatible chat client (tool calls, 120 s
-  timeout, retries).
+  per-attempt timeout, `retries` for network/429/5xx and a separate
+  `timeoutRetries` budget; #74).
 
 ### 3.4 Replay — `src/replay-format.ts`, `src/replay-runner.ts`
 

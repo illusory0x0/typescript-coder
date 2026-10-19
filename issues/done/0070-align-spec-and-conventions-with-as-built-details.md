@@ -1,7 +1,7 @@
 ---
 id: 70
 title: "Align spec and conventions with as-built details"
-status: todo
+status: done
 priority: low
 milestone: null
 parent: null

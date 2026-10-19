@@ -45,8 +45,9 @@ The old names are not separate terms; each is just part of the flow above:
 - **No-progress ask (#54/#60)**: a round that opens after `MAX_STALLED_ROUNDS`
   (8) consecutive no-progress rounds — failed verifications and rounds that end
   with no applied edit (rejection-exhausted, truncated, or spent picking) both
-  advance the run-scope streak — starts with the no-progress framing
-  instead of the ordinary exchange header — the consecutive-failed-round count,
+  advance the run-scope streak — **with a pinned target** starts with the
+  no-progress framing instead of the ordinary exchange header — the
+  consecutive-failed-round count,
   the current round (N of 32), `STOP` to end the run (only when the failures
   cannot be resolved), and concrete alternatives (change the matcher shape,
   re-pin to a declaration the diagnostics name, restructure the declaration) —

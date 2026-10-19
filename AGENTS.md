@@ -5,9 +5,13 @@ typecheck with `bunx tsc --noEmit`.
 
 ## Temp files
 
-- Put every scratch/temporary file in the repo-local `./tmp/` directory
-  (gitignored). Create it if missing.
-- Never write temporary files to `/tmp` or anywhere outside this repository.
+- Put every scratch/temporary file an agent creates in the repo-local `./tmp/`
+  directory (gitignored). Create it if missing.
+- Never write agent scratch files to `/tmp` or anywhere outside this
+  repository.
+- Test harnesses may sandbox throwaway workspaces under the system temp
+  directory instead (`acceptance/run.ts` uses `mkdtempSync(join(tmpdir(), …))`);
+  a harness-owned workspace is not an agent scratch file.
 - Clean up scratch files when the task is done.
 
 ## Commands

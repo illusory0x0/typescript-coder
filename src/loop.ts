@@ -1139,7 +1139,6 @@ const IDENTICAL_RETRY_NOTE =
 export interface LoopOptions {
   cwd: string;
   issue: string;
-  model: string;
   provider: ProviderLike;
   /** Abort the run once accumulated provider tokens exceed this (#36). */
   tokenBudget?: number;

@@ -299,7 +299,6 @@ async function runScenario(
       result = await runLoop({
         cwd: dir,
         issue: scenario.issue,
-        model: live ? context.model : "acceptance-scripted",
         provider,
         temperature: live ? 0 : undefined,
         checkCommand: context.checkCommand,

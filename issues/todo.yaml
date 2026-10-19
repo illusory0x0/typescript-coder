@@ -3,14 +3,6 @@
 # A dep, and every child of an umbrella, must be listed before its dependent.
 # wontfix entries stay listed (not pickable) at the bottom, by id.
 
-- id: 70
-  title: "Align spec and conventions with as-built details"
-  status: in-progress
-  priority: low
-  milestone: null
-  parent: null
-  deps: []
-  file: 0070-align-spec-and-conventions-with-as-built-details.md
 - id: 75
   title: "Storm compliance: the model ignores the sharpened no-progress ask and never STOPs (help wanted)"
   status: todo

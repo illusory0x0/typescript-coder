@@ -126,9 +126,12 @@ cache-hit input $0.006 peak / $0.003 off-peak; cache-miss input $0.30 / $0.15;
 output $1.20 / $0.60 (`src/benchmark-pricing.ts` carries the rate table).
 
 Peak hours are Monday-Friday 01:00-04:00 and 06:00-10:00 UTC, excluding Chinese
-public holidays (the editable 2026 list lives next to the rates); every other
-hour is off-peak. A run whose window crosses a boundary splits its cost by
-elapsed-time share — a documented uniform-spend approximation.
+public holidays (`CN_2026_PUBLIC_HOLIDAYS` next to the rates); every other hour
+is off-peak. That list is **2026-only and fixed**: for a date in another year it
+matches nothing, so a holiday weekday in a later year prices as peak until the
+list (or the year logic) is updated. A run whose window crosses a boundary
+splits its cost by elapsed-time share — a documented uniform-spend
+approximation.
 
 These figures are a **calculator estimate, not provider billing**: the runs are
 served through a relay endpoint that does not bill on DeepSeek's peak/off-peak
