@@ -79,6 +79,7 @@ digraph issues {
   "72" [label="#72 Edit protocol: add a (line,column) position selector as a matcher alternative"];
   "73" [label="#73 Repair self-verification: let the model request one bounded read or check per repair round"];
   "74" [label="#74 Provider: retry timed-out chat requests (max 5 additional attempts)"];
+  "75" [label="#75 Storm compliance: the model ignores the sharpened no-progress ask and never STOPs (help wanted)"];
 
   // parent edges (parent -> child), solid
   "1" -> "2";
@@ -132,6 +133,7 @@ digraph issues {
   "46" -> "63";
   "46" -> "65";
   "46" -> "71";
+  "65" -> "75";
 
   // dependency edges (blocker -> blocked), dashed
   "2" -> "3" [style=dashed, label="blocks"];
