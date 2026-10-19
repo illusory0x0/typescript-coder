@@ -127,3 +127,28 @@ Two scheduled matrices (`benchmark/results/2026-10-19-tc-storm65-a.json` /
   clause recorded in #49 (d 13,008 below the canonical 13,716; c 34,586).
 - Rows added to `benchmark/results/consumption.md` (c and d, peak-class). The
   issue stays in-progress; the #46 close-out remains gated on it.
+
+### Re-measure (criterion 3), shortened ask cadence, samples e/f (2026-10-19)
+
+Landed refinement: after the first decision point (failedRounds 8, byte-identical
+first ask), asks now recur every `MAX_STALLED_ROUNDS / 2` = 4 failed rounds
+(8, 12, 16, 20, …) via `isStalledAskMilestone` / `STALLED_ASK_INTERVAL`, so a
+fast-burning storm reaches the sharpened repeated ask before the budget ends it.
+
+- **e** (`2026-10-19-tc-storm65-e.json`; replays `tmp/replays-65-tc-matrix-e/`):
+  json 3/3, sexp 3/3, minilisp 3/3 — clean 9/9, overall $0.00207 (series best).
+  The bar's success clause holds on this sample.
+- **f** (`2026-10-19-tc-storm65-f.json`; replays `tmp/replays-65-tc-matrix-f/`):
+  json 3/3, sexp 3/3, minilisp **2/3**. rep2 burned to the bare token budget
+  (125,046; 28 turns, 6 applied / 20 rejected). The cadence fix did its job: the
+  replay shows **both the round-9 first ask and the round-13 `repeated ask 2`**
+  fired (previously the second ask was unreachable before budget exhaustion), but
+  the model answered each with another edit and never replied `STOP`.
+- **Criterion 3: still NOT met** (f has a bare-budget storm). The remaining
+  blocker is not cadence but compliance: under the standing "no hard cap, no
+  auto-stop" rule the model may ignore the explicit "address the unchanged
+  failing set or STOP" instruction, and it does. Filed as a help-wanted child
+  (see below); #65 stays in-progress and #46's close-out stays gated on it.
+- Criterion 4: #57's clause and #49's raw clause are unchanged by this cadence
+  change (no new rejection-class behavior); their prior re-measures stand.
+- Rows added to `benchmark/results/consumption.md` (e and f, peak-class).

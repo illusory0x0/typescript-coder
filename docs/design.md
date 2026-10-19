@@ -33,13 +33,16 @@ These are the load-bearing choices; most smaller decisions follow from them.
 1. **Structured edits, never unified diffs.** The model does not emit diff
    text. It picks a **target** — mode (`modify`/`create`/`delete`) plus an
    **address** (`path × symbol × kind`) — and returns **one flat JSON edit
-   payload** (`{"path","symbol","kind","matcher"?,"replacement"}`). Address
+   payload** (`{"path","symbol","kind","matcher"?,"range"?,"replacement"}`).
+   Address
    drift and patch-format failures disappear, diagnostics can name the exact
    field that failed, and retries stay cheap.
 2. **Strict addressing — reject, don't guess.** The address is resolved
    against the symbol index with a **strict AND** (every field must hold, and
    the resolution must be unique — never a silent first match). The optional
-   `matcher` is matched structurally (`anchor.ts`). On any mismatch the edit
+   `matcher` is matched structurally (`anchor.ts`), or the optional `range`
+   `(line,column)` selector (#72) addresses the span directly against the
+   numbered current-source block. On any mismatch the edit
    is rejected and fed back; it is not fuzzily patched in.
 3. **A bounded, two-level loop.**
 
@@ -59,16 +62,20 @@ These are the load-bearing choices; most smaller decisions follow from them.
    (keep-progress), and the next iteration re-asks against the freshly rebuilt
    context.
 5. **Failures are feedback, not dead ends.** Rejections are classified by
-   cause (protocol, address, echo, matcher, repeat, duplicate, gate, format,
+   cause (protocol, address, echo, matcher, range, repeat, duplicate, gate, format,
    truncated, …), corrections escalate when the same cause repeats, and the
    harness adds structure as a run stalls: a **continuation prompt** when a
    round burns its exchanges, a **no-progress ask** at every 8-consecutive-
    no-progress milestone, and a bounded **attempt digest** of prior failed
    attempts; a non-converging repair chain additionally gets a **failure
    history** note naming the unchanged failing set or the two cycling states
-   (#71). Standing rule (#65): fixes for rejection storms may sharpen wording,
-   never add hard caps or auto-stops, and never weaken the matcher, echo, or
-   gate guards — a recovering cycle must still be able to succeed.
+   (#71). A **repair exchange** may also make one bounded self-verification
+   request (#73): `{"request":"read"|"check"|"test"}`, executed once per round
+   against the same commands Verification runs, with a bounded result returned
+   in the next prompt. Standing rule (#65): fixes for rejection storms may
+   sharpen wording, never add hard caps or auto-stops, and never weaken the
+   matcher, echo, or gate guards — a recovering cycle must still be able to
+   succeed.
 6. **Everything is recorded and replayable.** Each exchange lands in the run
    records; provider calls can be recorded into a replay bundle
    (`typescript-coder-replay@1`) that the replay runner executes offline,
@@ -123,7 +130,9 @@ These are the load-bearing choices; most smaller decisions follow from them.
   `MAX_RUN_ITERATIONS` 32; `MAX_STALLED_ROUNDS` 8.
 - **Rejection machinery** — `parseSelectionResponse` / `parseEditResponse`,
   `classifyRejection`, `rejectionPolicy`, `rejectionLead`, and the digest
-  state (`createAttemptDigestState`).
+  state (`createAttemptDigestState`). `parseSelfCheckRequest` recognises the
+  repair-only `{"request":…}` reply (#73); `executeSelfCheck` runs the one
+  whitelisted kind and renders the bounded `Self-check result` block.
 - **Termination matrix** — `TerminationReason` = `token-budget` |
   `edit-exhausted` | `delete-verification-failed` | `prev-broken` |
   `harness-fault`; a run that verifies green carries no reason. `LoopResult`
@@ -225,12 +234,18 @@ The scripted end-to-end contract, offline by default with a mock provider:
 ### 4.2 The no-progress decision point
 
 Rounds that end without an applied edit advance a run-scope no-progress
-streak (failed verifications count too). At every 8-streak milestone on a
-pinned target, the harness stops repeating the same correction and asks the
-model to decide: `STOP`, or continue with a materially different approach.
+streak (failed verifications count too). At the first 8-streak milestone on a
+pinned target — and then every 4 further failed rounds (#65), so a fast-burning
+storm still reaches it — the harness stops repeating the same correction and
+asks the model to decide: `STOP`, or continue with a materially different
+approach.
 The ask carries the streak, the cause, and alternatives; the digest carries
-the prior failures and a ruled-out line. This is the designed escape from
-rejection storms — a decision point, not a cap.
+the prior failures and a ruled-out line. From the second decision point on
+(#65) the ask is sharpened: it names the unchanged/cycling failing set the
+`Failure history` note carries and requires the reply to address it or `STOP`.
+This is the designed escape from rejection storms — a decision point, not a
+cap; the first ask keeps its original wording and the recovering cycle can
+still continue.
 
 ### 4.3 How a number is born
 

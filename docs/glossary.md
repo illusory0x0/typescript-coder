@@ -26,8 +26,8 @@ The old names are not separate terms; each is just part of the flow above:
 - **Turn** → one model exchange inside the Edit loop.
 - **Selection** → the first round(s) of the Edit loop (picking mode + address).
 - **Correction** → a re-ask inside the Edit loop after a soft failure
-  (protocol / address / echo / matcher / no-op / repeat / duplicate / gate /
-  format / truncated); consumes the same ≤3.
+  (protocol / address / echo / matcher / range / no-op / repeat / duplicate /
+  gate / format / truncated); consumes the same ≤3.
 - **Attempt** → one iteration of the Run loop.
 - **Anchor / Locator** → merged into one payload: the old locator is the
   address, the old anchor is the optional `matcher`.
@@ -51,7 +51,14 @@ The old names are not separate terms; each is just part of the flow above:
   cannot be resolved), and concrete alternatives (change the matcher shape,
   re-pin to a declaration the diagnostics name, restructure the declaration) —
   keeping the retry shape (pinned selection, current source, diagnostics, JSON
-  payload). It recurs at every further multiple of 8. A #52 continuation round
+  payload). After the first ask it recurs every `MAX_STALLED_ROUNDS / 2` (4)
+  further failed rounds — 8, 12, 16, 20, … — so a fast-burning storm reaches
+  the later ask before the token budget ends the run (#65). The first ask uses
+  that wording; from the second decision point on it is **sharpened (#65)**: it names
+  the unchanged/cycling fact carried by the #71 `Failure history` note and
+  requires the reply to address that unchanged failing set or reply exactly
+  `STOP` — framing only, no cap, no auto-stop, and the first ask is
+  byte-identical. A #52 continuation round
   keeps its own framing, except that the continuation directly following a
   milestone round carries the ask instead (how rejection-exhausted cycles,
   whose every round is a continuation, reach the decision point); a selection
@@ -84,9 +91,21 @@ The old names are not separate terms; each is just part of the flow above:
   naming the unchanged failing set or the two cycling states (clamped,
   diagnostics only). It rides ordinary retries, #52 continuations and the #54
   ask; a passing verification resets the chain.
+- **Self-verification request (#73)**: on a repair exchange (a content exchange
+  whose prompt carries prior diagnostics, or a #52 continuation — never the
+  fresh post-pick edit prompt) the model may reply with `{"request":…}` instead
+  of an edit payload: `"read"` (the pinned file's current source, numbered and
+  truncated), `"check"` (the task's check command) or `"test"` (the task's test
+  command). The harness runs the one whitelisted kind and returns a bounded
+  `Self-check result` block in the next prompt. At most one request is executed
+  per Run iteration; a second request, a request with no successor exchange, a
+  non-whitelisted kind, or a malformed object is refused as a `protocol`
+  rejection (consumes the exchange, cannot extend the round). A round that
+  makes no request adds no provider calls or local commands.
 - **Rejection policy (#56/#65)**: every soft failure is classified into a typed
   cause — `protocol`, `echo`, `address`, the three matcher sub-causes
-  (`matcher-unparseable`, `matcher-not-found`, `matcher-ambiguous`), `no-op`,
+  (`matcher-unparseable`, `matcher-not-found`, `matcher-ambiguous`),
+  `range-invalid`, `no-op`,
   `repeat`,
   `duplicate`, `gate`, `format`, `truncated` — carried on the record row; the
   re-ask's lead sentence is that cause's concrete correction instead of the
@@ -111,10 +130,15 @@ The old names are not separate terms; each is just part of the flow above:
   rejection row is recorded and the run exits through the termination matrix as
   `harness-fault` with the full diagnostics and exactly one summary call — it
   is never retried.
-- **Edit shape**: one flat payload `{path, symbol, kind, matcher, replacement}`
+- **Edit shape**: one flat payload `{path, symbol, kind, matcher, range,
+  replacement}`
   per edit; `path × symbol × kind` is the address, `matcher` locates the range
   inside the symbol (a statement, member, expression, or contiguous statement
-  run; omitted ⇒ whole-symbol rewrite). One matcher per edit —
+  run; omitted ⇒ whole-symbol rewrite), and the optional `range`
+  `{line, column, endLine, endColumn}` (#72) instead addresses the span by
+  1-based inclusive positions against the numbered current-source block (takes
+  precedence over `matcher`; must sit inside the declaration). One matcher or
+  range per edit —
   multiple changes happen across Edit rounds (the old `edits[]` batch is gone).
 - **Syntax-preservation** (highest-priority invariant): the syntax gate rejects
   an edit whose `after` fails to parse — the splice is discarded, nothing is

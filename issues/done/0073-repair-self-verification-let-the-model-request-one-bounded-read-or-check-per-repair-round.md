@@ -1,7 +1,7 @@
 ---
 id: 73
 title: "Repair self-verification: let the model request one bounded read or check per repair round"
-status: todo
+status: done
 priority: medium
 milestone: null
 parent: null
@@ -94,3 +94,24 @@ against the then-current row.
   (first cut: per round).
 - Priority defaulted to medium; no milestone. Filed as a root issue so the v3
   close-out (#46) is not gated on it; re-parent on request.
+
+### Measurement (2026-10-19)
+
+One tc-side matrix on the frozen #72+#73 code
+(`benchmark/results/2026-10-19-tc-self-verification.json`, replays
+`tmp/replays-73-tc-matrix/`; row added to `benchmark/results/consumption.md`):
+
+- json 3/3 $0.00151, sexp 3/3 $0.00035, minilisp **2/3** $0.01652, overall 8/9
+  $0.00483 (runs 17:07:21-17:09:15 UTC).
+- **Adoption:** every minilisp run issued self-check requests (rep1 1, rep2 1,
+  rep3 2 — `exchangeStats.selfChecks`); json/sexp issued none. So the bounded
+  exception is live and used in the weak-spot task.
+- **Outcome vs the then-current #72 row:** minilisp tokens/USD per success are
+  worse (108,465 / $0.01652 vs 30,002 / $0.00508) because rep3 ran the
+  applied-but-unverified storm to the bare budget (127,548) despite 2
+  self-checks. json/sexp stay on the happy path. Recorded honestly per the
+  issue's "or the outcome (low adoption / no gain / worse) is recorded" clause;
+  the two samples either side (#72 clean 9/9, this one 8/9) show the storm is
+  high-variance, not a deterministic feature effect.
+- Gates: `bunx tsc --noEmit` 0, `bun test` 729 pass, accept 5/5,
+  `bun benchmark/check.ts` 3 PASS; the ledger row is `fresh` under #66.

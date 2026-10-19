@@ -38,7 +38,7 @@ import type {
 const SKIPPED_DIRECTORIES = new Set(["node_modules", ".git", "dist", "tmp"]);
 const CONTEXT_SYMBOL_LIMIT = 500;
 const SIGNATURE_LIMIT = 200;
-const SPEC_FILE_LIMIT = 8000;
+export const SPEC_FILE_LIMIT = 8000;
 const TEST_FILE_SUFFIX = ".test.ts";
 // Path-like tokens in the issue text, e.g. `src/lisp.ts` inside backticks.
 const ISSUE_PATH_PATTERN = /[\w./-]+\.ts\b/g;
@@ -167,7 +167,7 @@ export function buildSystemPrompt(multiPayload = false): string {
     "",
     'First you will be asked to select the target. Reply with ONLY a JSON object {"mode": "modify", "path": ..., "symbol": ..., "kind": ...}: "mode" is "modify" (default), "create", or "delete"; the composite address {path, symbol, kind} must all match the symbol index exactly and "kind" is required.',
     "",
-    'Then you will be asked to edit the selected symbol. Reply with ONLY one flat JSON object {"path": ..., "symbol": ..., "kind": ..., "matcher": ..., "replacement": ...}: the address {path, symbol, kind} must echo the pinned selection (a verification-repair round may re-pin to another declaration in the same file), and the optional "matcher" is a complete snippet copied from the current source that is structurally matched inside the symbol (omit it for a whole-symbol rewrite). The replacement is a drop-in for the matched range: keep leading keywords and modifiers consistent (do not re-add `export` the declaration omitted). Keep the same declaration kind and name unless the task requires otherwise. At most one matcher per response; multiple changes happen across edit rounds. No markdown fences and no explanations.',
+    'Then you will be asked to edit the selected symbol. Reply with ONLY one flat JSON object {"path": ..., "symbol": ..., "kind": ..., "matcher": ..., "replacement": ...}: the address {path, symbol, kind} must echo the pinned selection (a verification-repair round may re-pin to another declaration in the same file), and the optional "matcher" is a complete snippet copied from the current source that is structurally matched inside the symbol (omit it for a whole-symbol rewrite). As an alternative to "matcher", an optional "range" {line, column, endLine, endColumn} addresses the span by 1-based inclusive positions relative to the numbered current-source block shown in the prompt (the range must sit inside the declaration; when both are sent "range" wins). The replacement is a drop-in for the addressed range: keep leading keywords and modifiers consistent (do not re-add `export` the declaration omitted). Keep the same declaration kind and name unless the task requires otherwise. At most one matcher or range per response; multiple changes happen across edit rounds. No markdown fences and no explanations.',
     "",
     'A "create" selection asks for the COMPLETE declaration in "replacement"; the harness appends it to the target file, creating the file and any parent directories when needed. A "delete" selection carries no edit payload: the harness removes the declaration. To remove only part of a declaration, use "modify" with an empty "replacement". The syntax gate discards any edit that leaves the file unparseable and writes nothing.',
     "",
@@ -222,16 +222,47 @@ export function buildUserPrompt(
   return `${prompt}\n${buildSpecSection(specFiles)}\n`;
 }
 
+// Split a source into lines for rendering (a trailing newline does not add an
+// empty final line, so an empty source has no lines).
+function splitSourceLines(source: string): string[] {
+  const lines = source.split("\n");
+  if (lines.length > 0 && lines[lines.length - 1] === "") {
+    lines.pop();
+  }
+  return lines;
+}
+
+// Render the current-source block with 1-based line numbers so the optional
+// `range` selector (#72) can be derived from the prompt. Columns count the
+// source text after the `N | ` prefix.
+export function numberedSourceBlock(source: string): string {
+  const lines = splitSourceLines(source);
+  const width = String(lines.length).length;
+  return lines
+    .map((line, index) => `${String(index + 1).padStart(width, " ")} | ${line}`)
+    .join("\n");
+}
+
+// The optional `(line,column)` selector offered alongside `matcher` (#72).
+const RANGE_SELECTOR_NOTE =
+  'Optionally locate the span by its 1-based inclusive "range" ({line, column, endLine, endColumn}) copied from the numbered current-source lines; when both are sent "range" takes precedence over "matcher".';
+
+// The bounded self-verification offer, added only to repair prompts (#73); the
+// fresh post-pick edit prompt never carries it, so the no-repair path is
+// byte-identical.
+const SELF_CHECK_OFFER =
+  'Before editing, you may make at most one bounded self-verification request this round: reply with exactly {"request":"read"} (the pinned file\'s current source), {"request":"check"} (run the task\'s check command), or {"request":"test"} (run the task\'s test command); the harness runs it and returns a bounded result, then asks again.';
+
 export function buildEditPrompt(
   addressJson: string,
   symbolSource: string,
   multiPayload = false,
 ): string {
-  const body = symbolSource.endsWith("\n") ? symbolSource : `${symbolSource}\n`;
+  const numbered = numberedSourceBlock(symbolSource);
   if (multiPayload) {
     return `Output ONE flat JSON object {"path": ..., "symbol": ..., "kind": ..., "matcher": ..., "replacement": ...} for the pinned symbol, or a multi-payload object {"payloads": [ ... ]} that batches path-independent edits — one entry per file — with no markdown fences and no explanations.
 
-The first payload echoes the pinned address {path, symbol, kind}; every further payload names a different file and its own declaration address, which must resolve to exactly one declaration in that file's current source. "matcher" is optional per payload: a complete snippet copied from the current source below; "replacement" replaces exactly the matched range. Omit "matcher" for a whole-symbol rewrite: "replacement" then replaces the whole declaration. Keep leading keywords and modifiers consistent (do not re-add \`export\` the declaration omitted). Every replacement must keep its file parseable. The exchange applies atomically: if any payload fails its own guard, nothing is written and the exchange is rejected naming every failing payload.
+The first payload echoes the pinned address {path, symbol, kind}; every further payload names a different file and its own declaration address, which must resolve to exactly one declaration in that file's current source. "matcher" is optional per payload: a complete snippet copied from the current source below; "replacement" replaces exactly the matched range. Omit "matcher" for a whole-symbol rewrite: "replacement" then replaces the whole declaration. ${RANGE_SELECTOR_NOTE} Keep leading keywords and modifiers consistent (do not re-add \`export\` the declaration omitted). Every replacement must keep its file parseable. The exchange applies atomically: if any payload fails its own guard, nothing is written and the exchange is rejected naming every failing payload.
 
 Pinned selection:
 
@@ -241,13 +272,15 @@ ${addressJson}
 
 Current source:
 
+Each line below is prefixed with its 1-based line number (the optional "range" coordinates; columns count the source text after the \`N | \` prefix).
+
 \`\`\`ts
-${body}\`\`\`
+${numbered}\n\`\`\`
 `;
   }
   return `Output ONE flat JSON object {"path": ..., "symbol": ..., "kind": ..., "matcher": ..., "replacement": ...} for the pinned symbol, with no markdown fences and no explanations.
 
-Echo the pinned address {path, symbol, kind}. "matcher" is optional: a complete snippet copied from the current source below; "replacement" replaces exactly the matched range. Omit "matcher" for a whole-symbol rewrite: "replacement" then replaces the whole declaration. Keep leading keywords and modifiers consistent (do not re-add \`export\` the declaration omitted). The replacement must keep the file parseable.
+Echo the pinned address {path, symbol, kind}. "matcher" is optional: a complete snippet copied from the current source below; "replacement" replaces exactly the matched range. Omit "matcher" for a whole-symbol rewrite: "replacement" then replaces the whole declaration. ${RANGE_SELECTOR_NOTE} Keep leading keywords and modifiers consistent (do not re-add \`export\` the declaration omitted). The replacement must keep the file parseable.
 
 Pinned selection:
 
@@ -257,13 +290,15 @@ ${addressJson}
 
 Current source:
 
+Each line below is prefixed with its 1-based line number (the optional "range" coordinates; columns count the source text after the \`N | \` prefix).
+
 \`\`\`ts
-${body}\`\`\`
+${numbered}\n\`\`\`
 `;
 }
 
 export function buildCreatePrompt(addressJson: string, path: string): string {
-  return `The pinned selection uses mode "create". Output ONE flat JSON object {"path": ..., "symbol": ..., "kind": ..., "replacement": ...} with no markdown fences and no explanations: echo the pinned address {path, symbol, kind}, put the COMPLETE declaration in "replacement", and omit "matcher". The target file may not exist yet; the declaration is appended to it. The replacement must keep the file parseable.
+  return `The pinned selection uses mode "create". Output ONE flat JSON object {"path": ..., "symbol": ..., "kind": ..., "replacement": ...} with no markdown fences and no explanations: echo the pinned address {path, symbol, kind}, put the COMPLETE declaration in "replacement", and omit "matcher" and "range". The target file may not exist yet; the declaration is appended to it. The replacement must keep the file parseable.
 
 Target file:
 
@@ -277,6 +312,25 @@ Pinned selection:
 ${addressJson}
 \`\`\`
 `;
+}
+
+/**
+ * The no-progress ask (#54/#60) facts the retry and continuation headers render.
+ * The first ask is byte-identical to the original wording; from the second
+ * decision point on the header is sharpened (#65) with the `history` fact.
+ */
+export interface StalledAsk {
+  failedRounds: number;
+  round: number;
+  maxRounds: number;
+  /**
+   * 1-based decision-point number (`failedRounds / MAX_STALLED_ROUNDS`): 1 is the
+   * first ask; 2+ fold in the unchanged/cycling fact and demand address-or-STOP.
+   * Absent is treated as the first ask.
+   */
+  askNumber?: number;
+  /** The `#71` failure pattern the sharpened ask names; null while still changing. */
+  history?: FailurePattern | null;
 }
 
 export interface RetryPromptInput {
@@ -303,9 +357,10 @@ export interface RetryPromptInput {
   /**
    * No-progress ask (#54): replaces the exchange header (and the corrective
    * action sentence) with the consecutive-failed-rounds framing; only the
-   * first exchange of a stalled round sets it.
+   * first exchange of a stalled round sets it. From the second ask (#65) the
+   * header names the unchanged/cycling failing set.
    */
-  stalled?: { failedRounds: number; round: number; maxRounds: number };
+  stalled?: StalledAsk;
   /**
    * Per-cause rejection correction (#56): replaces the default corrective lead
    * sentence with the class-specific action (or its escalation); `stalled`
@@ -330,6 +385,12 @@ export interface RetryPromptInput {
    * default) keeps the exact single-payload instructions.
    */
   multiPayload?: boolean;
+  /**
+   * Bounded self-verification result (#73), appended after the Diagnostics
+   * block as a `Self-check result:` section. Rendered only on the prompt that
+   * immediately follows the executed request; ordinary retries set nothing.
+   */
+  selfCheck?: string;
 }
 
 /** Multi-payload modify instruction (#69): one flat payload or a path-independent batch. */
@@ -342,7 +403,29 @@ function multiModifyInstruction(
   const address = repin
     ? 'return the full address of the declaration you are fixing — either the pinned selection or a different declaration in the same file to re-pin and edit it (it must resolve uniquely in the current source) — or a {"payloads": [...]} object batching path-independent edits whose first entry carries that pinned-or-re-pinned address and each further entry names a different file and its own declaration'
     : 'echo the pinned selection in the first payload\'s address — or, to batch path-independent edits, return a {"payloads": [...]} object whose first entry echoes the pinned selection and each further entry names a different file and its own declaration';
-  return `${lead} ${status}Output either ONE flat JSON object {"path": ..., "symbol": ..., "kind": ..., "matcher": ..., "replacement": ...} (${address}), or exactly that {"payloads": [ ... ]} batch shape. "matcher" is optional per payload: a snippet copied from the current source, or omit it for a whole-symbol rewrite; "replacement" replaces the matched range (empty removes it). The exchange applies atomically: if any payload fails its own guard, nothing is written and the rejection names every failing payload. ${modifierNote} No markdown fences and no explanations.`;
+  return `${lead} ${status}Output either ONE flat JSON object {"path": ..., "symbol": ..., "kind": ..., "matcher": ..., "replacement": ...} (${address}), or exactly that {"payloads": [ ... ]} batch shape. "matcher" is optional per payload: a snippet copied from the current source, or omit it for a whole-symbol rewrite; "replacement" replaces the matched range (empty removes it). ${RANGE_SELECTOR_NOTE} The exchange applies atomically: if any payload fails its own guard, nothing is written and the rejection names every failing payload. ${modifierNote} No markdown fences and no explanations.`;
+}
+
+/**
+ * The no-progress ask header (#54). The first decision point renders the original
+ * wording byte-for-byte; from the second on (#65) it names the unchanged/cycling
+ * failing set the `#71 Failure history` note carries and requires the reply to
+ * address it or `STOP`. STOP's meaning is unchanged and no cap or auto-stop is
+ * added — the ask stays passable so a recovering cycle can continue.
+ */
+function stalledAskHeader(stalled: StalledAsk): string {
+  const base = `No progress: ${stalled.failedRounds} consecutive failed rounds. This is round ${stalled.round} of ${stalled.maxRounds}.`;
+  const askNumber = stalled.askNumber ?? 1;
+  if (askNumber <= 1) {
+    return `${base} Reply exactly \`STOP\` to end the run now, but only if the failures cannot be resolved; otherwise take a materially different approach rather than another minimal attempt.`;
+  }
+  const history =
+    stalled.history?.kind === "unchanged"
+      ? `the failing set is unchanged across the last ${stalled.history.rounds} verification rounds`
+      : stalled.history?.kind === "alternating"
+        ? `the failing set has cycled between two states across the last ${stalled.history.rounds} verification rounds`
+        : "the failing set has not converged";
+  return `${base} This is repeated ask ${askNumber} and the previous ask did not resolve it: ${history}, so another minimal edit at the same spot cannot help. This reply MUST either directly address that unchanged failing set — change the cause the diagnostics below name — or, only if it cannot be resolved, reply exactly \`STOP\` to end the run now.`;
 }
 
 export function buildRetryPrompt(input: RetryPromptInput): string {
@@ -358,7 +441,7 @@ export function buildRetryPrompt(input: RetryPromptInput): string {
   } = input;
   const remaining = Math.max(0, maxExchanges - exchangeNumber);
   const label = failure === "verification" ? "failed verification" : "failed";
-  const body = currentSource.endsWith("\n") ? currentSource : `${currentSource}\n`;
+  const numbered = numberedSourceBlock(currentSource);
   // The splice tolerates a leading `export` that repeats the declaration's
   // existing modifier, so no re-add warning is needed (#48).
   const modifierNote =
@@ -390,15 +473,15 @@ export function buildRetryPrompt(input: RetryPromptInput): string {
     input.multiPayload === true
       ? multiModifyInstruction(modifyLead, status, repin, modifierNote)
       : repin
-        ? `${modifyLead} ${status}Output ONLY one flat JSON object {"path": ..., "symbol": ..., "kind": ..., "matcher": ..., "replacement": ...}: return the full address of the declaration you are fixing — either the pinned selection or a different declaration in the same file to re-pin and edit it (it must resolve uniquely in the current source). "matcher" is optional: a snippet copied from the current source, or omit it for a whole-symbol rewrite; "replacement" replaces the matched range (empty removes it). ${modifierNote} No markdown fences and no explanations.`
-        : `${modifyLead} ${status}Output ONLY one flat JSON object {"path": ..., "symbol": ..., "kind": ..., "matcher": ..., "replacement": ...}: echo the pinned selection in the address. "matcher" is optional: a snippet copied from the current source, or omit it for a whole-symbol rewrite; "replacement" replaces the matched range (empty removes it). ${modifierNote} No markdown fences and no explanations.`;
+        ? `${modifyLead} ${status}Output ONLY one flat JSON object {"path": ..., "symbol": ..., "kind": ..., "matcher": ..., "replacement": ...}: return the full address of the declaration you are fixing — either the pinned selection or a different declaration in the same file to re-pin and edit it (it must resolve uniquely in the current source). "matcher" is optional: a snippet copied from the current source, or omit it for a whole-symbol rewrite; "replacement" replaces the matched range (empty removes it). ${RANGE_SELECTOR_NOTE} ${modifierNote} No markdown fences and no explanations.`
+        : `${modifyLead} ${status}Output ONLY one flat JSON object {"path": ..., "symbol": ..., "kind": ..., "matcher": ..., "replacement": ...}: echo the pinned selection in the address. "matcher" is optional: a snippet copied from the current source, or omit it for a whole-symbol rewrite; "replacement" replaces the matched range (empty removes it). ${RANGE_SELECTOR_NOTE} ${modifierNote} No markdown fences and no explanations.`;
   const instruction =
     mode === "modify"
       ? modifyInstruction
-      : `${createLead} ${status}Output ONLY one flat JSON object {"path": ..., "symbol": ..., "kind": ..., "replacement": ...}: echo the pinned selection in the address, put the COMPLETE corrected declaration in "replacement", and omit "matcher". No markdown fences and no explanations.`;
+      : `${createLead} ${status}Output ONLY one flat JSON object {"path": ..., "symbol": ..., "kind": ..., "replacement": ...}: echo the pinned selection in the address, put the COMPLETE corrected declaration in "replacement", and omit "matcher" and "range". No markdown fences and no explanations.`;
   const header =
     stalled !== undefined
-      ? `No progress: ${stalled.failedRounds} consecutive failed rounds. This is round ${stalled.round} of ${stalled.maxRounds}. Reply exactly \`STOP\` to end the run now, but only if the failures cannot be resolved; otherwise take a materially different approach rather than another minimal attempt.`
+      ? stalledAskHeader(stalled)
       : input.continuation === undefined
         ? ""
         : `Round ${input.continuation.round} of ${input.continuation.maxRounds} exhausted its ${maxExchanges}-exchange edit budget without a valid edit. Reply STOP to end the run, or return a corrected edit to continue with a fresh round.`;
@@ -408,7 +491,13 @@ export function buildRetryPrompt(input: RetryPromptInput): string {
     input.failureHistory === undefined || input.failureHistory.trim() === ""
       ? ""
       : `\n${input.failureHistory}\n`;
+  const selfCheckSection =
+    input.selfCheck === undefined || input.selfCheck.trim() === ""
+      ? ""
+      : `\nSelf-check result:\n\n\`\`\`\n${input.selfCheck}\n\`\`\`\n`;
   return `${header === "" ? "" : `${header}\n\n`}${instruction}
+
+${SELF_CHECK_OFFER}
 
 Pinned selection:
 
@@ -418,15 +507,17 @@ ${locatorJson}
 
 Current source:
 
+Each line below is prefixed with its 1-based line number (the optional "range" coordinates; columns count the source text after the \`N | \` prefix).
+
 \`\`\`ts
-${body}\`\`\`
+${numbered}\n\`\`\`
 
 Diagnostics:
 
 \`\`\`
 ${diagnostics}
 \`\`\`
-${failureHistorySection}${digestSection}`;
+${selfCheckSection}${failureHistorySection}${digestSection}`;
 }
 
 export interface ContinuationPromptInput {
@@ -451,8 +542,9 @@ export interface ContinuationPromptInput {
    * No-progress ask (#60): a continuation that directly follows a milestone
    * no-progress round carries the stalled decision framing (and its STOP
    * semantics) instead of the round-exhausted header; the retry shape is kept.
+   * The #65 sharpened framing rides the same field.
    */
-  stalled?: { failedRounds: number; round: number; maxRounds: number };
+  stalled?: StalledAsk;
   /** Opt-in multi-payload variant (#69); forwarded to the retry prompt. */
   multiPayload?: boolean;
 }
@@ -562,10 +654,26 @@ export interface SelectionResponse {
   locator: Locator;
 }
 
+/**
+ * Optional `(line, column)` selector (#72): a 1-based, inclusive-end position
+ * range relative to the current source block shown in the prompt (the pinned
+ * declaration for a modify round). It is an alternative to `matcher` for the
+ * ambiguity class the structural matcher cannot resolve, and when both are sent
+ * `range` takes precedence.
+ */
+export interface EditRange {
+  line: number;
+  column: number;
+  endLine: number;
+  endColumn: number;
+}
+
 export interface EditPayload {
   locator: Locator;
   /** Structural snippet copied from the current source; null = whole-symbol rewrite. */
   matcher: string | null;
+  /** Optional `(line, column)` selector (#72); takes precedence over `matcher` when present. */
+  range: EditRange | null;
   replacement: string;
 }
 
@@ -580,8 +688,12 @@ const EDIT_KEYS: ReadonlySet<string> = new Set([
   "symbol",
   "kind",
   "matcher",
+  "range",
   "replacement",
 ]);
+
+/** Keys of the optional `(line,column)` selector (#72). */
+const RANGE_KEYS: ReadonlySet<string> = new Set(["line", "column", "endLine", "endColumn"]);
 
 function isRecord(value: unknown): value is Record<string, unknown> {
   return typeof value === "object" && value !== null && !Array.isArray(value);
@@ -658,6 +770,36 @@ export function parseSelectionResponse(content: string): SelectionResponse {
   return selectionFromValue(readJsonObject(content, SELECTION_EXPECTED));
 }
 
+// Optional `(line,column)` selector (#72): shape errors are protocol rejections
+// (like a malformed `matcher`); resolution errors are `range-invalid`.
+function parseRangeField(record: Record<string, unknown>, expected: string): EditRange | null {
+  const raw = record["range"];
+  if (raw === undefined) {
+    return null;
+  }
+  if (!isRecord(raw)) {
+    throw new Error(
+      `${expected}; "range" must be an object {"line": ..., "column": ..., "endLine": ..., "endColumn": ...} of positive integers (omit it to keep the matcher/whole-symbol path)`,
+    );
+  }
+  const extra = Object.keys(raw).filter((key) => !RANGE_KEYS.has(key));
+  if (extra.length > 0) {
+    throw new Error(
+      `${expected}; "range" carries unexpected key(s) ${extra.map((key) => JSON.stringify(key)).join(", ")}`,
+    );
+  }
+  const fields: readonly (keyof EditRange)[] = ["line", "column", "endLine", "endColumn"];
+  const parsed: EditRange = { line: 0, column: 0, endLine: 0, endColumn: 0 };
+  for (const key of fields) {
+    const value = raw[key];
+    if (typeof value !== "number" || !Number.isInteger(value) || value < 1) {
+      throw new Error(`${expected}; "range.${key}" must be a positive integer (1-based)`);
+    }
+    parsed[key] = value;
+  }
+  return parsed;
+}
+
 // One flat edit payload from an already-parsed record; shared by the classic
 // single-payload reply and each entry of an opt-in `{"payloads": [...]}` batch
 // (#69).
@@ -669,11 +811,17 @@ function payloadFromRecord(record: Record<string, unknown>, expected: string): E
       `${expected}; "matcher" must be a non-empty string when present (omit it for a whole-symbol rewrite)`,
     );
   }
+  const range = parseRangeField(record, expected);
   const replacement = record["replacement"];
   if (typeof replacement !== "string") {
     throw new Error(`${expected}; "replacement" must be a string`);
   }
-  return { locator, matcher: matcher === undefined ? null : matcher, replacement };
+  return {
+    locator,
+    matcher: matcher === undefined ? null : matcher,
+    range,
+    replacement,
+  };
 }
 
 export function parseEditResponse(content: string): EditPayload {
@@ -806,6 +954,93 @@ export function parseEditResponseList(content: string): EditPayloadList {
   return { ok: true, batch: true, payloads };
 }
 
+// ---------------------------------------------------------------------------
+// Bounded self-verification request (#73)
+
+/** The whitelisted self-check kinds; the model names a kind, never a command. */
+export type SelfCheckKind = "read" | "check" | "test";
+
+/** The one key of the repair-only self-verification request object (#73). */
+const SELF_CHECK_KEY = "request";
+const SELF_CHECK_KINDS: ReadonlySet<string> = new Set(["read", "check", "test"]);
+const SELF_CHECK_EXPECTED = 'expected {"request":"read"|"check"|"test"}';
+
+/** Result of parsing a reply as a self-verification request (#73). */
+export type SelfCheckParse =
+  // Not request-shaped: the caller falls through to the ordinary edit parser.
+  | { kind: "none" }
+  | { kind: "ok"; request: SelfCheckKind }
+  // Request-shaped but malformed or outside the whitelist: a `protocol` rejection.
+  | { kind: "error"; diagnostics: string };
+
+/**
+ * Parse a reply as a self-verification request (#73): the distinct object
+ * `{"request":"read"|"check"|"test"}` carrying exactly that one key. Anything
+ * that is not request-shaped returns `none`, so the caller falls through to the
+ * ordinary edit parser; a request-shaped object with an unknown kind or an extra
+ * key returns `error`.
+ */
+export function parseSelfCheckRequest(content: string): SelfCheckParse {
+  let parsed: unknown;
+  try {
+    parsed = extractJsonObject(content);
+  } catch {
+    return { kind: "none" };
+  }
+  if (!isRecord(parsed) || !(SELF_CHECK_KEY in parsed)) {
+    return { kind: "none" };
+  }
+  const extra = Object.keys(parsed).filter((key) => key !== SELF_CHECK_KEY);
+  if (extra.length > 0) {
+    return {
+      kind: "error",
+      diagnostics: `stage: protocol\n${SELF_CHECK_EXPECTED}; unexpected key(s) ${extra.map((key) => JSON.stringify(key)).join(", ")} (a request carries only "request")`,
+    };
+  }
+  const value = parsed[SELF_CHECK_KEY];
+  if (typeof value !== "string" || !SELF_CHECK_KINDS.has(value)) {
+    return {
+      kind: "error",
+      diagnostics: `stage: protocol\n${SELF_CHECK_EXPECTED}; "request" must be one of "read", "check", "test" (got ${JSON.stringify(value)})`,
+    };
+  }
+  return { kind: "ok", request: value as SelfCheckKind };
+}
+
+/** Shared stdout+stderr budget for one self-check command result (#73). */
+export const SELF_CHECK_OUTPUT_LIMIT = 4_000;
+
+// Clamp command output to the self-check bound, naming how much was dropped; an
+// empty result stays explicit so the model can tell "no output" from "failed".
+function clampSelfCheckOutput(output: string): string {
+  const trimmed = output.trimEnd();
+  if (trimmed === "") {
+    return "(no output)";
+  }
+  return trimmed.length > SELF_CHECK_OUTPUT_LIMIT
+    ? `${trimmed.slice(0, SELF_CHECK_OUTPUT_LIMIT)}\n… [truncated ${trimmed.length - SELF_CHECK_OUTPUT_LIMIT} characters]`
+    : trimmed;
+}
+
+/** Bounded current-source rendering for a `read` request (#73). */
+export function renderSelfCheckRead(target: string, source: string): string {
+  if (source === "") {
+    return `Self-check (read): ${target} is empty or does not exist.`;
+  }
+  const lines = splitSourceLines(source).length;
+  return `Self-check (read): ${target} (${lines} line(s), truncated at ${SPEC_FILE_LIMIT} characters).\n\n${numberedSourceBlock(truncateSource(source))}`;
+}
+
+/** Bounded command-result rendering for a `check`/`test` request (#73). */
+export function renderSelfCheckCommand(
+  kind: "check" | "test",
+  label: string,
+  result: CommandResult,
+): string {
+  const status = result.ok ? "passed" : "failed";
+  return `Self-check (${kind}): ${label} ${status} (exit ${result.exitCode}).\n\n\`\`\`\n${clampSelfCheckOutput(result.output)}\n\`\`\``;
+}
+
 function addressJson(locator: Locator): string {
   return JSON.stringify({ path: locator.path, symbol: locator.name, kind: locator.kind });
 }
@@ -868,10 +1103,34 @@ export const MAX_RUN_ITERATIONS = 32;
 /**
  * No-progress decision point (#54): after this many consecutive
  * verification-failed rounds, the first content prompt of the next round asks
- * the model to decide (reply `STOP` or take a materially different approach);
- * the ask recurs at every further multiple.
+ * the model to decide (reply `STOP` or take a materially different approach).
  */
 export const MAX_STALLED_ROUNDS = 8;
+
+/**
+ * No-progress ask cadence after the first decision point (#65): the first ask
+ * stays at `MAX_STALLED_ROUNDS`; later asks recur this many failed rounds apart
+ * (4), so a fast-burning storm reaches the sharpened repeated ask before the
+ * token budget can end the run.
+ */
+export const STALLED_ASK_INTERVAL = Math.max(1, Math.floor(MAX_STALLED_ROUNDS / 2));
+
+/**
+ * True when `failedRounds` is a no-progress decision point (#54/#60/#65): the
+ * first at `MAX_STALLED_ROUNDS` (8), then every `STALLED_ASK_INTERVAL` (4) —
+ * 8, 12, 16, 20, …
+ */
+export function isStalledAskMilestone(failedRounds: number): boolean {
+  return (
+    failedRounds >= MAX_STALLED_ROUNDS &&
+    (failedRounds - MAX_STALLED_ROUNDS) % STALLED_ASK_INTERVAL === 0
+  );
+}
+
+/** 1-based decision-point index for a milestone failed-round count (#65). */
+export function stalledAskNumber(failedRounds: number): number {
+  return 1 + Math.floor((failedRounds - MAX_STALLED_ROUNDS) / STALLED_ASK_INTERVAL);
+}
 
 // Shown on the retry after the same rejection repeats verbatim (#48).
 const IDENTICAL_RETRY_NOTE =
@@ -904,10 +1163,13 @@ export type ExchangeOutcome =
   | "selected"
   | "applied"
   | "stopped"
+  // A repair exchange that carried one bounded self-verification request (#73).
+  | "self-check"
   | "protocol"
   | "address"
   | "echo"
   | "matcher"
+  | "range"
   | "no-op"
   | "repeat"
   | "duplicate"
@@ -934,6 +1196,7 @@ export type RejectionCause =
   | "echo"
   | "address"
   | MatcherCause
+  | "range-invalid"
   | "no-op"
   | "repeat"
   | "duplicate"
@@ -950,6 +1213,7 @@ type EditFailureStage =
   | "echo"
   | "address"
   | "matcher"
+  | "range"
   | "no-op"
   | "repeat"
   | "duplicate"
@@ -970,6 +1234,7 @@ export function classifyRejection(input: {
     | "echo"
     | "address"
     | "matcher"
+    | "range"
     | "no-op"
     | "repeat"
     | "duplicate"
@@ -986,6 +1251,10 @@ export function classifyRejection(input: {
         throw new Error('classifyRejection: stage "matcher" requires a matcherCause');
       }
       return input.matcherCause;
+    case "range":
+      // A single `range-invalid` class for out-of-bounds, outside-declaration,
+      // and empty/end-before-start ranges (#72); the diagnostic names which.
+      return "range-invalid";
     case "format":
       // The splice duplicated a modifier the declaration already carried:
       // harness-side, not a model mistake (#56, defense-in-depth behind #48).
@@ -1157,6 +1426,14 @@ export function rejectionPolicy(cause: RejectionCause): RejectionPolicy {
           'Extend "matcher" with more surrounding context copied from the current source, or omit "matcher" for a whole-symbol rewrite.',
         escalation: MATCHER_ESCALATION,
       };
+    case "range-invalid":
+      return {
+        action: "retry",
+        correction:
+          'The "range" is invalid for the current source: copy the 1-based line and column positions from the numbered current-source block, keep the end inclusive, and keep the range inside the pinned declaration — or omit "range" and use "matcher"/a whole-symbol rewrite.',
+        escalation:
+          'This attempt MUST address the current source: omit "range" and return the complete declaration (or a verbatim "matcher") rather than repeating invalid coordinates.',
+      };
     case "no-op":
       return {
         action: "retry",
@@ -1253,6 +1530,8 @@ export interface ExchangeStats {
   selected: number;
   /** Exchange rows that ended the run with a `STOP` reply (`stopped`). */
   stopped: number;
+  /** Exchange rows that executed a self-verification request (`self-check`, #73). */
+  selfChecks: number;
 }
 
 /**
@@ -1268,6 +1547,7 @@ export function exchangeStats(records: readonly LoopRecord[]): ExchangeStats {
     rejected: 0,
     selected: 0,
     stopped: 0,
+    selfChecks: 0,
   };
   for (const record of records) {
     if (record.kind !== "exchange") {
@@ -1282,6 +1562,8 @@ export function exchangeStats(records: readonly LoopRecord[]): ExchangeStats {
       stats.selected += 1;
     } else if (record.outcome === "stopped") {
       stats.stopped += 1;
+    } else if (record.outcome === "self-check") {
+      stats.selfChecks += 1;
     } else {
       stats.rejected += 1;
     }
@@ -1450,6 +1732,7 @@ const REJECTION_CAUSES: ReadonlySet<string> = new Set<RejectionCause>([
   "matcher-unparseable",
   "matcher-not-found",
   "matcher-ambiguous",
+  "range-invalid",
   "no-op",
   "repeat",
   "duplicate",
@@ -1470,6 +1753,7 @@ const DIGEST_NON_FAILURES: ReadonlySet<AttemptOutcome> = new Set<AttemptOutcome>
   "applied",
   "ok",
   "stopped",
+  "self-check",
 ]);
 
 /**
@@ -1811,6 +2095,150 @@ function lineColumnAt(source: string, offset: number): { line: number; column: n
   return { line, column: limit - lineStart + 1 };
 }
 
+// Map a 1-based (line, column) to an absolute offset inside `source`, walking
+// from `base` (the first character of the coordinate space) up to `limit` (one
+// past its last character). Returns null when the position does not exist in
+// that space; a position exactly at `limit` (one past the last character) is
+// returned as `limit`.
+function positionOffset(
+  source: string,
+  base: number,
+  limit: number,
+  line: number,
+  column: number,
+): number | null {
+  let currentLine = 1;
+  let currentColumn = 1;
+  for (let index = base; index < limit; index += 1) {
+    if (currentLine === line && currentColumn === column) {
+      return index;
+    }
+    if (source[index] === "\n") {
+      currentLine += 1;
+      currentColumn = 1;
+    } else {
+      currentColumn += 1;
+    }
+  }
+  if (currentLine === line && currentColumn === column) {
+    return limit;
+  }
+  return null;
+}
+
+/** Why a `range` selector did not resolve to a spliceable span (#72). */
+export type RangeResolutionFailure =
+  | "out-of-bounds"
+  | "outside-declaration"
+  | "empty"
+  | "truncated";
+
+export type RangeResolution =
+  | { ok: true; start: number; end: number }
+  | { ok: false; reason: RangeResolutionFailure; detail: string };
+
+// Resolve one 1-based inclusive `(line,column)` range (#72) against the current
+// source block shown in the prompt: `base`/`limit` bound that block and
+// `declaration` is the absolute span the range must sit inside. The reported
+// span is half-open (`[start, end)`) for the splice.
+export function resolveEditRange(
+  source: string,
+  range: EditRange,
+  base: number,
+  limit: number,
+  declaration: { start: number; end: number },
+): RangeResolution {
+  // A block larger than the prompt limit is elided on the way to the model, so
+  // its shown line numbers no longer map back to the source; refuse rather than
+  // splice at a wrong offset.
+  if (limit - base > SPEC_FILE_LIMIT) {
+    return {
+      ok: false,
+      reason: "truncated",
+      detail: `the shown current source was truncated (it exceeds ${SPEC_FILE_LIMIT} characters), so its numbered lines do not map back to the file`,
+    };
+  }
+  const start = positionOffset(source, base, limit, range.line, range.column);
+  if (start === null || start >= limit) {
+    return {
+      ok: false,
+      reason: "out-of-bounds",
+      detail: `the start position (line ${range.line}, column ${range.column}) is outside the shown current source`,
+    };
+  }
+  const endOffset = positionOffset(source, base, limit, range.endLine, range.endColumn);
+  if (endOffset === null) {
+    return {
+      ok: false,
+      reason: "out-of-bounds",
+      detail: `the end position (line ${range.endLine}, column ${range.endColumn}) is outside the shown current source`,
+    };
+  }
+  const end = endOffset + 1; // inclusive end
+  if (end > limit) {
+    return {
+      ok: false,
+      reason: "out-of-bounds",
+      detail: `the end position (line ${range.endLine}, column ${range.endColumn}) is the last character of the shown current source, so the inclusive range extends past it`,
+    };
+  }
+  if (end <= start) {
+    return {
+      ok: false,
+      reason: "empty",
+      detail: `the range is empty or ends before it starts: (line ${range.line}, column ${range.column}) to (line ${range.endLine}, column ${range.endColumn})`,
+    };
+  }
+  if (start < declaration.start || end > declaration.end) {
+    return {
+      ok: false,
+      reason: "outside-declaration",
+      detail: "the range does not sit inside the pinned declaration",
+    };
+  }
+  return { ok: true, start, end };
+}
+
+// The staged `range-invalid` diagnostic (#72): names the offending range and the
+// declaration's current bounds in the same 1-based coordinate space.
+function rangeInvalidDiagnostics(
+  locator: Locator,
+  target: string,
+  sourceBefore: string,
+  base: number,
+  limit: number,
+  declaration: { start: number; end: number },
+  range: EditRange,
+  detail: string,
+): string {
+  const blockText = sourceBefore.slice(base, limit);
+  const startPos = lineColumnAt(blockText, declaration.start - base);
+  const endPos = lineColumnAt(blockText, declaration.end - base);
+  return [
+    "stage: range",
+    `the "range" (line ${range.line}, column ${range.column} to line ${range.endLine}, column ${range.endColumn}) is invalid for ${locator.kind} ${JSON.stringify(locator.name)} in ${target}: ${detail}`,
+    `the pinned declaration currently spans line ${startPos.line}, column ${startPos.column} to line ${endPos.line}, column ${endPos.column} of the shown current source`,
+    'copy the 1-based line and column positions from the numbered current-source block, keep the end inclusive, and keep the range inside the pinned declaration; or omit "range" and use "matcher"/a whole-symbol rewrite',
+  ].join("\n");
+}
+
+// A `range` is defined against the numbered block the prompt showed, which (for
+// an ordinary modify round) is the pinned declaration alone. A payload that
+// re-pins to another declaration, or a further multi-payload entry in another
+// file, has no shown block of its own, so its coordinates are undefined: refuse
+// rather than splice at a guessed offset inside the target declaration (#72).
+function rangeUnshownDiagnostics(
+  shownLocator: Locator,
+  payloadLocator: Locator,
+  range: EditRange,
+): string {
+  return [
+    "stage: range",
+    `the "range" (line ${range.line}, column ${range.column} to line ${range.endLine}, column ${range.endColumn}) for ${payloadLocator.kind} ${JSON.stringify(payloadLocator.name)} in ${payloadLocator.path} cannot be used: the numbered current-source block shows only ${shownLocator.kind} ${JSON.stringify(shownLocator.name)} in ${shownLocator.path}`,
+    'omit "range" for this payload and use "matcher" or a whole-symbol rewrite, or echo the pinned selection',
+  ].join("\n");
+}
+
 function describeEntry(entry: IndexEntry, sourceByPath: ReadonlyMap<string, string>): string {
   const source = sourceByPath.get(entry.locator.path) ?? "";
   const { line, column } = lineColumnAt(source, entry.node.start);
@@ -1921,7 +2349,7 @@ function resolveCurrentEntry(
   return { ok: true, entry };
 }
 
-type EntrySpliceCause = MatcherCause | "no-op";
+type EntrySpliceCause = MatcherCause | "no-op" | "range-invalid";
 
 type EntrySplice =
   | { ok: true; candidate: string; gateStart: number }
@@ -2053,9 +2481,10 @@ function relocationNote(
   return `note: the same snippet matches inside ${described.join(" and ")} — return the intended declaration's own {path, symbol, kind} to re-pin`;
 }
 
-// Apply one edit to an already-resolved entry: omitted matcher = whole-symbol
-// rewrite, otherwise the single structural match inside the entry. Shared by
-// the pinned modify branch and verification-repair re-pins (#48).
+// Apply one edit to an already-resolved entry: a `range` selector when present,
+// otherwise an omitted matcher = whole-symbol rewrite, otherwise the single
+// structural match inside the entry. Shared by the pinned modify branch and
+// verification-repair re-pins (#48).
 function spliceEntryEdit(
   sourceBefore: string,
   target: string,
@@ -2063,8 +2492,46 @@ function spliceEntryEdit(
   entry: IndexEntry,
   matcher: string | null,
   replacement: string,
+  range: EditRange | null = null,
+  rangeFileRelative = false,
 ): EntrySplice {
   const modifier = precedingExportModifier(sourceBefore, entry);
+  if (range !== null) {
+    // Coordinate base (#72): the current source block shown in the prompt. A
+    // declaration-relative block starts at the indexed node (after a wrapping
+    // `export`); a whole-file block (create→repair rounds) starts at offset 0.
+    const base = rangeFileRelative ? 0 : entry.node.start;
+    const limit = rangeFileRelative ? sourceBefore.length : entry.node.end;
+    const declaration = { start: entry.node.start, end: entry.node.end };
+    const located = resolveEditRange(sourceBefore, range, base, limit, declaration);
+    if (!located.ok) {
+      return {
+        ok: false,
+        cause: "range-invalid",
+        diagnostics: rangeInvalidDiagnostics(
+          locator,
+          target,
+          sourceBefore,
+          base,
+          limit,
+          declaration,
+          range,
+          located.detail,
+        ),
+      };
+    }
+    // A range covering the whole indexed declaration gets the same modifier
+    // tolerance as a whole-symbol rewrite; a body-level range must not strip.
+    const spliced =
+      modifier !== null && located.start === entry.node.start
+        ? stripLeadingExport(replacement, modifier)
+        : replacement;
+    const candidate = applyAnchorSplice(sourceBefore, located.start, located.end, spliced);
+    if (candidate === sourceBefore) {
+      return { ok: false, cause: "no-op", diagnostics: NOOP_DIAGNOSTICS };
+    }
+    return { ok: true, candidate, gateStart: located.start };
+  }
   if (matcher === null) {
     const candidate = applyAnchorSplice(
       sourceBefore,
@@ -2125,20 +2592,21 @@ type PayloadSplice =
   | { ok: true; entry: IndexEntry; candidate: string; gateStart: number }
   | {
       ok: false;
-      stage: "address" | "matcher" | "no-op";
+      stage: "address" | "matcher" | "range" | "no-op";
       diagnostics: string;
       matcherCause?: MatcherCause;
       undeclaredName?: string | null;
     };
 
 // Resolve one modify payload against the source that would be spliced and
-// splice it: strict-AND address resolution, then the matcher/no-op rules.
+// splice it: strict-AND address resolution, then the range/matcher/no-op rules.
 // Shared by the pinned first payload and each self-addressed batch payload
 // (#69); the caller owns the echo/re-pin policy.
 function splicePayloadAtSource(
   sourceBefore: string,
   target: string,
   payload: EditPayload,
+  rangeFileRelative = false,
 ): PayloadSplice {
   const resolved = resolveCurrentEntry(sourceBefore, target, payload.locator);
   if (!resolved.ok) {
@@ -2156,6 +2624,8 @@ function splicePayloadAtSource(
     resolved.entry,
     payload.matcher,
     payload.replacement,
+    payload.range,
+    rangeFileRelative,
   );
   if (spliced.ok) {
     return {
@@ -2167,6 +2637,9 @@ function splicePayloadAtSource(
   }
   if (spliced.cause === "no-op") {
     return { ok: false, stage: "no-op", diagnostics: spliced.diagnostics };
+  }
+  if (spliced.cause === "range-invalid") {
+    return { ok: false, stage: "range", diagnostics: spliced.diagnostics };
   }
   return {
     ok: false,
@@ -2544,6 +3017,31 @@ async function runVerificationTests(
   return testTool(cwd, command, options.commandTimeoutMs);
 }
 
+// One whitelisted self-verification request (#73): `read` renders the pinned
+// file's current source; `check`/`test` run the same commands Verification runs.
+// The model names a kind, never a command string, so nothing else can run.
+async function executeSelfCheck(
+  kind: SelfCheckKind,
+  context: {
+    cwd: string;
+    target: string;
+    checkCommand?: string[];
+    testCommand?: string[];
+    commandTimeoutMs?: number;
+  },
+): Promise<string> {
+  if (kind === "read") {
+    const source = readFileIfExists(join(context.cwd, context.target));
+    return renderSelfCheckRead(context.target, source ?? "");
+  }
+  if (kind === "check") {
+    const result = await checkTool(context.cwd, context.checkCommand, context.commandTimeoutMs);
+    return renderSelfCheckCommand("check", "the check command", result);
+  }
+  const result = await testTool(context.cwd, context.testCommand, context.commandTimeoutMs);
+  return renderSelfCheckCommand("test", "the test command", result);
+}
+
 export interface DiagnosticsInput {
   check: CommandResult & { diagnostics: CheckDiagnostic[] };
   test: CommandResult;
@@ -2869,6 +3367,8 @@ interface ModifySubmissionEntry {
   /** Canonical as-sent `{path, symbol, kind}`. */
   locatorJson: string;
   matcher: string | null;
+  /** Canonical `(line,column)` selector (#72), or null. */
+  rangeJson: string | null;
   replacement: string;
 }
 
@@ -2900,11 +3400,17 @@ function submissionOf(
     entries: payloads.map((payload) => ({
       locatorJson: addressJson(payload.locator),
       matcher: payload.matcher,
+      rangeJson: payload.range === null ? null : rangeJson(payload.range),
       replacement: payload.replacement,
     })),
     applied,
     rejectionFirstLine,
   };
+}
+
+/** Canonical, comparable form of a `range` selector (#72). */
+function rangeJson(range: EditRange): string {
+  return `${range.line},${range.column},${range.endLine},${range.endColumn}`;
 }
 
 function sameModifySubmission(
@@ -2920,6 +3426,7 @@ function sameModifySubmission(
       entry !== undefined &&
       entry.locatorJson === addressJson(payload.locator) &&
       entry.matcher === payload.matcher &&
+      entry.rangeJson === (payload.range === null ? null : rangeJson(payload.range)) &&
       entry.replacement === payload.replacement
     );
   });
@@ -3125,6 +3632,11 @@ export async function runLoop(options: LoopOptions): Promise<LoopResult> {
     // Previous content rejection within this iteration, for the identical-
     // retry note (#48); resets every iteration.
     let lastRejection: string | null = null;
+    // Bounded self-verification request (#73), per Run iteration: `selfCheckUsed`
+    // enforces the at-most-one execution, `pendingSelfCheck` carries the one
+    // result into the next prompt.
+    let selfCheckUsed = false;
+    let pendingSelfCheck: string | null = null;
     const retryDiagnostics = (diagnostics: string): string => {
       const identical = lastRejection === diagnostics;
       lastRejection = diagnostics;
@@ -3164,8 +3676,7 @@ export async function runLoop(options: LoopOptions): Promise<LoopResult> {
     // target and keeps its own STOP framing.
     const stalledAsk =
       pinned !== null &&
-      stalledRounds > 0 &&
-      stalledRounds % MAX_STALLED_ROUNDS === 0 &&
+      isStalledAskMilestone(stalledRounds) &&
       (pendingContinuation !== null || iterationOpenedBy !== null);
 
     let continuationPrompt: string | null = null;
@@ -3174,8 +3685,10 @@ export async function runLoop(options: LoopOptions): Promise<LoopResult> {
       continuationDiagnostics = pendingContinuation.diagnostics;
       // Failure history (#71): the trailing verification failures as the
       // prompts see them (chain reset included); computed once per
-      // continuation and threaded into both variants.
-      const failureHistory = renderFailureHistoryNote(detectFailurePattern(records));
+      // continuation and threaded into both variants. The same pattern feeds the
+      // sharpened 2nd+ ask framing (#65).
+      const failurePattern = detectFailurePattern(records);
+      const failureHistory = renderFailureHistoryNote(failurePattern);
       if (pendingContinuation.pick) {
         continuationPrompt = buildSelectionContinuationPrompt({
           round: pendingContinuation.round,
@@ -3210,7 +3723,13 @@ export async function runLoop(options: LoopOptions): Promise<LoopResult> {
           digest: digestText(),
           failureHistory,
           stalled: stalledAsk
-            ? { failedRounds: stalledRounds, round: iteration, maxRounds: MAX_RUN_ITERATIONS }
+            ? {
+                failedRounds: stalledRounds,
+                round: iteration,
+                maxRounds: MAX_RUN_ITERATIONS,
+                askNumber: stalledAskNumber(stalledRounds),
+                history: failurePattern,
+              }
             : undefined,
           multiPayload: options.multiPayload === true,
         });
@@ -3397,12 +3916,18 @@ export async function runLoop(options: LoopOptions): Promise<LoopResult> {
       const target = pinnedTarget.locator.path;
       const diskSource = readFileIfExists(join(cwd, target)) ?? "";
       let contentPrompt: string;
+      // Repair exchange (#73): an intra-round retry (diagnostics present) or a
+      // #52 continuation — never the fresh post-pick edit prompt. Only a repair
+      // exchange accepts a self-verification request and offers it in the prompt.
+      let repairExchange: boolean;
       if (exchange === 1 && continuationPrompt !== null) {
         // Round-level continuation (#52): the first exchange of a continued
         // round shows the continuation prompt instead of the echo of a pick.
         contentPrompt = continuationPrompt;
+        repairExchange = true;
       } else if (lastDiagnostics === null && initialContentPrompt !== null) {
         contentPrompt = initialContentPrompt;
+        repairExchange = false;
       } else {
         const wholeFile = repair || pinnedTarget.mode === "create";
         const currentSource = wholeFile
@@ -3411,17 +3936,25 @@ export async function runLoop(options: LoopOptions): Promise<LoopResult> {
         // No-progress ask (#54): only the first content prompt of a stalled
         // round carries the decision framing and the digest (#57); every other
         // retry is unchanged.
+        // Failure history (#71): unlike the digest, the note is computed for
+        // every content retry — ordinary retries and the #54 ask alike. The same
+        // pattern feeds the sharpened 2nd+ ask framing (#65).
+        const failurePattern = detectFailurePattern(records);
         const stalled =
           exchange === 1 && stalledAsk
             ? {
                 failedRounds: stalledRounds,
                 round: iteration,
                 maxRounds: MAX_RUN_ITERATIONS,
+                askNumber: stalledAskNumber(stalledRounds),
+                history: failurePattern,
               }
             : undefined;
-        // Failure history (#71): unlike the digest, the note is computed for
-        // every content retry — ordinary retries and the #54 ask alike.
-        const failureHistory = renderFailureHistoryNote(detectFailurePattern(records));
+        const failureHistory = renderFailureHistoryNote(failurePattern);
+        // The self-check result is shown exactly once, in the prompt right after
+        // the request was executed (#73).
+        const selfCheck = pendingSelfCheck;
+        pendingSelfCheck = null;
         contentPrompt = buildRetryPrompt({
           exchangeNumber: exchange,
           maxExchanges: MAX_EDIT_EXCHANGES,
@@ -3440,7 +3973,9 @@ export async function runLoop(options: LoopOptions): Promise<LoopResult> {
           // class-specific lead; verification-repair prompts keep the default.
           correction: lastFailure === "edit" ? (lastCorrection ?? undefined) : undefined,
           multiPayload: options.multiPayload === true,
+          selfCheck: selfCheck ?? undefined,
         });
+        repairExchange = true;
       }
       messages = [
         systemMessage,
@@ -3556,6 +4091,51 @@ export async function runLoop(options: LoopOptions): Promise<LoopResult> {
         continue;
       }
       const content = response.content ?? "";
+      // Bounded self-verification request (#73): a repair exchange may reply
+      // with the distinct request object instead of an edit payload. At most one
+      // is executed per round, and only when a later exchange exists to return
+      // its result; every refusal falls through to the ordinary protocol path.
+      let requestFailure: string | null = null;
+      if (repairExchange) {
+        const parsedRequest = parseSelfCheckRequest(content);
+        if (parsedRequest.kind === "error") {
+          requestFailure = parsedRequest.diagnostics;
+        } else if (parsedRequest.kind === "ok") {
+          if (selfCheckUsed) {
+            requestFailure =
+              "stage: protocol\nthe round already used its one self-verification request; return an edit payload now (the harness runs at most one request per round)";
+          } else if (exchange >= MAX_EDIT_EXCHANGES) {
+            requestFailure =
+              "stage: protocol\nthere is no exchange left in this round to return a self-check result; return an edit payload";
+          } else {
+            const result = await executeSelfCheck(parsedRequest.request, {
+              cwd,
+              target,
+              checkCommand: options.checkCommand,
+              testCommand: options.testCommand,
+              commandTimeoutMs: options.commandTimeoutMs,
+            });
+            selfCheckUsed = true;
+            pendingSelfCheck = result;
+            records.push(
+              recordRow({
+                row: records.length + 1,
+                iteration,
+                kind: "exchange",
+                exchange,
+                locator: pinnedTarget.locator,
+                replacement: null,
+                diagnostics: result,
+                outcome: "self-check",
+                finishReason: response.finishReason,
+                payloads: 0,
+                toolCalls: response.toolCalls.length,
+              }),
+            );
+            continue;
+          }
+        }
+      }
       let payload: EditPayload | null = null;
       // Opt-in multi-payload variant (#69): the reply may carry a
       // `{"payloads": [...]}` batch. `batchCarried` keeps every payload that
@@ -3576,6 +4156,11 @@ export async function runLoop(options: LoopOptions): Promise<LoopResult> {
       let gateReplacement = "";
       let failure: string | null = null;
       let failureStage: EditFailureStage = "protocol";
+      // A refused self-check request (#73) is an ordinary `protocol` rejection:
+      // skip the edit parser and fall through to the shared rejection record.
+      if (requestFailure !== null) {
+        failure = requestFailure;
+      }
       // Structured rejection origin (#56): the splice's matcher sub-cause and
       // the formatter message; never reconstructed from the diagnostics text.
       let matcherCause: MatcherCause | undefined;
@@ -3584,7 +4169,9 @@ export async function runLoop(options: LoopOptions): Promise<LoopResult> {
       // current source does not declare, so the retry lead keeps the add path
       // open instead of demanding a re-pin that cannot resolve.
       let addressUndeclaredName: string | null = null;
-      if (options.multiPayload === true) {
+      if (failure !== null) {
+        // Refused self-check request: no payload to parse.
+      } else if (options.multiPayload === true) {
         const parsed = parseEditResponseList(content);
         if (parsed.ok) {
           if (parsed.batch && pinnedTarget.mode !== "modify") {
@@ -3635,9 +4222,12 @@ export async function runLoop(options: LoopOptions): Promise<LoopResult> {
           // splice; the file is not touched.
           failure = repeatDiagnostics(lastModifySubmission);
           failureStage = "repeat";
-        } else if (pinnedTarget.mode === "create" && payload.matcher !== null) {
+        } else if (
+          pinnedTarget.mode === "create" &&
+          (payload.matcher !== null || payload.range !== null)
+        ) {
           failure =
-            'stage: protocol\nmode "create" does not take a "matcher"; omit it and return the complete declaration';
+            'stage: protocol\nmode "create" does not take a "matcher" or "range"; omit them and return the complete declaration';
         } else if (!addressEquals(pinnedTarget.locator, payload.locator)) {
           if ((iterationOpenedBy !== null || stalledAsk) && pinnedTarget.mode === "modify") {
             // Verification-repair re-pin (#48): a round opened by failing
@@ -3646,6 +4236,15 @@ export async function runLoop(options: LoopOptions): Promise<LoopResult> {
             if (payload.locator.path !== pinnedTarget.locator.path) {
               failure = `stage: address\nthe payload may re-pin only to another declaration in the pinned file ${JSON.stringify(target)}; received path ${JSON.stringify(payload.locator.path)}`;
               failureStage = "address";
+            } else if (payload.range !== null && !repair) {
+              // The shown block is the pinned declaration, so a range cannot
+              // address a different (re-pinned) declaration (#72).
+              failure = rangeUnshownDiagnostics(
+                pinnedTarget.locator,
+                payload.locator,
+                payload.range,
+              );
+              failureStage = "range";
             } else {
               const resolved = resolveCurrentEntry(sourceBefore, target, payload.locator);
               if (!resolved.ok) {
@@ -3663,6 +4262,8 @@ export async function runLoop(options: LoopOptions): Promise<LoopResult> {
                   resolved.entry,
                   payload.matcher,
                   payload.replacement,
+                  payload.range,
+                  repair,
                 );
                 if (spliced.ok) {
                   candidate = spliced.candidate;
@@ -3670,6 +4271,9 @@ export async function runLoop(options: LoopOptions): Promise<LoopResult> {
                 } else if (spliced.cause === "no-op") {
                   failure = spliced.diagnostics;
                   failureStage = "no-op";
+                } else if (spliced.cause === "range-invalid") {
+                  failure = spliced.diagnostics;
+                  failureStage = "range";
                 } else {
                   failure = spliced.diagnostics;
                   failureStage = "matcher";
@@ -3702,6 +4306,8 @@ export async function runLoop(options: LoopOptions): Promise<LoopResult> {
               resolved.entry,
               payload.matcher,
               payload.replacement,
+              payload.range,
+              repair,
             );
             if (spliced.ok) {
               candidate = spliced.candidate;
@@ -3709,6 +4315,9 @@ export async function runLoop(options: LoopOptions): Promise<LoopResult> {
             } else if (spliced.cause === "no-op") {
               failure = spliced.diagnostics;
               failureStage = "no-op";
+            } else if (spliced.cause === "range-invalid") {
+              failure = spliced.diagnostics;
+              failureStage = "range";
             } else {
               failure = spliced.diagnostics;
               failureStage = "matcher";
@@ -3780,7 +4389,7 @@ export async function runLoop(options: LoopOptions): Promise<LoopResult> {
               // move the pin to another declaration in the pinned file.
               const locator = entryPayload.locator;
               if (addressEquals(pinnedTarget.locator, locator)) {
-                splice = splicePayloadAtSource(sourceBefore, target, entryPayload);
+                splice = splicePayloadAtSource(sourceBefore, target, entryPayload, repair);
               } else if (iterationOpenedBy !== null || stalledAsk) {
                 if (locator.path !== target) {
                   noteFailure(
@@ -3790,8 +4399,18 @@ export async function runLoop(options: LoopOptions): Promise<LoopResult> {
                     "address",
                     `stage: address\nthe payload may re-pin only to another declaration in the pinned file ${JSON.stringify(target)}; received path ${JSON.stringify(locator.path)}`,
                   );
+                } else if (entryPayload.range !== null && !repair) {
+                  // The shown block is the pinned declaration, so a range cannot
+                  // address a different (re-pinned) declaration (#72).
+                  noteFailure(
+                    index,
+                    path,
+                    locator,
+                    "range",
+                    rangeUnshownDiagnostics(pinnedTarget.locator, locator, entryPayload.range),
+                  );
                 } else {
-                  splice = splicePayloadAtSource(sourceBefore, target, entryPayload);
+                  splice = splicePayloadAtSource(sourceBefore, target, entryPayload, repair);
                   if (splice.ok) {
                     pinnedTarget = { mode: "modify", locator };
                     pinned = pinnedTarget;
@@ -3807,6 +4426,21 @@ export async function runLoop(options: LoopOptions): Promise<LoopResult> {
                   echoDiagnostics(pinnedTarget.locator, locator),
                 );
               }
+            } else if (entryPayload.range !== null) {
+              // A further multi-payload entry is in another file whose source
+              // the prompt never showed, so a range has no numbered block to
+              // address (#72).
+              noteFailure(
+                index,
+                path,
+                entryPayload.locator,
+                "range",
+                rangeUnshownDiagnostics(
+                  pinnedTarget.locator,
+                  entryPayload.locator,
+                  entryPayload.range,
+                ),
+              );
             } else {
               // Path-independent payloads (#69): each names its own
               // declaration, which resolves strictly in its own file.

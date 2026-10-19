@@ -26,24 +26,34 @@ import {
   FAILURE_HISTORY_LOOKBACK,
   FAILURE_STATE_LIMIT,
   formatDiagnostics,
+  isStalledAskMilestone,
   MAX_EDIT_EXCHANGES,
   MAX_RUN_ITERATIONS,
   MAX_STALLED_ROUNDS,
   MULTI_PAYLOAD_KEY,
+  numberedSourceBlock,
   parseEditResponse,
   parseEditResponseList,
   parseSelectionResponse,
+  parseSelfCheckRequest,
   rejectionLead,
   rejectionPolicy,
   renderAttemptDigest,
   renderFailureHistoryNote,
+  renderSelfCheckCommand,
+  renderSelfCheckRead,
+  resolveEditRange,
   runLoop,
   selectSpecFiles,
+  SELF_CHECK_OUTPUT_LIMIT,
+  SPEC_FILE_LIMIT,
+  STALLED_ASK_INTERVAL,
+  stalledAskNumber,
   stripCodeFences,
   updateAttemptDigest,
   verificationFingerprint,
 } from "./loop";
-import type { LoopRecord, ProviderLike } from "./loop";
+import type { LoopRecord, ProviderLike, RetryPromptInput, StalledAsk } from "./loop";
 import type { ChatMessage, ChatOptions, ChatResponse, ToolDefinition } from "./openai";
 import { Parser } from "./parser";
 import { buildIndexTolerant } from "./utility";
@@ -514,7 +524,8 @@ describe("prompt builders", () => {
       '{"path": ..., "symbol": ..., "kind": ..., "matcher": ..., "replacement": ...}',
     );
     expect(buildSystemPrompt()).toContain('"mode" is "modify" (default), "create", or "delete"');
-    expect(buildSystemPrompt()).toContain("At most one matcher per response");
+    expect(buildSystemPrompt()).toContain("At most one matcher or range per response");
+    expect(buildSystemPrompt()).toContain('"range" {line, column, endLine, endColumn}');
     expect(buildSystemPrompt()).toContain("No markdown fences and no explanations");
     // The two-step framing is load-bearing: the first live request is the
     // selection, and dropping the framing made the model answer it with an
@@ -590,7 +601,10 @@ describe("prompt builders", () => {
     expect(prompt).toContain("Pinned selection:");
     expect(prompt).toContain(addressJson);
     expect(prompt).toContain("Current source:");
-    expect(prompt).toContain(symbolSource);
+    expect(prompt).toContain("1 | export function make(): number {");
+    expect(prompt).toContain("2 |   return 1;");
+    expect(prompt).toContain("3 | }");
+    expect(prompt).toContain('"range"');
     expect(prompt).toContain("```ts");
   });
 
@@ -635,7 +649,9 @@ describe("prompt builders", () => {
     expect(prompt).toContain("```json");
     expect(prompt).toContain(locatorJson);
     expect(prompt).toContain("```ts");
-    expect(prompt).toContain(currentSource);
+    expect(prompt).toContain("1 | export function make(): number {");
+    expect(prompt).toContain('2 |   return "nope";');
+    expect(prompt).toContain("3 | }");
     expect(prompt).toContain(diagnostics);
   });
 
@@ -1331,6 +1347,7 @@ describe("parseEditResponse", () => {
     ).toEqual({
       locator: { path: "src/a.ts", name: "make", kind: "function" },
       matcher: "return 1;",
+      range: null,
       replacement: "return 2;",
     });
   });
@@ -1341,6 +1358,7 @@ describe("parseEditResponse", () => {
     ).toEqual({
       locator: { path: "a.ts", name: "x", kind: "function" },
       matcher: null,
+      range: null,
       replacement: "",
     });
   });
@@ -1360,6 +1378,47 @@ describe("parseEditResponse", () => {
     expect(() => parseEditResponse('{"path":"a.ts","symbol":"x","kind":"function"}')).toThrow(
       '"replacement" must be a string',
     );
+  });
+
+  test("accepts an optional range selector and defaults it to null", () => {
+    expect(
+      parseEditResponse(
+        '{"path":"a.ts","symbol":"x","kind":"function","range":{"line":2,"column":3,"endLine":2,"endColumn":11},"replacement":"y"}',
+      ),
+    ).toEqual({
+      locator: { path: "a.ts", name: "x", kind: "function" },
+      matcher: null,
+      range: { line: 2, column: 3, endLine: 2, endColumn: 11 },
+      replacement: "y",
+    });
+  });
+
+  test("rejects a malformed range as a protocol error", () => {
+    const badRanges: unknown[] = [
+      "nope",
+      { line: 1, column: 1, endLine: 1 },
+      { line: 0, column: 1, endLine: 1, endColumn: 1 },
+      { line: 1, column: 1, endLine: 1, endColumn: 2.5 },
+      { line: 1, column: 1, endLine: 1, endColumn: 1, extra: 1 },
+    ];
+    for (const range of badRanges) {
+      const payload = JSON.stringify({
+        path: "a.ts",
+        symbol: "x",
+        kind: "function",
+        range,
+        replacement: "y",
+      });
+      expect(() => parseEditResponse(payload)).toThrow(/range/);
+    }
+  });
+
+  test("keeps both matcher and range when both are sent (range wins at resolution)", () => {
+    const parsed = parseEditResponse(
+      '{"path":"a.ts","symbol":"x","kind":"function","matcher":"return 1;","range":{"line":1,"column":1,"endLine":1,"endColumn":1},"replacement":"y"}',
+    );
+    expect(parsed.matcher).toBe("return 1;");
+    expect(parsed.range).toEqual({ line: 1, column: 1, endLine: 1, endColumn: 1 });
   });
 
   test("names the v1 shapes in the hints", () => {
@@ -1402,16 +1461,18 @@ describe("exchangeStats (#69)", () => {
       row({ outcome: "applied", kind: "exchange", payloads: 2, toolCalls: 0 }),
       row({ outcome: "gate", kind: "exchange", payloads: 1, toolCalls: 0 }),
       row({ outcome: "stopped", kind: "exchange", payloads: 0, toolCalls: 0 }),
+      row({ outcome: "self-check", kind: "exchange", payloads: 0, toolCalls: 0 }),
       row({ outcome: "ok", kind: "verification", exchange: null }),
     ]);
     expect(stats).toEqual({
-      turns: 4,
+      turns: 5,
       payloads: 3,
       toolCalls: 1,
       applied: 1,
       rejected: 1,
       selected: 1,
       stopped: 1,
+      selfChecks: 1,
     });
   });
 
@@ -1435,6 +1496,7 @@ describe("parseEditResponseList (#69)", () => {
         {
           locator: { path: "src/a.ts", name: "make", kind: "function" },
           matcher: null,
+          range: null,
           replacement: "y",
         },
       ],
@@ -1512,6 +1574,850 @@ describe("parseEditResponseList (#69)", () => {
   });
 });
 
+describe("edit range selector (#72)", () => {
+  test("numberedSourceBlock prefixes 1-based line numbers", () => {
+    expect(numberedSourceBlock("a\nb\n")).toBe("1 | a\n2 | b");
+    expect(numberedSourceBlock("")).toBe("");
+    const ten = Array.from({ length: 10 }, (_, index) => `line ${index + 1}`).join("\n");
+    expect(numberedSourceBlock(`${ten}\n`)).toContain(" 9 | line 9\n10 | line 10");
+  });
+
+  test("resolveEditRange maps 1-based inclusive positions and rejects bad ranges", () => {
+    const source = "function f() {\n  const a = 1;\n  const b = 2;\n  return a + b;\n}\n";
+    const limit = source.length - 1; // one past the final `}` (trailing newline excluded)
+    const declaration = { start: 0, end: limit };
+
+    const single = resolveEditRange(
+      source,
+      { line: 2, column: 3, endLine: 2, endColumn: 14 },
+      0,
+      limit,
+      declaration,
+    );
+    expect(single.ok).toBe(true);
+    if (single.ok) {
+      expect(source.slice(single.start, single.end)).toBe("const a = 1;");
+    }
+
+    const multi = resolveEditRange(
+      source,
+      { line: 2, column: 3, endLine: 4, endColumn: 15 },
+      0,
+      limit,
+      declaration,
+    );
+    expect(multi.ok).toBe(true);
+    if (multi.ok) {
+      expect(source.slice(multi.start, multi.end)).toBe(
+        "const a = 1;\n  const b = 2;\n  return a + b;",
+      );
+    }
+
+    // The start line does not exist in the shown block.
+    expect(
+      resolveEditRange(
+        source,
+        { line: 99, column: 1, endLine: 99, endColumn: 1 },
+        0,
+        limit,
+        declaration,
+      ),
+    ).toMatchObject({ ok: false, reason: "out-of-bounds" });
+    // The end column runs past the line.
+    expect(
+      resolveEditRange(
+        source,
+        { line: 2, column: 3, endLine: 2, endColumn: 99 },
+        0,
+        limit,
+        declaration,
+      ),
+    ).toMatchObject({ ok: false, reason: "out-of-bounds" });
+    // End before start (empty span).
+    expect(
+      resolveEditRange(
+        source,
+        { line: 3, column: 1, endLine: 2, endColumn: 1 },
+        0,
+        limit,
+        declaration,
+      ),
+    ).toMatchObject({ ok: false, reason: "empty" });
+    // A whole-file coordinate space with the declaration as a sub-span: the
+    // range resolves on the file but does not sit inside the declaration.
+    const wholeFileDeclaration = { start: 15, end: 29 };
+    expect(
+      resolveEditRange(
+        source,
+        { line: 4, column: 3, endLine: 4, endColumn: 15 },
+        0,
+        source.length,
+        wholeFileDeclaration,
+      ),
+    ).toMatchObject({ ok: false, reason: "outside-declaration" });
+
+    // A block the prompt would elide cannot be addressed by position: its shown
+    // line numbers no longer map back to the source.
+    const longSource = `${"x".repeat(SPEC_FILE_LIMIT + 100)}\n`;
+    expect(
+      resolveEditRange(
+        longSource,
+        { line: 1, column: 1, endLine: 1, endColumn: 1 },
+        0,
+        longSource.length,
+        { start: 0, end: longSource.length },
+      ),
+    ).toMatchObject({ ok: false, reason: "truncated" });
+  });
+
+  test("applies a single-line range against the pinned declaration", async () => {
+    const dir = fixtureDir();
+    const provider = new ScriptedProvider([
+      selectionResponse(),
+      rangeEditResponse({ line: 2, column: 3, endLine: 2, endColumn: 11 }, "return 2;"),
+    ]);
+    const result = await runLoop({
+      cwd: dir,
+      issue: "make the answer test pass",
+      model: "fake",
+      provider,
+      checkCommand: TSC,
+      testCommand: ["bun", "test"],
+    });
+    expect(result.ok).toBe(true);
+    expect(result.records.map((record) => record.outcome)).toEqual(["selected", "applied", "ok"]);
+    expect(helperSource(dir)).toContain("return 2;");
+  }, 30000);
+
+  test("applies a multi-line range", async () => {
+    const dir = fixtureDir();
+    writeFileSync(
+      join(dir, "src", "helper.ts"),
+      "export function answer(): number {\n  const a = 1;\n  const b = 2;\n  return a + b;\n}\n",
+    );
+    const provider = new ScriptedProvider([
+      selectionResponse(),
+      rangeEditResponse({ line: 2, column: 3, endLine: 4, endColumn: 15 }, "return 2;"),
+    ]);
+    const result = await runLoop({
+      cwd: dir,
+      issue: "make the answer test pass",
+      model: "fake",
+      provider,
+      checkCommand: TSC,
+      testCommand: ["bun", "test"],
+    });
+    expect(result.ok).toBe(true);
+    expect(result.records.map((record) => record.outcome)).toEqual(["selected", "applied", "ok"]);
+    expect(helperSource(dir)).toContain("return 2;");
+    expect(helperSource(dir)).not.toContain("const a");
+  }, 30000);
+
+  test("a range takes precedence over a matcher when both are sent", async () => {
+    const dir = fixtureDir();
+    const provider = new ScriptedProvider([
+      selectionResponse(),
+      JSON.stringify({
+        ...ANSWER,
+        matcher: "return 999;",
+        range: { line: 2, column: 3, endLine: 2, endColumn: 11 },
+        replacement: "return 2;",
+      }),
+    ]);
+    const result = await runLoop({
+      cwd: dir,
+      issue: "make the answer test pass",
+      model: "fake",
+      provider,
+      checkCommand: TSC,
+      testCommand: ["bun", "test"],
+    });
+    expect(result.ok).toBe(true);
+    expect(result.records.map((record) => record.outcome)).toEqual(["selected", "applied", "ok"]);
+    expect(helperSource(dir)).toContain("return 2;");
+  }, 30000);
+
+  test("a whole-declaration range keeps the export-range expansion", async () => {
+    const dir = fixtureDir();
+    const provider = new ScriptedProvider([
+      selectionResponse(),
+      rangeEditResponse(
+        { line: 1, column: 1, endLine: 3, endColumn: 1 },
+        "export function answer(): number {\n  return 2;\n}",
+      ),
+    ]);
+    const result = await runLoop({
+      cwd: dir,
+      issue: "make the answer test pass",
+      model: "fake",
+      provider,
+      checkCommand: TSC,
+      testCommand: ["bun", "test"],
+    });
+    expect(result.ok).toBe(true);
+    expect(result.records.map((record) => record.outcome)).toEqual(["selected", "applied", "ok"]);
+    const source = helperSource(dir);
+    expect(source).toBe("export function answer(): number {\n  return 2;\n}\n");
+    expect(source.match(/export/g)).toHaveLength(1);
+  }, 30000);
+
+  test("rejects an out-of-bounds range with range-invalid and recovers", async () => {
+    const dir = fixtureDir();
+    const provider = new ScriptedProvider([
+      selectionResponse(),
+      rangeEditResponse({ line: 99, column: 1, endLine: 99, endColumn: 1 }, "return 2;"),
+      editResponse(null, "export function answer(): number {\n  return 2;\n}"),
+    ]);
+    const result = await runLoop({
+      cwd: dir,
+      issue: "make the answer test pass",
+      model: "fake",
+      provider,
+      checkCommand: TSC,
+      testCommand: ["bun", "test"],
+    });
+    expect(result.ok).toBe(true);
+    expect(result.records.map((record) => record.outcome)).toEqual([
+      "selected",
+      "range",
+      "applied",
+      "ok",
+    ]);
+    expect(result.records[1]?.cause).toBe("range-invalid");
+    const diagnostics = result.records[1]?.diagnostics ?? "";
+    expect(diagnostics).toContain("stage: range");
+    expect(diagnostics).toContain("currently spans line 1");
+    // The retry carries the range-invalid correction.
+    const retryPrompt = provider.calls[2]?.at(-1)?.content ?? "";
+    const policy = rejectionPolicy("range-invalid");
+    if (policy.action !== "retry" || policy.correction === null) {
+      throw new Error("expected a retryable range-invalid policy");
+    }
+    expect(retryPrompt).toContain(policy.correction);
+  }, 30000);
+
+  test("rejects an empty or end-before-start range with range-invalid", async () => {
+    const dir = fixtureDir();
+    const provider = new ScriptedProvider([
+      selectionResponse(),
+      rangeEditResponse({ line: 3, column: 1, endLine: 2, endColumn: 1 }, "return 2;"),
+      editResponse(null, "export function answer(): number {\n  return 2;\n}"),
+    ]);
+    const result = await runLoop({
+      cwd: dir,
+      issue: "make the answer test pass",
+      model: "fake",
+      provider,
+      checkCommand: TSC,
+      testCommand: ["bun", "test"],
+    });
+    expect(result.ok).toBe(true);
+    expect(result.records.map((record) => record.outcome)).toEqual([
+      "selected",
+      "range",
+      "applied",
+      "ok",
+    ]);
+    expect(result.records[1]?.cause).toBe("range-invalid");
+    expect(result.records[1]?.diagnostics).toContain("empty or ends before it starts");
+  }, 30000);
+
+  test("a range cannot address a re-pinned declaration", async () => {
+    const dir = fixtureDir();
+    writeFileSync(
+      join(dir, "src", "helper.ts"),
+      "export function answer(): number {\n  return 1;\n}\n\nexport function other(): number {\n  return 1;\n}\n",
+    );
+    const otherAddress = { path: "src/helper.ts", symbol: "other", kind: "function" };
+    const provider = new ScriptedProvider([
+      selectionResponse(ANSWER, "modify"),
+      editResponse("return 1;", 'return "nope";'),
+      rangeEditResponse(
+        { line: 1, column: 1, endLine: 3, endColumn: 1 },
+        "function other(): number {\n  return 2;\n}",
+        otherAddress,
+      ),
+      editResponse(null, "export function answer(): number {\n  return 2;\n}"),
+    ]);
+    const result = await runLoop({
+      cwd: dir,
+      issue: "make the answer test pass",
+      model: "fake",
+      provider,
+      checkCommand: signatureCheckCommand(dir, [1, 0]),
+      testCommand: passingCommand,
+    });
+    expect(result.ok).toBe(true);
+    expect(result.records.map((record) => record.outcome)).toEqual([
+      "selected",
+      "applied",
+      "tsc",
+      "range",
+      "applied",
+      "ok",
+    ]);
+    expect(result.records[3]?.cause).toBe("range-invalid");
+    expect(result.records[3]?.diagnostics).toContain("cannot be used");
+    // The refused re-pin left the pin on the declaration the prompt showed.
+    expect(result.locator).toEqual({ path: "src/helper.ts", name: "answer", kind: "function" });
+    expect(helperSource(dir)).toContain("export function answer(): number {\n  return 2;\n}");
+    expect(helperSource(dir)).toContain("export function other(): number {\n  return 1;\n}");
+  }, 30000);
+
+  test("a matcher payload without range stays byte-identical", async () => {
+    const dir = fixtureDir();
+    const provider = new ScriptedProvider([
+      selectionResponse(),
+      editResponse("return 1;", "return 2;"),
+    ]);
+    const result = await runLoop({
+      cwd: dir,
+      issue: "make the answer test pass",
+      model: "fake",
+      provider,
+      checkCommand: TSC,
+      testCommand: ["bun", "test"],
+    });
+    expect(result.ok).toBe(true);
+    expect(result.records.map((record) => record.outcome)).toEqual(["selected", "applied", "ok"]);
+    expect(helperSource(dir)).toContain("return 2;");
+  }, 30000);
+});
+
+describe("self-verification request (#73)", () => {
+  const verificationRow = (row: number, diagnostics: string): LoopRecord => ({
+    row,
+    iteration: row,
+    kind: "verification",
+    exchange: null,
+    outcome: "tsc",
+    locator: { path: "src/a.ts", name: "x", kind: "function" },
+    replacement: null,
+    diagnostics,
+    diagnosticsHead: null,
+    replacementChars: null,
+    finishReason: null,
+    signature: null,
+  });
+  const exchangeRow = (row: number, outcome: LoopRecord["outcome"]): LoopRecord => ({
+    row,
+    iteration: row,
+    kind: "exchange",
+    exchange: 1,
+    outcome,
+    locator: { path: "src/a.ts", name: "x", kind: "function" },
+    replacement: null,
+    diagnostics: null,
+    diagnosticsHead: null,
+    replacementChars: null,
+    finishReason: null,
+    signature: null,
+  });
+
+  test("parses the whitelisted kinds and defaults to none", () => {
+    expect(parseSelfCheckRequest('{"request":"read"}')).toEqual({ kind: "ok", request: "read" });
+    expect(parseSelfCheckRequest('{"request":"check"}')).toEqual({ kind: "ok", request: "check" });
+    expect(parseSelfCheckRequest('{"request":"test"}')).toEqual({ kind: "ok", request: "test" });
+    // Not request-shaped: the caller falls through to the edit parser.
+    expect(
+      parseSelfCheckRequest('{"path":"a.ts","symbol":"x","kind":"function","replacement":"y"}'),
+    ).toEqual({ kind: "none" });
+    expect(parseSelfCheckRequest('{"payloads":[]}')).toEqual({ kind: "none" });
+    expect(parseSelfCheckRequest("not json")).toEqual({ kind: "none" });
+    expect(parseSelfCheckRequest("[1,2,3]")).toEqual({ kind: "none" });
+  });
+
+  test("rejects a malformed or non-whitelisted request as protocol", () => {
+    for (const bad of [
+      '{"request":"rm -rf /"}',
+      '{"request":"bunx tsc --noEmit"}',
+      '{"request":42}',
+      '{"request":"read","path":"src/a.ts"}',
+    ]) {
+      const parsed = parseSelfCheckRequest(bad);
+      expect(parsed.kind).toBe("error");
+      if (parsed.kind === "error") {
+        expect(parsed.diagnostics.startsWith("stage: protocol")).toBe(true);
+      }
+    }
+  });
+
+  test("renders a bounded read result with 1-based numbering", () => {
+    expect(renderSelfCheckRead("src/a.ts", "a\nb\n")).toBe(
+      `Self-check (read): src/a.ts (2 line(s), truncated at ${SPEC_FILE_LIMIT} characters).\n\n1 | a\n2 | b`,
+    );
+    expect(renderSelfCheckRead("src/a.ts", "")).toBe(
+      "Self-check (read): src/a.ts is empty or does not exist.",
+    );
+    const rendered = renderSelfCheckRead("src/a.ts", `${"x".repeat(SPEC_FILE_LIMIT + 50)}\n`);
+    expect(rendered).toContain("[truncated");
+  });
+
+  test("clamps a command result to the output bound", () => {
+    expect(
+      renderSelfCheckCommand("check", "the check command", {
+        ok: true,
+        exitCode: 0,
+        output: "done\n",
+      }),
+    ).toBe("Self-check (check): the check command passed (exit 0).\n\n```\ndone\n```");
+    expect(
+      renderSelfCheckCommand("test", "the test command", { ok: false, exitCode: 1, output: "" }),
+    ).toContain("(no output)");
+    const big = renderSelfCheckCommand("test", "the test command", {
+      ok: false,
+      exitCode: 1,
+      output: "y".repeat(SELF_CHECK_OUTPUT_LIMIT + 100),
+    });
+    expect(big).toContain("[truncated 100 characters]");
+  });
+
+  test("offers the request only in repair prompts", () => {
+    const locatorJson = '{"mode":"modify","path":"src/a.ts","symbol":"make","kind":"function"}';
+    const retry = buildRetryPrompt({
+      exchangeNumber: 2,
+      maxExchanges: 3,
+      mode: "modify",
+      locatorJson,
+      currentSource: "function make() {\n  return 1;\n}",
+      diagnostics: "stage: protocol",
+      failure: "edit",
+      repin: false,
+    });
+    expect(retry).toContain('{"request":"read"}');
+    expect(retry).toContain('{"request":"check"}');
+    expect(retry).toContain('{"request":"test"}');
+    // The fresh post-pick prompts are the no-repair path and never offer it.
+    expect(buildEditPrompt(locatorJson, "function make() {\n  return 1;\n}")).not.toContain(
+      '"request"',
+    );
+    expect(buildCreatePrompt(locatorJson, "src/a.ts")).not.toContain('"request"');
+  });
+
+  test("renders the self-check result section only when passed", () => {
+    const input = {
+      exchangeNumber: 2,
+      maxExchanges: 3,
+      mode: "modify" as const,
+      locatorJson: '{"mode":"modify","path":"src/a.ts","symbol":"make","kind":"function"}',
+      currentSource: "function make() {\n  return 1;\n}",
+      diagnostics: "stage: protocol",
+      failure: "edit" as const,
+      repin: false,
+    };
+    expect(buildRetryPrompt(input)).not.toContain("Self-check result:");
+    const withResult = buildRetryPrompt({
+      ...input,
+      selfCheck: "Self-check (read): src/a.ts (1 line(s)).",
+    });
+    expect(withResult).toContain("Self-check result:");
+    expect(withResult).toContain("Self-check (read): src/a.ts");
+    expect(withResult.indexOf("Self-check result:")).toBeGreaterThan(
+      withResult.indexOf("Diagnostics:"),
+    );
+  });
+
+  test("the #52 continuation keeps its header and the #71 note rides alongside", () => {
+    const locatorJson = '{"mode":"modify","path":"src/a.ts","symbol":"make","kind":"function"}';
+    const continuation = buildContinuationPrompt({
+      round: 1,
+      maxRounds: 32,
+      mode: "modify",
+      locatorJson,
+      currentSource: "function make() {\n  return 1;\n}",
+      diagnostics: "stage: protocol",
+      repin: false,
+    });
+    expect(continuation).toContain("exhausted its 3-exchange edit budget");
+    expect(continuation).toContain('{"request":"read"}');
+    const withHistory = buildRetryPrompt({
+      exchangeNumber: 2,
+      maxExchanges: 3,
+      mode: "modify",
+      locatorJson,
+      currentSource: "function make() {\n  return 1;\n}",
+      diagnostics: "stage: protocol",
+      failure: "edit",
+      repin: false,
+      failureHistory:
+        "Failure history: the failing set is unchanged across the last 3 verification rounds.",
+      selfCheck: "Self-check (check): the check command failed (exit 1).",
+    });
+    expect(withHistory).toContain("Failure history:");
+    expect(withHistory).toContain("Self-check result:");
+    expect(withHistory.indexOf("Self-check result:")).toBeLessThan(
+      withHistory.indexOf("Failure history:"),
+    );
+  });
+
+  test("a self-check exchange row does not break the failure-history walk (#71)", () => {
+    const diag = "src/a.ts(2,3): error TS2322: Type 'string' is not assignable to type 'number'.";
+    const records: LoopRecord[] = [
+      verificationRow(1, diag),
+      exchangeRow(2, "self-check"),
+      verificationRow(3, diag),
+      exchangeRow(4, "self-check"),
+      verificationRow(5, diag),
+    ];
+    expect(detectFailurePattern(records)).toEqual({ kind: "unchanged", rounds: 3 });
+  });
+
+  test("executes a read request in a repair round and returns it once", async () => {
+    const dir = fixtureDir();
+    const provider = new ScriptedProvider([
+      selectionResponse(ANSWER, "modify"),
+      editResponse("return 1;", 'return "nope";'),
+      JSON.stringify({ request: "read" }),
+      editResponse(null, "export function answer(): number {\n  return 2;\n}"),
+    ]);
+    const result = await runLoop({
+      cwd: dir,
+      issue: "make the answer test pass",
+      model: "fake",
+      provider,
+      checkCommand: signatureCheckCommand(dir, [1, 0]),
+      testCommand: passingCommand,
+    });
+    expect(result.ok).toBe(true);
+    expect(result.records.map((record) => record.outcome)).toEqual([
+      "selected",
+      "applied",
+      "tsc",
+      "self-check",
+      "applied",
+      "ok",
+    ]);
+    expect(exchangeStats(result.records).selfChecks).toBe(1);
+    const afterRequest = (provider.calls[3] ?? []).at(-1)?.content ?? "";
+    expect(afterRequest).toContain("Self-check result:");
+    expect(afterRequest).toContain("Self-check (read): src/helper.ts");
+    expect(afterRequest).toContain("1 | function answer(): number {");
+    expect(helperSource(dir)).toContain("return 2;");
+  }, 30000);
+
+  test("executes at most one request per round and refuses a second", async () => {
+    const dir = fixtureDir();
+    const provider = new ScriptedProvider([
+      selectionResponse(ANSWER, "modify"),
+      editResponse("return 1;", 'return "nope";'),
+      JSON.stringify({ request: "check" }),
+      JSON.stringify({ request: "check" }),
+      editResponse(null, "export function answer(): number {\n  return 2;\n}"),
+    ]);
+    const result = await runLoop({
+      cwd: dir,
+      issue: "make the answer test pass",
+      model: "fake",
+      provider,
+      checkCommand: signatureCheckCommand(dir, [1, 0]),
+      testCommand: passingCommand,
+    });
+    expect(result.ok).toBe(true);
+    expect(result.records.map((record) => record.outcome)).toEqual([
+      "selected",
+      "applied",
+      "tsc",
+      "self-check",
+      "protocol",
+      "applied",
+      "ok",
+    ]);
+    expect(exchangeStats(result.records).selfChecks).toBe(1);
+    const refused = result.records[4];
+    expect(refused?.cause).toBe("protocol");
+    expect(refused?.diagnostics).toContain("already used its one self-verification request");
+    // The result is shown once (calls[3]); the refusal prompt does not repeat it.
+    expect((provider.calls[3] ?? []).at(-1)?.content ?? "").toContain("Self-check result:");
+    expect((provider.calls[4] ?? []).at(-1)?.content ?? "").not.toContain("Self-check result:");
+    // The check command ran exactly: round-1 verification, the one request,
+    // round-2 verification. The refused second request did not run it again.
+    expect(readFileSync(join(dir, "check-calls.txt"), "utf8")).toBe("3");
+  }, 30000);
+
+  test("refuses a non-whitelisted request without executing it", async () => {
+    const dir = fixtureDir();
+    const provider = new ScriptedProvider([
+      selectionResponse(ANSWER, "modify"),
+      editResponse("return 1;", 'return "nope";'),
+      JSON.stringify({ request: "bunx tsc --noEmit" }),
+      editResponse(null, "export function answer(): number {\n  return 2;\n}"),
+    ]);
+    const result = await runLoop({
+      cwd: dir,
+      issue: "make the answer test pass",
+      model: "fake",
+      provider,
+      checkCommand: signatureCheckCommand(dir, [1, 0]),
+      testCommand: passingCommand,
+    });
+    expect(result.ok).toBe(true);
+    expect(result.records.map((record) => record.outcome)).toEqual([
+      "selected",
+      "applied",
+      "tsc",
+      "protocol",
+      "applied",
+      "ok",
+    ]);
+    const refused = result.records[3];
+    expect(refused?.cause).toBe("protocol");
+    expect(refused?.diagnostics).toContain('"request" must be one of');
+    expect(exchangeStats(result.records).selfChecks).toBe(0);
+    // Only the two verifications ran the check command.
+    expect(readFileSync(join(dir, "check-calls.txt"), "utf8")).toBe("2");
+  }, 30000);
+
+  test("does not recognise a request on the fresh post-pick prompt", async () => {
+    const dir = fixtureDir();
+    const provider = new ScriptedProvider([
+      selectionResponse(ANSWER, "modify"),
+      JSON.stringify({ request: "read" }),
+      editResponse("return 1;", "return 2;"),
+    ]);
+    const result = await runLoop({
+      cwd: dir,
+      issue: "make the answer test pass",
+      model: "fake",
+      provider,
+      checkCommand: TSC,
+      testCommand: ["bun", "test"],
+    });
+    expect(result.ok).toBe(true);
+    expect(result.records.map((record) => record.outcome)).toEqual([
+      "selected",
+      "protocol",
+      "applied",
+      "ok",
+    ]);
+    expect(result.records[1]?.diagnostics).toContain('unexpected key(s) "request"');
+    expect(exchangeStats(result.records).selfChecks).toBe(0);
+  }, 30000);
+
+  test("refuses a request at the final exchange of a round", async () => {
+    const dir = fixtureDir();
+    const provider = new ScriptedProvider([
+      selectionResponse(ANSWER, "modify"),
+      editResponse("return 1;", 'return "nope";'),
+      editResponse("return 999;", "return 2;"),
+      editResponse("return 998;", "return 2;"),
+      JSON.stringify({ request: "read" }),
+      editResponse(null, "export function answer(): number {\n  return 2;\n}"),
+    ]);
+    const result = await runLoop({
+      cwd: dir,
+      issue: "make the answer test pass",
+      model: "fake",
+      provider,
+      checkCommand: signatureCheckCommand(dir, [1, 0]),
+      testCommand: passingCommand,
+    });
+    expect(result.ok).toBe(true);
+    expect(result.records.map((record) => record.outcome)).toEqual([
+      "selected",
+      "applied",
+      "tsc",
+      "matcher",
+      "matcher",
+      "protocol",
+      "applied",
+      "ok",
+    ]);
+    const refused = result.records[5];
+    expect(refused?.diagnostics).toContain("no exchange left");
+    expect(exchangeStats(result.records).selfChecks).toBe(0);
+  }, 30000);
+});
+
+describe("sharpened repeated no-progress ask (#65)", () => {
+  const stalledInput = (over: Partial<StalledAsk> = {}): RetryPromptInput => ({
+    exchangeNumber: 1,
+    maxExchanges: 3,
+    mode: "modify",
+    locatorJson: '{"mode":"modify","path":"src/a.ts","symbol":"answer","kind":"function"}',
+    currentSource: "export function answer(): number {\n  return 1;\n}",
+    diagnostics: "src/a.ts(2,3): error TS2322: Type 'string' is not assignable to type 'number'.",
+    failure: "verification",
+    repin: true,
+    stalled: { failedRounds: 8, round: 9, maxRounds: 32, ...over },
+  });
+
+  test("the first ask keeps the original wording byte-for-byte", () => {
+    const prompt = buildRetryPrompt(stalledInput());
+    expect(prompt).toContain(
+      "No progress: 8 consecutive failed rounds. This is round 9 of 32. Reply exactly `STOP` to end the run now, but only if the failures cannot be resolved; otherwise take a materially different approach rather than another minimal attempt.",
+    );
+    expect(prompt).not.toContain("repeated ask");
+  });
+
+  test("the second ask folds in the unchanged failing set and demands address-or-STOP", () => {
+    const prompt = buildRetryPrompt(
+      stalledInput({ askNumber: 2, history: { kind: "unchanged", rounds: 6 } }),
+    );
+    expect(prompt).toContain("No progress: 8 consecutive failed rounds. This is round 9 of 32.");
+    expect(prompt).toContain("repeated ask 2");
+    expect(prompt).toContain("the failing set is unchanged across the last 6 verification rounds");
+    expect(prompt).toContain("directly address that unchanged failing set");
+    // STOP keeps its biased-to-continue semantics: only when the set cannot be
+    // resolved; the concrete alternatives still ride along.
+    expect(prompt).toContain(
+      "only if it cannot be resolved, reply exactly `STOP` to end the run now",
+    );
+    expect(prompt).toContain("Concretely: change the matcher shape");
+  });
+
+  test("an alternating or still-changing set is named too", () => {
+    const alternating = buildRetryPrompt(
+      stalledInput({
+        askNumber: 3,
+        history: { kind: "alternating", rounds: 5, a: "TS2322", b: "TS2345" },
+      }),
+    );
+    expect(alternating).toContain("repeated ask 3");
+    expect(alternating).toContain(
+      "cycled between two states across the last 5 verification rounds",
+    );
+    const changing = buildRetryPrompt(stalledInput({ askNumber: 2, history: null }));
+    expect(changing).toContain("repeated ask 2");
+    expect(changing).toContain("the failing set has not converged");
+  });
+
+  test("the sharpened ask rides a #52 continuation round", () => {
+    const prompt = buildContinuationPrompt({
+      round: 8,
+      maxRounds: 32,
+      mode: "modify",
+      locatorJson: '{"mode":"modify","path":"src/a.ts","symbol":"answer","kind":"function"}',
+      currentSource: "export function answer(): number {\n  return 1;\n}",
+      diagnostics: "stage: protocol",
+      repin: true,
+      stalled: {
+        failedRounds: 16,
+        round: 17,
+        maxRounds: 32,
+        askNumber: 2,
+        history: { kind: "unchanged", rounds: 10 },
+      },
+    });
+    expect(prompt).toContain("No progress: 16 consecutive failed rounds. This is round 17 of 32.");
+    expect(prompt).toContain("repeated ask 2");
+    expect(prompt).toContain("the failing set is unchanged across the last 10 verification rounds");
+    // The ask still replaces the continuation's own round-exhausted header.
+    expect(prompt).not.toContain("exhausted its 3-exchange edit budget");
+  });
+
+  test("the decision-point cadence shortens after the first ask", () => {
+    // First ask at 8, then every MAX_STALLED_ROUNDS / 2 (4): 8, 12, 16, 20, …
+    expect(MAX_STALLED_ROUNDS).toBe(8);
+    expect(STALLED_ASK_INTERVAL).toBe(4);
+    expect([0, 1, 7, 9, 11].filter(isStalledAskMilestone)).toEqual([]);
+    expect([8, 12, 16, 20, 24, 28, 32].filter(isStalledAskMilestone)).toEqual([
+      8, 12, 16, 20, 24, 28, 32,
+    ]);
+    expect([8, 12, 16, 20, 24].map(stalledAskNumber)).toEqual([1, 2, 3, 4, 5]);
+  });
+
+  test("the repeated ask names the unchanged set and the recovering cycle still succeeds", async () => {
+    const dir = fixtureDir();
+    const provider = new ScriptedProvider([
+      selectionResponse(ANSWER, "modify"),
+      ...chainedEdits(17),
+    ]);
+    const result = await runLoop({
+      cwd: dir,
+      issue: "make the answer test pass",
+      model: "fake",
+      provider,
+      checkCommand: stallingCheckCommand(dir, MAX_STALLED_ROUNDS * 2),
+      testCommand: passingCommand,
+    });
+    expect(result.ok).toBe(true);
+    const firstAsk = provider.calls[9]?.at(-1)?.content ?? "";
+    expect(firstAsk).toContain(`No progress: ${MAX_STALLED_ROUNDS} consecutive failed rounds.`);
+    expect(firstAsk).not.toContain("repeated ask");
+    // The second ask arrives four failed rounds later (streak 12, round 13).
+    const secondAsk = provider.calls[13]?.at(-1)?.content ?? "";
+    expect(secondAsk).toContain(
+      `No progress: ${MAX_STALLED_ROUNDS + STALLED_ASK_INTERVAL} consecutive failed rounds.`,
+    );
+    expect(secondAsk).toContain("This is round 13 of 32.");
+    expect(secondAsk).toContain("repeated ask 2");
+    expect(secondAsk).toContain("the failing set is unchanged across the last");
+    expect(secondAsk).toContain("directly address that unchanged failing set");
+    // The #71 note is still carried alongside the sharpened framing.
+    expect(secondAsk).toContain("Failure history: the failing set is unchanged");
+    // The third ask recurs at the next shortened interval (streak 16, round 17).
+    const thirdAsk = provider.calls[17]?.at(-1)?.content ?? "";
+    expect(thirdAsk).toContain(`No progress: ${MAX_STALLED_ROUNDS * 2} consecutive failed rounds.`);
+    expect(thirdAsk).toContain("This is round 17 of 32.");
+    expect(thirdAsk).toContain("repeated ask 3");
+    // A decision point, not a cap: the model continues and the run recovers.
+    expect(helperSource(dir)).toContain("return 18;");
+  }, 30000);
+
+  test("a fast-burning storm reaches the second ask before the budget ends it", async () => {
+    const dir = fixtureDir();
+    // 8k tokens per call against a 120k budget: the run is terminated around
+    // round 15, so a 16-round cadence could never show the second ask.
+    const provider = new UsageProvider(
+      [selectionResponse(ANSWER, "modify"), ...chainedEdits(30)],
+      Array.from({ length: 40 }, () => ({ total_tokens: 8_000 })),
+    );
+    const result = await runLoop({
+      cwd: dir,
+      issue: "make the answer test pass",
+      model: "fake",
+      provider,
+      tokenBudget: 120_000,
+      checkCommand: stallingCheckCommand(dir, 40),
+      testCommand: passingCommand,
+    });
+    expect(result.ok).toBe(false);
+    expect(result.terminationReason).toBe("token-budget");
+    const asks = provider.calls.filter((call) =>
+      (call.at(-1)?.content ?? "").includes("No progress:"),
+    );
+    expect(asks).toHaveLength(2);
+    const firstAsk = provider.calls[9]?.at(-1)?.content ?? "";
+    expect(firstAsk).toContain(`No progress: ${MAX_STALLED_ROUNDS} consecutive failed rounds.`);
+    expect(firstAsk).not.toContain("repeated ask");
+    // The second (sharpened) ask fired at streak 12, round 13 — before the
+    // budget ended the run around round 15.
+    const secondAsk = provider.calls[13]?.at(-1)?.content ?? "";
+    expect(secondAsk).toContain("This is round 13 of 32.");
+    expect(secondAsk).toContain("repeated ask 2");
+    expect(secondAsk).toContain("the failing set is unchanged across the last");
+  }, 30000);
+
+  test("STOP at the repeated ask still ends the run through the decision chain", async () => {
+    const dir = fixtureDir();
+    const provider = new ScriptedProvider([
+      selectionResponse(ANSWER, "modify"),
+      ...chainedEdits(16),
+      "  stop\n",
+      "the storm could not be resolved",
+    ]);
+    const result = await runLoop({
+      cwd: dir,
+      issue: "make the answer test pass",
+      model: "fake",
+      provider,
+      checkCommand: stallingCheckCommand(dir, MAX_STALLED_ROUNDS * 2),
+      testCommand: passingCommand,
+    });
+    expect(result.ok).toBe(false);
+    expect(result.terminationReason).toBe("edit-exhausted");
+    const stopped = result.records.at(-1);
+    expect(stopped?.outcome).toBe("stopped");
+    expect(stopped?.iteration).toBe(17);
+    expect(stopped?.exchange).toBe(1);
+    // STOP's meaning is unchanged at the sharpened ask: one summary, stalled text.
+    expect(stopped?.diagnostics).toContain(
+      `edit-exhausted: the model replied STOP after ${MAX_STALLED_ROUNDS * 2} consecutive failed rounds`,
+    );
+    expect(provider.calls.at(-1)?.at(-1)?.content ?? "").toContain("The run is over");
+  }, 30000);
+});
+
 const TSC = [
   "bun",
   new URL("../node_modules/typescript/bin/tsc", import.meta.url).pathname,
@@ -1574,6 +2480,16 @@ function createResponse(
   replacement: string,
 ): string {
   return editResponse(null, replacement, address);
+}
+
+// A v2 range payload (#72): the pinned address plus a 1-based inclusive
+// `(line,column)` selector instead of a matcher.
+function rangeEditResponse(
+  range: { line: number; column: number; endLine: number; endColumn: number },
+  replacement: string,
+  address: { path: string; symbol: string; kind: string } = ANSWER,
+): string {
+  return JSON.stringify({ ...address, range, replacement });
 }
 
 // The canonical pinned selection the loop echoes into retry prompts.
@@ -2616,8 +3532,9 @@ describe("runLoop", () => {
 
   test("recurs the no-progress ask in a rejection cycle at 16 with the updated count (#60)", async () => {
     const dir = fixtureDir();
-    // Rounds 1-16 reject every exchange: the ask fires at round 9 (streak 8)
-    // and again at round 17 (streak 16); the round-17 edit then recovers.
+    // Rounds 1-16 reject every exchange: the ask fires at round 9 (streak 8),
+    // round 13 (streak 12), and round 17 (streak 16) under the shortened
+    // cadence (#65); the round-17 edit then recovers.
     const provider = new ScriptedProvider([
       selectionResponse(ANSWER, "modify"),
       ...protocolRejections(2 + 15 * 3),
@@ -2635,13 +3552,20 @@ describe("runLoop", () => {
     const asks = provider.calls.filter((call) =>
       (call.at(-1)?.content ?? "").includes("No progress:"),
     );
-    expect(asks).toHaveLength(2);
-    expect(provider.calls[24]?.at(-1)?.content ?? "").toContain(
-      `No progress: ${MAX_STALLED_ROUNDS} consecutive failed rounds.`,
+    expect(asks).toHaveLength(3);
+    const first = provider.calls[24]?.at(-1)?.content ?? "";
+    expect(first).toContain(`No progress: ${MAX_STALLED_ROUNDS} consecutive failed rounds.`);
+    expect(first).not.toContain("repeated ask");
+    const second = provider.calls[36]?.at(-1)?.content ?? "";
+    expect(second).toContain(
+      `No progress: ${MAX_STALLED_ROUNDS + STALLED_ASK_INTERVAL} consecutive failed rounds.`,
     );
-    const second = provider.calls[48]?.at(-1)?.content ?? "";
-    expect(second).toContain(`No progress: ${MAX_STALLED_ROUNDS * 2} consecutive failed rounds.`);
-    expect(second).toContain("This is round 17 of 32.");
+    expect(second).toContain("This is round 13 of 32.");
+    expect(second).toContain("repeated ask 2");
+    const third = provider.calls[48]?.at(-1)?.content ?? "";
+    expect(third).toContain(`No progress: ${MAX_STALLED_ROUNDS * 2} consecutive failed rounds.`);
+    expect(third).toContain("This is round 17 of 32.");
+    expect(third).toContain("repeated ask 3");
     expect(helperSource(dir)).toContain("return 2;");
   }, 30000);
 
@@ -5893,7 +6817,14 @@ function multiFixtureDir(): string {
 }
 
 function batchResponse(
-  entries: { path: string; symbol: string; kind: string; matcher?: string; replacement: string }[],
+  entries: {
+    path: string;
+    symbol: string;
+    kind: string;
+    matcher?: string;
+    range?: { line: number; column: number; endLine: number; endColumn: number };
+    replacement: string;
+  }[],
 ): string {
   return JSON.stringify({
     payloads: entries.map((entry) => ({
@@ -5901,6 +6832,7 @@ function batchResponse(
       symbol: entry.symbol,
       kind: entry.kind,
       ...(entry.matcher === undefined ? {} : { matcher: entry.matcher }),
+      ...(entry.range === undefined ? {} : { range: entry.range }),
       replacement: entry.replacement,
     })),
   });
@@ -6010,6 +6942,69 @@ describe("multi-payload exchanges (#69)", () => {
     const stats = exchangeStats(result.records);
     expect(stats.rejected).toBe(1);
     expect(stats.applied).toBe(1);
+  }, 30000);
+
+  test("rejects a range on a batch payload in an unshown file", async () => {
+    const dir = multiFixtureDir();
+    const beforeA = readFileSync(join(dir, "src", "a.ts"), "utf8");
+    const beforeB = readFileSync(join(dir, "src", "b.ts"), "utf8");
+    const provider = new ScriptedProvider([
+      selectionResponse({ path: "src/a.ts", symbol: "one", kind: "function" }),
+      batchResponse([
+        {
+          path: "src/a.ts",
+          symbol: "one",
+          kind: "function",
+          matcher: "return 1;",
+          replacement: "return 2;",
+        },
+        {
+          path: "src/b.ts",
+          symbol: "two",
+          kind: "function",
+          range: { line: 1, column: 1, endLine: 3, endColumn: 1 },
+          replacement: "return 3;",
+        },
+      ]),
+      batchResponse([
+        {
+          path: "src/a.ts",
+          symbol: "one",
+          kind: "function",
+          matcher: "return 1;",
+          replacement: "return 2;",
+        },
+        {
+          path: "src/b.ts",
+          symbol: "two",
+          kind: "function",
+          matcher: "return 1;",
+          replacement: "return 3;",
+        },
+      ]),
+    ]);
+    const result = await runLoop({
+      cwd: dir,
+      issue: "make both declarations satisfy the pair test",
+      model: "fake",
+      provider,
+      checkCommand: TSC,
+      testCommand: ["bun", "test"],
+      multiPayload: true,
+    });
+    expect(result.ok).toBe(true);
+    const rejected = result.records.find(
+      (record) => record.outcome !== "applied" && record.kind === "exchange" && record.row === 2,
+    );
+    expect(rejected?.payloads).toBe(2);
+    expect(rejected?.diagnostics).toContain("stage: multi");
+    expect(rejected?.diagnostics).toContain("payload 2");
+    expect(rejected?.diagnostics).toContain("cannot be used");
+    // The failed batch wrote neither file; the retry applied both.
+    expect(beforeA).toContain("return 1;");
+    expect(beforeB).toContain("return 1;");
+    expect(readFileSync(join(dir, "src", "a.ts"), "utf8")).toContain("return 2;");
+    expect(readFileSync(join(dir, "src", "b.ts"), "utf8")).toContain("return 3;");
   }, 30000);
 
   test("rejects a batch that targets the same file twice before any splice", async () => {

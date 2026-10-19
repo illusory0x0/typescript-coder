@@ -6,10 +6,11 @@ A self-contained TypeScript coding agent. It reads an issue from **stdin**, uses
 hand-written TypeScript frontend plus a symbol index to select a target
 (**address**: `path × symbol × kind`) and a **mode** (`modify`, `create`, or
 `delete`), asks an OpenAI-compatible LLM for **one flat edit payload**
-(`{"path","symbol","kind","matcher"?,"replacement"}`) for that target, resolves
-the address with a strict AND (never a silent first match), splices the
-replacement over the structurally-matched range (or the whole symbol when
-`matcher` is omitted), and accepts the result only after the mandatory **syntax
+(`{"path","symbol","kind","matcher"?,"range"?,"replacement"}`) for that target,
+resolves the address with a strict AND (never a silent first match), splices the
+replacement over the structurally-matched range (or an explicit `(line,column)`
+`range`, or the whole symbol when both selectors are omitted), and accepts the
+result only after the mandatory **syntax
 gate** plus `tsc --noEmit` and `bun test` pass. The loop is two nested levels:
 **Run** iterates **Edit → Verification**; each Run iteration grants a fresh Edit
 budget of **≤3 model exchanges** shared by target picking and content revision,
@@ -22,7 +23,9 @@ corrected edit/selection opens a fresh round), a round that opens on 8
 consecutive no-progress rounds (failed verifications plus rounds that end with
 no applied edit, e.g. rejection-exhausted ones) asks the model to decide through
 the **no-progress ask** (reply `STOP`, or continue with a materially different
-approach), while a token-budget overrun, a failed delete verification, a target
+approach; its second and later occurrences name the unchanged/cycling failing
+set and demand the reply address it or `STOP`), while a token-budget overrun, a
+failed delete verification, a target
 that stops parsing, a harness fault, or the 32-round cap ends the run, and the
 LLM writes exactly one summary in the four labeled sections (accomplished /
 failed and why / remaining / next step) for the planning main agent.
@@ -88,6 +91,7 @@ A selection carries one of three modes (default `modify`):
 | `symbol`      | string  | address echo, must equal the pinned selection                                                                           |
 | `kind`        | string  | address echo, must equal the pinned selection                                                                           |
 | `matcher`     | string? | optional snippet copied from the current source, structurally matched inside the symbol; omitted = whole-symbol rewrite |
+| `range`       | object? | optional position selector `{line, column, endLine, endColumn}` (#72): all 1-based, end inclusive, against the numbered current-source block shown in the prompt; an alternative to `matcher`, must sit inside the declaration; takes precedence over `matcher` when both are sent |
 | `replacement` | string  | the text spliced over exactly the matched (or whole-symbol) range                                                       |
 
 One flat payload per edit. The address is echoed back (`mode` is never echoed)
@@ -97,7 +101,7 @@ may move to a different declaration in the same file — the payload carries tha
 declaration's own {path, symbol, kind}, which must resolve to exactly one
 declaration in the current source, and the pin (with its echoed label) then
 points at it. A payload path outside the pinned file fails with `stage:
-address`. `create` rejects a present `matcher`.
+address`. `create` rejects a present `matcher` or `range`.
 
 **Multi-payload exchanges (#69, opt-in, default off):** with the
 `--multi-payload` flag (benchmark: `--multi-payload`; loop option
@@ -153,13 +157,40 @@ splice is then gated: if the resulting source does not parse, the exchange fails
 with `stage: gate` and **nothing is written**; otherwise `oxfmt` formats the
 whole file before the write (a formatting failure is `stage: format`). Two
 pre-write guards stop self-inflicted spirals. A modify payload byte-identical to
-the previous modify payload (locator as sent, `matcher`, `replacement`) fails
-with `stage: repeat` before any resolution or splice — nothing is written, the
-guard spans iterations, and the diagnostic distinguishes an already-applied edit
-from a just-rejected one. After the parse gate, a candidate that raises the
-file's top-level count of a bodyful function, class, or type-alias name fails
-with `stage: duplicate`, naming the existing declaration and its line; overload
-signatures (bodyless functions) and interfaces/namespaces are exempt.
+the previous modify payload (locator as sent, `matcher`, `range`,
+`replacement`) fails with `stage: repeat` before any resolution or splice —
+nothing is written, the guard spans iterations, and the diagnostic distinguishes
+an already-applied edit from a just-rejected one. After the parse gate, a
+candidate that raises the file's top-level count of a bodyful function, class,
+or type-alias name fails with `stage: duplicate`, naming the existing
+declaration and its line; overload signatures (bodyless functions) and
+interfaces/namespaces are exempt.
+
+**Range selector (#72):** a `modify` payload may carry `range` —
+`{line, column, endLine, endColumn}`, all positive integers and 1-based, end
+inclusive — as an alternative to `matcher` for the ambiguity class the
+structural matcher cannot resolve. The coordinates address the current-source
+block the prompt shows: the pinned declaration for an ordinary modify round
+(the indexed range, starting after a wrapping `export`), or the whole file in a
+create→repair round. The prompt renders that block with 1-based line numbers
+(`N | source`; columns count the source characters after the prefix), so the
+positions are copied from the prompt. The resolved span must sit inside the
+resolved declaration; it is spliced exactly like a matcher match, and a range
+that starts at the declaration's first character gets the same leading-`export`
+tolerance as a whole-symbol rewrite (a body-level range does not). A `range` is
+rejected with `stage: range` — the single `range-invalid` typed cause — for an
+out-of-bounds position (a line/column that does not exist in the shown block,
+including an inclusive end that runs past its last character), a span outside
+the declaration, an empty range, or an end before its start; a block the prompt
+would elide (over the 8000-character prompt limit) is refused too, because its
+shown line numbers no longer map back to the file. The diagnostic
+names the current bounds (the declaration's line/column span in the shown
+source). Because a `range` addresses only the declaration the prompt showed, a
+payload that re-pins to another declaration (outside a create→repair round,
+whose whole file is shown), or a further multi-payload entry in another file, is
+refused the same way — its coordinates would have no shown block to address.
+`range` takes precedence over `matcher` when both are sent, and a
+missing `range` leaves the matcher/whole-symbol path byte-identical.
 
 ### create (missing symbol)
 
@@ -214,12 +245,13 @@ harness:
 model (Edit, ≤3 exchanges per Run iteration):
   - LLM reads context                          # yaml
   - LLM selects target + mode                  # json {mode, path, symbol, kind}
-  - LLM outputs one flat edit payload          # {"path","symbol","kind","matcher"?,"replacement"}
+  - LLM outputs one flat edit payload          # {"path","symbol","kind","matcher"?,"range"?,"replacement"}
                                                # or, with --multi-payload on, {"payloads":[…]} (one per file)
+  - LLM (repair exchange only, once per round) # {"request":"read"|"check"|"test"}, harness returns a bounded result
 
 harness:
   - resolve address (strict AND)   # 0 or >1 matches = staged diagnostic, never a silent pick
-  - echo-check + matcher splice    # omitted matcher = whole-symbol rewrite
+  - echo-check + range/matcher splice  # omitted selectors = whole-symbol rewrite
   - syntax gate                    # unparseable after = discard, nothing written
   - format with oxfmt
   - write the edit (keep-progress, no rollback)
@@ -229,25 +261,30 @@ harness:
 
 - **budget:** every Run iteration starts a fresh ≤3-exchange Edit budget shared by
   target picking and content revision. Soft failures (`protocol`, `address`,
-  `echo`, `matcher`, `no-op`, `repeat`, `duplicate`, `gate`, `format`, `truncated`)
+  `echo`, `matcher`, `range`, `no-op`, `repeat`, `duplicate`, `gate`, `format`,
+  `truncated`)
   consume one exchange and re-ask with staged diagnostics; a rejection repeated
   byte-identically inside the iteration prefixes the retry with a `failed
   identically` note. A valid edit leaves Edit and enters Verification.
-- **records (#69):** every record row carries the number of payload objects the
-  exchange submitted (`payloads`: 1 classic, N for a batch, 0 when none) and the
-  provider tool calls in the reply (`toolCalls`). `exchangeStats(records)` folds
-  a run's rows into per-run diagnostics — `turns`, `payloads`, `toolCalls`,
-  `applied`, `rejected`, `selected`, `stopped` — so the rejected-vs-applied
+- **records (#69/#73):** every record row carries the number of payload objects
+  the exchange submitted (`payloads`: 1 classic, N for a batch, 0 when none) and
+  the provider tool calls in the reply (`toolCalls`); an executed self-check
+  request records a `self-check` exchange row (#73). `exchangeStats(records)`
+  folds a run's rows into per-run diagnostics — `turns`, `payloads`, `toolCalls`,
+  `applied`, `rejected`, `selected`, `stopped`, `selfChecks` — so the rejected-vs-applied
   exchange counts and the command/tool-call volume are readable from the
   benchmark record (and the tc side log's `exchangeStats:` line) without replay
   parsing.
 - **rejection policy (#56/#65):** every soft failure is classified into a typed
   cause — `protocol`, `echo`, `address`, the three matcher sub-causes
-  (`matcher-unparseable`, `matcher-not-found`, `matcher-ambiguous`), `no-op`,
+  (`matcher-unparseable`, `matcher-not-found`, `matcher-ambiguous`),
+  `range-invalid`, `no-op`,
   `repeat`, `duplicate`, `gate`, `format`, or `truncated` — carried on the record
   row, and the retry prompt's lead sentence is that cause's concrete correction
   instead of the generic "make minimal corrective changes" (matcher causes ask
-  for a verbatim matcher or an omitted `matcher`; no-op states the intended
+  for a verbatim matcher or an omitted `matcher`; `range-invalid` asks for the
+  1-based positions copied from the numbered current-source block, or omitting
+  `range`; no-op states the intended
   change is already in the file and points at the round's pending failures;
   address/echo ask to echo the pin;
   gate asks for a complete declaration; format asks to keep the declaration
@@ -296,9 +333,21 @@ harness:
   biased to continue — only when the failures cannot be resolved), and a request
   for a materially different approach naming concrete alternatives (change the
   matcher shape, re-pin to a declaration the diagnostics name, restructure the
-  declaration); the ask round may re-pin like a verification-opened one. The ask
-  recurs at every further multiple (8, 16, 24, …) with the updated count and
-  carries the **attempt digest** (#57). A round that opens through a #52
+  declaration); the ask round may re-pin like a verification-opened one. After
+  the first ask the decision point recurs every `MAX_STALLED_ROUNDS / 2` (4)
+  further failed rounds — 8, 12, 16, 20, … — with the updated count (#65); the
+  shorter interval keeps the later ask reachable in a fast-burning storm that
+  would otherwise exhaust the token budget before it. Each ask carries the
+  **attempt digest** (#57). The **first** ask uses exactly that
+  wording; from the **second** decision point on the ask is sharpened (#65): it
+  states how many consecutive failed rounds have passed since the previous ask,
+  names the unchanged/cycling fact the `#71 Failure history` note carries (the
+  failing set is unchanged across the last N verification rounds, or cycling
+  between two states), and requires the reply to either directly address that
+  unchanged failing set — the diagnostics below name it, not another minimal
+  edit at the same spot — or reply exactly `STOP`. This sharpens the framing
+  only: the first ask stays byte-identical, `STOP`'s meaning and the decision
+  point are unchanged, and no cap or auto-stop is added. A round that opens through a #52
   continuation prompt keeps that prompt's framing, except that a continuation
   directly following a milestone no-progress round carries the no-progress ask
   instead (rejection-exhausted cycles open every round through a continuation,
@@ -351,6 +400,25 @@ harness:
   not-found matcher names a matching declaration of the same file together with
   its re-pin address when one exists. Omitting it is a whole-symbol rewrite, and
   multiple changes happen across edit rounds — the old `edits[]` batch is gone.
+- **range (#72):** an alternative selector, `range` `{line, column, endLine,
+  endColumn}`, all 1-based and end inclusive, addresses the span against the
+  numbered current-source block shown in the prompt (the pinned declaration for
+  an ordinary modify round, the whole file in a create→repair round). The span
+  must sit inside the declaration; an out-of-bounds, outside-declaration, empty,
+  or end-before-start range is a single `range-invalid` rejection naming the
+  declaration's current bounds. `range` wins over `matcher` when both are sent;
+  omitting it keeps the matcher/whole-symbol path byte-identical.
+- **prompt support:** the edit and retry prompts render the current-source block
+  with 1-based line numbers (`N | source`; columns count the characters after
+  the prefix) so a `range` can be derived; this is a deliberate prompt-text
+  change and its token cost is part of the measurement.
+- **self-verification request (#73):** a repair exchange may reply with the
+  distinct request object `{"request":"read"|"check"|"test"}` instead of an
+  edit payload (§7 holds the shape, whitelist, bounds, and at-most-one rule).
+  The harness executes the one request and returns a bounded `Self-check result:`
+  block in the next repair prompt; every other exchange treats a `{"request":…}`
+  reply as an ordinary (protocol) rejection. Requests add no provider calls or
+  local commands on a round that makes none, and all guards stay unchanged.
 - **selection:** the address must be a strict AND of `path`, `symbol`, `kind`;
   a miss lists the candidates the name does exist at, and an ambiguity lists
   every declaration. `create` requires a safe, parseable path whose name is
@@ -367,7 +435,8 @@ harness:
   declaration and verifies once. A deletion that fails verification ends the run
   as `delete-verification-failed`.
 - **on-failure:** report staged diagnostics (`protocol`, `address`, `echo`,
-  `matcher`, `no-op`, `repeat`, `duplicate`, `gate`, `format`, `tsc`, `tests`; plus
+  `matcher`, `range`, `no-op`, `repeat`, `duplicate`, `gate`, `format`, `tsc`,
+  `tests`; plus
   `truncated` and `prev-broken`) → classify the rejection by typed cause and
   pick the per-cause correction for the re-ask (see rejection policy) → keep the
   attempted state → re-ask within the same Edit budget. A verification failure
@@ -409,10 +478,46 @@ harness:
 
 Tools are **internal library APIs** in v1 (`src/tools.ts`): `rename`, `scroll`,
 `find-definition`, `check`, `test`. The harness uses them directly; they are
-covered by per-tool unit tests and are **never offered to the model**. v1 has no
-agentic tool-execution loop: the loop sends no `tools` to the provider, and a
-provider tool-call response is only ever parsed as a selection. Provider-level
-`tools` parameter support stays (§8).
+covered by per-tool unit tests and are **never offered to the model as provider
+tool calls**. v1 has no general agentic tool-execution loop: the loop sends no
+`tools` to the provider, and a provider tool-call response is only ever parsed
+as a selection. Provider-level `tools` parameter support stays (§8).
+
+**Bounded self-verification exception (#73).** A *repair exchange* — a content
+exchange whose prompt carries prior diagnostics (an intra-round retry) or is a
+`#52` continuation, never the fresh post-pick edit prompt — may instead carry a
+single self-verification request, a distinct reply object `{"request": …}` with
+`…` one of three whitelisted kinds:
+
+- `"read"` — the pinned file's current on-disk source, rendered with 1-based
+  line numbers (`numberedSourceBlock`) and truncated at the prompt limit
+  (`SPEC_FILE_LIMIT`; `truncateSource`). No path argument: the harness never
+  reads an arbitrary path;
+- `"check"` — the task's check command, run through the existing `checkTool`
+  (default `bunx tsc --noEmit`);
+- `"test"` — the task's test command, run through the existing `testTool`
+  (default `bun test`).
+
+The model names a **kind**, never a command string: the harness maps each kind
+to the same commands Verification runs. The bounded result is returned once, in
+the model's next prompt (a `Self-check result:` block appended after the
+Diagnostics block and before the `Failure history`/`Prior attempts` sections):
+the numbered source for `read`, or `exit <code>` plus the combined
+stdout/stderr clamped to a fixed output limit (with a truncation marker) for
+`check`/`test`.
+
+The exception is deliberately narrow. A request is honored only on a repair
+exchange and only at most **once per Run iteration**; it consumes one of the
+round's ≤3 model exchanges (so a no-request round adds zero provider calls and
+zero local commands, and its prompt path is byte-identical). A second request in
+the same round, a request at the final exchange (no successor exists to return
+the result), an unknown kind, an extra key, or a non-string value is **not
+executed** — it is refused as a `protocol` rejection that consumes the exchange
+and cannot extend the round. The three kinds are the complete whitelist; no
+other command, no write access, and no additional provider `tools` are offered.
+The request rides the ordinary repair-prompt shape, so the `#52`
+continuation/`#54` stalled headers and the `#71` failure-history note are
+unchanged.
 
 ## 8. Provider
 
@@ -509,7 +614,7 @@ round-tripping must fail the suite before any measured number can move.
 | R3  | LLM tool-call / JSON flakiness (gateway models)        | strict JSON schema, low temperature, bounded re-asks                                                                   |
 | R4  | whole-project `tsc` per iteration is slow              | incremental / changed-files scope; check/test commands bounded at 120s by default (`commandTimeoutMs`)                 |
 | R5  | overload / namespace address ambiguity                 | strict-AND `path × symbol × kind` lookup; ambiguity diagnostics list every candidate instead of picking one            |
-| R6  | repeated / ambiguous matchers inside a symbol          | one matcher per edit with an exactly-one-match rule and an extend-the-matcher hint; omit it for a whole-symbol rewrite |
+| R6  | repeated / ambiguous matchers inside a symbol          | one matcher per edit with an exactly-one-match rule and an extend-the-matcher hint; omit it for a whole-symbol rewrite, or address the span with the optional `range` `(line,column)` selector (#72) |
 | R7  | re-ask context growth / prompt drift                   | stable system + issue/context prefix; bounded rebuilt context                                                          |
 
 ## 13. Open items (defaults)

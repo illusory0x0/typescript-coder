@@ -1,7 +1,7 @@
 ---
 id: 72
 title: "Edit protocol: add a (line,column) position selector as a matcher alternative"
-status: todo
+status: done
 priority: medium
 milestone: null
 parent: null
@@ -94,3 +94,21 @@ plus replay-bundle inspection for range adoption and the new rejection classes.
   when needed); the structural matcher stays the default and the selector
   remains an alternative, not a replacement.
 - Priority defaulted to medium; no milestone.
+
+### Measurement (2026-10-19)
+
+One tc-side matrix on the frozen #72 code (`benchmark/results/2026-10-19-tc-range-selector.json`,
+replays `tmp/replays-72-tc-matrix/`; row added to `benchmark/results/consumption.md`):
+
+- json 3/3 $0.00125, sexp 3/3 $0.00053, minilisp 3/3 $0.00508, overall 9/9
+  $0.00229 — clean, no storm (runs 16:42:35-16:43:31 UTC). Overall tokens per
+  success 12,680 and USD $0.00229 are series bests; minilisp is under its
+  $0.00598 pressure target.
+- **Adoption was 0**: no reply in the sample carried `range`; every edit used
+  the matcher/whole-symbol path, whose byte-identical guarantee the unit tests
+  pin. So this row is evidence of no regression, not of the selector's effect;
+  the issue framing already treats the selector as protocol robustness rather
+  than an assumed storm fix.
+- Criterion 5 gates: `bunx tsc --noEmit` 0, `bun test` 716 pass, accept 5/5,
+  `bun benchmark/check.ts` 3 PASS (the new ledger row is the first `fresh` row
+  under #66 provenance).
