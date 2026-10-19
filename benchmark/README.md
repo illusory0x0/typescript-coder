@@ -56,9 +56,11 @@ is frozen by #61's discipline: its model-facing issue text is fixed in
 iteration. Prompt/loop changes must not be tuned against it, and a held-out
 result is never a change-set's evidence of *prompt fit* — it gates only
 "generalizes beyond the tuned fixtures" claims. Every series matrix includes it
-(`--all`), so its row is recorded like the others, but the rule above governs
-how a change-set may cite it. `benchmark/results/consumption.md` records the
-rule and the first held-out baseline row.
+(`--all`), so its result is recorded in every row's `Notes` (the per-task
+columns stay the three tuned fixtures and `Overall` now spans all four tasks),
+but the rule above governs how a change-set may cite it.
+`benchmark/results/consumption.md` records the rule and the first held-out
+baseline row.
 
 ## Metrics per record
 

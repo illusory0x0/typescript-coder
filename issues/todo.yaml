@@ -3,17 +3,9 @@
 # A dep, and every child of an umbrella, must be listed before its dependent.
 # wontfix entries stay listed (not pickable) at the bottom, by id.
 
-- id: 67
-  title: "Add a held-out fixture and a prompt-freeze rule for series claims"
-  status: todo
-  priority: medium
-  milestone: null
-  parent: null
-  deps: []
-  file: 0067-add-a-held-out-fixture-and-a-prompt-freeze-rule-for-series-claims.md
 - id: 70
   title: "Align spec and conventions with as-built details"
-  status: todo
+  status: in-progress
   priority: low
   milestone: null
   parent: null

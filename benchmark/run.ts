@@ -22,7 +22,7 @@ import type { RateClass } from "../src/benchmark-pricing";
 import type { RecordedProvenance } from "../src/provenance";
 import type { ChatMessage, ChatResponse, ReasoningEffort, ToolDefinition } from "../src/openai";
 
-type TaskName = "json-parser" | "sexp-parser" | "minilisp";
+type TaskName = "json-parser" | "sexp-parser" | "minilisp" | "csv-parser";
 type Side = "tc" | "oc";
 type SideSelection = Side | "both";
 
@@ -250,6 +250,7 @@ const TASKS: readonly TaskSpec[] = [
   { name: "json-parser" },
   { name: "sexp-parser" },
   { name: "minilisp" },
+  { name: "csv-parser" },
 ];
 
 // One issue string per task, used verbatim by both sides (G1 is quoted from
@@ -282,6 +283,16 @@ export const TASK_ISSUES: Record<TaskName, string> = {
     "The test file is the specification; implement what it requires, nothing more.",
     "Verify with `bun test` and `bunx tsc --noEmit` only.",
   ].join("\n"),
+  // Held-out task (#67): never a target of prompt or loop iteration.
+  "csv-parser": [
+    "Implement src/csv.ts exporting parseCsv(text: string): string[][]",
+    "so that src/csv.test.ts passes and `bunx tsc --noEmit` stays clean.",
+    "Create or modify only src/csv.ts - no other files, no scratch files;",
+    "src/csv.test.ts and tsconfig.json are read-only.",
+    "The fixture contains only those files - nothing else to explore.",
+    "The test file is the specification; implement what it requires, nothing more.",
+    "Verify with `bun test` and `bunx tsc --noEmit` only.",
+  ].join("\n"),
 };
 
 // Reference implementations live in benchmark/references/ under short names
@@ -290,6 +301,7 @@ const TASK_REFERENCE_BASENAMES: Record<TaskName, string> = {
   "json-parser": "json",
   "sexp-parser": "sexp",
   minilisp: "lisp",
+  "csv-parser": "csv",
 };
 
 const DEFAULT_MODEL = "deepseek-v4.1-flash";
@@ -334,7 +346,7 @@ function printUsage(): void {
   process.stdout.write(`Usage: bun run benchmark/run.ts [options]
 
 Options:
-  --task <json-parser|sexp-parser|minilisp>  run a single task (default: all)
+  --task <json-parser|sexp-parser|minilisp|csv-parser>  run a single task (default: all)
   --all                                      run all tasks (default)
   --reps <n>                                 repetitions per task and side (default: 3)
   --concurrency <n>                          max parallel runs (default: ${DEFAULT_CONCURRENCY})
@@ -780,7 +792,6 @@ async function runTypescriptCoderSide(options: {
     result = await runLoop({
       cwd: options.workspace,
       issue: options.issue,
-      model: options.model,
       provider,
       temperature: 0,
       checkCommand: ["bun", options.tscBin, "--noEmit"],
