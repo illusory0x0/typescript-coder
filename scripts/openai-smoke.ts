@@ -5,7 +5,7 @@ function modelFromArgv(argv: string[]): string {
   const index = argv.indexOf("--model");
   const value = index === -1 ? undefined : argv[index + 1];
   if (value === undefined || value === "") {
-    return "deepseek";
+    return "deepseek-v4.1-flash";
   }
   return value;
 }

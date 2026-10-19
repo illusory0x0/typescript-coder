@@ -1,7 +1,7 @@
 ---
 id: 69
 title: "Measure batched path-independent edits per exchange"
-status: todo
+status: in-progress
 priority: medium
 milestone: null
 parent: null
@@ -62,3 +62,46 @@ window; both rows noted in `consumption.md`.
   first cut keeps path-independent payloads only (distinct declaration paths).
   #72's design must reserve an interface for same-symbol multi-range batching
   (extension filed separately when needed).
+
+### Implementation (2026-10-19)
+
+- **Records (criterion 1).** `LoopRecord` rows carry `payloads` (1 classic,
+  N batch, 0 none) and `toolCalls` (provider tool calls in the reply); both
+  additive/defaulted so every existing row literal stays valid. `exchangeStats`
+  folds a run's exchange rows into `{turns, payloads, toolCalls, applied,
+  rejected, selected, stopped}`; the benchmark record exposes it as
+  `runs[].exchangeStats` and each `runs[].records[]` entry now carries
+  `payloads`/`toolCalls`. The tc side log prints an `exchangeStats:` line, and
+  the report header prints `- multi-payload: off (default)`.
+- **Opt-in variant (criterion 2).** Flag `--multi-payload` (camelCase
+  `--multiPayload` alias) end-to-end: `src/cli.ts` → `main.ts` →
+  `LoopOptions.multiPayload` → `buildSystemPrompt(true)` and the retry/continuation
+  prompts; the benchmark runner forwards its own `--multi-payload` to the tc side.
+  Reply shape `{"payloads":[{…},…]}`, one payload per **file** (path-independent);
+  the first carries the pin (or verification-repair re-pin), each further entry
+  names its own uniquely-resolving declaration. Each entry runs the full
+  per-payload chain (echo/address, splice, syntax gate, duplicate-name guard,
+  `oxfmt` no-op check) against its own file; the exchange is **atomic** — any
+  failing entry rejects the whole exchange (nothing written) with `stage: multi`
+  naming every failing entry. New typed causes `multi-protocol` and
+  `multi-duplicate`; `create`/`delete` never batch. No unified diffs; matcher,
+  echo, address, no-op, repeat, duplicate, budget, and stage guards are unchanged.
+- **Design decision (the open question).** Pin echo is **per payload** (each
+  entry echoes its own address; only the first is pinned, the rest resolve
+  strictly in their own file), and gates are **per payload** but the exchange
+  rejects **atomically** (all-or-nothing apply). Rationale: it keeps the
+  single-payload path byte-identical when the flag is off and makes the batch a
+  strict superset of one edit, with no partial writes to roll back.
+- **Flag off.** A `{"payloads": …}` reply is parsed as a classic payload and
+  fails `stage: protocol`; behavior is byte-identical to today (test asserted).
+- **Tests.** `parseEditResponseList` unit tests (flat vs batch, duplicate file,
+  empty/non-array/extra-key, non-JSON), `exchangeStats` fold tests, and five
+  `runLoop` integration tests (atomic apply + one verification, atomic reject
+  with per-payload causes, duplicate-file reject, flag-off unchanged,
+  prompt-gated batch shape).
+- **Gates.** `bunx tsc --noEmit` 0 errors; `bun test` 681 pass / 0 fail (was
+  670); `bun run accept` 5/5; `bun benchmark/check.ts` 3 PASS.
+- **Still open (criterion 3).** The live measurement — `benchmark/run.ts --all
+  --side tc --reps 3 --multi-payload` on vs off on the same frozen text,
+  priced per window, with both rows in `consumption.md` — has not run yet:
+  it waits on the freeze discipline (fresh gates, then the matrices).

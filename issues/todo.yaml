@@ -5,7 +5,7 @@
 
 - id: 69
   title: "Measure batched path-independent edits per exchange"
-  status: todo
+  status: in-progress
   priority: medium
   milestone: null
   parent: null
@@ -27,22 +27,6 @@
   parent: null
   deps: []
   file: 0073-repair-self-verification-let-the-model-request-one-bounded-read-or-check-per-repair-round.md
-- id: 49
-  title: "Context management: audit and cut input tokens"
-  status: in-progress
-  priority: high
-  milestone: null
-  parent: 46
-  deps: []
-  file: 0049-context-management-audit-and-cut-input-tokens.md
-- id: 60
-  title: "Repair rejection-cycle storms: count rejection-exhausted rounds toward the no-progress decision point"
-  status: in-progress
-  priority: medium
-  milestone: null
-  parent: 46
-  deps: []
-  file: 0060-repair-rejection-cycle-storms-count-rejection-exhausted-rounds-toward-the-no-progress-decision-point.md
 - id: 64
   title: "Study opencode2 context management (e.g. compaction) for absorption candidates"
   status: todo
@@ -91,14 +75,6 @@
   parent: null
   deps: []
   file: 0070-align-spec-and-conventions-with-as-built-details.md
-- id: 71
-  title: "Repair verification-cycle storms: surface a non-converging failing set in the retry chain"
-  status: in-progress
-  priority: medium
-  milestone: null
-  parent: 46
-  deps: []
-  file: 0071-repair-verification-cycle-storms-surface-a-non-converging-failing-set-in-the-retry-chain.md
 - id: 46
   title: "Harness optimization v3: agent-loop, context, structure-editor"
   status: in-progress

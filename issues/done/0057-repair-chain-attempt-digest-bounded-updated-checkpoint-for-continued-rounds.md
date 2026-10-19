@@ -121,3 +121,11 @@ plus replay-bundle inspection for digest presence and repeat-class counts.
   `address` class (5 in the pre-#65 rep3) no longer appears. Digest renders
   1,098-1,176 chars (<= 1,200). Success did not regress (7/9, 8/9 vs 7/9).
   Closed on this re-measure.
+
+- Re-measure 4 (2026-10-19 #71 matrices, `benchmark/results/2026-10-19-tc-storm71-c.json` /
+  `-d.json`, bundles `tmp/replays-71-tc-matrix-{c,d}/`): clause holds.
+  repeat + duplicate: 17 + 5 in the pre-#65 sample -> c rep1 2 + 8, c rep2
+  2 + 1, c rep3 0; d rep2 0 + 2, d reps 1/3 0; `address` still absent. Repeat
+  alone: 4 total (0-2 per run). Noted wobble: c rep1's 8 `duplicate` rejections
+  are the highest single-run count since #59, still far below the pre-change
+  sample.

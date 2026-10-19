@@ -20,7 +20,7 @@ export interface ReplayBundleMeta {
 
 export interface ReplayBundle extends ReplayBundleMeta {
   readonly format: string;
-  readonly side: "ts";
+  readonly side: "tc";
   readonly calls: ReplayCall[];
 }
 
@@ -75,7 +75,7 @@ export class ReplayRecorder {
   bundle(meta: ReplayBundleMeta): ReplayBundle {
     return {
       format: REPLAY_BUNDLE_FORMAT,
-      side: "ts",
+      side: "tc",
       task: meta.task,
       rep: meta.rep,
       model: meta.model,

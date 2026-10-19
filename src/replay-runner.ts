@@ -47,9 +47,9 @@ export function parseReplayBundle(json: string): ReplayBundle {
       `unsupported replay bundle format: ${JSON.stringify(parsed["format"])} (expected "${REPLAY_BUNDLE_FORMAT}")`,
     );
   }
-  if (parsed["side"] !== "ts") {
+  if (parsed["side"] !== "tc" && parsed["side"] !== "ts") {
     throw new Error(
-      `unsupported replay bundle side: ${JSON.stringify(parsed["side"])} (expected "ts")`,
+      `unsupported replay bundle side: ${JSON.stringify(parsed["side"])} (expected "tc")`,
     );
   }
   const task = parsed["task"];
@@ -74,7 +74,7 @@ export function parseReplayBundle(json: string): ReplayBundle {
   }
   return {
     format: REPLAY_BUNDLE_FORMAT,
-    side: "ts",
+    side: "tc",
     task,
     rep,
     model,
@@ -254,14 +254,17 @@ export function summarizeReplay(run: ReplayRun): string {
         : run.promptMismatches.map((callNumber) => `call ${callNumber}`).join(", ")
     }`,
   );
-  if (result.attempts.length === 0) {
-    lines.push("attempts: none");
+  if (result.terminationReason !== undefined) {
+    lines.push(`termination: ${result.terminationReason}`);
   }
-  for (const attempt of result.attempts) {
+  if (result.records.length === 0) {
+    lines.push("records: none");
+  }
+  for (const record of result.records) {
     lines.push(
-      `attempt ${attempt.attempt}: outcome=${attempt.outcome} diagnostics=${
-        attempt.diagnosticsHead ?? "none"
-      }`,
+      `record ${record.row}: kind=${record.kind} outcome=${record.outcome} exchange=${
+        record.exchange ?? "-"
+      } diagnostics=${record.diagnosticsHead ?? "none"}`,
     );
   }
   if (!result.ok) {

@@ -97,3 +97,26 @@ plus: read the new report's aggregates against the #47 baseline figures.
   their outcome clauses; #71 (new) owns the post-#65 residual —
   applied-but-unverified oscillation storms. #46 closes when the storm chain
   resolves and the final row lands.
+
+## Status (2026-10-19, post-#71 c/d two-matrix verdict)
+
+- Samples (`2026-10-19-tc-storm71-c.json` / `-d.json`; rows in
+  `benchmark/results/consumption.md`): d — json $0.00190 (3/3), sexp $0.00070
+  (3/3), minilisp $0.00999 (3/3; 31,330 tokens per success), overall $0.00420
+  (9/9) — the first clean sample: every storm run resolved (23,186 / 27,279 /
+  43,524 tokens; 13,008 tokens per success, below the #44 canonical 13,716),
+  and the overall sits under the oc pressure baseline ($0.00444). c — json
+  $0.00196 (3/3), sexp $0.00069 (3/3), minilisp $0.04090 (2/3), overall
+  $0.01122 (8/9), the spread driven by one bare-budget storm (125,052 tokens;
+  asks at rounds 9/17/25 answered with further edits — the #65 residual).
+- Against the #47 baseline (15,963 / 11,770 / 30,398 / 19,377 per task and
+  overall): sample d is below on json (4,612), sexp (3,083), and overall
+  (13,008), and above on minilisp only (31,330, +3%) — the goal misses on one
+  task by ~930 tokens in this sample; success 9/9 (bars met).
+- Children: #49 closed (raw clause met on sample d: 13,008 < 13,716); #60 and
+  #71 closed with the c-rep2 residual recorded; #65 stays open on its outcome
+  clause — this issue closes when that resolves and the final row lands.
+- Gates at this state: green at the c/d run start (`tmp/live-71/run.log`,
+  16:45:54): `bunx tsc --noEmit` 0, `bun test` pass, `bun run accept` 5/5,
+  `bun benchmark/check.ts` 3 PASS. The closure package touches docs/issues
+  only.

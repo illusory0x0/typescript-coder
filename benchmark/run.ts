@@ -11,14 +11,17 @@ import {
 } from "node:fs";
 import { dirname, isAbsolute, join, relative, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
-import { runLoop } from "../src/loop";
+import { archiveFailureArtifacts, writeFailureArtifact } from "../src/failure-artifact";
+import { exchangeStats, runLoop } from "../src/loop";
 import { OpenAIProvider, readConfigFromEnv } from "../src/openai";
-import type { ProviderLike } from "../src/loop";
+import type { ProviderLike, RejectionCause } from "../src/loop";
 import { ReplayRecorder, usageFromRaw } from "../src/replay-format";
-import type { ChatMessage, ChatResponse, ToolDefinition } from "../src/openai";
+import { PRICING_FETCHED_ON, PRICING_SOURCE_URL, runCost } from "../src/benchmark-pricing";
+import type { RateClass } from "../src/benchmark-pricing";
+import type { ChatMessage, ChatResponse, ReasoningEffort, ToolDefinition } from "../src/openai";
 
 type TaskName = "json-parser" | "sexp-parser" | "minilisp";
-type Side = "ts" | "opencode";
+type Side = "tc" | "oc";
 type SideSelection = Side | "both";
 
 interface TaskSpec {
@@ -37,6 +40,8 @@ interface CliArgs {
   json: string | null;
   replayDir: string | null;
   tokenBudget: number | null;
+  effort: ReasoningEffort | null;
+  multiPayload: boolean;
   help: boolean;
 }
 
@@ -58,15 +63,36 @@ interface CommandOutcome {
   readonly error: string | null;
 }
 
-interface AttemptSummary {
-  readonly attempt: number;
+interface RecordSummary {
+  readonly row: number;
+  readonly iteration: number;
+  readonly kind: "exchange" | "verification";
+  readonly exchange: number | null;
   readonly outcome: string;
   readonly diagnosticsHead: string | null;
   readonly replacementChars: number | null;
   readonly finishReason: string | null;
-  readonly extensionGranted: boolean;
-  readonly edits: number | null;
-  readonly appliedEdits: number | null;
+  /** Typed edit-rejection cause (#56); null on success and verification rows. */
+  readonly cause: RejectionCause | null;
+  /** Payload objects the exchange carried (#69): 1 classic, N batch, 0 none. */
+  readonly payloads: number;
+  /** Provider tool calls in the reply that produced this row (#69). */
+  readonly toolCalls: number;
+}
+
+/**
+ * Per-run exchange diagnostics (#69): rejected-vs-applied exchange counts plus
+ * the command/tool-call volume the run's turns carried, so a benchmark record
+ * exposes them without replay parsing.
+ */
+export interface RecordExchangeStats {
+  readonly turns: number;
+  readonly payloads: number;
+  readonly toolCalls: number;
+  readonly applied: number;
+  readonly rejected: number;
+  readonly selected: number;
+  readonly stopped: number;
 }
 
 interface SideOutcome {
@@ -75,14 +101,18 @@ interface SideOutcome {
   readonly infraError: string | null;
   readonly steps: number | null;
   readonly durationMs: number;
+  /** Wall clock of the side's model work (what `durationMs` measures). */
+  readonly startedAt: string;
+  readonly finishedAt: string;
   readonly tokens: TokenUsage;
   readonly usageAvailable: boolean;
   readonly usageSource: string;
   readonly rawUsage: unknown;
-  readonly attemptSummaries: readonly AttemptSummary[] | null;
+  readonly recordSummaries: readonly RecordSummary[] | null;
+  /** Per-run rejected-vs-applied exchange counts (#69); null when no records. */
+  readonly exchangeStats: RecordExchangeStats | null;
   readonly loopDiagnostics: string | null;
-  readonly extensions: number | null;
-  readonly abortReason: string | null;
+  readonly terminationReason: string | null;
   readonly logText: string;
   readonly sessionExportJson: string | null;
   readonly statsJson: string | null;
@@ -113,11 +143,16 @@ interface RunRecord {
   readonly usageSource: string;
   readonly rawUsage: unknown;
   readonly durationMs: number;
+  readonly startedAt: string;
+  readonly finishedAt: string;
+  readonly cost: number | null;
+  readonly rateClass: RateClass | null;
   readonly steps: number | null;
-  readonly attempts: readonly AttemptSummary[] | null;
+  readonly records: readonly RecordSummary[] | null;
+  /** Per-run rejected-vs-applied exchange counts (#69); null when no records. */
+  readonly exchangeStats: RecordExchangeStats | null;
   readonly loopDiagnostics: string | null;
-  readonly extensions: number | null;
-  readonly abortReason: string | null;
+  readonly terminationReason: string | null;
   readonly model: string;
   readonly workspace: string;
   readonly logs: LogPaths;
@@ -141,9 +176,12 @@ interface AggregateRow {
   successRate: number;
   usageRuns: number;
   tokens: { input: TokenStats; output: TokenStats; total: TokenStats };
+  /** USD cost stats over runs that carry a cost (same shape as tokens). */
+  cost: TokenStats;
   durationMsMean: number | null;
   stepsMean: number | null;
   tokensPerSuccess: { input: number | null; output: number | null; total: number | null };
+  costPerSuccess: number | null;
 }
 
 interface Aggregates {
@@ -152,7 +190,7 @@ interface Aggregates {
   overall: AggregateRow;
 }
 
-interface Report {
+export interface Report {
   generatedAt: string;
   date: string;
   mode: "pilot" | "full";
@@ -161,6 +199,9 @@ interface Report {
   reps: number;
   concurrency: number;
   model: string;
+  effort: ReasoningEffort | null;
+  /** Opt-in multi-payload exchanges (#69): whether the tc side batched edits. */
+  multiPayload: boolean;
   bunVersion: string;
   opencodeVersion: string | null;
   pilotReference: string | null;
@@ -173,11 +214,14 @@ interface RunContext {
   readonly repoRoot: string;
   readonly tscBin: string;
   readonly model: string;
+  readonly effort: ReasoningEffort | null;
   readonly opencodeModel: string;
   readonly opencode: OpencodeContext | null;
   readonly runRoot: string;
   readonly replayDir: string | null;
   readonly tokenBudget: number | null;
+  /** Opt-in multi-payload exchanges (#69) forwarded to the tc side; off by default. */
+  readonly multiPayload: boolean;
 }
 
 interface BenchmarkJob {
@@ -207,18 +251,30 @@ const TASKS: readonly TaskSpec[] = [
 const TASK_ISSUES: Record<TaskName, string> = {
   "json-parser": [
     "Implement src/json.ts exporting JsonValue and parseJson(text: string): JsonValue",
-    "so that src/json.test.ts passes. Keep tsc --noEmit clean. Do not modify the test",
-    "file or tsconfig.json. The test file is the specification.",
+    "so that src/json.test.ts passes and `bunx tsc --noEmit` stays clean.",
+    "Create or modify only src/json.ts - no other files, no scratch files;",
+    "src/json.test.ts and tsconfig.json are read-only.",
+    "The fixture contains only those files - nothing else to explore.",
+    "The test file is the specification; implement what it requires, nothing more.",
+    "Verify with `bun test` and `bunx tsc --noEmit` only.",
   ].join("\n"),
   "sexp-parser": [
     "Implement src/sexp.ts exporting Sexp and parseSexp(text: string): Sexp",
-    "so that src/sexp.test.ts passes. Keep tsc --noEmit clean. Do not modify the test",
-    "file or tsconfig.json. The test file is the specification.",
+    "so that src/sexp.test.ts passes and `bunx tsc --noEmit` stays clean.",
+    "Create or modify only src/sexp.ts - no other files, no scratch files;",
+    "src/sexp.test.ts and tsconfig.json are read-only.",
+    "The fixture contains only those files - nothing else to explore.",
+    "The test file is the specification; implement what it requires, nothing more.",
+    "Verify with `bun test` and `bunx tsc --noEmit` only.",
   ].join("\n"),
   minilisp: [
     "Implement src/lisp.ts exporting LispValue and run(program: string): LispValue",
-    "so that src/lisp.test.ts passes. Keep tsc --noEmit clean. Do not modify the test",
-    "file or tsconfig.json. The test file is the specification.",
+    "so that src/lisp.test.ts passes and `bunx tsc --noEmit` stays clean.",
+    "Create or modify only src/lisp.ts - no other files, no scratch files;",
+    "src/lisp.test.ts and tsconfig.json are read-only.",
+    "The fixture contains only those files - nothing else to explore.",
+    "The test file is the specification; implement what it requires, nothing more.",
+    "Verify with `bun test` and `bunx tsc --noEmit` only.",
   ].join("\n"),
 };
 
@@ -278,13 +334,19 @@ Options:
   --concurrency <n>                          max parallel runs (default: ${DEFAULT_CONCURRENCY})
   --pilot                                    force 1 rep per task and side and write
                                              benchmark/results/pilot-<date>.json
-  --side ts|opencode|both                    which side(s) to run (default: both)
+  --side tc|oc|both                          which side(s) to run (default: both)
   --model <id>                               gateway model id (default: ${DEFAULT_MODEL})
   --keep                                     keep workspaces and logs under ./tmp/benchmark/
   --json <path>                              report output path (default: benchmark/results/)
-  --replay-dir <path>                        write per-run ts-side replay bundles to <path>
-  --token-budget <n>                         abort a ts-side run once accumulated provider
+  --replay-dir <path>                        write per-run tc-side replay bundles to <path>
+  --token-budget <n>                         abort a tc-side run once accumulated provider
                                              tokens exceed n (default: 120000)
+  --effort <none|low|high|max>               force this reasoning_effort on every tc-side
+                                             model call (default: none)
+  --multi-payload                            opt in to multi-payload exchanges (#69) on the
+                                             tc side: a modify reply may batch path-independent
+                                             edits in one {"payloads": [...]} object
+                                             (default: off, one flat payload per exchange)
   --help, -h                                 print this help and exit
 `);
 }
@@ -322,8 +384,15 @@ function parseTokenBudget(value: string): number {
   return budget;
 }
 
+function parseEffort(value: string): ReasoningEffort {
+  if (value === "none" || value === "low" || value === "high" || value === "max") {
+    return value;
+  }
+  failUsage(`invalid --effort value: ${value}`);
+}
+
 function parseSide(value: string): SideSelection {
-  if (value === "ts" || value === "opencode" || value === "both") {
+  if (value === "tc" || value === "oc" || value === "both") {
     return value;
   }
   failUsage(`invalid --side value: ${value}`);
@@ -350,6 +419,8 @@ function parseArgs(argv: string[]): CliArgs {
     json: null,
     replayDir: null,
     tokenBudget: null,
+    effort: null,
+    multiPayload: false,
     help: false,
   };
   for (let index = 0; index < argv.length; index += 1) {
@@ -445,6 +516,19 @@ function parseArgs(argv: string[]): CliArgs {
         }
         args.tokenBudget = parseTokenBudget(value);
         index += 1;
+        break;
+      }
+      case "--effort": {
+        const value = argv[index + 1];
+        if (value === undefined || value.startsWith("-")) {
+          failUsage("missing value for --effort");
+        }
+        args.effort = parseEffort(value);
+        index += 1;
+        break;
+      }
+      case "--multi-payload": {
+        args.multiPayload = true;
         break;
       }
       default: {
@@ -553,6 +637,25 @@ function usageReported(usage: TokenUsage): boolean {
   );
 }
 
+// Per-run USD cost from the recorded window and buckets (see
+// src/benchmark-pricing.ts for the rate table and bucket normalization); null
+// when the side reported no usage, mirroring a null `tokens.total`.
+function costForOutcome(
+  outcome: SideOutcome,
+  side: Side,
+): { cost: number | null; rateClass: RateClass | null } {
+  if (!outcome.usageAvailable) {
+    return { cost: null, rateClass: null };
+  }
+  const result = runCost(
+    outcome.tokens,
+    side,
+    new Date(outcome.startedAt),
+    new Date(outcome.finishedAt),
+  );
+  return { cost: result.cost, rateClass: result.rateClass };
+}
+
 function summarizeOutput(text: string, limit = OUTPUT_LIMIT): string {
   const trimmed = text.trim();
   return trimmed.length > limit ? `${trimmed.slice(0, limit)}...` : trimmed;
@@ -637,7 +740,7 @@ class RecordingProvider implements ProviderLike {
   }
 }
 
-async function runTypescriptSide(options: {
+async function runTypescriptCoderSide(options: {
   workspace: string;
   issue: string;
   model: string;
@@ -647,6 +750,11 @@ async function runTypescriptSide(options: {
   fixture: string;
   replayPath: string | null;
   tokenBudget: number | null;
+  effort: ReasoningEffort | null;
+  /** Opt-in multi-payload exchanges (#69); forwarded to the loop. */
+  multiPayload: boolean;
+  /** Repo root receiving failure artifacts under `failures/` (#43). */
+  failureRoot: string;
 }): Promise<SideOutcome> {
   const recorder = options.replayPath === null ? null : new ReplayRecorder();
   const provider = new RecordingProvider(
@@ -658,6 +766,7 @@ async function runTypescriptSide(options: {
     ),
     recorder,
   );
+  const startedAt = new Date().toISOString();
   const started = performance.now();
   let error: string | null = null;
   let result: Awaited<ReturnType<typeof runLoop>> | null = null;
@@ -671,18 +780,23 @@ async function runTypescriptSide(options: {
       checkCommand: ["bun", options.tscBin, "--noEmit"],
       testCommand: ["bun", "test"],
       tokenBudget: options.tokenBudget ?? undefined,
+      effortOverride: options.effort ?? undefined,
+      multiPayload: options.multiPayload,
     });
   } catch (caught) {
     error = errorMessage(caught);
   }
   const durationMs = Math.round(performance.now() - started);
+  const finishedAt = new Date().toISOString();
   const usages = provider.rawUsages.map((raw) => tokenUsageFromOpenAi(raw));
   const tokens = withDerivedTotal(sumTokenUsages(usages));
   const usageAvailable = usages.some((usage) => usageReported(usage));
 
   const lines: string[] = [
-    "side: ts",
+    "side: tc",
     `model: ${options.model}`,
+    `startedAt: ${startedAt}`,
+    `finishedAt: ${finishedAt}`,
     `durationMs: ${durationMs}`,
     `issue:\n${options.issue}`,
     `result: ${result === null ? "error" : result.ok ? "ok" : "failed"}`,
@@ -691,37 +805,59 @@ async function runTypescriptSide(options: {
   if (result !== null) {
     lines.push(`mode: ${result.mode ?? "none"}`);
     lines.push(`filePath: ${result.filePath ?? "none"}`);
-    lines.push(`extensions: ${result.extensions}`);
-    lines.push(`abortReason: ${result.abortReason ?? "none"}`);
-    lines.push(`attempts: ${result.attempts.length}`);
-    for (const attempt of result.attempts) {
+    lines.push(`terminationReason: ${result.terminationReason ?? "none"}`);
+    lines.push(`records: ${result.records.length}`);
+    for (const record of result.records) {
       lines.push(
-        `  attempt ${attempt.attempt}: outcome=${attempt.outcome} locator=${JSON.stringify(
-          attempt.locator,
-        )} diagnostics=${
-          attempt.diagnostics === null ? "none" : summarizeOutput(attempt.diagnostics)
+        `  record ${record.row}: kind=${record.kind} iteration=${record.iteration} exchange=${
+          record.exchange ?? "-"
+        } outcome=${record.outcome} locator=${JSON.stringify(record.locator)} diagnostics=${
+          record.diagnostics === null ? "none" : summarizeOutput(record.diagnostics)
         }`,
       );
     }
+    const stats = exchangeStats(result.records);
+    lines.push(
+      `exchangeStats: turns=${stats.turns} applied=${stats.applied} rejected=${stats.rejected} selected=${stats.selected} stopped=${stats.stopped} payloads=${stats.payloads} toolCalls=${stats.toolCalls}`,
+    );
     lines.push(`diagnostics: ${result.diagnostics ?? "none"}`);
     lines.push(`explanation: ${result.explanation ?? "none"}`);
   }
   lines.push(`usageAvailable: ${usageAvailable}`);
   lines.push(`rawUsage: ${JSON.stringify(provider.rawUsages, null, 2)}`);
 
-  const attemptSummaries =
+  // Failure artifacts land in the repo (#43); the harness writes them, the
+  // outer layer never runs git.
+  let failureArtifact: string | null = null;
+  if (result !== null) {
+    failureArtifact = writeFailureArtifact({
+      rootDir: options.failureRoot,
+      result,
+      context: `benchmark ${options.task} tc rep${options.rep}`,
+    });
+    if (failureArtifact !== null) {
+      lines.push(`failureArtifact: ${relative(options.failureRoot, failureArtifact)}`);
+    }
+  }
+
+  const recordSummaries =
     result === null
       ? null
-      : result.attempts.map((attempt) => ({
-          attempt: attempt.attempt,
-          outcome: attempt.outcome,
-          diagnosticsHead: attempt.diagnosticsHead,
-          replacementChars: attempt.replacementChars,
-          finishReason: attempt.finishReason,
-          extensionGranted: attempt.extensionGranted === true,
-          edits: attempt.edits ?? null,
-          appliedEdits: attempt.appliedEdits ?? null,
+      : result.records.map((record) => ({
+          row: record.row,
+          iteration: record.iteration,
+          kind: record.kind,
+          exchange: record.exchange,
+          outcome: record.outcome,
+          diagnosticsHead: record.diagnosticsHead,
+          replacementChars: record.replacementChars,
+          finishReason: record.finishReason,
+          cause: record.cause ?? null,
+          payloads: record.payloads ?? 0,
+          toolCalls: record.toolCalls ?? 0,
         }));
+  const recordsExchangeStats =
+    result === null ? null : (exchangeStats(result.records) as RecordExchangeStats);
 
   if (recorder !== null && options.replayPath !== null) {
     const bundle = recorder.bundle({
@@ -738,16 +874,18 @@ async function runTypescriptSide(options: {
     sideOk: result?.ok === true,
     error,
     infraError: null,
-    steps: result?.attempts.length ?? null,
+    steps: result?.records.length ?? null,
     durationMs,
+    startedAt,
+    finishedAt,
     tokens,
     usageAvailable,
     usageSource: usageAvailable ? "chat-completions" : "unavailable",
     rawUsage: provider.rawUsages,
-    attemptSummaries,
+    recordSummaries,
+    exchangeStats: recordsExchangeStats,
     loopDiagnostics: result?.diagnostics ?? null,
-    extensions: result?.extensions ?? null,
-    abortReason: result?.abortReason ?? null,
+    terminationReason: result?.terminationReason ?? null,
     logText: `${lines.join("\n")}\n`,
     sessionExportJson: null,
     statsJson: null,
@@ -769,6 +907,7 @@ async function runOpencodeSide(options: {
   model: string;
 }): Promise<SideOutcome> {
   const sessionId = `ses_bench${randomUUID().replaceAll("-", "")}`;
+  const startedAt = new Date().toISOString();
   const started = performance.now();
   const run = await runCommand(
     [
@@ -787,6 +926,7 @@ async function runOpencodeSide(options: {
     OPENCODE_TIMEOUT_MS,
   );
   const durationMs = Math.round(performance.now() - started);
+  const finishedAt = new Date().toISOString();
 
   let tokens: TokenUsage = NULL_USAGE;
   let usageAvailable = false;
@@ -860,10 +1000,12 @@ async function runOpencodeSide(options: {
   }
 
   const lines: string[] = [
-    "side: opencode",
+    "side: oc",
     `command: ${options.bin} run --auto --format json --session ${sessionId} --model ${options.model} <issue>`,
     `model: ${options.model}`,
     `sessionId: ${sessionId}`,
+    `startedAt: ${startedAt}`,
+    `finishedAt: ${finishedAt}`,
     `durationMs: ${durationMs}`,
     `exitCode: ${run.exitCode ?? "unknown"}`,
     `timedOut: ${run.timedOut}`,
@@ -884,14 +1026,16 @@ async function runOpencodeSide(options: {
     infraError,
     steps,
     durationMs,
+    startedAt,
+    finishedAt,
     tokens,
     usageAvailable,
     usageSource,
     rawUsage,
-    attemptSummaries: null,
+    recordSummaries: null,
+    exchangeStats: null,
     loopDiagnostics: null,
-    extensions: null,
-    abortReason: null,
+    terminationReason: null,
     logText: `${lines.join("\n")}\n`,
     sessionExportJson,
     statsJson,
@@ -1051,10 +1195,10 @@ async function runOnce(
 
   const issue = TASK_ISSUES[task];
   const replayPath =
-    side === "ts" && context.replayDir !== null ? join(context.replayDir, `${runName}.json`) : null;
+    side === "tc" && context.replayDir !== null ? join(context.replayDir, `${runName}.json`) : null;
   let outcome: SideOutcome;
-  if (side === "ts") {
-    outcome = await runTypescriptSide({
+  if (side === "tc") {
+    outcome = await runTypescriptCoderSide({
       workspace,
       issue,
       model: context.model,
@@ -1064,10 +1208,13 @@ async function runOnce(
       fixture: ["benchmark", "fixtures", task].join("/"),
       replayPath,
       tokenBudget: context.tokenBudget,
+      effort: context.effort,
+      multiPayload: context.multiPayload,
+      failureRoot: context.repoRoot,
     });
   } else {
     if (context.opencode === null) {
-      throw new InfraError("opencode side requested but the CLI was not probed");
+      throw new InfraError("oc side requested but the CLI was not probed");
     }
     outcome = await runOpencodeSide({
       bin: context.opencode.bin,
@@ -1092,25 +1239,30 @@ async function runOnce(
   }
 
   const asRelative = (path: string): string => relative(context.repoRoot, path);
+  const { cost, rateClass } = costForOutcome(outcome, side);
   return {
     task,
     side,
     rep,
-    // A token-budget abort is a run failure even when the judge passes on the
-    // state left on disk (#36); judge fields stay as recorded.
-    ok: outcome.abortReason === null && judge.ok,
+    // A termination-matrix ending is a run failure even when the judge passes
+    // on the state left on disk (#43); judge fields stay as recorded.
+    ok: outcome.terminationReason === null && judge.ok,
     sideOk: outcome.sideOk,
     tokens: outcome.tokens,
     usageAvailable: outcome.usageAvailable,
     usageSource: outcome.usageSource,
     rawUsage: outcome.rawUsage,
     durationMs: outcome.durationMs,
+    startedAt: outcome.startedAt,
+    finishedAt: outcome.finishedAt,
+    cost,
+    rateClass,
     steps: outcome.steps,
-    attempts: outcome.attemptSummaries,
+    records: outcome.recordSummaries,
+    exchangeStats: outcome.exchangeStats,
     loopDiagnostics: outcome.loopDiagnostics,
-    extensions: outcome.extensions,
-    abortReason: outcome.abortReason,
-    model: side === "ts" ? context.model : context.opencodeModel,
+    terminationReason: outcome.terminationReason,
+    model: side === "tc" ? context.model : context.opencodeModel,
     workspace: asRelative(workspace),
     logs: {
       side: asRelative(sideLogPath),
@@ -1136,7 +1288,7 @@ function printRecord(record: RunRecord): void {
   process.stdout.write(
     `${label} ${record.task} ${record.side} rep${record.rep} (${seconds}s, tokens=${
       record.tokens.total ?? "unavailable"
-    }, steps=${record.steps ?? "n/a"})\n`,
+    }, cost=${formatUsd(record.cost)}, steps=${record.steps ?? "n/a"})\n`,
   );
   if (!record.ok) {
     if (record.judge !== null && record.judge.detail !== null) {
@@ -1157,9 +1309,9 @@ function writeReport(path: string, report: Report): void {
 // Aggregates are computed from the final `runs` array (matrix order) so reruns
 // never leak in: only final records are listed. Token means/totals cover runs
 // whose `tokens.total` is non-null; a field is skipped when its value is null.
-// `tokensPerSuccess` divides those token sums by the number of passing runs
-// (judge-passing and not aborted at the token budget; null when there were no
-// successes).
+// `tokensPerSuccess` and `costPerSuccess` divide those sums by the number of
+// passing runs (judge-passing and not aborted at the token budget; null when
+// there were no successes). `cost` stats cover runs that carry a USD cost.
 function aggregateRuns(
   runs: readonly RunRecord[],
   task: TaskName | null,
@@ -1190,6 +1342,14 @@ function aggregateRuns(
     output: tokenStats((usage) => usage.output),
     total: tokenStats((usage) => usage.total),
   };
+  const costValues = selected
+    .map((run) => run.cost)
+    .filter((value): value is number => value !== null);
+  const costTotal = costValues.reduce((left, right) => left + right, 0);
+  const cost: TokenStats =
+    costValues.length === 0
+      ? { mean: null, total: null }
+      : { mean: costTotal / costValues.length, total: costTotal };
   const perSuccess = (stats: TokenStats): number | null =>
     ok === 0 || stats.total === null ? null : stats.total / ok;
   return {
@@ -1201,6 +1361,7 @@ function aggregateRuns(
     successRate: selected.length === 0 ? 0 : ok / selected.length,
     usageRuns: usageRuns.length,
     tokens,
+    cost,
     durationMsMean:
       selected.length === 0
         ? null
@@ -1212,6 +1373,7 @@ function aggregateRuns(
       output: perSuccess(tokens.output),
       total: perSuccess(tokens.total),
     },
+    costPerSuccess: perSuccess(cost),
   };
 }
 
@@ -1239,6 +1401,11 @@ function markdownPathFor(jsonPath: string): string {
 
 function formatTokenCount(value: number | null): string {
   return value === null ? "n/a" : Math.round(value).toLocaleString("en-US");
+}
+
+// USD values print with five decimals (#63); `n/a` when nothing was recorded.
+function formatUsd(value: number | null): string {
+  return value === null ? "n/a" : `$${value.toFixed(5)}`;
 }
 
 function formatSeconds(durationMs: number | null): string {
@@ -1294,7 +1461,7 @@ function resolveReferencePath(repoRoot: string, task: TaskName): string {
   return candidates[0] ?? "benchmark/references";
 }
 
-function writeMarkdownReport(mdPath: string, report: Report): void {
+export function writeMarkdownReport(mdPath: string, report: Report): void {
   const repoRoot = fileURLToPath(new URL("..", import.meta.url));
   const { aggregates } = report;
   const lines: string[] = [];
@@ -1302,6 +1469,8 @@ function writeMarkdownReport(mdPath: string, report: Report): void {
   lines.push(
     `- mode: ${report.mode}`,
     `- model: ${report.model}`,
+    `- effort: ${report.effort ?? "none (default)"}`,
+    `- multi-payload: ${report.multiPayload ? "on (#69)" : "off (default)"}`,
     `- concurrency: ${report.concurrency}`,
     `- tasks: ${report.tasks.join(", ")}`,
     `- sides: ${report.sides.join(", ")}`,
@@ -1331,23 +1500,31 @@ function writeMarkdownReport(mdPath: string, report: Report): void {
     );
   }
 
-  lines.push("## Token accounting", "");
+  lines.push("## Token and cost accounting", "");
   lines.push(
-    "ts: OpenAI-compatible `usage` from the provider, summed over every chat request",
+    "tc: OpenAI-compatible `usage` from the provider, summed over every chat request",
     "(input/prompt, output/completion, total; cache and reasoning counters are kept per",
-    "record). Cost is recorded verbatim but not compared.",
+    "record).",
     "",
-    "opencode: usage read from `opencode session export` (`info.tokens`), falling back to",
+    "oc: usage read from `opencode session export` (`info.tokens`), falling back to",
     "`opencode stats --json`; input/output come from the reported session usage and total",
-    "is derived from input + output + reasoning when the export reports none. Cost is",
-    "recorded verbatim but not compared.",
+    "is derived from input + output + reasoning when the export reports none; the export's",
+    "own `cost` stays verbatim in `rawUsage`.",
+    "",
+    "Cost: USD per run, computed from the recorded buckets and the run's",
+    "`startedAt`/`finishedAt` window with the official DeepSeek V4.1-Flash peak/off-peak",
+    "prices (see `src/benchmark-pricing.ts`). Buckets: tc `input` includes cache hits",
+    "(miss = input - cacheRead); oc `input` excludes them (miss = input, hit = cacheRead);",
+    "output is priced together with reasoning; `cacheWrite` is priced at the cache-miss",
+    "rate. A run that crosses a peak/off-peak boundary splits by elapsed-time share",
+    "(uniform-spend approximation).",
     "",
   );
 
   lines.push("## Per-task results", "");
   lines.push(
-    "| Task | Side | Success | Mean in | Mean out | Mean total | Mean dur (s) | Mean steps |",
-    "| --- | --- | ---: | ---: | ---: | ---: | ---: | ---: |",
+    "| Task | Side | Success | Mean in | Mean out | Mean total | Mean $ | $/success | Mean dur (s) | Mean steps |",
+    "| --- | --- | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: |",
   );
   for (const row of aggregates.byTaskSide) {
     lines.push(
@@ -1355,15 +1532,17 @@ function writeMarkdownReport(mdPath: string, report: Report): void {
         row.tokens.input.mean,
       )} | ${formatTokenCount(row.tokens.output.mean)} | ${formatTokenCount(
         row.tokens.total.mean,
-      )} | ${formatSeconds(row.durationMsMean)} | ${formatSteps(row.stepsMean)} |`,
+      )} | ${formatUsd(row.cost?.mean ?? null)} | ${formatUsd(row.costPerSuccess)} | ${formatSeconds(
+        row.durationMsMean,
+      )} | ${formatSteps(row.stepsMean)} |`,
     );
   }
   lines.push("");
 
   lines.push("## Overall comparison", "");
   lines.push(
-    "| Side | Success | Mean in | Mean out | Mean total | Total tokens | Mean dur (s) | Mean steps |",
-    "| --- | --- | ---: | ---: | ---: | ---: | ---: | ---: |",
+    "| Side | Success | Mean in | Mean out | Mean total | Total tokens | Mean $ | Total $ | $/success | Mean dur (s) | Mean steps |",
+    "| --- | --- | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: |",
   );
   for (const row of aggregates.bySide) {
     lines.push(
@@ -1371,23 +1550,34 @@ function writeMarkdownReport(mdPath: string, report: Report): void {
         row.tokens.input.mean,
       )} | ${formatTokenCount(row.tokens.output.mean)} | ${formatTokenCount(
         row.tokens.total.mean,
-      )} | ${formatTokenCount(row.tokens.total.total)} | ${formatSeconds(
-        row.durationMsMean,
-      )} | ${formatSteps(row.stepsMean)} |`,
+      )} | ${formatTokenCount(row.tokens.total.total)} | ${formatUsd(
+        row.cost?.mean ?? null,
+      )} | ${formatUsd(row.cost?.total ?? null)} | ${formatUsd(
+        row.costPerSuccess,
+      )} | ${formatSeconds(row.durationMsMean)} | ${formatSteps(row.stepsMean)} |`,
     );
   }
   lines.push("");
-  lines.push("Tokens per success (usage-run token sums divided by successful runs):", "");
-  lines.push("| Side | Input | Output | Total |", "| --- | ---: | ---: | ---: |");
+  lines.push("Per success (usage-run sums divided by successful runs):", "");
+  lines.push("| Side | Input | Output | Total | Cost |", "| --- | ---: | ---: | ---: | ---: |");
   for (const row of aggregates.bySide) {
     lines.push(
       `| ${row.side ?? "all"} | ${formatTokenCount(row.tokensPerSuccess.input)} | ${formatTokenCount(
         row.tokensPerSuccess.output,
-      )} | ${formatTokenCount(row.tokensPerSuccess.total)} |`,
+      )} | ${formatTokenCount(row.tokensPerSuccess.total)} | ${formatUsd(row.costPerSuccess)} |`,
     );
   }
   lines.push("");
   lines.push(successRateSentence(aggregates.bySide), "");
+  lines.push(
+    `*Pricing footnote:* USD costs use the official DeepSeek V4.1-Flash peak/off-peak`,
+    `rates (fetched ${PRICING_FETCHED_ON} from ${PRICING_SOURCE_URL}; USD per 1M tokens):`,
+    "cache-hit input $0.006 peak / $0.003 off-peak; cache-miss input $0.30 / $0.15;",
+    "output $1.20 / $0.60. Peak hours are Mon-Fri 01:00-04:00 and 06:00-10:00 UTC,",
+    "excluding Chinese public holidays; every other hour is off-peak. A run straddling",
+    "a boundary splits its cost by elapsed-time share.",
+    "",
+  );
 
   lines.push("## Anomalies", "");
   const failures = report.runs.filter((run) => !run.ok);
@@ -1397,12 +1587,12 @@ function writeMarkdownReport(mdPath: string, report: Report): void {
   } else {
     for (const run of failures) {
       const reason =
-        run.abortReason === null
+        run.terminationReason === null
           ? (run.judge?.detail ??
             run.error ??
             run.infraError ??
             "no judge or error detail recorded")
-          : (run.loopDiagnostics ?? run.abortReason);
+          : (run.loopDiagnostics ?? run.terminationReason);
       lines.push(`- ${run.task} ${run.side} rep${run.rep}: ${formatOneLine(reason)}`);
     }
     lines.push("");
@@ -1464,16 +1654,18 @@ function writeMarkdownReport(mdPath: string, report: Report): void {
 
   lines.push("## Raw runs", "");
   lines.push(
-    "| Task | Side | Rep | OK | Input | Output | Total | Steps | Dur (s) |",
-    "| --- | --- | ---: | --- | ---: | ---: | ---: | ---: | ---: |",
+    "| Task | Side | Rep | OK | Input | Output | Total | Cost | Rate | Steps | Dur (s) |",
+    "| --- | --- | ---: | --- | ---: | ---: | ---: | ---: | --- | ---: | ---: |",
   );
   for (const run of report.runs) {
     lines.push(
       `| ${run.task} | ${run.side} | ${run.rep} | ${run.ok ? "yes" : "no"} | ${formatTokenCount(
         run.tokens.input,
-      )} | ${formatTokenCount(run.tokens.output)} | ${formatTokenCount(run.tokens.total)} | ${formatTokenCount(
-        run.steps,
-      )} | ${formatSeconds(run.durationMs)} |`,
+      )} | ${formatTokenCount(run.tokens.output)} | ${formatTokenCount(run.tokens.total)} | ${formatUsd(
+        run.cost ?? null,
+      )} | ${run.rateClass ?? "n/a"} | ${formatTokenCount(run.steps)} | ${formatSeconds(
+        run.durationMs,
+      )} |`,
     );
   }
   lines.push("");
@@ -1508,7 +1700,7 @@ async function main(): Promise<number> {
         ? args.replayDir
         : resolve(process.cwd(), args.replayDir);
   const tasks = args.task === null ? TASKS.map((task) => task.name) : [args.task];
-  const sides: Side[] = args.side === "both" ? ["ts", "opencode"] : [args.side];
+  const sides: Side[] = args.side === "both" ? ["tc", "oc"] : [args.side];
   const reps = args.pilot ? PILOT_REPS : args.reps;
 
   const jobs: BenchmarkJob[] = [];
@@ -1533,6 +1725,8 @@ async function main(): Promise<number> {
     reps,
     concurrency: Math.min(args.concurrency, jobs.length),
     model: args.model,
+    effort: args.effort,
+    multiPayload: args.multiPayload,
     bunVersion: Bun.version,
     opencodeVersion: null,
     pilotReference: existsSync(pilotCandidate) ? relative(repoRoot, pilotCandidate) : null,
@@ -1544,7 +1738,7 @@ async function main(): Promise<number> {
   };
 
   let opencode: OpencodeContext | null = null;
-  if (sides.includes("opencode")) {
+  if (sides.includes("oc")) {
     try {
       opencode = await probeOpencodeCli(repoRoot);
       report.opencodeVersion = opencode.version;
@@ -1552,7 +1746,7 @@ async function main(): Promise<number> {
       report.infraErrors.push(errorMessage(error));
     }
   }
-  if (sides.includes("ts")) {
+  if (sides.includes("tc")) {
     try {
       readConfigFromEnv(args.model);
     } catch (error) {
@@ -1566,6 +1760,15 @@ async function main(): Promise<number> {
     return 2;
   }
 
+  // Rotate the previous round's artifacts (#51) once runs are certain to
+  // execute; CLI single runs keep writing into `failures/` without rotating.
+  const archived = archiveFailureArtifacts({ rootDir: repoRoot });
+  if (archived !== null) {
+    process.stdout.write(
+      `archived ${archived.moved} failure artifact(s) to ${relative(repoRoot, archived.archiveDir)}\n`,
+    );
+  }
+
   const trimStamp = (value: string): string => value.replace(/[:.]/g, "-");
   const runStamp = `${trimStamp(new Date().toISOString())}-${randomUUID().slice(0, 8)}`;
   const runRoot = join(repoRoot, "tmp", "benchmark", runStamp);
@@ -1575,11 +1778,13 @@ async function main(): Promise<number> {
     repoRoot,
     tscBin,
     model: args.model,
+    effort: args.effort,
     opencodeModel: opencodeModelId(args.model),
     opencode,
     runRoot,
     replayDir,
     tokenBudget: args.tokenBudget,
+    multiPayload: args.multiPayload,
   };
 
   // Bounded worker pool: workers claim jobs by index so each run keeps its own

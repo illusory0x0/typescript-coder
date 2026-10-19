@@ -2,13 +2,6 @@ import { LexError } from "./lexer";
 import { ParseError, Parser } from "./parser";
 import type { Node, Program } from "./parser";
 
-export interface ParsedEdit {
-  anchor: string;
-  replacement: string;
-}
-
-const EDITS_EXPECTED = 'expected {"edits":[{"anchor": ..., "replacement": ...}]}';
-
 export function stripCodeFences(text: string): string {
   const trimmed = text.trim();
   if (trimmed.length < 6 || !trimmed.startsWith("```") || !trimmed.endsWith("```")) {
@@ -70,43 +63,20 @@ export function extractJsonObject(text: string): unknown {
   throw new Error("no complete JSON object found in the response");
 }
 
-export function parseEditsResponse(content: string): { edits: ParsedEdit[] } {
-  let parsed: unknown;
-  try {
-    parsed = extractJsonObject(content);
-  } catch {
-    throw new Error(EDITS_EXPECTED);
-  }
-  if (typeof parsed !== "object" || parsed === null || Array.isArray(parsed)) {
-    throw new Error(EDITS_EXPECTED);
-  }
-  const edits = (parsed as Record<string, unknown>)["edits"];
-  if (!Array.isArray(edits) || edits.length === 0) {
-    throw new Error(EDITS_EXPECTED);
-  }
-  const result: ParsedEdit[] = edits.map((entry) => {
-    if (typeof entry !== "object" || entry === null || Array.isArray(entry)) {
-      throw new Error(EDITS_EXPECTED);
-    }
-    const record = entry as Record<string, unknown>;
-    const anchor = record["anchor"];
-    const replacement = record["replacement"];
-    if (typeof anchor !== "string" || typeof replacement !== "string") {
-      throw new Error(EDITS_EXPECTED);
-    }
-    return { anchor, replacement };
-  });
-  return { edits: result };
-}
-
 export type AnchorFragmentResult =
-  | { kind: "parsed"; nodes: Node[] }
+  | { kind: "parsed"; nodes: Node[]; runs?: Node[][] }
   | { kind: "unparseable"; message: string };
 
-const ANCHOR_SHAPE_ERROR = "the anchor does not form a single statement, member, or expression";
+const ANCHOR_SHAPE_ERROR =
+  "the anchor does not form a single statement, member, expression, or contiguous run of statements";
 
 interface FragmentAttempt {
   node: Node | null;
+  error: string | null;
+}
+
+interface RunAttempt {
+  run: Node[] | null;
   error: string | null;
 }
 
@@ -128,13 +98,33 @@ function attemptFragment(
   }
 }
 
+// A multi-statement fragment (>=2 top-level statements) is kept whole as a run
+// alternative rather than reduced to its first statement (#59).
+function attemptRunFragment(source: string): RunAttempt {
+  try {
+    const program = new Parser(source).parseProgram();
+    return { run: program.body.length >= 2 ? program.body : null, error: null };
+  } catch (error) {
+    if (error instanceof ParseError || error instanceof LexError) {
+      return {
+        run: null,
+        error: `${error.message} (line ${error.line}, column ${error.column})`,
+      };
+    }
+    throw error;
+  }
+}
+
 /**
  * Parses an anchor with wrapper heuristics in priority order: a whole
- * statement, then a single class-body member, then an expression. Each
- * successful wrapper contributes one node; matching tries them in that order.
+ * statement, then a single class-body member, then an expression, and finally
+ * a contiguous run of statements (>1 top-level statement). Each successful
+ * single-node wrapper contributes one node; a multi-statement fragment
+ * contributes one run. Matching tries the single nodes first, then the runs.
  */
 export function parseAnchorFragment(anchor: string): AnchorFragmentResult {
   const nodes: Node[] = [];
+  const runs: Node[][] = [];
   let firstError: string | null = null;
 
   const statement = attemptFragment(anchor, (program) =>
@@ -177,10 +167,16 @@ export function parseAnchorFragment(anchor: string): AnchorFragmentResult {
     nodes.push(expression.node);
   }
 
-  if (nodes.length === 0) {
+  const run = attemptRunFragment(anchor);
+  firstError ??= run.error;
+  if (run.run !== null) {
+    runs.push(run.run);
+  }
+
+  if (nodes.length === 0 && runs.length === 0) {
     return { kind: "unparseable", message: firstError ?? ANCHOR_SHAPE_ERROR };
   }
-  return { kind: "parsed", nodes };
+  return runs.length === 0 ? { kind: "parsed", nodes } : { kind: "parsed", nodes, runs };
 }
 
 const STRUCTURAL_IGNORED_KEYS: ReadonlySet<string> = new Set(["start", "end", "raw", "source"]);
@@ -229,31 +225,47 @@ export type AnchorResult =
   | { kind: "not-found" }
   | { kind: "ambiguous"; matches: number };
 
+interface CandidateNode {
+  node: Node;
+  /** The array the node was found in; null when an object field holds it. */
+  container: readonly unknown[] | null;
+  /** The node's slot inside `container`; -1 when `container` is null. */
+  index: number;
+}
+
 // Walks the AST generically: node objects carry numeric start/end and a string
 // kind; containers and arrays are traversed, strings are ignored. Only nodes
-// fully inside the symbol range are candidates.
-function collectCandidateNodes(value: unknown, symbol: SymbolRange, out: Node[]): void {
-  if (Array.isArray(value)) {
-    for (const item of value) {
-      collectCandidateNodes(item, symbol, out);
-    }
-    return;
-  }
-  if (typeof value !== "object" || value === null) {
-    return;
+// fully inside the symbol range are candidates. Each array's own element nodes
+// are recorded before their children, so consecutive siblings sit next to each
+// other in the candidate list and a run can be matched positionally.
+function nodeRecord(value: unknown): Record<string, unknown> | null {
+  if (typeof value !== "object" || value === null || Array.isArray(value)) {
+    return null;
   }
   const record = value as Record<string, unknown>;
   const start = record["start"];
   const end = record["end"];
   const kind = record["kind"];
-  if (typeof start === "number" && typeof end === "number" && typeof kind === "string") {
-    if (end <= symbol.start || start >= symbol.end) {
-      return;
-    }
-    if (start >= symbol.start && end <= symbol.end) {
-      out.push(record as unknown as Node);
-    }
+  if (typeof start !== "number" || typeof end !== "number" || typeof kind !== "string") {
+    return null;
   }
+  return record;
+}
+
+function insideRange(record: Record<string, unknown>, symbol: SymbolRange): boolean {
+  const start = record["start"] as number;
+  const end = record["end"] as number;
+  if (end <= symbol.start || start >= symbol.end) {
+    return false;
+  }
+  return start >= symbol.start && end <= symbol.end;
+}
+
+function collectChildNodes(
+  record: Record<string, unknown>,
+  symbol: SymbolRange,
+  out: CandidateNode[],
+): void {
   for (const key of Object.keys(record)) {
     if (key === "source") {
       continue;
@@ -262,18 +274,89 @@ function collectCandidateNodes(value: unknown, symbol: SymbolRange, out: Node[])
   }
 }
 
+function collectCandidateNodes(value: unknown, symbol: SymbolRange, out: CandidateNode[]): void {
+  if (Array.isArray(value)) {
+    for (let index = 0; index < value.length; index += 1) {
+      const record = nodeRecord(value[index]);
+      if (record !== null && insideRange(record, symbol)) {
+        out.push({ node: record as unknown as Node, container: value, index });
+      }
+    }
+    for (const item of value) {
+      if (Array.isArray(item)) {
+        collectCandidateNodes(item, symbol, out);
+        continue;
+      }
+      const record = nodeRecord(item);
+      if (record !== null) {
+        collectChildNodes(record, symbol, out);
+      }
+    }
+    return;
+  }
+  const record = nodeRecord(value);
+  if (record === null) {
+    return;
+  }
+  if (insideRange(record, symbol)) {
+    out.push({ node: record as unknown as Node, container: null, index: -1 });
+  }
+  collectChildNodes(record, symbol, out);
+}
+
 export function findAnchor(source: string, symbol: SymbolRange, anchor: string): AnchorResult {
   const fragment = parseAnchorFragment(anchor);
   if (fragment.kind === "unparseable") {
     return fragment;
   }
-  const candidates: Node[] = [];
+  const candidates: CandidateNode[] = [];
   collectCandidateNodes(new Parser(source).parseProgram(), symbol, candidates);
   for (const node of fragment.nodes) {
-    const matches = candidates.filter((candidate) => structurallyEqual(candidate, node));
+    const matches = candidates.filter((candidate) => structurallyEqual(candidate.node, node));
     const only = matches.length === 1 ? matches[0] : undefined;
     if (only !== undefined) {
-      return { kind: "match", start: only.start, end: only.end };
+      return { kind: "match", start: only.node.start, end: only.node.end };
+    }
+    if (matches.length > 1) {
+      return { kind: "ambiguous", matches: matches.length };
+    }
+  }
+  for (const run of fragment.runs ?? []) {
+    // A run matches only at consecutive sibling slots of one container; the
+    // reported span is the matched source range, not the fragment's own
+    // parsing offsets.
+    const matches: { first: CandidateNode; last: CandidateNode }[] = [];
+    for (let position = 0; position < candidates.length; position += 1) {
+      const base = candidates[position];
+      if (base === undefined || base.container === null) {
+        continue;
+      }
+      let runMatches = true;
+      for (let offset = 0; offset < run.length; offset += 1) {
+        const candidate = candidates[position + offset];
+        if (
+          candidate === undefined ||
+          candidate.container !== base.container ||
+          candidate.index !== base.index + offset ||
+          !structurallyEqual(candidate.node, run[offset])
+        ) {
+          runMatches = false;
+          break;
+        }
+      }
+      if (!runMatches) {
+        continue;
+      }
+      const last = candidates[position + run.length - 1];
+      if (last !== undefined) {
+        matches.push({ first: base, last });
+      }
+    }
+    if (matches.length === 1) {
+      const only = matches[0];
+      if (only !== undefined) {
+        return { kind: "match", start: only.first.node.start, end: only.last.node.end };
+      }
     }
     if (matches.length > 1) {
       return { kind: "ambiguous", matches: matches.length };

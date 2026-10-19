@@ -1,0 +1,1200 @@
+{
+  "generatedAt": "2026-10-18T06:53:11.675Z",
+  "date": "2026-10-18",
+  "mode": "full",
+  "tasks": [
+    "json-parser",
+    "sexp-parser",
+    "minilisp"
+  ],
+  "sides": [
+    "ts"
+  ],
+  "reps": 3,
+  "concurrency": 4,
+  "model": "deepseek-v4.1-flash",
+  "effort": "none",
+  "bunVersion": "1.3.13",
+  "opencodeVersion": null,
+  "pilotReference": null,
+  "infraErrors": [],
+  "runs": [
+    {
+      "task": "json-parser",
+      "side": "ts",
+      "rep": 1,
+      "ok": true,
+      "sideOk": true,
+      "tokens": {
+        "input": 2722,
+        "output": 1734,
+        "cacheRead": 2560,
+        "cacheWrite": null,
+        "reasoning": 0,
+        "total": 4456
+      },
+      "usageAvailable": true,
+      "usageSource": "chat-completions",
+      "rawUsage": [
+        {
+          "prompt_tokens": 1270,
+          "completion_tokens": 27,
+          "total_tokens": 1297,
+          "prompt_tokens_details": {
+            "cached_tokens": 1152
+          },
+          "completion_tokens_details": {
+            "reasoning_tokens": 0
+          }
+        },
+        {
+          "prompt_tokens": 1452,
+          "completion_tokens": 1707,
+          "total_tokens": 3159,
+          "prompt_tokens_details": {
+            "cached_tokens": 1408
+          },
+          "completion_tokens_details": {
+            "reasoning_tokens": 0
+          }
+        }
+      ],
+      "durationMs": 9986,
+      "steps": 3,
+      "records": [
+        {
+          "row": 1,
+          "iteration": 1,
+          "kind": "exchange",
+          "exchange": 1,
+          "outcome": "selected",
+          "diagnosticsHead": null,
+          "replacementChars": null,
+          "finishReason": "stop"
+        },
+        {
+          "row": 2,
+          "iteration": 1,
+          "kind": "exchange",
+          "exchange": 2,
+          "outcome": "applied",
+          "diagnosticsHead": null,
+          "replacementChars": 4765,
+          "finishReason": "stop"
+        },
+        {
+          "row": 3,
+          "iteration": 1,
+          "kind": "verification",
+          "exchange": null,
+          "outcome": "ok",
+          "diagnosticsHead": null,
+          "replacementChars": 4765,
+          "finishReason": "stop"
+        }
+      ],
+      "loopDiagnostics": null,
+      "terminationReason": null,
+      "model": "deepseek-v4.1-flash",
+      "workspace": "tmp/benchmark/2026-10-18T06-53-11-676Z-d7f1c92b/json-parser-ts-rep1",
+      "logs": {
+        "side": "tmp/benchmark/2026-10-18T06-53-11-676Z-d7f1c92b/logs/json-parser-ts-rep1/side.log",
+        "judge": "tmp/benchmark/2026-10-18T06-53-11-676Z-d7f1c92b/logs/json-parser-ts-rep1/judge.log",
+        "session": null,
+        "stats": null
+      },
+      "versions": {
+        "bun": "1.3.13",
+        "opencode": null
+      },
+      "judge": {
+        "testsOk": true,
+        "tscOk": true,
+        "fixtureOk": true,
+        "detail": null
+      },
+      "error": null,
+      "infraError": null
+    },
+    {
+      "task": "json-parser",
+      "side": "ts",
+      "rep": 2,
+      "ok": true,
+      "sideOk": true,
+      "tokens": {
+        "input": 2722,
+        "output": 1716,
+        "cacheRead": 2560,
+        "cacheWrite": null,
+        "reasoning": 0,
+        "total": 4438
+      },
+      "usageAvailable": true,
+      "usageSource": "chat-completions",
+      "rawUsage": [
+        {
+          "prompt_tokens": 1270,
+          "completion_tokens": 27,
+          "total_tokens": 1297,
+          "prompt_tokens_details": {
+            "cached_tokens": 1152
+          },
+          "completion_tokens_details": {
+            "reasoning_tokens": 0
+          }
+        },
+        {
+          "prompt_tokens": 1452,
+          "completion_tokens": 1689,
+          "total_tokens": 3141,
+          "prompt_tokens_details": {
+            "cached_tokens": 1408
+          },
+          "completion_tokens_details": {
+            "reasoning_tokens": 0
+          }
+        }
+      ],
+      "durationMs": 66291,
+      "steps": 3,
+      "records": [
+        {
+          "row": 1,
+          "iteration": 1,
+          "kind": "exchange",
+          "exchange": 1,
+          "outcome": "selected",
+          "diagnosticsHead": null,
+          "replacementChars": null,
+          "finishReason": "stop"
+        },
+        {
+          "row": 2,
+          "iteration": 1,
+          "kind": "exchange",
+          "exchange": 2,
+          "outcome": "applied",
+          "diagnosticsHead": null,
+          "replacementChars": 4851,
+          "finishReason": "stop"
+        },
+        {
+          "row": 3,
+          "iteration": 1,
+          "kind": "verification",
+          "exchange": null,
+          "outcome": "ok",
+          "diagnosticsHead": null,
+          "replacementChars": 4851,
+          "finishReason": "stop"
+        }
+      ],
+      "loopDiagnostics": null,
+      "terminationReason": null,
+      "model": "deepseek-v4.1-flash",
+      "workspace": "tmp/benchmark/2026-10-18T06-53-11-676Z-d7f1c92b/json-parser-ts-rep2",
+      "logs": {
+        "side": "tmp/benchmark/2026-10-18T06-53-11-676Z-d7f1c92b/logs/json-parser-ts-rep2/side.log",
+        "judge": "tmp/benchmark/2026-10-18T06-53-11-676Z-d7f1c92b/logs/json-parser-ts-rep2/judge.log",
+        "session": null,
+        "stats": null
+      },
+      "versions": {
+        "bun": "1.3.13",
+        "opencode": null
+      },
+      "judge": {
+        "testsOk": true,
+        "tscOk": true,
+        "fixtureOk": true,
+        "detail": null
+      },
+      "error": null,
+      "infraError": null
+    },
+    {
+      "task": "json-parser",
+      "side": "ts",
+      "rep": 3,
+      "ok": true,
+      "sideOk": true,
+      "tokens": {
+        "input": 2722,
+        "output": 1779,
+        "cacheRead": 1408,
+        "cacheWrite": null,
+        "reasoning": 0,
+        "total": 4501
+      },
+      "usageAvailable": true,
+      "usageSource": "chat-completions",
+      "rawUsage": [
+        {
+          "prompt_tokens": 1270,
+          "completion_tokens": 27,
+          "total_tokens": 1297,
+          "prompt_tokens_details": {
+            "cached_tokens": 0
+          },
+          "completion_tokens_details": {
+            "reasoning_tokens": 0
+          }
+        },
+        {
+          "prompt_tokens": 1452,
+          "completion_tokens": 1752,
+          "total_tokens": 3204,
+          "prompt_tokens_details": {
+            "cached_tokens": 1408
+          },
+          "completion_tokens_details": {
+            "reasoning_tokens": 0
+          }
+        }
+      ],
+      "durationMs": 9287,
+      "steps": 3,
+      "records": [
+        {
+          "row": 1,
+          "iteration": 1,
+          "kind": "exchange",
+          "exchange": 1,
+          "outcome": "selected",
+          "diagnosticsHead": null,
+          "replacementChars": null,
+          "finishReason": "stop"
+        },
+        {
+          "row": 2,
+          "iteration": 1,
+          "kind": "exchange",
+          "exchange": 2,
+          "outcome": "applied",
+          "diagnosticsHead": null,
+          "replacementChars": 5050,
+          "finishReason": "stop"
+        },
+        {
+          "row": 3,
+          "iteration": 1,
+          "kind": "verification",
+          "exchange": null,
+          "outcome": "ok",
+          "diagnosticsHead": null,
+          "replacementChars": 5050,
+          "finishReason": "stop"
+        }
+      ],
+      "loopDiagnostics": null,
+      "terminationReason": null,
+      "model": "deepseek-v4.1-flash",
+      "workspace": "tmp/benchmark/2026-10-18T06-53-11-676Z-d7f1c92b/json-parser-ts-rep3",
+      "logs": {
+        "side": "tmp/benchmark/2026-10-18T06-53-11-676Z-d7f1c92b/logs/json-parser-ts-rep3/side.log",
+        "judge": "tmp/benchmark/2026-10-18T06-53-11-676Z-d7f1c92b/logs/json-parser-ts-rep3/judge.log",
+        "session": null,
+        "stats": null
+      },
+      "versions": {
+        "bun": "1.3.13",
+        "opencode": null
+      },
+      "judge": {
+        "testsOk": true,
+        "tscOk": true,
+        "fixtureOk": true,
+        "detail": null
+      },
+      "error": null,
+      "infraError": null
+    },
+    {
+      "task": "sexp-parser",
+      "side": "ts",
+      "rep": 1,
+      "ok": true,
+      "sideOk": true,
+      "tokens": {
+        "input": 2182,
+        "output": 559,
+        "cacheRead": 1152,
+        "cacheWrite": null,
+        "reasoning": 0,
+        "total": 2741
+      },
+      "usageAvailable": true,
+      "usageSource": "chat-completions",
+      "rawUsage": [
+        {
+          "prompt_tokens": 996,
+          "completion_tokens": 30,
+          "total_tokens": 1026,
+          "prompt_tokens_details": {
+            "cached_tokens": 0
+          },
+          "completion_tokens_details": {
+            "reasoning_tokens": 0
+          }
+        },
+        {
+          "prompt_tokens": 1186,
+          "completion_tokens": 529,
+          "total_tokens": 1715,
+          "prompt_tokens_details": {
+            "cached_tokens": 1152
+          },
+          "completion_tokens_details": {
+            "reasoning_tokens": 0
+          }
+        }
+      ],
+      "durationMs": 5933,
+      "steps": 3,
+      "records": [
+        {
+          "row": 1,
+          "iteration": 1,
+          "kind": "exchange",
+          "exchange": 1,
+          "outcome": "selected",
+          "diagnosticsHead": null,
+          "replacementChars": null,
+          "finishReason": "stop"
+        },
+        {
+          "row": 2,
+          "iteration": 1,
+          "kind": "exchange",
+          "exchange": 2,
+          "outcome": "applied",
+          "diagnosticsHead": null,
+          "replacementChars": 1469,
+          "finishReason": "stop"
+        },
+        {
+          "row": 3,
+          "iteration": 1,
+          "kind": "verification",
+          "exchange": null,
+          "outcome": "ok",
+          "diagnosticsHead": null,
+          "replacementChars": 1469,
+          "finishReason": "stop"
+        }
+      ],
+      "loopDiagnostics": null,
+      "terminationReason": null,
+      "model": "deepseek-v4.1-flash",
+      "workspace": "tmp/benchmark/2026-10-18T06-53-11-676Z-d7f1c92b/sexp-parser-ts-rep1",
+      "logs": {
+        "side": "tmp/benchmark/2026-10-18T06-53-11-676Z-d7f1c92b/logs/sexp-parser-ts-rep1/side.log",
+        "judge": "tmp/benchmark/2026-10-18T06-53-11-676Z-d7f1c92b/logs/sexp-parser-ts-rep1/judge.log",
+        "session": null,
+        "stats": null
+      },
+      "versions": {
+        "bun": "1.3.13",
+        "opencode": null
+      },
+      "judge": {
+        "testsOk": true,
+        "tscOk": true,
+        "fixtureOk": true,
+        "detail": null
+      },
+      "error": null,
+      "infraError": null
+    },
+    {
+      "task": "sexp-parser",
+      "side": "ts",
+      "rep": 2,
+      "ok": true,
+      "sideOk": true,
+      "tokens": {
+        "input": 2182,
+        "output": 559,
+        "cacheRead": 2048,
+        "cacheWrite": null,
+        "reasoning": 0,
+        "total": 2741
+      },
+      "usageAvailable": true,
+      "usageSource": "chat-completions",
+      "rawUsage": [
+        {
+          "prompt_tokens": 996,
+          "completion_tokens": 30,
+          "total_tokens": 1026,
+          "prompt_tokens_details": {
+            "cached_tokens": 896
+          },
+          "completion_tokens_details": {
+            "reasoning_tokens": 0
+          }
+        },
+        {
+          "prompt_tokens": 1186,
+          "completion_tokens": 529,
+          "total_tokens": 1715,
+          "prompt_tokens_details": {
+            "cached_tokens": 1152
+          },
+          "completion_tokens_details": {
+            "reasoning_tokens": 0
+          }
+        }
+      ],
+      "durationMs": 5212,
+      "steps": 3,
+      "records": [
+        {
+          "row": 1,
+          "iteration": 1,
+          "kind": "exchange",
+          "exchange": 1,
+          "outcome": "selected",
+          "diagnosticsHead": null,
+          "replacementChars": null,
+          "finishReason": "stop"
+        },
+        {
+          "row": 2,
+          "iteration": 1,
+          "kind": "exchange",
+          "exchange": 2,
+          "outcome": "applied",
+          "diagnosticsHead": null,
+          "replacementChars": 1469,
+          "finishReason": "stop"
+        },
+        {
+          "row": 3,
+          "iteration": 1,
+          "kind": "verification",
+          "exchange": null,
+          "outcome": "ok",
+          "diagnosticsHead": null,
+          "replacementChars": 1469,
+          "finishReason": "stop"
+        }
+      ],
+      "loopDiagnostics": null,
+      "terminationReason": null,
+      "model": "deepseek-v4.1-flash",
+      "workspace": "tmp/benchmark/2026-10-18T06-53-11-676Z-d7f1c92b/sexp-parser-ts-rep2",
+      "logs": {
+        "side": "tmp/benchmark/2026-10-18T06-53-11-676Z-d7f1c92b/logs/sexp-parser-ts-rep2/side.log",
+        "judge": "tmp/benchmark/2026-10-18T06-53-11-676Z-d7f1c92b/logs/sexp-parser-ts-rep2/judge.log",
+        "session": null,
+        "stats": null
+      },
+      "versions": {
+        "bun": "1.3.13",
+        "opencode": null
+      },
+      "judge": {
+        "testsOk": true,
+        "tscOk": true,
+        "fixtureOk": true,
+        "detail": null
+      },
+      "error": null,
+      "infraError": null
+    },
+    {
+      "task": "sexp-parser",
+      "side": "ts",
+      "rep": 3,
+      "ok": true,
+      "sideOk": true,
+      "tokens": {
+        "input": 2182,
+        "output": 559,
+        "cacheRead": 2048,
+        "cacheWrite": null,
+        "reasoning": 0,
+        "total": 2741
+      },
+      "usageAvailable": true,
+      "usageSource": "chat-completions",
+      "rawUsage": [
+        {
+          "prompt_tokens": 996,
+          "completion_tokens": 30,
+          "total_tokens": 1026,
+          "prompt_tokens_details": {
+            "cached_tokens": 896
+          },
+          "completion_tokens_details": {
+            "reasoning_tokens": 0
+          }
+        },
+        {
+          "prompt_tokens": 1186,
+          "completion_tokens": 529,
+          "total_tokens": 1715,
+          "prompt_tokens_details": {
+            "cached_tokens": 1152
+          },
+          "completion_tokens_details": {
+            "reasoning_tokens": 0
+          }
+        }
+      ],
+      "durationMs": 4809,
+      "steps": 3,
+      "records": [
+        {
+          "row": 1,
+          "iteration": 1,
+          "kind": "exchange",
+          "exchange": 1,
+          "outcome": "selected",
+          "diagnosticsHead": null,
+          "replacementChars": null,
+          "finishReason": "stop"
+        },
+        {
+          "row": 2,
+          "iteration": 1,
+          "kind": "exchange",
+          "exchange": 2,
+          "outcome": "applied",
+          "diagnosticsHead": null,
+          "replacementChars": 1469,
+          "finishReason": "stop"
+        },
+        {
+          "row": 3,
+          "iteration": 1,
+          "kind": "verification",
+          "exchange": null,
+          "outcome": "ok",
+          "diagnosticsHead": null,
+          "replacementChars": 1469,
+          "finishReason": "stop"
+        }
+      ],
+      "loopDiagnostics": null,
+      "terminationReason": null,
+      "model": "deepseek-v4.1-flash",
+      "workspace": "tmp/benchmark/2026-10-18T06-53-11-676Z-d7f1c92b/sexp-parser-ts-rep3",
+      "logs": {
+        "side": "tmp/benchmark/2026-10-18T06-53-11-676Z-d7f1c92b/logs/sexp-parser-ts-rep3/side.log",
+        "judge": "tmp/benchmark/2026-10-18T06-53-11-676Z-d7f1c92b/logs/sexp-parser-ts-rep3/judge.log",
+        "session": null,
+        "stats": null
+      },
+      "versions": {
+        "bun": "1.3.13",
+        "opencode": null
+      },
+      "judge": {
+        "testsOk": true,
+        "tscOk": true,
+        "fixtureOk": true,
+        "detail": null
+      },
+      "error": null,
+      "infraError": null
+    },
+    {
+      "task": "minilisp",
+      "side": "ts",
+      "rep": 1,
+      "ok": false,
+      "sideOk": false,
+      "tokens": {
+        "input": 18224,
+        "output": 3484,
+        "cacheRead": 5888,
+        "cacheWrite": null,
+        "reasoning": 302,
+        "total": 21708
+      },
+      "usageAvailable": true,
+      "usageSource": "chat-completions",
+      "rawUsage": [
+        {
+          "prompt_tokens": 1494,
+          "completion_tokens": 27,
+          "total_tokens": 1521,
+          "prompt_tokens_details": {
+            "cached_tokens": 0
+          },
+          "completion_tokens_details": {
+            "reasoning_tokens": 0
+          }
+        },
+        {
+          "prompt_tokens": 1677,
+          "completion_tokens": 2024,
+          "total_tokens": 3701,
+          "prompt_tokens_details": {
+            "cached_tokens": 1664
+          },
+          "completion_tokens_details": {
+            "reasoning_tokens": 0
+          }
+        },
+        {
+          "prompt_tokens": 4097,
+          "completion_tokens": 670,
+          "total_tokens": 4767,
+          "prompt_tokens_details": {
+            "cached_tokens": 1408
+          },
+          "completion_tokens_details": {
+            "reasoning_tokens": 0
+          }
+        },
+        {
+          "prompt_tokens": 3382,
+          "completion_tokens": 132,
+          "total_tokens": 3514,
+          "prompt_tokens_details": {
+            "cached_tokens": 1408
+          },
+          "completion_tokens_details": {
+            "reasoning_tokens": 0
+          }
+        },
+        {
+          "prompt_tokens": 3345,
+          "completion_tokens": 48,
+          "total_tokens": 3393,
+          "prompt_tokens_details": {
+            "cached_tokens": 1408
+          },
+          "completion_tokens_details": {
+            "reasoning_tokens": 0
+          }
+        },
+        {
+          "prompt_tokens": 4229,
+          "completion_tokens": 583,
+          "total_tokens": 4812,
+          "prompt_tokens_details": {
+            "cached_tokens": 0
+          },
+          "completion_tokens_details": {
+            "reasoning_tokens": 302
+          }
+        }
+      ],
+      "durationMs": 25735,
+      "steps": 6,
+      "records": [
+        {
+          "row": 1,
+          "iteration": 1,
+          "kind": "exchange",
+          "exchange": 1,
+          "outcome": "selected",
+          "diagnosticsHead": null,
+          "replacementChars": null,
+          "finishReason": "stop"
+        },
+        {
+          "row": 2,
+          "iteration": 1,
+          "kind": "exchange",
+          "exchange": 2,
+          "outcome": "applied",
+          "diagnosticsHead": null,
+          "replacementChars": 5775,
+          "finishReason": "stop"
+        },
+        {
+          "row": 3,
+          "iteration": 1,
+          "kind": "verification",
+          "exchange": null,
+          "outcome": "tests",
+          "diagnosticsHead": "stage: tests tests failed: failing tests: - minilisp special forms > recursion - minilisp pairs > car and cdr select pair parts test output: [25 earlier characters omitted] c) src/lisp.test.ts: 114 | ",
+          "replacementChars": 5775,
+          "finishReason": "stop"
+        },
+        {
+          "row": 4,
+          "iteration": 2,
+          "kind": "exchange",
+          "exchange": 1,
+          "outcome": "matcher",
+          "diagnosticsHead": "stage: matcher the matcher was not found inside function \"run\" in src/lisp.ts (line 211, column 8); copy a complete snippet from the current source, or omit \"matcher\" for a whole-symbol rewrite",
+          "replacementChars": 909,
+          "finishReason": "stop"
+        },
+        {
+          "row": 5,
+          "iteration": 2,
+          "kind": "exchange",
+          "exchange": 2,
+          "outcome": "format",
+          "diagnosticsHead": "stage: format oxfmt failed: 'export' modifier already seen.",
+          "replacementChars": 336,
+          "finishReason": "stop"
+        },
+        {
+          "row": 6,
+          "iteration": 2,
+          "kind": "exchange",
+          "exchange": 3,
+          "outcome": "matcher",
+          "diagnosticsHead": "stage: matcher the matcher could not be parsed as TypeScript: expected \"}\" (line 1, column 50)",
+          "replacementChars": 49,
+          "finishReason": "stop"
+        }
+      ],
+      "loopDiagnostics": "edit-exhausted: the 3-exchange Edit budget was exhausted without a valid edit\n\nstage: tests\ntests failed:\nfailing tests:\n  - minilisp special forms > recursion\n  - minilisp pairs > car and cdr select pair parts\ntest output:\n[25 earlier characters omitted]\nc)\n\nsrc/lisp.test.ts:\n114 |   if (typeof expr === \"number\" || typeof expr === \"boolean\") {\n115 |     return expr;\n116 |   }\n117 |   if (typeof expr === \"string\") {\n118 |     if (!env.has(expr)) {\n119 |       throw new Error(`Unknown symbol: ${expr}`);\n                                                     ^\nerror: Unknown symbol: fact\n      at evaluate (/home/illu/repo/typescript-coder/tmp/benchmark/2026-10-18T06-53-11-676Z-d7f1c92b/minilisp-ts-rep1/src/lisp.ts:119:48)\n      at evaluate (/home/illu/repo/typescript-coder/tmp/benchmark/2026-10-18T06-53-11-676Z-d7f1c92b/minilisp-ts-rep1/src/lisp.ts:184:14)\n      at map (1:11)\n      at evaluate (/home/illu/repo/typescript-coder/tmp/benchmark/2026-10-18T06-53-11-676Z-d7f1c92b/minilisp-ts-rep1/src/lisp.ts:185:30)\n      at run (/home/illu/repo/typescript-coder/tmp/benchmark/2026-10-18T06-53-11-676Z-d7f1c92b/minilisp-ts-rep1/src/lisp.ts:219:14)\n      at <anonymous> (/home/illu/repo/typescript-coder/tmp/benchmark/2026-10-18T06-53-11-676Z-d7f1c92b/minilisp-ts-rep1/src/lisp.test.ts:80:12)\n(fail) minilisp special forms > recursion\n81 | }\n82 | \n83 | function makeBuiltin(name: string, fn: (a: LispValue, b: LispValue) => LispValue): Builtin {\n84 |   return (args: LispValue[]): LispValue => {\n85 |     if (args.length !== 2) {\n86 |       throw new Error(`${name} expects exactly two arguments`);\n                                                                  ^\nerror: car expects exactly two arguments\n      at <anonymous> (/home/illu/repo/typescript-coder/tmp/benchmark/2026-10-18T06-53-11-676Z-d7f1c92b/minilisp-ts-rep1/src/lisp.ts:86:62)\n      at run (/home/illu/repo/typescript-coder/tmp/benchmark/2026-10-18T06-53-11-676Z-d7f1c92b/minilisp-ts-rep1/src/lisp.ts:219:14)\n      at <anonymous> (/home/illu/repo/typescript-coder/tmp/benchmark/2026-10-18T06-53-11-676Z-d7f1c92b/minilisp-ts-rep1/src/lisp.test.ts:90:12)\n(fail) minilisp pairs > car and cdr select pair parts\n\n 14 pass\n 2 fail\n 27 expect() calls\nRan 16 tests across 1 file. [17.00ms]\n\nstage: matcher\nthe matcher could not be parsed as TypeScript: expected \"}\" (line 1, column 50)",
+      "terminationReason": "edit-exhausted",
+      "model": "deepseek-v4.1-flash",
+      "workspace": "tmp/benchmark/2026-10-18T06-53-11-676Z-d7f1c92b/minilisp-ts-rep1",
+      "logs": {
+        "side": "tmp/benchmark/2026-10-18T06-53-11-676Z-d7f1c92b/logs/minilisp-ts-rep1/side.log",
+        "judge": "tmp/benchmark/2026-10-18T06-53-11-676Z-d7f1c92b/logs/minilisp-ts-rep1/judge.log",
+        "session": null,
+        "stats": null
+      },
+      "versions": {
+        "bun": "1.3.13",
+        "opencode": null
+      },
+      "judge": {
+        "testsOk": false,
+        "tscOk": true,
+        "fixtureOk": true,
+        "detail": "bun test failed: bun test v1.3.13 (bf2e2cec)\n\nsrc/lisp.test.ts:\n114 |   if (typeof expr === \"number\" || typeof expr === \"boolean\") {\n115 |     return expr;\n116 |   }\n117 |   if (typeof expr === \"string\") {\n118 |     if (!env.has(expr)) {\n119 |       throw new Error(`Unknown symbol: ${expr}`);\n                                                     ^\nerror: Unknown symbol: fact\n      at evaluate (/home/illu/repo/types..."
+      },
+      "error": null,
+      "infraError": null
+    },
+    {
+      "task": "minilisp",
+      "side": "ts",
+      "rep": 2,
+      "ok": true,
+      "sideOk": true,
+      "tokens": {
+        "input": 3171,
+        "output": 2413,
+        "cacheRead": 1664,
+        "cacheWrite": null,
+        "reasoning": 0,
+        "total": 5584
+      },
+      "usageAvailable": true,
+      "usageSource": "chat-completions",
+      "rawUsage": [
+        {
+          "prompt_tokens": 1494,
+          "completion_tokens": 27,
+          "total_tokens": 1521,
+          "prompt_tokens_details": {
+            "cached_tokens": 0
+          },
+          "completion_tokens_details": {
+            "reasoning_tokens": 0
+          }
+        },
+        {
+          "prompt_tokens": 1677,
+          "completion_tokens": 2386,
+          "total_tokens": 4063,
+          "prompt_tokens_details": {
+            "cached_tokens": 1664
+          },
+          "completion_tokens_details": {
+            "reasoning_tokens": 0
+          }
+        }
+      ],
+      "durationMs": 11382,
+      "steps": 3,
+      "records": [
+        {
+          "row": 1,
+          "iteration": 1,
+          "kind": "exchange",
+          "exchange": 1,
+          "outcome": "selected",
+          "diagnosticsHead": null,
+          "replacementChars": null,
+          "finishReason": "stop"
+        },
+        {
+          "row": 2,
+          "iteration": 1,
+          "kind": "exchange",
+          "exchange": 2,
+          "outcome": "applied",
+          "diagnosticsHead": null,
+          "replacementChars": 6774,
+          "finishReason": "stop"
+        },
+        {
+          "row": 3,
+          "iteration": 1,
+          "kind": "verification",
+          "exchange": null,
+          "outcome": "ok",
+          "diagnosticsHead": null,
+          "replacementChars": 6774,
+          "finishReason": "stop"
+        }
+      ],
+      "loopDiagnostics": null,
+      "terminationReason": null,
+      "model": "deepseek-v4.1-flash",
+      "workspace": "tmp/benchmark/2026-10-18T06-53-11-676Z-d7f1c92b/minilisp-ts-rep2",
+      "logs": {
+        "side": "tmp/benchmark/2026-10-18T06-53-11-676Z-d7f1c92b/logs/minilisp-ts-rep2/side.log",
+        "judge": "tmp/benchmark/2026-10-18T06-53-11-676Z-d7f1c92b/logs/minilisp-ts-rep2/judge.log",
+        "session": null,
+        "stats": null
+      },
+      "versions": {
+        "bun": "1.3.13",
+        "opencode": null
+      },
+      "judge": {
+        "testsOk": true,
+        "tscOk": true,
+        "fixtureOk": true,
+        "detail": null
+      },
+      "error": null,
+      "infraError": null
+    },
+    {
+      "task": "minilisp",
+      "side": "ts",
+      "rep": 3,
+      "ok": false,
+      "sideOk": false,
+      "tokens": {
+        "input": 15878,
+        "output": 2394,
+        "cacheRead": 7296,
+        "cacheWrite": null,
+        "reasoning": 258,
+        "total": 18272
+      },
+      "usageAvailable": true,
+      "usageSource": "chat-completions",
+      "rawUsage": [
+        {
+          "prompt_tokens": 1494,
+          "completion_tokens": 27,
+          "total_tokens": 1521,
+          "prompt_tokens_details": {
+            "cached_tokens": 1408
+          },
+          "completion_tokens_details": {
+            "reasoning_tokens": 0
+          }
+        },
+        {
+          "prompt_tokens": 1677,
+          "completion_tokens": 1602,
+          "total_tokens": 3279,
+          "prompt_tokens_details": {
+            "cached_tokens": 1664
+          },
+          "completion_tokens_details": {
+            "reasoning_tokens": 0
+          }
+        },
+        {
+          "prompt_tokens": 3243,
+          "completion_tokens": 64,
+          "total_tokens": 3307,
+          "prompt_tokens_details": {
+            "cached_tokens": 1408
+          },
+          "completion_tokens_details": {
+            "reasoning_tokens": 0
+          }
+        },
+        {
+          "prompt_tokens": 3051,
+          "completion_tokens": 95,
+          "total_tokens": 3146,
+          "prompt_tokens_details": {
+            "cached_tokens": 1408
+          },
+          "completion_tokens_details": {
+            "reasoning_tokens": 0
+          }
+        },
+        {
+          "prompt_tokens": 3014,
+          "completion_tokens": 174,
+          "total_tokens": 3188,
+          "prompt_tokens_details": {
+            "cached_tokens": 1408
+          },
+          "completion_tokens_details": {
+            "reasoning_tokens": 0
+          }
+        },
+        {
+          "prompt_tokens": 3399,
+          "completion_tokens": 432,
+          "total_tokens": 3831,
+          "prompt_tokens_details": {
+            "cached_tokens": 0
+          },
+          "completion_tokens_details": {
+            "reasoning_tokens": 258
+          }
+        }
+      ],
+      "durationMs": 20659,
+      "steps": 6,
+      "records": [
+        {
+          "row": 1,
+          "iteration": 1,
+          "kind": "exchange",
+          "exchange": 1,
+          "outcome": "selected",
+          "diagnosticsHead": null,
+          "replacementChars": null,
+          "finishReason": "stop"
+        },
+        {
+          "row": 2,
+          "iteration": 1,
+          "kind": "exchange",
+          "exchange": 2,
+          "outcome": "applied",
+          "diagnosticsHead": null,
+          "replacementChars": 4851,
+          "finishReason": "stop"
+        },
+        {
+          "row": 3,
+          "iteration": 1,
+          "kind": "verification",
+          "exchange": null,
+          "outcome": "tsc",
+          "diagnosticsHead": "stage: tsc replacement line 83: TS2322: Type 'Expr' is not assignable to type 'LispValue'. Type 'string' is not assignable to type 'LispValue'. 82 | }); 83 | const closure: Closure = { params, body: e",
+          "replacementChars": 4851,
+          "finishReason": "stop"
+        },
+        {
+          "row": 4,
+          "iteration": 2,
+          "kind": "exchange",
+          "exchange": 1,
+          "outcome": "matcher",
+          "diagnosticsHead": "stage: matcher the matcher was not found inside function \"run\" in src/lisp.ts (line 152, column 8); copy a complete snippet from the current source, or omit \"matcher\" for a whole-symbol rewrite",
+          "replacementChars": 58,
+          "finishReason": "stop"
+        },
+        {
+          "row": 5,
+          "iteration": 2,
+          "kind": "exchange",
+          "exchange": 2,
+          "outcome": "format",
+          "diagnosticsHead": "stage: format oxfmt failed: 'export' modifier already seen.",
+          "replacementChars": 230,
+          "finishReason": "stop"
+        },
+        {
+          "row": 6,
+          "iteration": 2,
+          "kind": "exchange",
+          "exchange": 3,
+          "outcome": "matcher",
+          "diagnosticsHead": "stage: matcher the matcher was not found inside function \"run\" in src/lisp.ts (line 152, column 8); copy a complete snippet from the current source, or omit \"matcher\" for a whole-symbol rewrite",
+          "replacementChars": 230,
+          "finishReason": "stop"
+        }
+      ],
+      "loopDiagnostics": "edit-exhausted: the 3-exchange Edit budget was exhausted without a valid edit\n\nstage: tsc\nreplacement line 83: TS2322: Type 'Expr' is not assignable to type 'LispValue'. Type 'string' is not assignable to type 'LispValue'.\n  82 |           });\n  83 |           const closure: Closure = { params, body: expr[2], env };\n  84 |           env.set(name, closure as unknown as LispValue);\nreplacement line 94: TS2322: Type 'Expr' is not assignable to type 'LispValue'. Type 'string' is not assignable to type 'LispValue'.\n  93 |         });\n  94 |         const closure: Closure = { params, body: expr[2], env };\n  95 |         return closure as unknown as LispValue;\nreplacement line 147: TS2345: Argument of type 'LispValue' is not assignable to parameter of type 'Expr'. Type 'null' is not assignable to type 'Expr'.\n  146 |     fn.params.forEach((p, idx) => local.set(p, args[idx]));\n  147 |     return evaluate(fn.body, local);\n  148 |   }\n\nstage: matcher\nthe matcher was not found inside function \"run\" in src/lisp.ts (line 152, column 8); copy a complete snippet from the current source, or omit \"matcher\" for a whole-symbol rewrite",
+      "terminationReason": "edit-exhausted",
+      "model": "deepseek-v4.1-flash",
+      "workspace": "tmp/benchmark/2026-10-18T06-53-11-676Z-d7f1c92b/minilisp-ts-rep3",
+      "logs": {
+        "side": "tmp/benchmark/2026-10-18T06-53-11-676Z-d7f1c92b/logs/minilisp-ts-rep3/side.log",
+        "judge": "tmp/benchmark/2026-10-18T06-53-11-676Z-d7f1c92b/logs/minilisp-ts-rep3/judge.log",
+        "session": null,
+        "stats": null
+      },
+      "versions": {
+        "bun": "1.3.13",
+        "opencode": null
+      },
+      "judge": {
+        "testsOk": true,
+        "tscOk": false,
+        "fixtureOk": true,
+        "detail": "tsc failed: src/lisp.ts(83,46): error TS2322: Type 'Expr' is not assignable to type 'LispValue'.\n  Type 'string' is not assignable to type 'LispValue'.\nsrc/lisp.ts(94,44): error TS2322: Type 'Expr' is not assignable to type 'LispValue'.\n  Type 'string' is not assignable to type 'LispValue'.\nsrc/lisp.ts(147,21): error TS2345: Argument of type 'LispValue' is not assignable to parameter of type 'Expr'.\n  Type 'n..."
+      },
+      "error": null,
+      "infraError": null
+    }
+  ],
+  "aggregates": {
+    "byTaskSide": [
+      {
+        "task": "json-parser",
+        "side": "ts",
+        "runs": 3,
+        "ok": 3,
+        "failed": 0,
+        "successRate": 1,
+        "usageRuns": 3,
+        "tokens": {
+          "input": {
+            "mean": 2722,
+            "total": 8166
+          },
+          "output": {
+            "mean": 1743,
+            "total": 5229
+          },
+          "total": {
+            "mean": 4465,
+            "total": 13395
+          }
+        },
+        "durationMsMean": 28521.333333333332,
+        "stepsMean": 3,
+        "tokensPerSuccess": {
+          "input": 2722,
+          "output": 1743,
+          "total": 4465
+        }
+      },
+      {
+        "task": "sexp-parser",
+        "side": "ts",
+        "runs": 3,
+        "ok": 3,
+        "failed": 0,
+        "successRate": 1,
+        "usageRuns": 3,
+        "tokens": {
+          "input": {
+            "mean": 2182,
+            "total": 6546
+          },
+          "output": {
+            "mean": 559,
+            "total": 1677
+          },
+          "total": {
+            "mean": 2741,
+            "total": 8223
+          }
+        },
+        "durationMsMean": 5318,
+        "stepsMean": 3,
+        "tokensPerSuccess": {
+          "input": 2182,
+          "output": 559,
+          "total": 2741
+        }
+      },
+      {
+        "task": "minilisp",
+        "side": "ts",
+        "runs": 3,
+        "ok": 1,
+        "failed": 2,
+        "successRate": 0.3333333333333333,
+        "usageRuns": 3,
+        "tokens": {
+          "input": {
+            "mean": 12424.333333333334,
+            "total": 37273
+          },
+          "output": {
+            "mean": 2763.6666666666665,
+            "total": 8291
+          },
+          "total": {
+            "mean": 15188,
+            "total": 45564
+          }
+        },
+        "durationMsMean": 19258.666666666668,
+        "stepsMean": 5,
+        "tokensPerSuccess": {
+          "input": 37273,
+          "output": 8291,
+          "total": 45564
+        }
+      }
+    ],
+    "bySide": [
+      {
+        "task": null,
+        "side": "ts",
+        "runs": 9,
+        "ok": 7,
+        "failed": 2,
+        "successRate": 0.7777777777777778,
+        "usageRuns": 9,
+        "tokens": {
+          "input": {
+            "mean": 5776.111111111111,
+            "total": 51985
+          },
+          "output": {
+            "mean": 1688.5555555555557,
+            "total": 15197
+          },
+          "total": {
+            "mean": 7464.666666666667,
+            "total": 67182
+          }
+        },
+        "durationMsMean": 17699.333333333332,
+        "stepsMean": 3.6666666666666665,
+        "tokensPerSuccess": {
+          "input": 7426.428571428572,
+          "output": 2171,
+          "total": 9597.42857142857
+        }
+      }
+    ],
+    "overall": {
+      "task": null,
+      "side": null,
+      "runs": 9,
+      "ok": 7,
+      "failed": 2,
+      "successRate": 0.7777777777777778,
+      "usageRuns": 9,
+      "tokens": {
+        "input": {
+          "mean": 5776.111111111111,
+          "total": 51985
+        },
+        "output": {
+          "mean": 1688.5555555555557,
+          "total": 15197
+        },
+        "total": {
+          "mean": 7464.666666666667,
+          "total": 67182
+        }
+      },
+      "durationMsMean": 17699.333333333332,
+      "stepsMean": 3.6666666666666665,
+      "tokensPerSuccess": {
+        "input": 7426.428571428572,
+        "output": 2171,
+        "total": 9597.42857142857
+      }
+    }
+  }
+}

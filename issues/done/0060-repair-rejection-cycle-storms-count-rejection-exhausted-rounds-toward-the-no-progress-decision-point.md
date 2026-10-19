@@ -1,7 +1,7 @@
 ---
 id: 60
 title: "Repair rejection-cycle storms: count rejection-exhausted rounds toward the no-progress decision point"
-status: in-progress
+status: done
 priority: medium
 milestone: null
 parent: 46
@@ -143,3 +143,22 @@ plus: replay inspection of the minilisp bundles for ask events
 - Criterion 3 outcome still NOT met; the storm shape moved from rejection
   cycles to applied-but-unverified oscillation (`tmp/live-65/fail-sequences.txt`),
   so the residual is split to #71 — this issue re-measures on #71's matrices.
+
+### Re-measure (2026-10-19 #71 matrices, added 2026-10-19)
+
+- c/d (`benchmark/results/2026-10-19-tc-storm71-{c,d}.json`; replays
+  `tmp/replays-71-tc-matrix-{c,d}/`): json 3/3 and sexp 3/3 in both; minilisp
+  2/3 (c) / 3/3 (d) — the >=2/3 bar holds.
+- Mechanism holds live: c rep1's failedRounds=8 streak (ask at round 9)
+  includes rejection-exhausted rounds 5-7 — three-exchange rounds with no
+  applied edit — i.e. the counting fired the ask there; asks keep the #57
+  digest (1,148-1,187 chars) and STOP.
+- Outcome: d meets the sub-clause fully (23,186 / 27,279 / 43,524, all below
+  the 2026-10-19 totals; one ask, round 9, recovered). c: rep3 36,219 and rep1
+  92,208 (2.5% over the 89,716 reference, recovered) resolved; rep2 125,052
+  burned to the bare token budget (asks at 8/16/24 ignored) — not fully met on
+  c; the residual is #65's.
+- Criterion 4 re-measured and recorded in #57 (re-measure 4) and #49
+  (measurement 4); rows added to `benchmark/results/consumption.md`.
+- Disposition (user decision, 2026-10-19): closed on the mechanism + sample d's
+  full reading, with the c rep2 residual recorded and tracked by #65.

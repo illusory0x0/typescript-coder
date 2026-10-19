@@ -1,9 +1,9 @@
 # Acceptance harness
 
-Scripted end-to-end tests for the agent loop harness (context/index -> edit ->
-check/test -> keep-progress retry -> explanation). Each offline scenario drives
-the real `runLoop` with a `ScriptedProvider`, so no network access or manual
-steps are needed. Live scenarios are opt-in, call the real model, and are
+Scripted end-to-end tests for the agent loop harness (context/index -> Edit ->
+Verification -> keep-progress next iteration -> summary). Each offline scenario
+drives the real `runLoop` with a `ScriptedProvider`, so no network access or
+manual steps are needed. Live scenarios are opt-in, call the real model, and are
 covered in [Live checks](#live-checks).
 
 ## Running
@@ -25,8 +25,8 @@ covered in [Live checks](#live-checks).
 | ---------------------- | ------------------------------------------------------------ | ---- | ---- |
 | fix-answer             | failing test becomes green                                   | no   | no   |
 | live-fix-answer        | real model makes the failing test pass                       | no   | yes  |
-| keep-progress-retry    | type-invalid replacement stays and the retry builds on it    | no   | no   |
-| persistent-failure     | exhausted retries keep the attempted state and explain       | no   | no   |
+| keep-progress-retry    | type-invalid replacement stays and the next iteration builds on it | no   | no   |
+| persistent-failure     | exhausted Edit budget keeps the attempted state and explains | no   | no   |
 | context-correctness    | context YAML exposes dotted signatures                       | no   | no   |
 | check-test-propagation | test-only failure feeds back diagnostics                     | no   | no   |
 | self-host              | agent edits its own sources and the copied suite stays green | yes  | no   |

@@ -13,7 +13,7 @@ const DEFAULT_RETRIES = 2;
 const RETRY_BASE_DELAY_MS = 1000;
 const RETRY_AFTER_MAX_MS = 10_000;
 
-export type ReasoningEffort = "low" | "medium" | "high";
+export type ReasoningEffort = "none" | "low" | "high" | "max";
 
 export interface ChatOptions {
   temperature?: number;

@@ -48,7 +48,7 @@ describe("ReplayRecorder", () => {
       fixture: "benchmark/fixtures/json-parser",
     });
     expect(bundle.format).toBe(REPLAY_BUNDLE_FORMAT);
-    expect(bundle.side).toBe("ts");
+    expect(bundle.side).toBe("tc");
     expect(bundle.task).toBe("json-parser");
     expect(bundle.rep).toBe(2);
     expect(bundle.calls.length).toBe(1);

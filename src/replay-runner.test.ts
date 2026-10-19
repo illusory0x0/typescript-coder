@@ -4,7 +4,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import {
   buildContextYaml,
-  buildReplacementPrompt,
+  buildEditPrompt,
   buildSystemPrompt,
   buildUserPrompt,
   discoverSourceFiles,
@@ -12,7 +12,7 @@ import {
 } from "./loop";
 import { REPLAY_BUNDLE_FORMAT } from "./replay-format";
 import { parseReplayBundle, ReplayProvider, runReplay, summarizeReplay } from "./replay-runner";
-import type { LoopAttempt, LoopResult } from "./loop";
+import type { LoopRecord, LoopResult } from "./loop";
 import type { ChatMessage } from "./openai";
 import type { ReplayBundle, ReplayCall } from "./replay-format";
 import type { ReplayRun } from "./replay-runner";
@@ -20,15 +20,28 @@ import type { ReplayRun } from "./replay-runner";
 const TSC_BIN = new URL("../node_modules/typescript/bin/tsc", import.meta.url).pathname;
 const ISSUE = "make the answer test pass";
 const LOCATOR = { path: "src/helper.ts", name: "answer", kind: "function" };
-const LOCATOR_JSON = JSON.stringify(LOCATOR);
+const ADDRESS_JSON = JSON.stringify({
+  path: LOCATOR.path,
+  symbol: LOCATOR.name,
+  kind: LOCATOR.kind,
+});
+const SELECTION_JSON = JSON.stringify({
+  mode: "modify",
+  path: LOCATOR.path,
+  symbol: LOCATOR.name,
+  kind: LOCATOR.kind,
+});
 const ORIGINAL_HELPER = "export function answer(): number {\n  return 1;\n}\n";
 // The index records the declaration without the `export` modifier, so the
-// replacement prompt shows the bare declaration.
+// edit prompt shows the bare declaration.
 const ANSWER_DECLARATION = "function answer(): number {\n  return 1;\n}";
-// The replace-phase response uses the anchor-splice protocol: the anchor is a
-// snippet copied from the current source and the replacement rewrites it.
+// The v2 edit payload is one flat object: address + optional matcher + replacement.
 const FIXED_EDIT = JSON.stringify({
-  edits: [{ anchor: "return 1;", replacement: "return 2;" }],
+  path: LOCATOR.path,
+  symbol: LOCATOR.name,
+  kind: LOCATOR.kind,
+  matcher: "return 1;",
+  replacement: "return 2;",
 });
 
 const tempDirs: string[] = [];
@@ -90,7 +103,7 @@ function recordedCalls(fixtureDir: string): ReplayCall[] {
   return [
     {
       messages: initial,
-      content: LOCATOR_JSON,
+      content: SELECTION_JSON,
       toolCalls: [],
       finishReason: "stop",
       usage: null,
@@ -98,8 +111,8 @@ function recordedCalls(fixtureDir: string): ReplayCall[] {
     {
       messages: [
         ...initial,
-        { role: "assistant", content: LOCATOR_JSON },
-        { role: "user", content: buildReplacementPrompt(LOCATOR_JSON, ANSWER_DECLARATION) },
+        { role: "assistant", content: SELECTION_JSON },
+        { role: "user", content: buildEditPrompt(ADDRESS_JSON, ANSWER_DECLARATION) },
       ],
       content: FIXED_EDIT,
       toolCalls: [],
@@ -112,7 +125,7 @@ function recordedCalls(fixtureDir: string): ReplayCall[] {
 function syntheticBundle(fixture: string, calls: ReplayCall[]): ReplayBundle {
   return {
     format: REPLAY_BUNDLE_FORMAT,
-    side: "ts",
+    side: "tc",
     task: "synthetic",
     rep: 1,
     model: "fake",
@@ -137,6 +150,12 @@ describe("parseReplayBundle", () => {
     expect(() => parseReplayBundle(broken)).toThrow(
       "replay bundle calls must be an array of recorded calls",
     );
+  });
+
+  test("accepts legacy ts-side bundles and normalizes the side label", () => {
+    const legacy = JSON.stringify({ ...syntheticBundle("project", []), side: "ts" });
+    const bundle = parseReplayBundle(legacy);
+    expect(bundle.side).toBe("tc");
   });
 });
 
@@ -184,14 +203,15 @@ describe("runReplay", () => {
     expect(run.callsTotal).toBe(2);
     expect(run.exhaustion).toBeNull();
     expect(run.promptMismatches).toEqual([]);
-    expect(run.result.attempts.map((attempt) => attempt.outcome)).toEqual(["ok"]);
+    expect(run.result.records.map((record) => record.outcome)).toEqual(["selected", "applied", "ok"]);
     expect(run.workspace.startsWith(join(repoRoot, "tmp", "replay"))).toBe(true);
     expect(readFileSync(join(run.workspace, "src", "helper.ts"), "utf8")).toContain("return 2;");
     const summary = summarizeReplay(run);
     expect(summary).toContain("result: ok");
     expect(summary).toContain("calls: 2/2");
     expect(summary).toContain("prompt mismatches: none");
-    expect(summary).toContain("attempt 1: outcome=ok diagnostics=none");
+    expect(summary).toContain("record 1: kind=exchange outcome=selected exchange=1 diagnostics=none");
+    expect(summary).toContain("record 3: kind=verification outcome=ok exchange=- diagnostics=none");
   }, 60000);
 
   test("reports exhaustion and removes the workspace by default", async () => {
@@ -214,32 +234,37 @@ describe("runReplay", () => {
     expect(summary).toContain("calls: 1/1");
     expect(summary).toContain("exhaustion: bundle exhausted after 1 call(s)");
     expect(summary).toContain("stopped: provider error: bundle exhausted after 1 call(s)");
-    expect(summary).toContain("attempts: none");
+    // The pick consumed the only recorded call before exhaustion.
+    expect(summary).toContain("record 1: kind=exchange outcome=selected exchange=1 diagnostics=none");
   }, 60000);
 });
 
 describe("summarizeReplay", () => {
-  test("includes attempt outcomes, consumed counts, and prompt mismatches", () => {
-    const attempt: LoopAttempt = {
-      attempt: 1,
+  test("includes record outcomes, consumed counts, and prompt mismatches", () => {
+    const record: LoopRecord = {
+      row: 1,
+      iteration: 1,
+      kind: "exchange",
+      exchange: 1,
       locator: LOCATOR,
       replacement: null,
-      diagnostics: "invalid locator: model did not return a valid locator JSON",
-      outcome: "selection-invalid",
-      diagnosticsHead: "invalid locator: model did not return a valid locator JSON",
+      diagnostics: "stage: protocol\nexpected a selection object",
+      outcome: "protocol",
+      diagnosticsHead: "stage: protocol expected a selection object",
       replacementChars: null,
       finishReason: "stop",
+      signature: null,
     };
     const result: LoopResult = {
       ok: false,
       locator: null,
       filePath: null,
       editedSource: null,
-      attempts: [attempt],
+      records: [record],
       diagnostics: "could not select a symbol",
       explanation: null,
       messages: [],
-      extensions: 0,
+      terminationReason: "edit-exhausted",
     };
     const run: ReplayRun = {
       bundle: syntheticBundle("project", []),
@@ -256,7 +281,8 @@ describe("summarizeReplay", () => {
     expect(summary).toContain("result: fail");
     expect(summary).toContain("calls: 1/2");
     expect(summary).toContain("prompt mismatches: call 1");
-    expect(summary).toContain("attempt 1: outcome=selection-invalid");
+    expect(summary).toContain("termination: edit-exhausted");
+    expect(summary).toContain("record 1: kind=exchange outcome=protocol exchange=1");
     expect(summary).toContain("stopped: could not select a symbol");
   });
 });

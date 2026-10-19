@@ -37,21 +37,48 @@ afterEach(() => {
 });
 
 describe("parseArgs", () => {
-  test("defaults to no help and the deepseek-v4.1-flash model", () => {
-    expect(parseArgs([])).toEqual({ help: false, model: "deepseek-v4.1-flash" });
+  test("defaults to no help, the deepseek-v4.1-flash model, and multi-payload off", () => {
+    expect(parseArgs([])).toEqual({
+      help: false,
+      model: "deepseek-v4.1-flash",
+      multiPayload: false,
+    });
   });
 
   test("recognizes --help and -h", () => {
-    expect(parseArgs(["--help"])).toEqual({ help: true, model: "deepseek-v4.1-flash" });
-    expect(parseArgs(["-h"])).toEqual({ help: true, model: "deepseek-v4.1-flash" });
+    expect(parseArgs(["--help"])).toEqual({
+      help: true,
+      model: "deepseek-v4.1-flash",
+      multiPayload: false,
+    });
+    expect(parseArgs(["-h"])).toEqual({
+      help: true,
+      model: "deepseek-v4.1-flash",
+      multiPayload: false,
+    });
   });
 
   test("reads --model with a separate value", () => {
-    expect(parseArgs(["--model", "qwen"])).toEqual({ help: false, model: "qwen" });
+    expect(parseArgs(["--model", "qwen"])).toEqual({
+      help: false,
+      model: "qwen",
+      multiPayload: false,
+    });
   });
 
   test("reads --model=<id>", () => {
-    expect(parseArgs(["--model=qwen"])).toEqual({ help: false, model: "qwen" });
+    expect(parseArgs(["--model=qwen"])).toEqual({
+      help: false,
+      model: "qwen",
+      multiPayload: false,
+    });
+  });
+
+  test("reads --multi-payload and its camelCase alias (#69)", () => {
+    expect(parseArgs(["--multi-payload"]).multiPayload).toBe(true);
+    expect(parseArgs(["--multiPayload"]).multiPayload).toBe(true);
+    expect(parseArgs(["--multi-payload", "--model", "qwen"]).multiPayload).toBe(true);
+    expect(parseArgs(["--model", "qwen"]).multiPayload).toBe(false);
   });
 
   test("throws when --model has no value", () => {
@@ -71,7 +98,11 @@ describe("parseArgs", () => {
     expect(parseArgs(["--model=qwen", "--model=deepseek-v4.1-flash"]).model).toBe(
       "deepseek-v4.1-flash",
     );
-    expect(parseArgs(["--help", "--model", "qwen"])).toEqual({ help: true, model: "qwen" });
+    expect(parseArgs(["--help", "--model", "qwen"])).toEqual({
+      help: true,
+      model: "qwen",
+      multiPayload: false,
+    });
   });
 });
 
@@ -150,10 +181,22 @@ function captureIo(): { io: MainIo; out: string[]; err: string[] } {
   return { io: { out: (line) => out.push(line), err: (line) => err.push(line) }, out, err };
 }
 
-const LOCATOR = '{"path":"src/helper.ts","name":"answer","kind":"function"}';
+const ADDRESS = { path: "src/helper.ts", symbol: "answer", kind: "function" };
+const LOCATOR = JSON.stringify(ADDRESS);
 
-function editResponse(anchor: string, replacement: string): string {
-  return JSON.stringify({ edits: [{ anchor, replacement }] });
+// A v2 edit payload: one flat object with the pinned address, an optional
+// matcher, and the replacement.
+function editResponse(
+  matcher: string | null,
+  replacement: string,
+  address: { path: string; symbol: string; kind: string } = ADDRESS,
+): string {
+  const payload: Record<string, string> = { ...address };
+  if (matcher !== null) {
+    payload["matcher"] = matcher;
+  }
+  payload["replacement"] = replacement;
+  return JSON.stringify(payload);
 }
 
 describe("runMain", () => {
@@ -173,14 +216,18 @@ describe("runMain", () => {
     expect(captured.out.join("\n")).toContain("applied");
     expect(captured.out.join("\n")).toContain("src/helper.ts");
     expect(readFileSync(join(dir, "src", "helper.ts"), "utf8")).toContain("return 2;");
+    // Success writes no failure artifact.
+    expect(existsSync(join(dir, "failures"))).toBe(false);
   }, 60000);
 
-  test("surfaces diagnostics on stderr and the explanation last on stdout", async () => {
+  test("surfaces diagnostics on stderr, writes a failure artifact, and prints the explanation last", async () => {
     const dir = fixtureDir();
     const bad = editResponse("return 1;", 'return "no";');
-    const keep = editResponse('return "no";', 'return "no";');
     const explanation = "the symbol cannot satisfy the test without a larger refactor";
-    const provider = new ScriptedProvider([LOCATOR, bad, keep, keep, explanation]);
+    // Iteration 1: a verified-failing edit. Iteration 2: the shared ≤3 budget
+    // runs out on protocol failures; the STOP reply ends the run and the
+    // summary is the final call.
+    const provider = new ScriptedProvider([LOCATOR, bad, "junk", "junk", "junk", "STOP", explanation]);
     const captured = captureIo();
     const code = await runMain({
       issue: "make the answer test pass",
@@ -191,9 +238,23 @@ describe("runMain", () => {
     });
     expect(code).toBe(1);
     expect(captured.err.join("\n")).toContain("not assignable");
+    expect(captured.err.join("\n")).toContain("edit-exhausted");
     expect(captured.err.join("\n")).not.toContain(explanation);
     expect(captured.out[captured.out.length - 1]).toBe(explanation);
     expect(captured.out.filter((line) => line === explanation)).toHaveLength(1);
+    const artifactLine = captured.out.find((line) => line.startsWith("failure artifact: "));
+    expect(artifactLine).toBeDefined();
+    const artifactPath = artifactLine?.slice("failure artifact: ".length) ?? "";
+    expect(artifactPath.startsWith(join(dir, "failures"))).toBe(true);
+    expect(existsSync(artifactPath)).toBe(true);
+    const artifact = readFileSync(artifactPath, "utf8");
+    expect(artifact).toContain("# Run failure — edit-exhausted");
+    expect(artifact).toContain("not assignable");
+    expect(artifact).toContain(explanation);
+    // The artifact line is printed before the explanation.
+    expect(captured.out.indexOf(artifactLine ?? "")).toBeLessThan(
+      captured.out.indexOf(explanation),
+    );
     const finalSource = readFileSync(join(dir, "src", "helper.ts"), "utf8");
     expect(finalSource).toContain('return "no";');
     expect(finalSource).not.toContain("return 1;");
@@ -235,8 +296,12 @@ describe("runMain", () => {
   test("fails cleanly when the intended target is unparseable", async () => {
     const dir = fixtureDir(["src/helper.ts"]);
     writeFileSync(join(dir, "src", "broken.ts"), "function broken( {\n");
+    const broken = '{"path":"src/broken.ts","symbol":"broken","kind":"function"}';
     const provider = new ScriptedProvider([
-      '{"path":"src/broken.ts","name":"broken","kind":"function"}',
+      broken,
+      broken,
+      broken,
+      "STOP",
       "the broken file cannot be selected",
     ]);
     const captured = captureIo();
@@ -246,14 +311,16 @@ describe("runMain", () => {
       cwd: dir,
       provider,
       io: captured.io,
-      maxRetries: 1,
     });
     expect(code).toBe(1);
-    expect(captured.err.join("\n")).toContain("could not select a symbol");
+    expect(captured.err.join("\n")).toContain("could not be parsed and indexed");
+    expect(captured.err.join("\n")).toContain("edit-exhausted");
+    expect(captured.out[captured.out.length - 1]).toBe("the broken file cannot be selected");
     expect(readFileSync(join(dir, "src", "broken.ts"), "utf8")).toBe("function broken( {\n");
   }, 60000);
 
   test("returns 1 with a readable message when the provider throws", async () => {
+    const dir = fixtureDir();
     const provider: ProviderLike = {
       async chat() {
         throw new Error("gateway unreachable");
@@ -263,7 +330,7 @@ describe("runMain", () => {
     const code = await runMain({
       issue: "make the answer test pass",
       model: "fake",
-      cwd: fixtureDir(),
+      cwd: dir,
       provider,
       io: captured.io,
     });
@@ -272,6 +339,8 @@ describe("runMain", () => {
     expect(errText).toContain("provider error");
     expect(errText).toContain("gateway unreachable");
     expect(errText).not.toContain("\n    at ");
+    // Provider errors keep their own path: no termination artifact.
+    expect(existsSync(join(dir, "failures"))).toBe(false);
   }, 60000);
 
   test("returns 1 with an error message when the loop itself throws", async () => {
@@ -328,10 +397,11 @@ test.skipIf(nestedSmoke)(
     symlinkSync(join(repoRoot, "node_modules"), join(dir, "node_modules"), "dir");
     writeFileSync(join(dir, ".nested-smoke"), "this copy runs under the self-host smoke test\n");
     const provider = new ScriptedProvider([
-      '{"path":"src/index.ts","name":"greet","kind":"function"}',
+      '{"path":"src/index.ts","symbol":"greet","kind":"function"}',
       editResponse(
         "function greet(subject: string): string {\n  return `hello, ${subject}`;\n}",
         "function greet(subject: string): string {\n  const greeting = `hello, ${subject}`;\n  return greeting;\n}",
+        { path: "src/index.ts", symbol: "greet", kind: "function" },
       ),
     ]);
     const captured = captureIo();

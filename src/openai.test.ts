@@ -259,12 +259,12 @@ test("keeps reasoning_effort on a retried request", async () => {
   const provider = new OpenAIProvider(config, fetchImpl, sleep);
 
   await provider.chat([{ role: "user", content: "hello" }], undefined, {
-    reasoningEffort: "medium",
+    reasoningEffort: "max",
   });
 
   expect(requests).toHaveLength(2);
-  expect(requestBody(requests[0])["reasoning_effort"]).toBe("medium");
-  expect(requestBody(requests[1])["reasoning_effort"]).toBe("medium");
+  expect(requestBody(requests[0])["reasoning_effort"]).toBe("max");
+  expect(requestBody(requests[1])["reasoning_effort"]).toBe("max");
 });
 
 test("maps content, tool calls, and finish reason from the response", async () => {

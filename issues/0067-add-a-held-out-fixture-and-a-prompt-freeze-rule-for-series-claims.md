@@ -37,7 +37,7 @@ gain.
 - [ ] `consumption.md` records the rule: held-out results are never a
       change-set's evidence of prompt fit; they gate "generalizes beyond the
       tuned fixtures" claims.
-- [ ] A first held-out baseline row (tc side, 3 reps, off-peak) is recorded in
+- [ ] A first held-out baseline row (tc side, 3 reps) is recorded in
       `consumption.md`.
 - [ ] Gates green.
 

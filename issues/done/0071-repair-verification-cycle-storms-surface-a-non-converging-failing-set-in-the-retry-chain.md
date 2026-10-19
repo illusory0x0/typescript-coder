@@ -1,7 +1,7 @@
 ---
 id: 71
 title: "Repair verification-cycle storms: surface a non-converging failing set in the retry chain"
-status: in-progress
+status: done
 priority: medium
 milestone: null
 parent: 46
@@ -97,3 +97,29 @@ plus replay inspection for the note's presence and the storm endings.
 - Levers considered: (L1) fingerprint + note in the retry/ask [chosen];
   (L2) a digest section for state cycling [redundant with L1]; (L3)
   prescriptive rewrite advice at asks [not factual; rejected].
+
+### Live evidence and disposition (c/d matrices, added 2026-10-19)
+
+- Matrices c/d (`benchmark/results/2026-10-19-tc-storm71-c.json` / `-d.json`;
+  replays `tmp/replays-71-tc-matrix-{c,d}/`; run log `tmp/live-71/run.log`,
+  gates green 16:45:54; both rows peak-class).
+- Implementation reviewed pre-freeze (main agent); no `.ts` edits after the
+  14:01 pre-matrix gate file.
+- json 3/3 both (c 4,616 / 4,686 / 4,685; d 4,613 / 4,632 / 4,591); sexp 3/3
+  both (3,056 / 3,097 / 3,066; 3,097 / 3,097 / 3,056); minilisp c 2/3
+  (92,208 / 125,052 / 36,219), d 3/3 (23,186 / 27,279 / 43,524).
+- Note rendering: c rep1 23x, c rep2 32x, d rep3 5x; zero in every other
+  bundle — present on detected non-convergence, absent while failures change
+  and on the happy path, as specified.
+- Outcome sub-clause: five of six storm runs met it — d's three (23,186 /
+  27,279 / 43,524), c rep3 (36,219), c rep1 (92,208, 2.5% over the ~90k
+  reference, recovered seven rounds after its ask). One did not: c rep2 burned
+  to the bare token budget (125,052; 30 rounds, every verification failed;
+  asks at failedRounds=8/16/24 answered with further edits, no STOP).
+- Disposition (user decision, 2026-10-19): criteria 1/2 met; criterion 3
+  mechanism and main bars met, the outcome sub-clause recorded as not met on
+  c rep2; closed with the residual cross-filed to #65 (ask effectiveness).
+  #65 stays open; the run is recorded there and in #60.
+- Criterion 4: re-measures recorded in #65, #60, and #49 (sample d 13,008
+  tokens per success, below the #44 canonical 13,716). Rows added to
+  `benchmark/results/consumption.md`.

@@ -33,7 +33,7 @@ interface ScenarioReport {
   model?: string;
   status: ScenarioStatus;
   durationMs: number;
-  attempts: number;
+  records: number;
   assertions: AssertionRecord[];
   diagnostics: string | null;
 }
@@ -301,7 +301,6 @@ async function runScenario(
         issue: scenario.issue,
         model: live ? context.model : "acceptance-scripted",
         provider,
-        maxRetries: scenario.maxRetries,
         temperature: live ? 0 : undefined,
         checkCommand: context.checkCommand,
         testCommand: context.testCommand,
@@ -343,7 +342,7 @@ async function runScenario(
       slow: scenario.slow === true,
       status,
       durationMs,
-      attempts: result?.attempts.length ?? 0,
+      records: result?.records.length ?? 0,
       assertions,
       diagnostics,
     };

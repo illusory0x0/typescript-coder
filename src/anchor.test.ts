@@ -4,7 +4,6 @@ import {
   extractJsonObject,
   findAnchor,
   parseAnchorFragment,
-  parseEditsResponse,
   structurallyEqual,
 } from "./anchor";
 import type { AnchorFragmentResult, SymbolRange } from "./anchor";
@@ -12,97 +11,37 @@ import { buildIndexTolerant, findDefinition } from "./utility";
 
 describe("extractJsonObject", () => {
   test("parses plain JSON", () => {
-    expect(extractJsonObject('{"edits":[]}')).toEqual({ edits: [] });
+    expect(extractJsonObject('{"symbol":"answer"}')).toEqual({ symbol: "answer" });
   });
 
   test("strips a whole-text markdown fence", () => {
-    expect(extractJsonObject('```json\n{"edits":[{"anchor":"a","replacement":"b"}]}\n```')).toEqual(
-      { edits: [{ anchor: "a", replacement: "b" }] },
-    );
+    expect(
+      extractJsonObject('```json\n{"path":"src/a.ts","symbol":"answer","kind":"function"}\n```'),
+    ).toEqual({ path: "src/a.ts", symbol: "answer", kind: "function" });
   });
 
   test("scans an object out of surrounding prose", () => {
     const content =
-      'Sure, here is the edit:\n```json\n{"edits":[{"anchor":"return 1;","replacement":"return 2;"}]}\n```\nDone.';
+      'Sure, here is the edit:\n```json\n{"symbol":"answer","replacement":"return 2;"}\n```\nDone.';
     expect(extractJsonObject(content)).toEqual({
-      edits: [{ anchor: "return 1;", replacement: "return 2;" }],
+      symbol: "answer",
+      replacement: "return 2;",
     });
   });
 
   test("brace-matches nested objects and string literals with braces and escapes", () => {
     const content =
-      'prefix {"edits":[{"anchor":"if (x) { return \\"}\\"; }","replacement":"y"}]} suffix';
+      'prefix {"symbol":"answer","matcher":"if (x) { return \\"}\\"; }","replacement":"y"} suffix';
     expect(extractJsonObject(content)).toEqual({
-      edits: [{ anchor: 'if (x) { return "}"; }', replacement: "y" }],
+      symbol: "answer",
+      matcher: 'if (x) { return "}"; }',
+      replacement: "y",
     });
   });
 
   test("throws when no object exists", () => {
     expect(() => extractJsonObject("plain text")).toThrow("no JSON object found");
     expect(() => extractJsonObject('{"unterminated":')).toThrow("no complete JSON object found");
-  });
-});
-
-describe("parseEditsResponse", () => {
-  test("parses a single plain edit", () => {
-    expect(
-      parseEditsResponse('{"edits":[{"anchor":"return 1;","replacement":"return 2;"}]}'),
-    ).toEqual({ edits: [{ anchor: "return 1;", replacement: "return 2;" }] });
-  });
-
-  test("tolerates a fenced object", () => {
-    const content = '```json\n{"edits":[{"anchor":"a","replacement":""}]}\n```';
-    expect(parseEditsResponse(content)).toEqual({ edits: [{ anchor: "a", replacement: "" }] });
-  });
-
-  test("tolerates prose around the object", () => {
-    const content = 'Here you go: {"edits":[{"anchor":"a","replacement":"b"}]} hope it helps';
-    expect(parseEditsResponse(content)).toEqual({ edits: [{ anchor: "a", replacement: "b" }] });
-  });
-
-  test("ignores extra keys", () => {
-    const content = '{"edits":[{"anchor":"a","replacement":"b","why":"x"}],"note":"n"}';
-    expect(parseEditsResponse(content)).toEqual({ edits: [{ anchor: "a", replacement: "b" }] });
-  });
-
-  test("parses multiple edits in order", () => {
-    const content = '{"edits":[{"anchor":"a","replacement":"b"},{"anchor":"c","replacement":"d"}]}';
-    expect(parseEditsResponse(content)).toEqual({
-      edits: [
-        { anchor: "a", replacement: "b" },
-        { anchor: "c", replacement: "d" },
-      ],
-    });
-  });
-
-  test("rejects missing or wrongly typed fields", () => {
-    expect(() => parseEditsResponse("{}")).toThrow('expected {"edits"');
-    expect(() => parseEditsResponse('{"edits":[]}')).toThrow('expected {"edits"');
-    expect(() => parseEditsResponse('{"edits":[{"anchor":"a"}]}')).toThrow('expected {"edits"');
-    expect(() => parseEditsResponse('{"edits":[{"anchor":1,"replacement":"b"}]}')).toThrow(
-      'expected {"edits"',
-    );
-    expect(() => parseEditsResponse('{"edits":[{"replacement":"b"}]}')).toThrow(
-      'expected {"edits"',
-    );
-  });
-
-  test("rejects a malformed entry anywhere in the array", () => {
-    expect(() =>
-      parseEditsResponse('{"edits":[{"anchor":"a","replacement":"b"},{"anchor":"c"}]}'),
-    ).toThrow('expected {"edits"');
-    expect(() => parseEditsResponse('{"edits":[{"anchor":"a","replacement":"b"},5]}')).toThrow(
-      'expected {"edits"',
-    );
-    expect(() => parseEditsResponse('{"edits":["nope",{"anchor":"a","replacement":"b"}]}')).toThrow(
-      'expected {"edits"',
-    );
-  });
-
-  test("rejects non-object JSON", () => {
-    expect(() => parseEditsResponse("[]")).toThrow('expected {"edits"');
-    expect(() => parseEditsResponse('"nope"')).toThrow('expected {"edits"');
-    expect(() => parseEditsResponse("not json at all")).toThrow('expected {"edits"');
   });
 });
 
@@ -135,6 +74,28 @@ describe("parseAnchorFragment", () => {
     if (result.kind === "unparseable") {
       expect(result.message).not.toBe("");
     }
+  });
+
+  test("records a multi-statement fragment as a run alternative", () => {
+    const result = parseAnchorFragment("const a = 1;\nconst b = 2;\nreturn a;");
+    expect(result.kind).toBe("parsed");
+    if (result.kind !== "parsed") {
+      return;
+    }
+    expect(result.nodes).toEqual([]);
+    const runKinds = result.runs?.map((run) =>
+      run.map((node) => (node as unknown as { kind: string }).kind),
+    );
+    expect(runKinds).toEqual([["VariableStatement", "VariableStatement", "ReturnStatement"]]);
+  });
+
+  test("keeps a single statement as a node without a run", () => {
+    const result = parseAnchorFragment("return 1;");
+    expect(result.kind).toBe("parsed");
+    if (result.kind !== "parsed") {
+      return;
+    }
+    expect(result.runs).toBeUndefined();
   });
 });
 
@@ -264,6 +225,73 @@ describe("findAnchor", () => {
     const range = symbolRange(HELPER, "answer", "function");
     const result = findAnchor(HELPER, range, "if (");
     expect(result.kind).toBe("unparseable");
+  });
+
+  test("matches a run of consecutive statements uniquely with the source span", () => {
+    const source = [
+      "export function f(): number {",
+      "  const a = 1;",
+      "  const b = 2;",
+      "  return a + b;",
+      "}",
+      "",
+    ].join("\n");
+    const range = symbolRange(source, "f", "function");
+    const anchor = ["const a = 1;", "  const b = 2;", "  return a + b;"].join("\n");
+    const start = source.indexOf("const a = 1;");
+    const end = source.indexOf("return a + b;") + "return a + b;".length;
+    const result = findAnchor(source, range, anchor);
+    expect(result).toEqual({ kind: "match", start, end });
+    if (result.kind === "match") {
+      expect(source.slice(result.start, result.end)).toBe(anchor);
+    }
+  });
+
+  test("does not match a run broken by a non-matching sibling", () => {
+    const source = [
+      "export function f(): number {",
+      "  const a = 1;",
+      "  const b = 2;",
+      "  const c = 3;",
+      "  return a;",
+      "}",
+      "",
+    ].join("\n");
+    const range = symbolRange(source, "f", "function");
+    const anchor = ["const a = 1;", "  const b = 9;", "  const c = 3;"].join("\n");
+    expect(findAnchor(source, range, anchor)).toEqual({ kind: "not-found" });
+  });
+
+  test("reports two identical runs as ambiguous", () => {
+    const source = [
+      "export function f(): number {",
+      "  const a = 1;",
+      "  const b = 2;",
+      "  return a;",
+      "  const a = 1;",
+      "  const b = 2;",
+      "  return a;",
+      "}",
+      "",
+    ].join("\n");
+    const range = symbolRange(source, "f", "function");
+    const anchor = ["const a = 1;", "  const b = 2;", "  return a;"].join("\n");
+    expect(findAnchor(source, range, anchor)).toEqual({ kind: "ambiguous", matches: 2 });
+  });
+
+  test("does not match a run across a container boundary", () => {
+    const source = [
+      "export function f(): number {",
+      "  if (true) {",
+      "    const a = 1;",
+      "  }",
+      "  return a;",
+      "}",
+      "",
+    ].join("\n");
+    const range = symbolRange(source, "f", "function");
+    const anchor = ["const a = 1;", "  return a;"].join("\n");
+    expect(findAnchor(source, range, anchor)).toEqual({ kind: "not-found" });
   });
 });
 

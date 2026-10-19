@@ -59,7 +59,6 @@ export interface Scenario {
   /** Live scenarios call the real model and run only with --live. */
   live?: boolean;
   issue: string;
-  maxRetries?: number;
   responses: ScriptedResponse[];
   prepare?: (dir: string, repoRoot: string) => void;
   assertions: ScenarioAssertion[];
@@ -79,16 +78,60 @@ export function hasOk(expected: boolean): ScenarioAssertion {
   };
 }
 
-export function hasAttempts(expectedCount: number): ScenarioAssertion {
+export function hasRecords(expectedCount: number): ScenarioAssertion {
   return {
-    name: `attempts count is ${expectedCount}`,
+    name: `records count is ${expectedCount}`,
     check: ({ result }) =>
-      result.attempts.length === expectedCount
+      result.records.length === expectedCount
         ? { ok: true }
         : {
             ok: false,
-            detail: `expected ${expectedCount} attempts but got ${result.attempts.length}`,
+            detail: `expected ${expectedCount} records but got ${result.records.length}`,
           },
+  };
+}
+
+export function recordOutcomes(expected: string[]): ScenarioAssertion {
+  return {
+    name: `record outcomes are ${JSON.stringify(expected)}`,
+    check: ({ result }) => {
+      const actual = result.records.map((record) => record.outcome);
+      if (JSON.stringify(actual) === JSON.stringify(expected)) {
+        return { ok: true };
+      }
+      return { ok: false, detail: `expected ${JSON.stringify(expected)} but got ${JSON.stringify(actual)}` };
+    },
+  };
+}
+
+export function hasTerminationReason(expected: string): ScenarioAssertion {
+  return {
+    name: `termination reason is ${JSON.stringify(expected)}`,
+    check: ({ result }) =>
+      result.terminationReason === expected
+        ? { ok: true }
+        : {
+            ok: false,
+            detail: `expected termination reason ${JSON.stringify(expected)} but got ${JSON.stringify(result.terminationReason)}`,
+          },
+  };
+}
+
+export function someRecordDiagnosticsContain(needle: string): ScenarioAssertion {
+  return {
+    name: `some record diagnostics contain ${JSON.stringify(needle)}`,
+    check: ({ result }) => {
+      const match = result.records.find(
+        (record) => record.diagnostics !== null && record.diagnostics.includes(needle),
+      );
+      if (match !== undefined) {
+        return { ok: true };
+      }
+      return {
+        ok: false,
+        detail: `no record diagnostics contain ${JSON.stringify(needle)}`,
+      };
+    },
   };
 }
 
@@ -257,13 +300,25 @@ export function diagnosticsContains(needle: string): ScenarioAssertion {
   };
 }
 
-function editResponse(anchor: string, replacement: string): string {
-  return JSON.stringify({ edits: [{ anchor, replacement }] });
+const ADDRESS = { path: "src/helper.ts", symbol: "answer", kind: "function" };
+
+// A v2 edit payload: one flat object with the pinned address, an optional
+// matcher, and the replacement.
+function editResponse(
+  matcher: string | null,
+  replacement: string,
+  address: { path: string; symbol: string; kind: string } = ADDRESS,
+): string {
+  const payload: Record<string, string> = { ...address };
+  if (matcher !== null) {
+    payload["matcher"] = matcher;
+  }
+  payload["replacement"] = replacement;
+  return JSON.stringify(payload);
 }
 
-const LOCATOR_JSON = '{"path":"src/helper.ts","name":"answer","kind":"function"}';
+const LOCATOR_JSON = JSON.stringify(ADDRESS);
 const BAD_EDIT = editResponse("return 1;", 'return "no";');
-const KEEP_EDIT = editResponse('return "no";', 'return "no";');
 const RECOVER_EDIT = editResponse('return "no";', "return 2;");
 const TEST_PROPAGATION_EDIT = editResponse("return 1;", "return 3;");
 const TEST_PROPAGATION_RECOVER_EDIT = editResponse("return 3;", "return 2;");
@@ -279,7 +334,8 @@ export const scenarios: Scenario[] = [
     responses: [LOCATOR_JSON, GOOD_EDIT],
     assertions: [
       hasOk(true),
-      hasAttempts(1),
+      hasRecords(3),
+      recordOutcomes(["selected", "applied", "ok"]),
       fileContains("src/helper.ts", "return 2;"),
       fileEqualsOriginal("src/helper.test.ts"),
     ],
@@ -300,13 +356,14 @@ export const scenarios: Scenario[] = [
   },
   {
     id: "keep-progress-retry",
-    title: "type-invalid replacement stays on disk and the retry builds on it",
+    title: "type-invalid replacement stays on disk and the next iteration builds on it",
     fixture: "keep-progress-retry",
     issue: TEST_ISSUE,
     responses: [LOCATOR_JSON, BAD_EDIT, RECOVER_EDIT],
     assertions: [
       hasOk(true),
-      hasAttempts(2),
+      hasRecords(5),
+      recordOutcomes(["selected", "applied", "tsc", "applied", "ok"]),
       hasCallCount(3),
       messageContains(2, "not assignable"),
       fileContains("src/helper.ts", "return 2;"),
@@ -314,25 +371,39 @@ export const scenarios: Scenario[] = [
   },
   {
     id: "persistent-failure",
-    title: "exhausted retries keep the attempted state and explain",
+    title: "a failed verification plus an exhausted Edit round ends with one summary after STOP",
     fixture: "persistent-failure",
     issue: TEST_ISSUE,
     responses: [
       LOCATOR_JSON,
       BAD_EDIT,
-      KEEP_EDIT,
-      KEEP_EDIT,
+      "not json",
+      "not json",
+      "not json",
+      "STOP",
       "The replacement could not satisfy the type checker; the next step is to review the return type.",
     ],
     assertions: [
       hasOk(false),
-      hasAttempts(3),
-      hasCallCount(5),
+      hasRecords(7),
+      recordOutcomes([
+        "selected",
+        "applied",
+        "tsc",
+        "protocol",
+        "protocol",
+        "protocol",
+        "stopped",
+      ]),
+      hasTerminationReason("edit-exhausted"),
+      hasCallCount(7),
+      messageContains(6, "The run is over"),
       explanationEquals(
         "The replacement could not satisfy the type checker; the next step is to review the return type.",
       ),
       fileContains("src/helper.ts", 'return "no";'),
-      diagnosticsContains("not assignable"),
+      someRecordDiagnosticsContain("not assignable"),
+      diagnosticsContains("edit-exhausted"),
     ],
   },
   {
@@ -341,11 +412,16 @@ export const scenarios: Scenario[] = [
     fixture: "context-correctness",
     issue: TEST_ISSUE,
     responses: [
-      '{"path":"src/lexer.ts","name":"lexer.make","kind":"function"}',
-      editResponse("return 1;", "return 10;"),
+      '{"path":"src/lexer.ts","symbol":"lexer.make","kind":"function"}',
+      editResponse("return 1;", "return 10;", {
+        path: "src/lexer.ts",
+        symbol: "lexer.make",
+        kind: "function",
+      }),
     ],
     assertions: [
       hasOk(true),
+      hasRecords(3),
       hasCallCount(2),
       {
         name: "context yaml exposes the dotted signature",
@@ -391,7 +467,8 @@ export const scenarios: Scenario[] = [
     responses: [LOCATOR_JSON, TEST_PROPAGATION_EDIT, TEST_PROPAGATION_RECOVER_EDIT],
     assertions: [
       hasOk(true),
-      hasAttempts(2),
+      hasRecords(5),
+      recordOutcomes(["selected", "applied", "tests", "applied", "ok"]),
       hasCallCount(3),
       messageContains(2, "tests failed:"),
       fileContains("src/helper.ts", "return 2;"),
@@ -411,10 +488,11 @@ export const scenarios: Scenario[] = [
       writeFileSync(join(dir, ".nested-smoke"), "acceptance self-host copy\n");
     },
     responses: [
-      '{"path":"src/index.ts","name":"greet","kind":"function"}',
+      '{"path":"src/index.ts","symbol":"greet","kind":"function"}',
       editResponse(
         "function greet(subject: string): string {\n  return `hello, ${subject}`;\n}",
         "function greet(subject: string): string {\n  const greeting = `hello, ${subject}`;\n  return greeting;\n}",
+        { path: "src/index.ts", symbol: "greet", kind: "function" },
       ),
     ],
     assertions: [hasOk(true), fileContains("src/index.ts", "const greeting")],

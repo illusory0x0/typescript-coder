@@ -31,7 +31,9 @@ export interface CheckDiagnostic {
   code?: string;
 }
 
-const commandTimeoutMs = 30000;
+// Bounds how long the loop's check/test commands may run (not provider
+// requests); 120s gives the repo's own full suite real headroom (#45).
+const commandTimeoutMs = 120_000;
 
 interface Span {
   start: number;

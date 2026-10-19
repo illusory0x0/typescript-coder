@@ -61,5 +61,5 @@ is green.
 - Consult (2026-10-19, oc survey A-group triage): A4 (compaction trim/discard
   rules) and A5 (overflow/truncation recovery — the shrink ladder is already
   in the Context list) are absorbed into this study's scope. A3 (bounded
-  trajectory) is deferred until #71's c/d matrix data lands; it will then be
-  absorbed here or filed as its own issue.
+  trajectory) is absorbed into this study's scope too (user decision
+  2026-10-19, after the #71 c/d matrices landed).

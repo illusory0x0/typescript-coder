@@ -1,6 +1,8 @@
 export interface CliOptions {
   help: boolean;
   model: string;
+  /** Opt-in multi-payload exchanges (#69); default off. */
+  multiPayload: boolean;
 }
 
 const DEFAULT_MODEL = "deepseek-v4.1-flash";
@@ -8,6 +10,7 @@ const DEFAULT_MODEL = "deepseek-v4.1-flash";
 export function parseArgs(argv: string[]): CliOptions {
   let help = false;
   let model = DEFAULT_MODEL;
+  let multiPayload = false;
   for (let index = 0; index < argv.length; index += 1) {
     const arg = argv[index];
     if (arg === undefined) {
@@ -15,6 +18,10 @@ export function parseArgs(argv: string[]): CliOptions {
     }
     if (arg === "-h" || arg === "--help") {
       help = true;
+      continue;
+    }
+    if (arg === "--multi-payload" || arg === "--multiPayload") {
+      multiPayload = true;
       continue;
     }
     if (arg === "--model") {
@@ -36,7 +43,7 @@ export function parseArgs(argv: string[]): CliOptions {
     }
     throw new Error(`unknown argument: ${arg}`);
   }
-  return { help, model };
+  return { help, model, multiPayload };
 }
 
 export function helpText(): string {
@@ -44,11 +51,14 @@ export function helpText(): string {
     "typescript-coder — read an issue on stdin and apply a verified LLM edit",
     "",
     "Usage:",
-    "  bun run src/main.ts [--model <id>] < issue.txt",
+    "  bun run src/main.ts [--model <id>] [--multi-payload] < issue.txt",
     "",
     "Options:",
-    "  --model <id>    model id for the OpenAI-compatible provider (default: deepseek-v4.1-flash)",
-    "  -h, --help      show this help and exit",
+    "  --model <id>       model id for the OpenAI-compatible provider (default: deepseek-v4.1-flash)",
+    "  --multi-payload    opt in to multi-payload exchanges (#69): a modify reply may",
+    "                     batch path-independent edits in one {\"payloads\": [...]} object",
+    "                     (default: off, one flat payload per exchange)",
+    "  -h, --help         show this help and exit",
     "",
     "Environment:",
     "  OPENAI_API_KEY    API key for the OpenAI-compatible provider",

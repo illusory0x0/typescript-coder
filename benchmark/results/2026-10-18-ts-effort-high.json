@@ -1,0 +1,1147 @@
+{
+  "generatedAt": "2026-10-18T06:59:38.477Z",
+  "date": "2026-10-18",
+  "mode": "full",
+  "tasks": [
+    "json-parser",
+    "sexp-parser",
+    "minilisp"
+  ],
+  "sides": [
+    "ts"
+  ],
+  "reps": 3,
+  "concurrency": 4,
+  "model": "deepseek-v4.1-flash",
+  "effort": "high",
+  "bunVersion": "1.3.13",
+  "opencodeVersion": null,
+  "pilotReference": null,
+  "infraErrors": [],
+  "runs": [
+    {
+      "task": "json-parser",
+      "side": "ts",
+      "rep": 1,
+      "ok": true,
+      "sideOk": true,
+      "tokens": {
+        "input": 2772,
+        "output": 5176,
+        "cacheRead": 2688,
+        "cacheWrite": null,
+        "reasoning": 3583,
+        "total": 7948
+      },
+      "usageAvailable": true,
+      "usageSource": "chat-completions",
+      "rawUsage": [
+        {
+          "prompt_tokens": 1295,
+          "completion_tokens": 3595,
+          "total_tokens": 4890,
+          "prompt_tokens_details": {
+            "cached_tokens": 1280
+          },
+          "completion_tokens_details": {
+            "reasoning_tokens": 3567
+          }
+        },
+        {
+          "prompt_tokens": 1477,
+          "completion_tokens": 1581,
+          "total_tokens": 3058,
+          "prompt_tokens_details": {
+            "cached_tokens": 1408
+          },
+          "completion_tokens_details": {
+            "reasoning_tokens": 16
+          }
+        }
+      ],
+      "durationMs": 31239,
+      "steps": 3,
+      "records": [
+        {
+          "row": 1,
+          "iteration": 1,
+          "kind": "exchange",
+          "exchange": 1,
+          "outcome": "selected",
+          "diagnosticsHead": null,
+          "replacementChars": null,
+          "finishReason": "stop"
+        },
+        {
+          "row": 2,
+          "iteration": 1,
+          "kind": "exchange",
+          "exchange": 2,
+          "outcome": "applied",
+          "diagnosticsHead": null,
+          "replacementChars": 4549,
+          "finishReason": "stop"
+        },
+        {
+          "row": 3,
+          "iteration": 1,
+          "kind": "verification",
+          "exchange": null,
+          "outcome": "ok",
+          "diagnosticsHead": null,
+          "replacementChars": 4549,
+          "finishReason": "stop"
+        }
+      ],
+      "loopDiagnostics": null,
+      "terminationReason": null,
+      "model": "deepseek-v4.1-flash",
+      "workspace": "tmp/benchmark/2026-10-18T06-59-38-478Z-b050425b/json-parser-ts-rep1",
+      "logs": {
+        "side": "tmp/benchmark/2026-10-18T06-59-38-478Z-b050425b/logs/json-parser-ts-rep1/side.log",
+        "judge": "tmp/benchmark/2026-10-18T06-59-38-478Z-b050425b/logs/json-parser-ts-rep1/judge.log",
+        "session": null,
+        "stats": null
+      },
+      "versions": {
+        "bun": "1.3.13",
+        "opencode": null
+      },
+      "judge": {
+        "testsOk": true,
+        "tscOk": true,
+        "fixtureOk": true,
+        "detail": null
+      },
+      "error": null,
+      "infraError": null
+    },
+    {
+      "task": "json-parser",
+      "side": "ts",
+      "rep": 2,
+      "ok": true,
+      "sideOk": true,
+      "tokens": {
+        "input": 2772,
+        "output": 11558,
+        "cacheRead": 1408,
+        "cacheWrite": null,
+        "reasoning": 9759,
+        "total": 14330
+      },
+      "usageAvailable": true,
+      "usageSource": "chat-completions",
+      "rawUsage": [
+        {
+          "prompt_tokens": 1295,
+          "completion_tokens": 2624,
+          "total_tokens": 3919,
+          "prompt_tokens_details": {
+            "cached_tokens": 0
+          },
+          "completion_tokens_details": {
+            "reasoning_tokens": 2596
+          }
+        },
+        {
+          "prompt_tokens": 1477,
+          "completion_tokens": 8934,
+          "total_tokens": 10411,
+          "prompt_tokens_details": {
+            "cached_tokens": 1408
+          },
+          "completion_tokens_details": {
+            "reasoning_tokens": 7163
+          }
+        }
+      ],
+      "durationMs": 48631,
+      "steps": 3,
+      "records": [
+        {
+          "row": 1,
+          "iteration": 1,
+          "kind": "exchange",
+          "exchange": 1,
+          "outcome": "selected",
+          "diagnosticsHead": null,
+          "replacementChars": null,
+          "finishReason": "stop"
+        },
+        {
+          "row": 2,
+          "iteration": 1,
+          "kind": "exchange",
+          "exchange": 2,
+          "outcome": "applied",
+          "diagnosticsHead": null,
+          "replacementChars": 5256,
+          "finishReason": "stop"
+        },
+        {
+          "row": 3,
+          "iteration": 1,
+          "kind": "verification",
+          "exchange": null,
+          "outcome": "ok",
+          "diagnosticsHead": null,
+          "replacementChars": 5256,
+          "finishReason": "stop"
+        }
+      ],
+      "loopDiagnostics": null,
+      "terminationReason": null,
+      "model": "deepseek-v4.1-flash",
+      "workspace": "tmp/benchmark/2026-10-18T06-59-38-478Z-b050425b/json-parser-ts-rep2",
+      "logs": {
+        "side": "tmp/benchmark/2026-10-18T06-59-38-478Z-b050425b/logs/json-parser-ts-rep2/side.log",
+        "judge": "tmp/benchmark/2026-10-18T06-59-38-478Z-b050425b/logs/json-parser-ts-rep2/judge.log",
+        "session": null,
+        "stats": null
+      },
+      "versions": {
+        "bun": "1.3.13",
+        "opencode": null
+      },
+      "judge": {
+        "testsOk": true,
+        "tscOk": true,
+        "fixtureOk": true,
+        "detail": null
+      },
+      "error": null,
+      "infraError": null
+    },
+    {
+      "task": "json-parser",
+      "side": "ts",
+      "rep": 3,
+      "ok": true,
+      "sideOk": true,
+      "tokens": {
+        "input": 2772,
+        "output": 17759,
+        "cacheRead": 1408,
+        "cacheWrite": null,
+        "reasoning": 16153,
+        "total": 20531
+      },
+      "usageAvailable": true,
+      "usageSource": "chat-completions",
+      "rawUsage": [
+        {
+          "prompt_tokens": 1295,
+          "completion_tokens": 6092,
+          "total_tokens": 7387,
+          "prompt_tokens_details": {
+            "cached_tokens": 0
+          },
+          "completion_tokens_details": {
+            "reasoning_tokens": 6064
+          }
+        },
+        {
+          "prompt_tokens": 1477,
+          "completion_tokens": 11667,
+          "total_tokens": 13144,
+          "prompt_tokens_details": {
+            "cached_tokens": 1408
+          },
+          "completion_tokens_details": {
+            "reasoning_tokens": 10089
+          }
+        }
+      ],
+      "durationMs": 87881,
+      "steps": 3,
+      "records": [
+        {
+          "row": 1,
+          "iteration": 1,
+          "kind": "exchange",
+          "exchange": 1,
+          "outcome": "selected",
+          "diagnosticsHead": null,
+          "replacementChars": null,
+          "finishReason": "stop"
+        },
+        {
+          "row": 2,
+          "iteration": 1,
+          "kind": "exchange",
+          "exchange": 2,
+          "outcome": "applied",
+          "diagnosticsHead": null,
+          "replacementChars": 4727,
+          "finishReason": "stop"
+        },
+        {
+          "row": 3,
+          "iteration": 1,
+          "kind": "verification",
+          "exchange": null,
+          "outcome": "ok",
+          "diagnosticsHead": null,
+          "replacementChars": 4727,
+          "finishReason": "stop"
+        }
+      ],
+      "loopDiagnostics": null,
+      "terminationReason": null,
+      "model": "deepseek-v4.1-flash",
+      "workspace": "tmp/benchmark/2026-10-18T06-59-38-478Z-b050425b/json-parser-ts-rep3",
+      "logs": {
+        "side": "tmp/benchmark/2026-10-18T06-59-38-478Z-b050425b/logs/json-parser-ts-rep3/side.log",
+        "judge": "tmp/benchmark/2026-10-18T06-59-38-478Z-b050425b/logs/json-parser-ts-rep3/judge.log",
+        "session": null,
+        "stats": null
+      },
+      "versions": {
+        "bun": "1.3.13",
+        "opencode": null
+      },
+      "judge": {
+        "testsOk": true,
+        "tscOk": true,
+        "fixtureOk": true,
+        "detail": null
+      },
+      "error": null,
+      "infraError": null
+    },
+    {
+      "task": "sexp-parser",
+      "side": "ts",
+      "rep": 1,
+      "ok": true,
+      "sideOk": true,
+      "tokens": {
+        "input": 2232,
+        "output": 6341,
+        "cacheRead": 1152,
+        "cacheWrite": null,
+        "reasoning": 5824,
+        "total": 8573
+      },
+      "usageAvailable": true,
+      "usageSource": "chat-completions",
+      "rawUsage": [
+        {
+          "prompt_tokens": 1021,
+          "completion_tokens": 3280,
+          "total_tokens": 4301,
+          "prompt_tokens_details": {
+            "cached_tokens": 0
+          },
+          "completion_tokens_details": {
+            "reasoning_tokens": 3249
+          }
+        },
+        {
+          "prompt_tokens": 1211,
+          "completion_tokens": 3061,
+          "total_tokens": 4272,
+          "prompt_tokens_details": {
+            "cached_tokens": 1152
+          },
+          "completion_tokens_details": {
+            "reasoning_tokens": 2575
+          }
+        }
+      ],
+      "durationMs": 38000,
+      "steps": 3,
+      "records": [
+        {
+          "row": 1,
+          "iteration": 1,
+          "kind": "exchange",
+          "exchange": 1,
+          "outcome": "selected",
+          "diagnosticsHead": null,
+          "replacementChars": null,
+          "finishReason": "stop"
+        },
+        {
+          "row": 2,
+          "iteration": 1,
+          "kind": "exchange",
+          "exchange": 2,
+          "outcome": "applied",
+          "diagnosticsHead": null,
+          "replacementChars": 1315,
+          "finishReason": "stop"
+        },
+        {
+          "row": 3,
+          "iteration": 1,
+          "kind": "verification",
+          "exchange": null,
+          "outcome": "ok",
+          "diagnosticsHead": null,
+          "replacementChars": 1315,
+          "finishReason": "stop"
+        }
+      ],
+      "loopDiagnostics": null,
+      "terminationReason": null,
+      "model": "deepseek-v4.1-flash",
+      "workspace": "tmp/benchmark/2026-10-18T06-59-38-478Z-b050425b/sexp-parser-ts-rep1",
+      "logs": {
+        "side": "tmp/benchmark/2026-10-18T06-59-38-478Z-b050425b/logs/sexp-parser-ts-rep1/side.log",
+        "judge": "tmp/benchmark/2026-10-18T06-59-38-478Z-b050425b/logs/sexp-parser-ts-rep1/judge.log",
+        "session": null,
+        "stats": null
+      },
+      "versions": {
+        "bun": "1.3.13",
+        "opencode": null
+      },
+      "judge": {
+        "testsOk": true,
+        "tscOk": true,
+        "fixtureOk": true,
+        "detail": null
+      },
+      "error": null,
+      "infraError": null
+    },
+    {
+      "task": "sexp-parser",
+      "side": "ts",
+      "rep": 2,
+      "ok": true,
+      "sideOk": true,
+      "tokens": {
+        "input": 2232,
+        "output": 10773,
+        "cacheRead": 2048,
+        "cacheWrite": null,
+        "reasoning": 10170,
+        "total": 13005
+      },
+      "usageAvailable": true,
+      "usageSource": "chat-completions",
+      "rawUsage": [
+        {
+          "prompt_tokens": 1021,
+          "completion_tokens": 9075,
+          "total_tokens": 10096,
+          "prompt_tokens_details": {
+            "cached_tokens": 896
+          },
+          "completion_tokens_details": {
+            "reasoning_tokens": 9044
+          }
+        },
+        {
+          "prompt_tokens": 1211,
+          "completion_tokens": 1698,
+          "total_tokens": 2909,
+          "prompt_tokens_details": {
+            "cached_tokens": 1152
+          },
+          "completion_tokens_details": {
+            "reasoning_tokens": 1126
+          }
+        }
+      ],
+      "durationMs": 65865,
+      "steps": 3,
+      "records": [
+        {
+          "row": 1,
+          "iteration": 1,
+          "kind": "exchange",
+          "exchange": 1,
+          "outcome": "selected",
+          "diagnosticsHead": null,
+          "replacementChars": null,
+          "finishReason": "stop"
+        },
+        {
+          "row": 2,
+          "iteration": 1,
+          "kind": "exchange",
+          "exchange": 2,
+          "outcome": "applied",
+          "diagnosticsHead": null,
+          "replacementChars": 1570,
+          "finishReason": "stop"
+        },
+        {
+          "row": 3,
+          "iteration": 1,
+          "kind": "verification",
+          "exchange": null,
+          "outcome": "ok",
+          "diagnosticsHead": null,
+          "replacementChars": 1570,
+          "finishReason": "stop"
+        }
+      ],
+      "loopDiagnostics": null,
+      "terminationReason": null,
+      "model": "deepseek-v4.1-flash",
+      "workspace": "tmp/benchmark/2026-10-18T06-59-38-478Z-b050425b/sexp-parser-ts-rep2",
+      "logs": {
+        "side": "tmp/benchmark/2026-10-18T06-59-38-478Z-b050425b/logs/sexp-parser-ts-rep2/side.log",
+        "judge": "tmp/benchmark/2026-10-18T06-59-38-478Z-b050425b/logs/sexp-parser-ts-rep2/judge.log",
+        "session": null,
+        "stats": null
+      },
+      "versions": {
+        "bun": "1.3.13",
+        "opencode": null
+      },
+      "judge": {
+        "testsOk": true,
+        "tscOk": true,
+        "fixtureOk": true,
+        "detail": null
+      },
+      "error": null,
+      "infraError": null
+    },
+    {
+      "task": "sexp-parser",
+      "side": "ts",
+      "rep": 3,
+      "ok": true,
+      "sideOk": true,
+      "tokens": {
+        "input": 2232,
+        "output": 10942,
+        "cacheRead": 2048,
+        "cacheWrite": null,
+        "reasoning": 10385,
+        "total": 13174
+      },
+      "usageAvailable": true,
+      "usageSource": "chat-completions",
+      "rawUsage": [
+        {
+          "prompt_tokens": 1021,
+          "completion_tokens": 7442,
+          "total_tokens": 8463,
+          "prompt_tokens_details": {
+            "cached_tokens": 896
+          },
+          "completion_tokens_details": {
+            "reasoning_tokens": 7418
+          }
+        },
+        {
+          "prompt_tokens": 1211,
+          "completion_tokens": 3500,
+          "total_tokens": 4711,
+          "prompt_tokens_details": {
+            "cached_tokens": 1152
+          },
+          "completion_tokens_details": {
+            "reasoning_tokens": 2967
+          }
+        }
+      ],
+      "durationMs": 60293,
+      "steps": 3,
+      "records": [
+        {
+          "row": 1,
+          "iteration": 1,
+          "kind": "exchange",
+          "exchange": 1,
+          "outcome": "selected",
+          "diagnosticsHead": null,
+          "replacementChars": null,
+          "finishReason": "stop"
+        },
+        {
+          "row": 2,
+          "iteration": 1,
+          "kind": "exchange",
+          "exchange": 2,
+          "outcome": "applied",
+          "diagnosticsHead": null,
+          "replacementChars": 1468,
+          "finishReason": "stop"
+        },
+        {
+          "row": 3,
+          "iteration": 1,
+          "kind": "verification",
+          "exchange": null,
+          "outcome": "ok",
+          "diagnosticsHead": null,
+          "replacementChars": 1468,
+          "finishReason": "stop"
+        }
+      ],
+      "loopDiagnostics": null,
+      "terminationReason": null,
+      "model": "deepseek-v4.1-flash",
+      "workspace": "tmp/benchmark/2026-10-18T06-59-38-478Z-b050425b/sexp-parser-ts-rep3",
+      "logs": {
+        "side": "tmp/benchmark/2026-10-18T06-59-38-478Z-b050425b/logs/sexp-parser-ts-rep3/side.log",
+        "judge": "tmp/benchmark/2026-10-18T06-59-38-478Z-b050425b/logs/sexp-parser-ts-rep3/judge.log",
+        "session": null,
+        "stats": null
+      },
+      "versions": {
+        "bun": "1.3.13",
+        "opencode": null
+      },
+      "judge": {
+        "testsOk": true,
+        "tscOk": true,
+        "fixtureOk": true,
+        "detail": null
+      },
+      "error": null,
+      "infraError": null
+    },
+    {
+      "task": "minilisp",
+      "side": "ts",
+      "rep": 1,
+      "ok": true,
+      "sideOk": true,
+      "tokens": {
+        "input": 3221,
+        "output": 12343,
+        "cacheRead": 1664,
+        "cacheWrite": null,
+        "reasoning": 10262,
+        "total": 15564
+      },
+      "usageAvailable": true,
+      "usageSource": "chat-completions",
+      "rawUsage": [
+        {
+          "prompt_tokens": 1519,
+          "completion_tokens": 2166,
+          "total_tokens": 3685,
+          "prompt_tokens_details": {
+            "cached_tokens": 0
+          },
+          "completion_tokens_details": {
+            "reasoning_tokens": 2145
+          }
+        },
+        {
+          "prompt_tokens": 1702,
+          "completion_tokens": 10177,
+          "total_tokens": 11879,
+          "prompt_tokens_details": {
+            "cached_tokens": 1664
+          },
+          "completion_tokens_details": {
+            "reasoning_tokens": 8117
+          }
+        }
+      ],
+      "durationMs": 62195,
+      "steps": 3,
+      "records": [
+        {
+          "row": 1,
+          "iteration": 1,
+          "kind": "exchange",
+          "exchange": 1,
+          "outcome": "selected",
+          "diagnosticsHead": null,
+          "replacementChars": null,
+          "finishReason": "stop"
+        },
+        {
+          "row": 2,
+          "iteration": 1,
+          "kind": "exchange",
+          "exchange": 2,
+          "outcome": "applied",
+          "diagnosticsHead": null,
+          "replacementChars": 6007,
+          "finishReason": "stop"
+        },
+        {
+          "row": 3,
+          "iteration": 1,
+          "kind": "verification",
+          "exchange": null,
+          "outcome": "ok",
+          "diagnosticsHead": null,
+          "replacementChars": 6007,
+          "finishReason": "stop"
+        }
+      ],
+      "loopDiagnostics": null,
+      "terminationReason": null,
+      "model": "deepseek-v4.1-flash",
+      "workspace": "tmp/benchmark/2026-10-18T06-59-38-478Z-b050425b/minilisp-ts-rep1",
+      "logs": {
+        "side": "tmp/benchmark/2026-10-18T06-59-38-478Z-b050425b/logs/minilisp-ts-rep1/side.log",
+        "judge": "tmp/benchmark/2026-10-18T06-59-38-478Z-b050425b/logs/minilisp-ts-rep1/judge.log",
+        "session": null,
+        "stats": null
+      },
+      "versions": {
+        "bun": "1.3.13",
+        "opencode": null
+      },
+      "judge": {
+        "testsOk": true,
+        "tscOk": true,
+        "fixtureOk": true,
+        "detail": null
+      },
+      "error": null,
+      "infraError": null
+    },
+    {
+      "task": "minilisp",
+      "side": "ts",
+      "rep": 2,
+      "ok": false,
+      "sideOk": false,
+      "tokens": {
+        "input": 23071,
+        "output": 80337,
+        "cacheRead": 12032,
+        "cacheWrite": null,
+        "reasoning": 74307,
+        "total": 103408
+      },
+      "usageAvailable": true,
+      "usageSource": "chat-completions",
+      "rawUsage": [
+        {
+          "prompt_tokens": 1519,
+          "completion_tokens": 41414,
+          "total_tokens": 42933,
+          "prompt_tokens_details": {
+            "cached_tokens": 1408
+          },
+          "completion_tokens_details": {
+            "reasoning_tokens": 38523
+          }
+        },
+        {
+          "prompt_tokens": 4523,
+          "completion_tokens": 160,
+          "total_tokens": 4683,
+          "prompt_tokens_details": {
+            "cached_tokens": 1408
+          },
+          "completion_tokens_details": {
+            "reasoning_tokens": 139
+          }
+        },
+        {
+          "prompt_tokens": 1719,
+          "completion_tokens": 18177,
+          "total_tokens": 19896,
+          "prompt_tokens_details": {
+            "cached_tokens": 1408
+          },
+          "completion_tokens_details": {
+            "reasoning_tokens": 15978
+          }
+        },
+        {
+          "prompt_tokens": 3946,
+          "completion_tokens": 1796,
+          "total_tokens": 5742,
+          "prompt_tokens_details": {
+            "cached_tokens": 1408
+          },
+          "completion_tokens_details": {
+            "reasoning_tokens": 1463
+          }
+        },
+        {
+          "prompt_tokens": 3624,
+          "completion_tokens": 8869,
+          "total_tokens": 12493,
+          "prompt_tokens_details": {
+            "cached_tokens": 1408
+          },
+          "completion_tokens_details": {
+            "reasoning_tokens": 8672
+          }
+        },
+        {
+          "prompt_tokens": 3648,
+          "completion_tokens": 9459,
+          "total_tokens": 13107,
+          "prompt_tokens_details": {
+            "cached_tokens": 1408
+          },
+          "completion_tokens_details": {
+            "reasoning_tokens": 9292
+          }
+        },
+        {
+          "prompt_tokens": 4092,
+          "completion_tokens": 462,
+          "total_tokens": 4554,
+          "prompt_tokens_details": {
+            "cached_tokens": 3584
+          },
+          "completion_tokens_details": {
+            "reasoning_tokens": 240
+          }
+        }
+      ],
+      "durationMs": 425327,
+      "steps": 7,
+      "records": [
+        {
+          "row": 1,
+          "iteration": 1,
+          "kind": "exchange",
+          "exchange": 1,
+          "outcome": "protocol",
+          "diagnosticsHead": "stage: protocol expected {\"mode\":\"modify\"|\"create\"|\"delete\",\"path\": ..., \"symbol\": ..., \"kind\": ...}; unexpected key(s) \"replacement\"",
+          "replacementChars": null,
+          "finishReason": "stop"
+        },
+        {
+          "row": 2,
+          "iteration": 1,
+          "kind": "exchange",
+          "exchange": 2,
+          "outcome": "selected",
+          "diagnosticsHead": null,
+          "replacementChars": null,
+          "finishReason": "stop"
+        },
+        {
+          "row": 3,
+          "iteration": 1,
+          "kind": "exchange",
+          "exchange": 3,
+          "outcome": "applied",
+          "diagnosticsHead": null,
+          "replacementChars": 6497,
+          "finishReason": "stop"
+        },
+        {
+          "row": 4,
+          "iteration": 1,
+          "kind": "verification",
+          "exchange": null,
+          "outcome": "tests",
+          "diagnosticsHead": "stage: tests tests failed: failing tests: - minilisp pairs > car and cdr select pair parts test output: bun test v1.3.13 (bf2e2cec) src/lisp.test.ts: 108 | return value; 109 | } 110 | 111 | function b",
+          "replacementChars": 6497,
+          "finishReason": "stop"
+        },
+        {
+          "row": 5,
+          "iteration": 2,
+          "kind": "exchange",
+          "exchange": 1,
+          "outcome": "matcher",
+          "diagnosticsHead": "stage: matcher the matcher could not be parsed as TypeScript: unexpected token \".\" (line 1, column 23)",
+          "replacementChars": 493,
+          "finishReason": "stop"
+        },
+        {
+          "row": 6,
+          "iteration": 2,
+          "kind": "exchange",
+          "exchange": 2,
+          "outcome": "matcher",
+          "diagnosticsHead": "stage: matcher the matcher was not found inside function \"run\" in src/lisp.ts (line 221, column 8); copy a complete snippet from the current source, or omit \"matcher\" for a whole-symbol rewrite",
+          "replacementChars": 250,
+          "finishReason": "stop"
+        },
+        {
+          "row": 7,
+          "iteration": 2,
+          "kind": "exchange",
+          "exchange": 3,
+          "outcome": "matcher",
+          "diagnosticsHead": "stage: matcher the matcher could not be parsed as TypeScript: unexpected token \"const\" (line 5, column 8)",
+          "replacementChars": 198,
+          "finishReason": "stop"
+        }
+      ],
+      "loopDiagnostics": "edit-exhausted: the 3-exchange Edit budget was exhausted without a valid edit\n\nstage: tests\ntests failed:\nfailing tests:\n  - minilisp pairs > car and cdr select pair parts\ntest output:\nbun test v1.3.13 (bf2e2cec)\n\nsrc/lisp.test.ts:\n108 |   return value;\n109 | }\n110 | \n111 | function binary(fn: (args: LispValue[]) => LispValue): Builtin {\n112 |   return new Builtin((args) => {\n113 |     if (args.length !== 2) throw new Error(\"expected exactly 2 arguments\");\n                                                                               ^\nerror: expected exactly 2 arguments\n      at <anonymous> (/home/illu/repo/typescript-coder/tmp/benchmark/2026-10-18T06-59-38-478Z-b050425b/minilisp-ts-rep2/src/lisp.ts:113:74)\n      at run (/home/illu/repo/typescript-coder/tmp/benchmark/2026-10-18T06-59-38-478Z-b050425b/minilisp-ts-rep2/src/lisp.ts:227:14)\n      at <anonymous> (/home/illu/repo/typescript-coder/tmp/benchmark/2026-10-18T06-59-38-478Z-b050425b/minilisp-ts-rep2/src/lisp.test.ts:90:12)\n(fail) minilisp pairs > car and cdr select pair parts\n\n 15 pass\n 1 fail\n 28 expect() calls\nRan 16 tests across 1 file. [14.00ms]\n\nstage: matcher\nthe matcher could not be parsed as TypeScript: unexpected token \"const\" (line 5, column 8)",
+      "terminationReason": "edit-exhausted",
+      "model": "deepseek-v4.1-flash",
+      "workspace": "tmp/benchmark/2026-10-18T06-59-38-478Z-b050425b/minilisp-ts-rep2",
+      "logs": {
+        "side": "tmp/benchmark/2026-10-18T06-59-38-478Z-b050425b/logs/minilisp-ts-rep2/side.log",
+        "judge": "tmp/benchmark/2026-10-18T06-59-38-478Z-b050425b/logs/minilisp-ts-rep2/judge.log",
+        "session": null,
+        "stats": null
+      },
+      "versions": {
+        "bun": "1.3.13",
+        "opencode": null
+      },
+      "judge": {
+        "testsOk": false,
+        "tscOk": true,
+        "fixtureOk": true,
+        "detail": "bun test failed: bun test v1.3.13 (bf2e2cec)\n\nsrc/lisp.test.ts:\n108 |   return value;\n109 | }\n110 | \n111 | function binary(fn: (args: LispValue[]) => LispValue): Builtin {\n112 |   return new Builtin((args) => {\n113 |     if (args.length !== 2) throw new Error(\"expected exactly 2 arguments\");\n                                                                               ^\nerror: expected exactly 2 arguments\n      a..."
+      },
+      "error": null,
+      "infraError": null
+    },
+    {
+      "task": "minilisp",
+      "side": "ts",
+      "rep": 3,
+      "ok": true,
+      "sideOk": true,
+      "tokens": {
+        "input": 3221,
+        "output": 23383,
+        "cacheRead": 1664,
+        "cacheWrite": null,
+        "reasoning": 20927,
+        "total": 26604
+      },
+      "usageAvailable": true,
+      "usageSource": "chat-completions",
+      "rawUsage": [
+        {
+          "prompt_tokens": 1519,
+          "completion_tokens": 11860,
+          "total_tokens": 13379,
+          "prompt_tokens_details": {
+            "cached_tokens": 0
+          },
+          "completion_tokens_details": {
+            "reasoning_tokens": 11832
+          }
+        },
+        {
+          "prompt_tokens": 1702,
+          "completion_tokens": 11523,
+          "total_tokens": 13225,
+          "prompt_tokens_details": {
+            "cached_tokens": 1664
+          },
+          "completion_tokens_details": {
+            "reasoning_tokens": 9095
+          }
+        }
+      ],
+      "durationMs": 122401,
+      "steps": 3,
+      "records": [
+        {
+          "row": 1,
+          "iteration": 1,
+          "kind": "exchange",
+          "exchange": 1,
+          "outcome": "selected",
+          "diagnosticsHead": null,
+          "replacementChars": null,
+          "finishReason": "stop"
+        },
+        {
+          "row": 2,
+          "iteration": 1,
+          "kind": "exchange",
+          "exchange": 2,
+          "outcome": "applied",
+          "diagnosticsHead": null,
+          "replacementChars": 6884,
+          "finishReason": "stop"
+        },
+        {
+          "row": 3,
+          "iteration": 1,
+          "kind": "verification",
+          "exchange": null,
+          "outcome": "ok",
+          "diagnosticsHead": null,
+          "replacementChars": 6884,
+          "finishReason": "stop"
+        }
+      ],
+      "loopDiagnostics": null,
+      "terminationReason": null,
+      "model": "deepseek-v4.1-flash",
+      "workspace": "tmp/benchmark/2026-10-18T06-59-38-478Z-b050425b/minilisp-ts-rep3",
+      "logs": {
+        "side": "tmp/benchmark/2026-10-18T06-59-38-478Z-b050425b/logs/minilisp-ts-rep3/side.log",
+        "judge": "tmp/benchmark/2026-10-18T06-59-38-478Z-b050425b/logs/minilisp-ts-rep3/judge.log",
+        "session": null,
+        "stats": null
+      },
+      "versions": {
+        "bun": "1.3.13",
+        "opencode": null
+      },
+      "judge": {
+        "testsOk": true,
+        "tscOk": true,
+        "fixtureOk": true,
+        "detail": null
+      },
+      "error": null,
+      "infraError": null
+    }
+  ],
+  "aggregates": {
+    "byTaskSide": [
+      {
+        "task": "json-parser",
+        "side": "ts",
+        "runs": 3,
+        "ok": 3,
+        "failed": 0,
+        "successRate": 1,
+        "usageRuns": 3,
+        "tokens": {
+          "input": {
+            "mean": 2772,
+            "total": 8316
+          },
+          "output": {
+            "mean": 11497.666666666666,
+            "total": 34493
+          },
+          "total": {
+            "mean": 14269.666666666666,
+            "total": 42809
+          }
+        },
+        "durationMsMean": 55917,
+        "stepsMean": 3,
+        "tokensPerSuccess": {
+          "input": 2772,
+          "output": 11497.666666666666,
+          "total": 14269.666666666666
+        }
+      },
+      {
+        "task": "sexp-parser",
+        "side": "ts",
+        "runs": 3,
+        "ok": 3,
+        "failed": 0,
+        "successRate": 1,
+        "usageRuns": 3,
+        "tokens": {
+          "input": {
+            "mean": 2232,
+            "total": 6696
+          },
+          "output": {
+            "mean": 9352,
+            "total": 28056
+          },
+          "total": {
+            "mean": 11584,
+            "total": 34752
+          }
+        },
+        "durationMsMean": 54719.333333333336,
+        "stepsMean": 3,
+        "tokensPerSuccess": {
+          "input": 2232,
+          "output": 9352,
+          "total": 11584
+        }
+      },
+      {
+        "task": "minilisp",
+        "side": "ts",
+        "runs": 3,
+        "ok": 2,
+        "failed": 1,
+        "successRate": 0.6666666666666666,
+        "usageRuns": 3,
+        "tokens": {
+          "input": {
+            "mean": 9837.666666666666,
+            "total": 29513
+          },
+          "output": {
+            "mean": 38687.666666666664,
+            "total": 116063
+          },
+          "total": {
+            "mean": 48525.333333333336,
+            "total": 145576
+          }
+        },
+        "durationMsMean": 203307.66666666666,
+        "stepsMean": 4.333333333333333,
+        "tokensPerSuccess": {
+          "input": 14756.5,
+          "output": 58031.5,
+          "total": 72788
+        }
+      }
+    ],
+    "bySide": [
+      {
+        "task": null,
+        "side": "ts",
+        "runs": 9,
+        "ok": 8,
+        "failed": 1,
+        "successRate": 0.8888888888888888,
+        "usageRuns": 9,
+        "tokens": {
+          "input": {
+            "mean": 4947.222222222223,
+            "total": 44525
+          },
+          "output": {
+            "mean": 19845.777777777777,
+            "total": 178612
+          },
+          "total": {
+            "mean": 24793,
+            "total": 223137
+          }
+        },
+        "durationMsMean": 104648,
+        "stepsMean": 3.4444444444444446,
+        "tokensPerSuccess": {
+          "input": 5565.625,
+          "output": 22326.5,
+          "total": 27892.125
+        }
+      }
+    ],
+    "overall": {
+      "task": null,
+      "side": null,
+      "runs": 9,
+      "ok": 8,
+      "failed": 1,
+      "successRate": 0.8888888888888888,
+      "usageRuns": 9,
+      "tokens": {
+        "input": {
+          "mean": 4947.222222222223,
+          "total": 44525
+        },
+        "output": {
+          "mean": 19845.777777777777,
+          "total": 178612
+        },
+        "total": {
+          "mean": 24793,
+          "total": 223137
+        }
+      },
+      "durationMsMean": 104648,
+      "stepsMean": 3.4444444444444446,
+      "tokensPerSuccess": {
+        "input": 5565.625,
+        "output": 22326.5,
+        "total": 27892.125
+      }
+    }
+  }
+}

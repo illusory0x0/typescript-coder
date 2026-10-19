@@ -108,3 +108,22 @@ Two scheduled matrices (`benchmark/results/2026-10-19-tc-storm65-a.json` /
   partial: rows added for both samples; the #46 close-out is not yet unblocked.
   Residual split to #71; this issue stays in-progress and re-measures on #71's
   matrices.
+
+### Re-measure (criterion 3), added 2026-10-19 (#71 c/d matrices)
+
+- c/d (`2026-10-19-tc-storm71-{c,d}.json`; replays
+  `tmp/replays-71-tc-matrix-{c,d}/`): json 3/3 and sexp 3/3 in both; minilisp
+  2/3 (c) / 3/3 (d) — the >=2/3 bar holds in both samples.
+- Outcome: five of six storm runs resolved (d 23,186 / 27,279 / 43,524; c
+  36,219; c rep1 92,208 after its ask). One did not: c rep2 (125,052) burned to
+  the bare token budget — asks fired at failedRounds=8/16/24, each answered
+  with another minimal edit, no STOP. The ask is still ignored in this shape;
+  criterion 3 outcome NOT met.
+- Levers recorded for the next iteration (not decided): fold the
+  failure-history fact into the 2nd/3rd ask; at asks after the first, require
+  the reply to address the unchanged failing set or STOP; standing rule
+  applies (no hard caps, no auto-stops, guards unchanged).
+- Criterion 4 re-measured: #57's clause holds (re-measure 4 in #57); #49's raw
+  clause recorded in #49 (d 13,008 below the canonical 13,716; c 34,586).
+- Rows added to `benchmark/results/consumption.md` (c and d, peak-class). The
+  issue stays in-progress; the #46 close-out remains gated on it.

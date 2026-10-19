@@ -1,7 +1,7 @@
 ---
 id: 49
 title: "Context management: audit and cut input tokens"
-status: in-progress
+status: done
 priority: high
 milestone: null
 parent: 46
@@ -140,3 +140,19 @@ lower (7/9, 8/9). The cost sits in the three storm runs (a rep1 124,369 =
 calls; b rep1 124,125 = 102,999 in over 41 calls) whose every-round re-send of
 the growing context dominates; minilisp's 3-run token total is 256,026 (a) /
 178,932 (b). Re-measures on #71's matrices.
+
+### Measurement 4 (2026-10-19, #71 c/d matrices, added 2026-10-19)
+
+| sample | report | success | raw overall tps | success-path tps | json | sexp | minilisp |
+| --- | --- | --- | --- | --- | --- | --- | --- |
+| 4 | `2026-10-19-tc-storm71-d.json` | 9/9 | 13,008 | 13,008 | 4,612 (3/3) | 3,083 (3/3) | 31,330 (3/3) |
+| 5 | `2026-10-19-tc-storm71-c.json` | 8/9 | 34,586 | 18,954 | 4,662 (3/3) | 3,073 (3/3) | 126,740 (2/3) |
+
+Sample 4 is the series' first raw reading below the canonical 13,716 — every
+storm run resolved (23,186 / 27,279 / 43,524), success 9/9. Sample 5 is
+dominated by one bare-budget storm (rep2, 125,052; the #65 residual); its other
+two storms resolved at 92,208 / 36,219. json 3/3 <= 6,900 holds in both and
+minilisp is not worse than the canonical 0/3 (3/3 / 2/3). Disposition (user
+decision, 2026-10-19): closed on the sample-4 reading; the sample-5 storm is
+recorded as the tracked #65 residual. Rows in
+`benchmark/results/consumption.md`.
