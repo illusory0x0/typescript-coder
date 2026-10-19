@@ -13,7 +13,7 @@ created: 2026-10-16
 ## Context
 
 Umbrella for the `typescript-coder` project defined in
-[spec.md](../../spec.md). The agent reads an issue from **stdin**, uses a
+[spec.md](../../docs/spec.md). The agent reads an issue from **stdin**, uses a
 hand-written TypeScript frontend plus a symbol index to select a target symbol
 (`Locator`), asks an OpenAI-compatible LLM to emit a complete replacement,
 applies it via span replacement + `oxfmt`, and accepts it only if `tsc --noEmit`

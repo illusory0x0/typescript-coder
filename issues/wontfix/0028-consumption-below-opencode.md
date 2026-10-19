@@ -1,7 +1,7 @@
 ---
 id: 28
 title: "Cut harness token consumption below the opencode baseline"
-status: todo
+status: wontfix
 priority: high
 milestone: null
 parent: null
@@ -61,3 +61,8 @@ committed under `benchmark/results/`.
   loop) replaced the anchor-protocol approach; #32/#41 are superseded
   (wontfix); the final full-run measurement moved to #44, deliberately at the
   lowest priority — v2 lands first.
+- Closed as superseded (user decision, 2026-10-19): the v2 phase is complete
+  (children #29–#40/#42–#44 done; #32/#41 superseded; #44 delivered), and the
+  end-to-end goal with the series verdict and the final `consumption.md` row now
+  run through #46 (harness optimization v3). Kept for the record.
+- Wontfix (2026-10-19): v2 phase complete (children done/wontfix; #44 delivered); end-to-end goal, series verdict, and final consumption.md row carried by #46 (user decision 2026-10-19).

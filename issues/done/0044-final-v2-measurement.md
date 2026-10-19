@@ -1,7 +1,7 @@
 ---
 id: 44
 title: "Final v2 measurement: full ts-side benchmark run + consumption report"
-status: todo
+status: done
 priority: low
 milestone: null
 parent: 28
@@ -56,3 +56,13 @@ plus: compare the aggregates in the new MD/JSON against the figures above.
   cost-in-USD comparison.
 - If the metrics miss, file follow-up issues rather than stretching the v2
   scope here.
+- Close-out (2026-10-18): canonical run `benchmark/results/2026-10-18-ts.json`
+  — json 4,366 (3/3), sexp 2,741 (3/3), minilisp n/a (0/3), overall 13,716 (6/9),
+  all under the uniform `none` policy; the effort sweep is archived as
+  `benchmark/results/2026-10-18-ts-effort-*.{json,md}`. Verdicts (report section
+  "Baseline comparison (2026-10-17)"): json pass (0.28× moat, also under the
+  un-adjusted 5,877), sexp pass (goal met), minilisp miss — documented deviation,
+  follow-up filed as #48 under #46; overall deviation documented (criterion
+  applies at 9/9). `consumption.md` holds the final row. Gates at close: tsc 0
+  errors, `bun test` 552 pass / 0 fail, `bun run accept` 5/5,
+  `bun benchmark/check.ts` 3 PASS.

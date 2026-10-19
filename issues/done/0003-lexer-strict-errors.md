@@ -12,7 +12,7 @@ created: 2026-10-16
 
 ## Context
 
-Milestone **M1** of [spec.md](../../spec.md) §11, implementing `lexer.ts` (spec §5).
+Milestone **M1** of [spec.md](../../docs/spec.md) §11, implementing `lexer.ts` (spec §5).
 The spec requires a full TypeScript lexer with **no error tolerance** — malformed
 input must throw with a source location.
 

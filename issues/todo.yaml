@@ -1,43 +1,122 @@
-# Open issues in picking order: repeatedly take the highest-priority available
-# leaf; once no leaf is available, the highest-priority available umbrella.
-# Available = deps done (an umbrella also needs all children done).
-# Tie-break by id.
-# wontfix entries stay listed (not pickable) at the bottom.
+# Open issues in picking order. This order is authoritative: `reorder`
+# rewrites it; `add` appends; other writes keep it. `check` enforces it.
+# A dep, and every child of an umbrella, must be listed before its dependent.
+# wontfix entries stay listed (not pickable) at the bottom, by id.
 
-- id: 42
-  title: "Edit protocol v2: composite locator × matcher, modes, syntax gate"
+- id: 69
+  title: "Measure batched path-independent edits per exchange"
+  status: todo
+  priority: medium
+  milestone: null
+  parent: null
+  deps: []
+  file: 0069-measure-batched-path-independent-edits-per-exchange.md
+- id: 72
+  title: "Edit protocol: add a (line,column) position selector as a matcher alternative"
+  status: todo
+  priority: medium
+  milestone: null
+  parent: null
+  deps: []
+  file: 0072-edit-protocol-add-a-line-column-position-selector-as-a-matcher-alternative.md
+- id: 73
+  title: "Repair self-verification: let the model request one bounded read or check per repair round"
+  status: todo
+  priority: medium
+  milestone: null
+  parent: null
+  deps: []
+  file: 0073-repair-self-verification-let-the-model-request-one-bounded-read-or-check-per-repair-round.md
+- id: 49
+  title: "Context management: audit and cut input tokens"
   status: in-progress
   priority: high
   milestone: null
-  parent: 28
-  deps: [45]
-  file: 0042-edit-protocol-v2.md
-- id: 43
-  title: "Agent loop v2: Run/Edit/Verification with shared ≤3 and summary-first termination"
-  status: todo
-  priority: high
+  parent: 46
+  deps: []
+  file: 0049-context-management-audit-and-cut-input-tokens.md
+- id: 60
+  title: "Repair rejection-cycle storms: count rejection-exhausted rounds toward the no-progress decision point"
+  status: in-progress
+  priority: medium
   milestone: null
-  parent: 28
-  deps: [42]
-  file: 0043-agent-loop-v2.md
-- id: 44
-  title: "Final v2 measurement: full ts-side benchmark run + consumption report"
+  parent: 46
+  deps: []
+  file: 0060-repair-rejection-cycle-storms-count-rejection-exhausted-rounds-toward-the-no-progress-decision-point.md
+- id: 64
+  title: "Study opencode2 context management (e.g. compaction) for absorption candidates"
   status: todo
   priority: low
   milestone: null
-  parent: 28
-  deps: [42, 43]
-  file: 0044-final-v2-measurement.md
+  parent: null
+  deps: []
+  file: 0064-study-opencode2-context-management-e-g-compaction-for-absorption-candidates.md
+- id: 65
+  title: "Make the no-progress ask effective in rejection-cycle storms"
+  status: in-progress
+  priority: medium
+  milestone: null
+  parent: 46
+  deps: []
+  file: 0065-make-the-no-progress-ask-effective-in-rejection-cycle-storms.md
+- id: 66
+  title: "Pin benchmark record provenance and verify the ledger against its sources"
+  status: todo
+  priority: medium
+  milestone: null
+  parent: null
+  deps: []
+  file: 0066-pin-benchmark-record-provenance-and-verify-the-ledger-against-its-sources.md
+- id: 67
+  title: "Add a held-out fixture and a prompt-freeze rule for series claims"
+  status: todo
+  priority: medium
+  milestone: null
+  parent: null
+  deps: []
+  file: 0067-add-a-held-out-fixture-and-a-prompt-freeze-rule-for-series-claims.md
+- id: 68
+  title: "Protect the judge with a golden corpus and parse/print round-trip nets"
+  status: todo
+  priority: medium
+  milestone: null
+  parent: null
+  deps: []
+  file: 0068-protect-the-judge-with-a-golden-corpus-and-parse-print-round-trip-nets.md
+- id: 70
+  title: "Align spec and conventions with as-built details"
+  status: todo
+  priority: low
+  milestone: null
+  parent: null
+  deps: []
+  file: 0070-align-spec-and-conventions-with-as-built-details.md
+- id: 71
+  title: "Repair verification-cycle storms: surface a non-converging failing set in the retry chain"
+  status: in-progress
+  priority: medium
+  milestone: null
+  parent: 46
+  deps: []
+  file: 0071-repair-verification-cycle-storms-surface-a-non-converging-failing-set-in-the-retry-chain.md
+- id: 46
+  title: "Harness optimization v3: agent-loop, context, structure-editor"
+  status: in-progress
+  priority: high
+  milestone: null
+  parent: null
+  deps: []
+  file: 0046-harness-optimization-v3-agent-loop-context-structure-editor.md
+
+# wontfix entries, kept for the record.
 - id: 28
   title: "Cut harness token consumption below the opencode baseline"
-  status: todo
+  status: wontfix
   priority: high
   milestone: null
   parent: null
   deps: []
   file: 0028-consumption-below-opencode.md
-
-# wontfix entries, kept for the record.
 - id: 32
   title: "Locator robustness: tolerant extraction, kind fallback, append guard"
   status: wontfix
@@ -54,3 +133,11 @@
   parent: 28
   deps: [30, 31]
   file: 0041-create-mode-repair.md
+- id: 53
+  title: "Edit protocol: try json_object mode; document json_schema upgrade path"
+  status: wontfix
+  priority: medium
+  milestone: null
+  parent: 46
+  deps: [52]
+  file: 0053-edit-protocol-try-json-object-mode-document-json-schema-upgrade-path.md

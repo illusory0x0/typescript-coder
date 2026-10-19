@@ -1,7 +1,7 @@
 ---
 id: 42
 title: "Edit protocol v2: composite locator × matcher, modes, syntax gate"
-status: in-progress
+status: done
 priority: high
 milestone: null
 parent: 28
@@ -9,9 +9,6 @@ deps: [45]
 labels: [harness]
 created: 2026-10-18
 ---
-
-
-
 
 ## Context
 

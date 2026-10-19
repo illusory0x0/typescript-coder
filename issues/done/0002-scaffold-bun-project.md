@@ -12,7 +12,7 @@ created: 2026-10-16
 
 ## Context
 
-Milestone **M0** of [spec.md](../../spec.md) §11. The project is greenfield; the
+Milestone **M0** of [spec.md](../../docs/spec.md) §11. The project is greenfield; the
 frontend, tools, and loop all need a Bun/TS skeleton with a strict, ESM
 `tsconfig` and a working test runner. `oxfmt` is a native NAPI package
 (`@oxfmt/binding`) whose Bun compatibility is an open risk (spec.md R2), so it is

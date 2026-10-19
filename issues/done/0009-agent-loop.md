@@ -12,7 +12,7 @@ created: 2026-10-16
 
 ## Context
 
-Milestone **M7** of [spec.md](../../spec.md) §11, implementing `loop.ts` (spec §5)
+Milestone **M7** of [spec.md](../../docs/spec.md) §11, implementing `loop.ts` (spec §5)
 and the agent loop in spec §6. The harness parses project TS files, builds the
 symbol index, and combines context; the model reads context (YAML), selects the
 modified symbol (JSON `Locator`), and outputs a complete replacement (text); the

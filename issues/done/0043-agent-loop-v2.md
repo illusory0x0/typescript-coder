@@ -1,7 +1,7 @@
 ---
 id: 43
 title: "Agent loop v2: Run/Edit/Verification with shared ≤3 and summary-first termination"
-status: todo
+status: done
 priority: high
 milestone: null
 parent: 28
