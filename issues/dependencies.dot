@@ -81,6 +81,7 @@ digraph issues {
   "74" [label="#74 Provider: retry timed-out chat requests (max 5 additional attempts)"];
   "75" [label="#75 Storm compliance: the model ignores the sharpened no-progress ask and never STOPs (help wanted)"];
   "76" [label="#76 Structure the attempt digest as a bounded update-in-place repair checkpoint (opencode2 absorption)"];
+  "77" [label="#77 Close the minilisp repair-cost gap: reliably beat the oc baseline on tokens per success (help wanted)"];
 
   // parent edges (parent -> child), solid
   "1" -> "2";
@@ -134,6 +135,7 @@ digraph issues {
   "46" -> "63";
   "46" -> "65";
   "46" -> "71";
+  "46" -> "77";
   "65" -> "75";
 
   // dependency edges (blocker -> blocked), dashed

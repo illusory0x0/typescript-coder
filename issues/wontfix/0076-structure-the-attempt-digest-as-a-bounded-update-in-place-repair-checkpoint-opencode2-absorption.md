@@ -1,7 +1,7 @@
 ---
 id: 76
 title: "Structure the attempt digest as a bounded update-in-place repair checkpoint (opencode2 absorption)"
-status: todo
+status: wontfix
 priority: medium
 milestone: null
 parent: null
@@ -68,3 +68,35 @@ plus replay inspection of the rendered checkpoint headings.
   (digest).
 - Non-goals: a model-generated compaction request (no extra LLM call), any guard
   or cap change, weakening match tolerance.
+
+### Verdict (2026-10-20): implemented, measured, **reverted** — no measured benefit
+
+**Implementation.** `renderAttemptDigest` gained a `Next move:` directive after
+the ruled-out block, naming the most-repeated ruled-out class
+(`most-repeated: <class> x<count>`) or the bare directive when none; the
+existing headings stayed, and the directive was reserved in the
+`DIGEST_MAX_CHARS` eviction loop. Three shape assertions added; gates green
+(`bunx tsc --noEmit` 0, `bun test` 820 pass, `bun run accept` 5/5,
+`bun benchmark/check.ts` 4 PASS).
+
+**Measurement.** Two full matrices (`2026-10-19-tc-checkpoint-{1,2}`) and eight
+minilisp pressure matrices (`-checkpoint-mini-{1..8}`, 48 runs), replays under
+`tmp/replays-76-*`.
+
+- Full: checkpoint-1 10/12 (minilisp rep3 and csv rep3 ended `edit-exhausted`
+  via `STOP`, 0 bare budget); checkpoint-2 **12/12**, overall $0.00184 (a new
+  series best), minilisp 26,075 tokens/success (below the 30,398 baseline).
+- Pressure: 39/48 ok with **4/48 bare-budget storms** (mini-1 rep6, mini-2
+  rep1, mini-5 rep1, mini-8 rep5); several further runs ended `edit-exhausted`
+  via `STOP`.
+
+**Verdict.** Criterion 5 ("no new bare-budget storm versus the #75 baseline")
+is **not met**: 4/48 pressure storms against the #75 generalized campaign's
+1/96 (and 0/24 on its own pressure sample, which `final-2` under identical #75
+code did not reproduce). The storm rate is dominated by model variance, not the
+digest directive, and the directive adds characters to every checkpoint render
+with no measured reduction in storms or repair tokens. Per the series rule
+("improvements must stay measured"), the change is **reverted**; the finding is
+recorded here (cf. the #69 rejected-hypothesis row) rather than landed
+unmeasured. The minilisp repair-cost gap stays owned by #46.
+- Wontfix (2026-10-20): Implemented and measured; the bounded Next move directive produced no measurable change in storm rate (4/48 vs the #75 campaign's 1/96 and 0/24) or repair tokens, while adding characters to every checkpoint render. Reverted per the series rule that improvements stay measured.

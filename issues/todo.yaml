@@ -2,6 +2,14 @@
 # rewrites it; `add` appends; other writes keep it. `check` enforces it.
 # A dep, and every child of an umbrella, must be listed before its dependent.
 
+- id: 77
+  title: "Close the minilisp repair-cost gap: reliably beat the oc baseline on tokens per success (help wanted)"
+  status: todo
+  priority: medium
+  milestone: null
+  parent: 46
+  deps: []
+  file: 0077-close-the-minilisp-repair-cost-gap-reliably-beat-the-oc-baseline-on-tokens-per-success-help-wanted.md
 - id: 46
   title: "Harness optimization v3: agent-loop, context, structure-editor"
   status: in-progress
@@ -10,11 +18,3 @@
   parent: null
   deps: []
   file: 0046-harness-optimization-v3-agent-loop-context-structure-editor.md
-- id: 76
-  title: "Structure the attempt digest as a bounded update-in-place repair checkpoint (opencode2 absorption)"
-  status: todo
-  priority: medium
-  milestone: null
-  parent: null
-  deps: []
-  file: 0076-structure-the-attempt-digest-as-a-bounded-update-in-place-repair-checkpoint-opencode2-absorption.md
