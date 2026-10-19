@@ -103,6 +103,7 @@ test("readConfigFromEnv reads credentials and trims a trailing slash", () => {
       OPENAI_API_KEY: "key-1",
       OPENAI_BASE_URL: "https://env.example.com/v1/",
       OPENAI_TIMEOUT_MS: undefined,
+      OPENAI_TIMEOUT_RETRIES: undefined,
     },
     () => {
       expect(readConfigFromEnv("qwen")).toEqual({
@@ -132,6 +133,7 @@ test("readConfigFromEnv reads OPENAI_TIMEOUT_MS as a positive integer", () => {
       OPENAI_API_KEY: "key-1",
       OPENAI_BASE_URL: "https://env.example.com/v1",
       OPENAI_TIMEOUT_MS: "2500",
+      OPENAI_TIMEOUT_RETRIES: undefined,
     },
     () => {
       expect(readConfigFromEnv("qwen")).toEqual({
@@ -155,6 +157,42 @@ test("readConfigFromEnv rejects an invalid OPENAI_TIMEOUT_MS", () => {
       () => {
         expect(() => readConfigFromEnv("qwen")).toThrow(
           `OPENAI_TIMEOUT_MS must be a positive integer (got "${value}")`,
+        );
+      },
+    );
+  }
+});
+
+test("readConfigFromEnv reads OPENAI_TIMEOUT_RETRIES as a non-negative integer", () => {
+  withEnv(
+    {
+      OPENAI_API_KEY: "key-1",
+      OPENAI_BASE_URL: "https://env.example.com/v1",
+      OPENAI_TIMEOUT_MS: undefined,
+      OPENAI_TIMEOUT_RETRIES: "3",
+    },
+    () => {
+      expect(readConfigFromEnv("qwen")).toEqual({
+        apiKey: "key-1",
+        baseUrl: "https://env.example.com/v1",
+        model: "qwen",
+        timeoutRetries: 3,
+      });
+    },
+  );
+});
+
+test("readConfigFromEnv rejects an invalid OPENAI_TIMEOUT_RETRIES", () => {
+  for (const value of ["abc", "-1", "1.5"]) {
+    withEnv(
+      {
+        OPENAI_API_KEY: "key-1",
+        OPENAI_BASE_URL: "https://env.example.com",
+        OPENAI_TIMEOUT_RETRIES: value,
+      },
+      () => {
+        expect(() => readConfigFromEnv("qwen")).toThrow(
+          `OPENAI_TIMEOUT_RETRIES must be a non-negative integer (got "${value}")`,
         );
       },
     );
@@ -350,7 +388,7 @@ test("truncates a long error body", async () => {
   );
 });
 
-test("times out and aborts when fetch never resolves", async () => {
+test("times out and aborts on a single attempt when timeoutRetries is 0", async () => {
   const captured: { signal: AbortSignal | null } = { signal: null };
   let calls = 0;
   const fetchImpl = (async (_input: string | URL | Request, init?: RequestInit) => {
@@ -358,7 +396,12 @@ test("times out and aborts when fetch never resolves", async () => {
     captured.signal = init?.signal ?? null;
     return new Promise<Response>(() => {});
   }) as unknown as typeof fetch;
-  const provider = new OpenAIProvider({ ...config, timeoutMs: 20 }, fetchImpl);
+  const { sleep } = mockSleep();
+  const provider = new OpenAIProvider(
+    { ...config, timeoutMs: 20, timeoutRetries: 0 },
+    fetchImpl,
+    sleep,
+  );
 
   await expect(provider.chat([{ role: "user", content: "hi" }])).rejects.toThrow(
     "chat request timed out after 20 ms",
@@ -366,6 +409,87 @@ test("times out and aborts when fetch never resolves", async () => {
   expect(captured.signal).toBeInstanceOf(AbortSignal);
   expect(captured.signal?.aborted).toBe(true);
   expect(calls).toBe(1);
+});
+
+test("retries a timed-out request and succeeds on a fresh attempt", async () => {
+  const signals: AbortSignal[] = [];
+  let calls = 0;
+  const fetchImpl = (async (_input: string | URL | Request, init?: RequestInit) => {
+    calls += 1;
+    signals.push(init?.signal as AbortSignal);
+    if (calls === 1) {
+      return new Promise<Response>(() => {});
+    }
+    return textResponse("recovered");
+  }) as unknown as typeof fetch;
+  const { sleep, delays } = mockSleep();
+  const provider = new OpenAIProvider({ ...config, timeoutMs: 10 }, fetchImpl, sleep);
+
+  const response = await provider.chat([{ role: "user", content: "hi" }]);
+
+  expect(response.content).toBe("recovered");
+  expect(calls).toBe(2);
+  expect(signals[0]).toBeInstanceOf(AbortSignal);
+  expect(signals[0]?.aborted).toBe(true);
+  expect(signals[1]).toBeInstanceOf(AbortSignal);
+  expect(signals[1]?.aborted).toBe(false);
+  expect(delays).toEqual([1000]);
+});
+
+test("re-sends an identical body when retrying a timeout", async () => {
+  const seen: string[] = [];
+  let calls = 0;
+  const fetchImpl = (async (_input: string | URL | Request, init?: RequestInit) => {
+    calls += 1;
+    seen.push(String(init?.body));
+    if (calls === 1) {
+      return new Promise<Response>(() => {});
+    }
+    return textResponse("ok");
+  }) as unknown as typeof fetch;
+  const { sleep } = mockSleep();
+  const provider = new OpenAIProvider({ ...config, timeoutMs: 10 }, fetchImpl, sleep);
+
+  await provider.chat([{ role: "user", content: "hello" }]);
+
+  expect(seen).toHaveLength(2);
+  expect(seen[0]).toBe(seen[1]);
+});
+
+test("fails after exhausting the timeout retry budget", async () => {
+  let calls = 0;
+  const fetchImpl = (async () => {
+    calls += 1;
+    return new Promise<Response>(() => {});
+  }) as unknown as typeof fetch;
+  const { sleep, delays } = mockSleep();
+  const provider = new OpenAIProvider({ ...config, timeoutMs: 10 }, fetchImpl, sleep);
+
+  await expect(provider.chat([{ role: "user", content: "hi" }])).rejects.toThrow(
+    "chat request timed out after 10 ms",
+  );
+  expect(calls).toBe(6);
+  expect(delays).toEqual([1000, 2000, 4000, 8000, 16000]);
+});
+
+test("keeps the timeout budget independent of the failure retry budget", async () => {
+  let calls = 0;
+  const fetchImpl = (async () => {
+    calls += 1;
+    if (calls === 1) {
+      return new Promise<Response>(() => {});
+    }
+    return textResponse("recovered");
+  }) as unknown as typeof fetch;
+  const { sleep, delays } = mockSleep();
+  // retries: 0 would forbid a failure retry, yet the timeout is still re-sent.
+  const provider = new OpenAIProvider({ ...config, timeoutMs: 10, retries: 0 }, fetchImpl, sleep);
+
+  const response = await provider.chat([{ role: "user", content: "hi" }]);
+
+  expect(response.content).toBe("recovered");
+  expect(calls).toBe(2);
+  expect(delays).toEqual([1000]);
 });
 
 test("wraps fetch failures with the original message", async () => {
@@ -514,6 +638,15 @@ test("rejects invalid retry counts", () => {
   for (const retries of [-1, 1.5, Number.NaN]) {
     expect(() => new OpenAIProvider({ ...config, retries }, fetchImpl)).toThrow(
       `retries must be a non-negative integer (got ${retries})`,
+    );
+  }
+});
+
+test("rejects invalid timeout retry counts", () => {
+  const { fetchImpl } = mockFetch(() => textResponse("hi"));
+  for (const timeoutRetries of [-1, 1.5, Number.NaN]) {
+    expect(() => new OpenAIProvider({ ...config, timeoutRetries }, fetchImpl)).toThrow(
+      `timeoutRetries must be a non-negative integer (got ${timeoutRetries})`,
     );
   }
 });

@@ -5,11 +5,17 @@ export interface OpenAIConfig {
   timeoutMs?: number;
   /** Additional attempts after a retryable failure; defaults to 2. */
   retries?: number;
+  /**
+   * Additional attempts after a per-attempt timeout; defaults to 5 (#74).
+   * `retries` covers network/429/5xx failures and is not consumed by timeouts.
+   */
+  timeoutRetries?: number;
 }
 
 export const DEFAULT_TIMEOUT_MS = 120_000;
 
 const DEFAULT_RETRIES = 2;
+const DEFAULT_TIMEOUT_RETRIES = 5;
 const RETRY_BASE_DELAY_MS = 1000;
 const RETRY_AFTER_MAX_MS = 10_000;
 
@@ -72,15 +78,28 @@ export function readConfigFromEnv(model: string): OpenAIConfig {
   if (baseUrl === undefined || baseUrl === "") {
     throw new Error("OPENAI_BASE_URL is not set");
   }
+  const config: OpenAIConfig = { apiKey, baseUrl: baseUrl.replace(/\/$/, ""), model };
   const timeoutText = process.env.OPENAI_TIMEOUT_MS;
-  if (timeoutText === undefined) {
-    return { apiKey, baseUrl: baseUrl.replace(/\/$/, ""), model };
+  if (timeoutText !== undefined) {
+    const timeoutMs = Number(timeoutText);
+    if (!Number.isInteger(timeoutMs) || timeoutMs <= 0) {
+      throw new Error(`OPENAI_TIMEOUT_MS must be a positive integer (got "${timeoutText}")`);
+    }
+    config.timeoutMs = timeoutMs;
   }
-  const timeoutMs = Number(timeoutText);
-  if (!Number.isInteger(timeoutMs) || timeoutMs <= 0) {
-    throw new Error(`OPENAI_TIMEOUT_MS must be a positive integer (got "${timeoutText}")`);
+  // Precedence: an explicit `timeoutRetries` on a config passed to the provider
+  // wins over this env-derived value (the env var only seeds the field here).
+  const timeoutRetriesText = process.env.OPENAI_TIMEOUT_RETRIES;
+  if (timeoutRetriesText !== undefined) {
+    const timeoutRetries = Number(timeoutRetriesText);
+    if (!Number.isInteger(timeoutRetries) || timeoutRetries < 0) {
+      throw new Error(
+        `OPENAI_TIMEOUT_RETRIES must be a non-negative integer (got "${timeoutRetriesText}")`,
+      );
+    }
+    config.timeoutRetries = timeoutRetries;
   }
-  return { apiKey, baseUrl: baseUrl.replace(/\/$/, ""), model, timeoutMs };
+  return config;
 }
 
 function serializeMessage(message: ChatMessage): SerializedMessage {
@@ -157,6 +176,14 @@ export class OpenAIProvider {
     if (config.retries !== undefined && (!Number.isInteger(config.retries) || config.retries < 0)) {
       throw new Error(`retries must be a non-negative integer (got ${config.retries})`);
     }
+    if (
+      config.timeoutRetries !== undefined &&
+      (!Number.isInteger(config.timeoutRetries) || config.timeoutRetries < 0)
+    ) {
+      throw new Error(
+        `timeoutRetries must be a non-negative integer (got ${config.timeoutRetries})`,
+      );
+    }
     this.config = config;
     this.fetchImpl = fetchImpl;
     this.sleep = sleep;
@@ -220,28 +247,38 @@ export class OpenAIProvider {
       body: JSON.stringify(body),
     };
     const retries = this.config.retries ?? DEFAULT_RETRIES;
+    const timeoutRetries = this.config.timeoutRetries ?? DEFAULT_TIMEOUT_RETRIES;
+    let failures = 0;
+    let timeouts = 0;
 
     for (let attempt = 0; ; attempt += 1) {
       let response: Response;
       try {
         response = await this.fetchWithTimeout(url, init);
       } catch (error) {
-        // #25 semantics: timeouts surface immediately and are never retried.
+        // #74: a per-attempt timeout is re-sent under its own budget.
         if (error instanceof ChatTimeoutError) {
+          if (timeouts >= timeoutRetries) {
+            throw error;
+          }
+          timeouts += 1;
+          await this.sleep(backoffMs(attempt));
+          continue;
+        }
+        if (failures >= retries) {
           throw error;
         }
-        if (attempt >= retries) {
-          throw error;
-        }
+        failures += 1;
         await this.sleep(backoffMs(attempt));
         continue;
       }
 
       if (!response.ok) {
         const bodyText = await response.text();
-        if (!isRetryableStatus(response.status) || attempt >= retries) {
+        if (!isRetryableStatus(response.status) || failures >= retries) {
           throw new Error(`chat request failed: ${response.status} ${bodyText.slice(0, 500)}`);
         }
+        failures += 1;
         const retryAfter = retryAfterMs(response.headers.get("retry-after"));
         await this.sleep(retryAfter ?? backoffMs(attempt));
         continue;

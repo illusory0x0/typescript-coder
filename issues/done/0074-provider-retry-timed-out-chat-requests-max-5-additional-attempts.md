@@ -1,7 +1,7 @@
 ---
 id: 74
 title: "Provider: retry timed-out chat requests (max 5 additional attempts)"
-status: todo
+status: done
 priority: medium
 milestone: null
 parent: null
