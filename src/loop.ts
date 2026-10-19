@@ -380,6 +380,13 @@ export interface RetryPromptInput {
    */
   failureHistory?: string;
   /**
+   * Stated re-approach (#75): the reply the model gave to the preceding
+   * decision-only turn, rendered as an `Approach to apply:` block after the
+   * Diagnostics block so the edit must follow it. Undefined/empty renders
+   * nothing; the next exchange after a decision turn sets it.
+   */
+  approach?: string;
+  /**
    * Opt-in multi-payload variant (#69): modify retries offer the
    * `{"payloads": [...]}` batch shape alongside the flat payload; off (the
    * default) keeps the exact single-payload instructions.
@@ -426,6 +433,37 @@ function stalledAskHeader(stalled: StalledAsk): string {
         ? `the failing set has cycled between two states across the last ${stalled.history.rounds} verification rounds`
         : "the failing set has not converged";
   return `${base} This is repeated ask ${askNumber} and the previous ask did not resolve it: ${history}, so another minimal edit at the same spot cannot help. This reply MUST either directly address that unchanged failing set — change the cause the diagnostics below name — or, only if it cannot be resolved, reply exactly \`STOP\` to end the run now.`;
+}
+
+/**
+ * Decision-only turn instruction (#75), shown in place of the edit template on a
+ * repeated no-progress ask whose `#71` pattern is non-converging. It keeps the
+ * sharpened ask header, the failing diagnostics, and the failure history, and
+ * offers only two replies: `STOP`, or a re-approach statement the next exchange
+ * carries. No cap or auto-stop: a real edit reply is still a valid attempt.
+ */
+const DECISION_INSTRUCTION =
+  "This is a decision turn: reply with a short re-approach statement — name what you will change (the cause) and where — instead of another edit payload. Reply exactly `STOP` to end the run now, but only if the failing set cannot be resolved. Do not send a JSON edit payload on this turn.";
+
+/** Bound on the carried re-approach statement (#75); clamped like the digest states. */
+export const APPROACH_LIMIT = 600;
+
+/**
+ * True when a decision-turn reply still carries a structurally valid edit
+ * payload (#75): such a reply is a real attempt and flows through the unchanged
+ * guards; any other reply is the stated re-approach. Mirrors the exchange
+ * parser's opt-in multi-payload shape.
+ */
+function isEditPayloadReply(content: string, multiPayload: boolean): boolean {
+  if (multiPayload) {
+    return parseEditResponseList(content).ok;
+  }
+  try {
+    parseEditResponse(content);
+    return true;
+  } catch {
+    return false;
+  }
 }
 
 export function buildRetryPrompt(input: RetryPromptInput): string {
@@ -495,6 +533,16 @@ export function buildRetryPrompt(input: RetryPromptInput): string {
     input.selfCheck === undefined || input.selfCheck.trim() === ""
       ? ""
       : `\nSelf-check result:\n\n\`\`\`\n${input.selfCheck}\n\`\`\`\n`;
+  const approachSection =
+    input.approach === undefined || input.approach.trim() === ""
+      ? ""
+      : `\nApproach to apply:\n\n${input.approach}\n`;
+  // Decision-only turn (#75): a repeated non-converging ask drops the edit
+  // template (instruction, self-check offer, pinned selection, current source)
+  // and keeps the sharpened header plus the failing diagnostics and history.
+  if (stalled !== undefined && isDecisionAsk(stalled)) {
+    return `${header}\n\n${DECISION_INSTRUCTION}\n\nDiagnostics:\n\n\`\`\`\n${diagnostics}\n\`\`\`\n${failureHistorySection}${digestSection}`;
+  }
   return `${header === "" ? "" : `${header}\n\n`}${instruction}
 
 ${SELF_CHECK_OFFER}
@@ -517,7 +565,7 @@ Diagnostics:
 \`\`\`
 ${diagnostics}
 \`\`\`
-${selfCheckSection}${failureHistorySection}${digestSection}`;
+${selfCheckSection}${approachSection}${failureHistorySection}${digestSection}`;
 }
 
 export interface ContinuationPromptInput {
@@ -1130,6 +1178,22 @@ export function isStalledAskMilestone(failedRounds: number): boolean {
 /** 1-based decision-point index for a milestone failed-round count (#65). */
 export function stalledAskNumber(failedRounds: number): number {
   return 1 + Math.floor((failedRounds - MAX_STALLED_ROUNDS) / STALLED_ASK_INTERVAL);
+}
+
+/**
+ * True when a no-progress ask escalates to a decision-only turn (#75): either
+ * signal says another minimal same-spot edit cannot help. A repeat ask
+ * (`askNumber >= 2`) escalates even while the `#71` pattern is still changing
+ * (`history` null), because a still-changing set at a repeat ask can still be a
+ * non-converging oscillation. A first ask escalates too once the failing set is
+ * already non-converging (`history` `unchanged`/`alternating`), because that
+ * already means another minimal edit cannot help. Only a first ask with a
+ * still-changing pattern (`history` null) keeps the exact edit prompt, so
+ * json/sexp and a recovering cycle are untouched at the first decision point.
+ */
+export function isDecisionAsk(stalled: StalledAsk): boolean {
+  const askNumber = stalled.askNumber ?? 1;
+  return askNumber >= 2 || (stalled.history !== undefined && stalled.history !== null);
 }
 
 // Shown on the retry after the same rejection repeats verbatim (#48).
@@ -3636,6 +3700,12 @@ export async function runLoop(options: LoopOptions): Promise<LoopResult> {
     // result into the next prompt.
     let selfCheckUsed = false;
     let pendingSelfCheck: string | null = null;
+    // Decision-only turn (#75), per Run iteration: `decisionTurn` is set while
+    // building the first prompt of a repeated non-converging ask; a non-edit
+    // reply to it is clamped into `pendingApproach` and carried into the next
+    // exchange's edit prompt instead of being applied.
+    let decisionTurn = false;
+    let pendingApproach: string | null = null;
     const retryDiagnostics = (diagnostics: string): string => {
       const identical = lastRejection === diagnostics;
       lastRejection = diagnostics;
@@ -3709,6 +3779,16 @@ export async function runLoop(options: LoopOptions): Promise<LoopResult> {
         const currentSource = wholeFile
           ? diskSource
           : currentSourceForPrompt("modify", target, continuedTarget.locator, diskSource);
+        const stalledInfo: StalledAsk | undefined = stalledAsk
+          ? {
+              failedRounds: stalledRounds,
+              round: iteration,
+              maxRounds: MAX_RUN_ITERATIONS,
+              askNumber: stalledAskNumber(stalledRounds),
+              history: failurePattern,
+            }
+          : undefined;
+        decisionTurn = stalledInfo !== undefined && isDecisionAsk(stalledInfo);
         continuationPrompt = buildContinuationPrompt({
           round: pendingContinuation.round,
           maxRounds: MAX_RUN_ITERATIONS,
@@ -3721,15 +3801,7 @@ export async function runLoop(options: LoopOptions): Promise<LoopResult> {
           repin: (iterationOpenedBy !== null || stalledAsk) && continuedTarget.mode === "modify",
           digest: digestText(),
           failureHistory,
-          stalled: stalledAsk
-            ? {
-                failedRounds: stalledRounds,
-                round: iteration,
-                maxRounds: MAX_RUN_ITERATIONS,
-                askNumber: stalledAskNumber(stalledRounds),
-                history: failurePattern,
-              }
-            : undefined,
+          stalled: stalledInfo,
           multiPayload: options.multiPayload === true,
         });
       }
@@ -3950,6 +4022,11 @@ export async function runLoop(options: LoopOptions): Promise<LoopResult> {
               }
             : undefined;
         const failureHistory = renderFailureHistoryNote(failurePattern);
+        // Decision-only turn (#75): the same repeated-non-converging gating as
+        // the continuation path; only the first exchange of a stalled round.
+        if (stalled !== undefined) {
+          decisionTurn = isDecisionAsk(stalled);
+        }
         // The self-check result is shown exactly once, in the prompt right after
         // the request was executed (#73).
         const selfCheck = pendingSelfCheck;
@@ -3968,6 +4045,9 @@ export async function runLoop(options: LoopOptions): Promise<LoopResult> {
           stalled,
           digest: stalled === undefined ? undefined : digestText(),
           failureHistory,
+          // The decision reply's stated re-approach (#75) rides the next
+          // exchange's edit prompt so the attempt must follow it.
+          approach: pendingApproach ?? undefined,
           // Per-cause rejection correction (#56): only edit retries carry the
           // class-specific lead; verification-repair prompts keep the default.
           correction: lastFailure === "edit" ? (lastCorrection ?? undefined) : undefined,
@@ -4032,6 +4112,19 @@ export async function runLoop(options: LoopOptions): Promise<LoopResult> {
           response,
           stoppedDiagnostics(iteration, continuationDiagnostics),
         );
+      }
+      // Decision-only turn (#75): STOP was handled above. A reply that still
+      // carries a structurally valid edit payload is a real attempt and flows
+      // through the unchanged guards below; any other reply is the stated
+      // re-approach — clamped and carried into the next exchange's prompt
+      // instead of being parsed as an edit (no cap, no auto-stop).
+      if (
+        exchange === 1 &&
+        decisionTurn &&
+        !isEditPayloadReply(response.content ?? "", options.multiPayload === true)
+      ) {
+        pendingApproach = clampText(response.content ?? "", APPROACH_LIMIT);
+        continue;
       }
       const sourceBefore = readFileIfExists(join(cwd, target)) ?? baseSource;
       const prevCheck = parseCheck(sourceBefore);

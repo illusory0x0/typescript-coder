@@ -2245,11 +2245,25 @@ describe("sharpened repeated no-progress ask (#65)", () => {
     expect(prompt).toContain("the failing set is unchanged across the last 6 verification rounds");
     expect(prompt).toContain("directly address that unchanged failing set");
     // STOP keeps its biased-to-continue semantics: only when the set cannot be
-    // resolved; the concrete alternatives still ride along.
+    // resolved.
     expect(prompt).toContain(
       "only if it cannot be resolved, reply exactly `STOP` to end the run now",
     );
-    expect(prompt).toContain("Concretely: change the matcher shape");
+    // #75: a non-converging pattern escalates the repeated ask to a decision
+    // turn, so the concrete-edit alternatives are dropped from this prompt.
+    expect(prompt).toContain("This is a decision turn");
+    expect(prompt).not.toContain("Concretely: change the matcher shape");
+    // #75: a repeat ask escalates even while the pattern is still changing, so
+    // no concrete-edit alternatives ride the prompt.
+    const repeatChanging = buildRetryPrompt(stalledInput({ askNumber: 2, history: null }));
+    expect(repeatChanging).toContain("the failing set has not converged");
+    expect(repeatChanging).toContain("This is a decision turn");
+    expect(repeatChanging).not.toContain("Concretely: change the matcher shape");
+    // A still-changing set at the FIRST ask is the one case that still keeps the
+    // ordinary edit prompt and its concrete alternatives.
+    const changing = buildRetryPrompt(stalledInput({ askNumber: 1, history: null }));
+    expect(changing).toContain("Concretely: change the matcher shape");
+    expect(changing).not.toContain("This is a decision turn");
   });
 
   test("an alternating or still-changing set is named too", () => {
@@ -2398,6 +2412,215 @@ describe("sharpened repeated no-progress ask (#65)", () => {
     expect(stopped?.diagnostics).toContain(
       `edit-exhausted: the model replied STOP after ${MAX_STALLED_ROUNDS * 2} consecutive failed rounds`,
     );
+    expect(provider.calls.at(-1)?.at(-1)?.content ?? "").toContain("The run is over");
+  }, 30000);
+});
+
+describe("decision-only turn (#75)", () => {
+  const stalledInput = (over: Partial<StalledAsk> = {}): RetryPromptInput => ({
+    exchangeNumber: 1,
+    maxExchanges: 3,
+    mode: "modify",
+    locatorJson: '{"mode":"modify","path":"src/a.ts","symbol":"answer","kind":"function"}',
+    currentSource: "export function answer(): number {\n  return 1;\n}",
+    diagnostics: "src/a.ts(2,3): error TS2322: Type 'string' is not assignable to type 'number'.",
+    failure: "verification",
+    repin: true,
+    stalled: {
+      failedRounds: 8,
+      round: 9,
+      maxRounds: 32,
+      askNumber: 2,
+      history: { kind: "unchanged", rounds: 6 },
+      ...over,
+    },
+  });
+
+  test("drops the edit template and offers STOP on a repeated unchanged set", () => {
+    const prompt = buildRetryPrompt({
+      ...stalledInput(),
+      failureHistory: renderFailureHistoryNote({ kind: "unchanged", rounds: 6 }),
+    });
+    expect(prompt).toContain("repeated ask 2");
+    expect(prompt).toContain("This is a decision turn");
+    expect(prompt).toContain("Reply exactly `STOP` to end the run now");
+    expect(prompt).toContain("Do not send a JSON edit payload on this turn");
+    // The edit template is gone entirely.
+    expect(prompt).not.toContain("Output ONLY one flat JSON object");
+    expect(prompt).not.toContain("Pinned selection:");
+    expect(prompt).not.toContain("Current source:");
+    expect(prompt).not.toContain('{"request":"read"}');
+    // The failing diagnostics and history are kept.
+    expect(prompt).toContain("Diagnostics:");
+    expect(prompt).toContain("Failure history: the failing set is unchanged");
+  });
+
+  test("fires for an alternating set too", () => {
+    const prompt = buildRetryPrompt(
+      stalledInput({
+        askNumber: 3,
+        history: { kind: "alternating", rounds: 5, a: "TS2322", b: "TS2345" },
+      }),
+    );
+    expect(prompt).toContain("This is a decision turn");
+    expect(prompt).toContain("cycled between two states");
+    expect(prompt).not.toContain("Output ONLY one flat JSON object");
+  });
+
+  test("fires on either signal; only a first ask with a still-changing set stays an edit prompt", () => {
+    // First ask with an already non-converging set fires.
+    const firstUnchanged = buildRetryPrompt(
+      stalledInput({ askNumber: 1, history: { kind: "unchanged", rounds: 6 } }),
+    );
+    expect(firstUnchanged).toContain("This is a decision turn");
+    expect(firstUnchanged).not.toContain("Output ONLY one flat JSON object");
+    // A repeat ask fires even while the pattern is still changing.
+    const repeatChanging = buildRetryPrompt(stalledInput({ askNumber: 2, history: null }));
+    expect(repeatChanging).toContain("This is a decision turn");
+    expect(repeatChanging).not.toContain("Output ONLY one flat JSON object");
+    // A later repeat ask fires regardless of pattern.
+    const laterChanging = buildRetryPrompt(stalledInput({ askNumber: 3, history: null }));
+    expect(laterChanging).toContain("This is a decision turn");
+    expect(laterChanging).not.toContain("Output ONLY one flat JSON object");
+    // Only a first ask with a still-changing set keeps the normal edit prompt.
+    const firstChanging = buildRetryPrompt(stalledInput({ askNumber: 1, history: null }));
+    expect(firstChanging).not.toContain("This is a decision turn");
+    expect(firstChanging).toContain("Output ONLY one flat JSON object");
+    expect(firstChanging).toContain("Pinned selection:");
+  });
+
+  test("rides a #52 continuation round", () => {
+    const prompt = buildContinuationPrompt({
+      round: 8,
+      maxRounds: 32,
+      mode: "modify",
+      locatorJson: '{"mode":"modify","path":"src/a.ts","symbol":"answer","kind":"function"}',
+      currentSource: "export function answer(): number {\n  return 1;\n}",
+      diagnostics: "stage: protocol",
+      repin: true,
+      stalled: {
+        failedRounds: 16,
+        round: 17,
+        maxRounds: 32,
+        askNumber: 2,
+        history: { kind: "unchanged", rounds: 10 },
+      },
+    });
+    expect(prompt).toContain("This is a decision turn");
+    expect(prompt).not.toContain("exhausted its 3-exchange edit budget");
+    expect(prompt).not.toContain("Output ONLY one flat JSON object");
+  });
+
+  test("renders a stated re-approach alongside the normal edit template", () => {
+    const approach = "Replace the whole declaration instead of patching the return type.";
+    const prompt = buildRetryPrompt({
+      exchangeNumber: 2,
+      maxExchanges: 3,
+      mode: "modify",
+      locatorJson: '{"mode":"modify","path":"src/a.ts","symbol":"answer","kind":"function"}',
+      currentSource: "export function answer(): number {\n  return 1;\n}",
+      diagnostics: "stage: protocol",
+      failure: "edit",
+      repin: false,
+      approach,
+    });
+    expect(prompt).toContain("Approach to apply:");
+    expect(prompt).toContain(approach);
+    expect(prompt).toContain("Output ONLY one flat JSON object");
+    // An empty approach renders nothing.
+    expect(buildRetryPrompt({ ...stalledInput({ askNumber: 1 }), approach: "" })).not.toContain(
+      "Approach to apply:",
+    );
+  });
+
+  test("a non-edit decision reply is carried, not applied, and the run can recover", async () => {
+    const dir = fixtureDir();
+    const approach = "Restructure answer to compute 2 directly instead of returning a literal.";
+    const provider = new ScriptedProvider([
+      selectionResponse(ANSWER, "modify"),
+      ...chainedEdits(12),
+      approach,
+      editResponse("return 13;", "return 14;"),
+    ]);
+    const result = await runLoop({
+      cwd: dir,
+      issue: "make the answer test pass",
+      provider,
+      checkCommand: stallingCheckCommand(dir, 12),
+      testCommand: passingCommand,
+    });
+    expect(result.ok).toBe(true);
+    // Round 13 opens with the decision turn, not the edit template.
+    const decision = provider.calls[13]?.at(-1)?.content ?? "";
+    expect(decision).toContain("This is a decision turn");
+    expect(decision).not.toContain("Output ONLY one flat JSON object");
+    // The stated approach rides the following exchange's edit prompt.
+    const followup = provider.calls[14]?.at(-1)?.content ?? "";
+    expect(followup).toContain("Approach to apply:");
+    expect(followup).toContain(approach);
+    expect(followup).toContain("Output ONLY one flat JSON object");
+    // The decision reply is not an applied edit: only exchange 2 of round 13 is.
+    const round13 = result.records.filter(
+      (record) => record.iteration === 13 && record.kind === "exchange",
+    );
+    expect(round13).toHaveLength(1);
+    expect(round13[0]?.exchange).toBe(2);
+    expect(round13[0]?.outcome).toBe("applied");
+    expect(helperSource(dir)).toContain("return 14;");
+  }, 30000);
+
+  test("a valid edit on the decision turn is still applied through the unchanged guards", async () => {
+    const dir = fixtureDir();
+    const provider = new ScriptedProvider([
+      selectionResponse(ANSWER, "modify"),
+      ...chainedEdits(12),
+      editResponse("return 13;", "return 14;"),
+    ]);
+    const result = await runLoop({
+      cwd: dir,
+      issue: "make the answer test pass",
+      provider,
+      checkCommand: stallingCheckCommand(dir, 12),
+      testCommand: passingCommand,
+    });
+    expect(result.ok).toBe(true);
+    const decision = provider.calls[13]?.at(-1)?.content ?? "";
+    expect(decision).toContain("This is a decision turn");
+    // The real attempt landed on the opening exchange, not a later retry.
+    const applied = result.records.find(
+      (record) => record.iteration === 13 && record.outcome === "applied",
+    );
+    expect(applied?.exchange).toBe(1);
+    expect(helperSource(dir)).toContain("return 14;");
+  }, 30000);
+
+  test("STOP on the decision turn ends the run through the existing stop path", async () => {
+    const dir = fixtureDir();
+    const provider = new ScriptedProvider([
+      selectionResponse(ANSWER, "modify"),
+      ...chainedEdits(12),
+      "  stop\n",
+      "the unchanged failing set could not be resolved",
+    ]);
+    const result = await runLoop({
+      cwd: dir,
+      issue: "make the answer test pass",
+      provider,
+      checkCommand: stallingCheckCommand(dir, 12),
+      testCommand: passingCommand,
+    });
+    expect(result.ok).toBe(false);
+    expect(result.terminationReason).toBe("edit-exhausted");
+    const stopped = result.records.at(-1);
+    expect(stopped?.outcome).toBe("stopped");
+    expect(stopped?.iteration).toBe(13);
+    expect(stopped?.exchange).toBe(1);
+    expect(stopped?.diagnostics).toContain(
+      `edit-exhausted: the model replied STOP after 12 consecutive failed rounds`,
+    );
+    // The decision prompt fired, not the edit template.
+    const decision = provider.calls[13]?.at(-1)?.content ?? "";
+    expect(decision).toContain("This is a decision turn");
     expect(provider.calls.at(-1)?.at(-1)?.content ?? "").toContain("The run is over");
   }, 30000);
 });
@@ -3164,25 +3387,23 @@ describe("runLoop", () => {
     const ordinary = provider.calls[8]?.at(-1)?.content ?? "";
     expect(ordinary).toContain("Edit exchange 1 of 3 failed verification.");
     expect(ordinary).not.toContain("consecutive failed rounds");
-    // Round 9 (8 failed rounds) opens with the no-progress ask in retry shape.
+    // Round 9 (8 failed rounds) opens with the no-progress ask; because the #71
+    // pattern is already unchanged, the first ask is a decision-only turn.
     const ask = provider.calls[9]?.at(-1)?.content ?? "";
     expect(MAX_STALLED_ROUNDS).toBe(8);
     expect(ask).toContain(`No progress: ${MAX_STALLED_ROUNDS} consecutive failed rounds.`);
     expect(ask).toContain("This is round 9 of 32.");
     expect(ask).toContain("Reply exactly `STOP` to end the run now");
-    expect(ask).toContain("only if the failures cannot be resolved");
-    expect(ask).toContain("materially different approach rather than another minimal attempt");
-    expect(ask).toContain("change the matcher shape");
-    expect(ask).toContain("re-pin to a declaration the diagnostics name");
-    expect(ask).not.toContain("Edit exchange 1 of 3 failed verification.");
-    // The retry shape is kept: pinned selection, current source, diagnostics,
-    // JSON output shape.
-    expect(ask).toContain("Pinned selection:");
-    expect(ask).toContain("Current source:");
+    expect(ask).toContain("This is a decision turn");
+    expect(ask).toContain("Do not send a JSON edit payload on this turn");
+    // The failing diagnostics and history are kept; the edit template is gone.
     expect(ask).toContain("Diagnostics:");
-    expect(ask).toContain(
-      'Output ONLY one flat JSON object {"path": ..., "symbol": ..., "kind": ..., "matcher": ..., "replacement": ...}',
-    );
+    expect(ask).toContain("Failure history: the failing set is unchanged");
+    expect(ask).not.toContain("Output ONLY one flat JSON object");
+    expect(ask).not.toContain("Pinned selection:");
+    expect(ask).not.toContain("Edit exchange 1 of 3 failed verification.");
+    // A valid edit reply on the decision turn is still a real attempt and
+    // continues through the unchanged guards.
     expect(helperSource(dir)).toContain("return 10;");
   }, 30000);
 
@@ -3278,7 +3499,7 @@ describe("runLoop", () => {
     }
   }, 30000);
 
-  test("does not carry the ask into a soft-failure retry inside the stalled round", async () => {
+  test("carries a non-edit reply at the stalled decision turn as the approach, then retries normally", async () => {
     const dir = fixtureDir();
     const provider = new ScriptedProvider([
       selectionResponse(ANSWER, "modify"),
@@ -3296,13 +3517,16 @@ describe("runLoop", () => {
     expect(result.ok).toBe(true);
     const ask = provider.calls[9]?.at(-1)?.content ?? "";
     expect(ask).toContain(`No progress: ${MAX_STALLED_ROUNDS} consecutive failed rounds.`);
-    // The soft failure at exchange 1 is answered by the ordinary exchange retry:
-    // the ask shapes only the first content prompt of the round.
+    expect(ask).toContain("This is a decision turn");
+    // The non-edit reply is the stated re-approach, not a protocol failure; the
+    // ask shapes only the first content prompt of the round, so the soft-failure
+    // retry is an ordinary exchange retry carrying the approach.
     const retry = provider.calls[10]?.at(-1)?.content ?? "";
-    expect(retry).toContain("Edit exchange 2 of 3 failed.");
-    expect(retry).toContain("stage: protocol");
+    expect(retry).toContain("Edit exchange 2 of 3 failed verification.");
+    expect(retry).toContain("Approach to apply:");
+    expect(retry).toContain("not json");
     expect(retry).not.toContain("No progress:");
-    expect(result.records.filter((record) => record.outcome === "protocol")).toHaveLength(1);
+    expect(result.records.filter((record) => record.outcome === "protocol")).toHaveLength(0);
     expect(helperSource(dir)).toContain("return 10;");
   }, 30000);
 
