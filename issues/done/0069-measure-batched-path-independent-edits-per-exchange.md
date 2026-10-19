@@ -1,7 +1,7 @@
 ---
 id: 69
 title: "Measure batched path-independent edits per exchange"
-status: in-progress
+status: done
 priority: medium
 milestone: null
 parent: null
@@ -105,3 +105,30 @@ window; both rows noted in `consumption.md`.
   --side tc --reps 3 --multi-payload` on vs off on the same frozen text,
   priced per window, with both rows in `consumption.md` — has not run yet:
   it waits on the freeze discipline (fresh gates, then the matrices).
+
+### Measurement (2026-10-19, both flag states; recorded 2026-10-20)
+
+Two matrices on the same frozen code, `--side tc --reps 3`, priced per run window:
+`benchmark/results/2026-10-19-tc-batch-off.json` and
+`benchmark/results/2026-10-19-tc-batch-on.json`; two rows added to
+`benchmark/results/consumption.md`.
+
+- **off (default):** json $0.00115 (3/3), sexp $0.00041 (3/3), minilisp
+  $0.00679 (3/3), overall $0.00279 (9/9) — clean, no storm (minilisp 29,415 /
+  48,101 / 42,431 tokens). The series-best overall and under the oc pressure
+  baseline ($0.00444).
+- **on (`--multi-payload`):** json $0.00116 (3/3), sexp $0.00042 (3/3), minilisp
+  **n/a (0/3)**, overall $0.01850 (6/9). Every minilisp rep burned to the bare
+  token budget (~125k; `exchangeStats` 30 turns, 29 payloads, 0 applied / 29
+  rejected, all `stage: gate`).
+- **Verdict (criterion 3): hypothesis rejected.** USD per success is worse on
+  minilisp and overall. Replay inspection shows the model never emitted a
+  `{"payloads": …}` batch in any run — it kept returning flat payloads — so the
+  atomic batch-apply path was not exercised live; the regression is the added
+  multi-payload system paragraph pushing minilisp into a parse-gate storm, not
+  batch application. The variant stays opt-in and off by default.
+- **Criterion 1** is satisfied by the records: every row carries
+  `payloads`/`toolCalls`, and `runs[].exchangeStats` exposes applied-vs-rejected
+  exchange counts (visible in both matrices). **Criterion 2** (the opt-in
+  variant) is implemented with tests. **Criterion 4** gates re-run at close.
+- Replays: `tmp/replays-69-tc-batch-off/`, `tmp/replays-69-tc-batch-on/`.
