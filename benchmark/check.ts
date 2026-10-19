@@ -1,6 +1,8 @@
-import { cpSync, mkdirSync, rmSync } from "node:fs";
-import { join } from "node:path";
+import { cpSync, existsSync, mkdirSync, readFileSync, rmSync } from "node:fs";
+import { isAbsolute, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
+import { checkLedger, currentInputHashes } from "../src/provenance";
+import { TASK_ISSUES } from "./run";
 
 interface FixtureTask {
   readonly name: string;
@@ -15,6 +17,12 @@ interface CommandResult {
 interface CheckOutcome {
   readonly ok: boolean;
   readonly detail: string | null;
+}
+
+interface LedgerOutcome {
+  readonly ok: boolean;
+  readonly summary: string;
+  readonly lines: string[];
 }
 
 const TASKS: FixtureTask[] = [
@@ -88,16 +96,96 @@ function checkTask(
   return { ok: true, detail: null };
 }
 
+// Zero-API ledger pass (#66): re-derive every `## Rows` entry of
+// `benchmark/results/consumption.md` from its cited source JSON, and flag
+// (without failing) rows whose recorded input hashes no longer match the tree.
+function checkLedgerFile(ledgerPath: string, repoRoot: string): LedgerOutcome {
+  if (!existsSync(ledgerPath)) {
+    return { ok: false, summary: `ledger: ${ledgerPath} missing`, lines: [] };
+  }
+  const markdown = readFileSync(ledgerPath, "utf8");
+  const result = checkLedger(markdown, {
+    loadSource: (path) => {
+      const absolute = join(repoRoot, path);
+      if (!existsSync(absolute)) {
+        return null;
+      }
+      try {
+        return JSON.parse(readFileSync(absolute, "utf8"));
+      } catch {
+        return null;
+      }
+    },
+    currentFor: (json) => {
+      const tasks = Array.isArray(json["tasks"])
+        ? (json["tasks"] as unknown[]).filter((task): task is string => typeof task === "string")
+        : [];
+      const model = typeof json["model"] === "string" ? json["model"] : "";
+      const reps = typeof json["reps"] === "number" ? json["reps"] : 1;
+      const effort = typeof json["effort"] === "string" ? json["effort"] : null;
+      const multiPayload = json["multiPayload"] === true;
+      const tokenBudget = typeof json["tokenBudget"] === "number" ? json["tokenBudget"] : null;
+      try {
+        return currentInputHashes(repoRoot, {
+          tasks,
+          taskIssues: TASK_ISSUES,
+          model,
+          multiPayload,
+          effort,
+          reps,
+          tokenBudget,
+        });
+      } catch {
+        return null;
+      }
+    },
+  });
+  const lines: string[] = [];
+  for (const failure of result.failures) {
+    lines.push(`FAIL ${failure}`);
+  }
+  for (const stale of result.staleFlags) {
+    lines.push(stale);
+  }
+  const failed = result.failures.length;
+  return {
+    ok: failed === 0,
+    summary: `ledger: ${result.rows} rows, ${result.checked} checked, ${result.fresh} fresh, ${result.stale} stale, ${failed} failed`,
+    lines,
+  };
+}
+
 async function main(): Promise<void> {
   const keep = process.argv.includes("--keep");
-  const unknown = process.argv.slice(2).filter((argument) => argument !== "--keep");
-  if (unknown.length > 0) {
-    process.stderr.write(`unknown argument: ${unknown[0]}\n`);
+  let ledgerOverride: string | null = null;
+  for (let index = 2; index < process.argv.length; index += 1) {
+    const argument = process.argv[index];
+    if (argument === "--keep") {
+      continue;
+    }
+    if (argument === "--ledger") {
+      const value = process.argv[index + 1];
+      if (value === undefined || value.startsWith("-")) {
+        process.stderr.write("missing value for --ledger\n");
+        process.exitCode = 2;
+        return;
+      }
+      ledgerOverride = value;
+      index += 1;
+      continue;
+    }
+    process.stderr.write(`unknown argument: ${argument}\n`);
     process.exitCode = 2;
     return;
   }
 
   const repoRoot = fileURLToPath(new URL("..", import.meta.url));
+  const ledgerPath =
+    ledgerOverride === null
+      ? join(repoRoot, "benchmark", "results", "consumption.md")
+      : isAbsolute(ledgerOverride)
+        ? ledgerOverride
+        : resolve(process.cwd(), ledgerOverride);
   const tscBin = join(repoRoot, "node_modules", "typescript", "bin", "tsc");
   const workspaceRoot = join(repoRoot, "tmp", "benchmark-check");
 
@@ -129,11 +217,16 @@ async function main(): Promise<void> {
   }
 
   const failed = TASKS.length - passed;
+  const ledger = checkLedgerFile(ledgerPath, repoRoot);
+  for (const line of ledger.lines) {
+    process.stdout.write(`${line}\n`);
+  }
+  process.stdout.write(`${ledger.summary}\n`);
   process.stdout.write(`benchmark-check: ${passed} passed, ${failed} failed\n`);
   if (!keep) {
     rmSync(workspaceRoot, { recursive: true, force: true });
   }
-  process.exitCode = failed === 0 ? 0 : 1;
+  process.exitCode = failed === 0 && ledger.ok ? 0 : 1;
 }
 
 await main();

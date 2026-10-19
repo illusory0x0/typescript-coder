@@ -45,6 +45,21 @@ fixture. The task × side × rep matrix runs through a bounded worker pool
 session, and logs, and `report.runs` stays in matrix order even though runs
 finish in arbitrary order.
 
+## Fixtures and the held-out task
+
+Four frozen fixtures live under `benchmark/fixtures/`: `json-parser`,
+`sexp-parser`, `minilisp`, and the **held-out** task `csv-parser`. Each fixture
+is frozen by #61's discipline: its model-facing issue text is fixed in
+`TASK_ISSUES` (`benchmark/run.ts`) and only same-text runs are compared.
+
+**`csv-parser` is held out (#67):** it is never the target of prompt or loop
+iteration. Prompt/loop changes must not be tuned against it, and a held-out
+result is never a change-set's evidence of *prompt fit* — it gates only
+"generalizes beyond the tuned fixtures" claims. Every series matrix includes it
+(`--all`), so its row is recorded like the others, but the rule above governs
+how a change-set may cite it. `benchmark/results/consumption.md` records the
+rule and the first held-out baseline row.
+
 ## Metrics per record
 
 - `tokens.input` / `tokens.output`: prompt / completion tokens.
@@ -277,3 +292,46 @@ control); unreferenced one-off artifacts (superseded variants, one-off smokes,
 ad-hoc sweeps) may be pruned. Replay bundles live under `tmp/` and are
 prunable by construction. This declaration is the durable set that #66's
 ledger check stands on.
+
+### Input provenance hashes (#66)
+
+Every result JSON carries a top-level `provenance` block:
+
+    "provenance": {
+      "inputs": { "model": …, "taskIssue": …, "fixture": …, "systemPrompt": …,
+                  "loopConfig": …, "pricing": … },
+      "inputHash": …,
+      "computedAt": "2026-10-19T…"
+    }
+
+`src/provenance.ts` computes the sha256 hex digests (`computeInputHashes`,
+written by `benchmark/run.ts` via `currentInputHashes` so the record pins the
+same tree the runs read). Text pieces are newline-normalized to `\n`; object
+pieces go through a stable, recursively key-sorted JSON encoding, so insertion
+order never changes a hash.
+
+| Digest | What it covers | Computation point |
+| ------ | -------------- | ----------------- |
+| `model` | the gateway model id | `report.model` |
+| `taskIssue` | the frozen task text of every task in the report, keyed by task | `TASK_ISSUES` (`run.ts`) |
+| `fixture` | the on-disk content of `benchmark/fixtures/<task>/`, keyed by task and relative path | current tree |
+| `systemPrompt` | the model-facing system + protocol text | `buildSystemPrompt(multiPayload)` (`src/loop.ts`) |
+| `loopConfig` | token budget, edit/iteration/stall caps, `effort`, `reps`, `multiPayload` | loop constants + run flags |
+| `pricing` | the peak/off-peak rate table plus `PRICING_FETCHED_ON` | `src/benchmark-pricing.ts` |
+
+`inputHash` is sha256 over the stable JSON of that digest object. A change to
+the fixture text, the prompt, the loop config, or the pricing table changes the
+digests, so earlier rows are explicitly invalidated (the #55 prompt regression
+would have been caught mechanically).
+
+`bun benchmark/check.ts` adds a zero-API ledger pass: for each `## Rows` entry
+of `results/consumption.md` it re-derives the per-task and overall
+`costPerSuccess` and the `ok/runs` counts from the cited source JSON (rounding
+to five decimals) and **fails**, naming the row, on any mismatch or a missing
+cited file. It then compares each source's recorded `provenance` against a
+fresh `currentInputHashes` from the tree and prints a `stale:` line for rows
+whose hashes differ or that carry no `provenance` (historical rows predating
+#66) — stale is a warning, not a failure. `--ledger <path>` points the pass at
+another copy (used to prove a corrupted row fails). Cross-side baselines live in
+a separate table and are not row-checked (they are means/minima across files,
+not single-JSON rows).

@@ -17,7 +17,9 @@ import { OpenAIProvider, readConfigFromEnv } from "../src/openai";
 import type { ProviderLike, RejectionCause } from "../src/loop";
 import { ReplayRecorder, usageFromRaw } from "../src/replay-format";
 import { PRICING_FETCHED_ON, PRICING_SOURCE_URL, runCost } from "../src/benchmark-pricing";
+import { currentInputHashes } from "../src/provenance";
 import type { RateClass } from "../src/benchmark-pricing";
+import type { RecordedProvenance } from "../src/provenance";
 import type { ChatMessage, ChatResponse, ReasoningEffort, ToolDefinition } from "../src/openai";
 
 type TaskName = "json-parser" | "sexp-parser" | "minilisp";
@@ -202,12 +204,16 @@ export interface Report {
   effort: ReasoningEffort | null;
   /** Opt-in multi-payload exchanges (#69): whether the tc side batched edits. */
   multiPayload: boolean;
+  /** Token budget forwarded to the tc side; null means `DEFAULT_TOKEN_BUDGET`. */
+  tokenBudget: number | null;
   bunVersion: string;
   opencodeVersion: string | null;
   pilotReference: string | null;
   infraErrors: string[];
   runs: RunRecord[];
   aggregates: Aggregates;
+  /** Content hashes of the measured inputs (#66); see `src/provenance.ts`. */
+  provenance: RecordedProvenance;
 }
 
 interface RunContext {
@@ -248,7 +254,7 @@ const TASKS: readonly TaskSpec[] = [
 
 // One issue string per task, used verbatim by both sides (G1 is quoted from
 // the benchmark issue; G2/G3 are analogous with their exported names).
-const TASK_ISSUES: Record<TaskName, string> = {
+export const TASK_ISSUES: Record<TaskName, string> = {
   "json-parser": [
     "Implement src/json.ts exporting JsonValue and parseJson(text: string): JsonValue",
     "so that src/json.test.ts passes and `bunx tsc --noEmit` stays clean.",
@@ -1727,6 +1733,7 @@ async function main(): Promise<number> {
     model: args.model,
     effort: args.effort,
     multiPayload: args.multiPayload,
+    tokenBudget: args.tokenBudget,
     bunVersion: Bun.version,
     opencodeVersion: null,
     pilotReference: existsSync(pilotCandidate) ? relative(repoRoot, pilotCandidate) : null,
@@ -1735,6 +1742,20 @@ async function main(): Promise<number> {
     // Preflight errors write this zeroed aggregate set; the normal path
     // recomputes it from the final runs after the pool.
     aggregates: computeAggregates([], tasks, sides),
+    // #66: pin the measured inputs from the same tree the runs read, so the
+    // record is self-describing and the ledger check can flag staleness.
+    provenance: {
+      ...currentInputHashes(repoRoot, {
+        tasks,
+        taskIssues: TASK_ISSUES,
+        model: args.model,
+        multiPayload: args.multiPayload,
+        effort: args.effort,
+        reps,
+        tokenBudget: args.tokenBudget,
+      }),
+      computedAt: generatedAt,
+    },
   };
 
   let opencode: OpencodeContext | null = null;
