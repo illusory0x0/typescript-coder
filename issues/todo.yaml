@@ -11,14 +11,6 @@
   parent: null
   deps: []
   file: 0067-add-a-held-out-fixture-and-a-prompt-freeze-rule-for-series-claims.md
-- id: 68
-  title: "Protect the judge with a golden corpus and parse/print round-trip nets"
-  status: in-progress
-  priority: medium
-  milestone: null
-  parent: null
-  deps: []
-  file: 0068-protect-the-judge-with-a-golden-corpus-and-parse-print-round-trip-nets.md
 - id: 70
   title: "Align spec and conventions with as-built details"
   status: todo
