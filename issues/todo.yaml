@@ -10,6 +10,14 @@
   parent: 46
   deps: []
   file: 0077-close-the-minilisp-repair-cost-gap-reliably-beat-the-oc-baseline-on-tokens-per-success-help-wanted.md
+- id: 78
+  title: "Edit protocol: allow bounded same-file multi-region edits in one repair exchange"
+  status: todo
+  priority: medium
+  milestone: null
+  parent: 46
+  deps: []
+  file: 0078-edit-protocol-allow-bounded-same-file-multi-region-edits-in-one-repair-exchange.md
 - id: 46
   title: "Harness optimization v3: agent-loop, context, structure-editor"
   status: in-progress
