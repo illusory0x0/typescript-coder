@@ -260,3 +260,29 @@ class JsonParser {
 export function parseJson(text: string): JsonValue {
   return new JsonParser(text).parse();
 }
+
+// Canonical, deterministic printing paired with parseJson for round-trip tests
+// (#68). Scalars reuse JSON.stringify's escaping semantics; containers are
+// emitted compactly with a stable key order (insertion order), so
+// parseJson(printJson(value)) deep-equals `value`.
+export function printJson(value: JsonValue): string {
+  if (value === null) {
+    return "null";
+  }
+  if (typeof value === "boolean") {
+    return value ? "true" : "false";
+  }
+  if (typeof value === "number") {
+    return JSON.stringify(value);
+  }
+  if (typeof value === "string") {
+    return JSON.stringify(value);
+  }
+  if (Array.isArray(value)) {
+    return `[${value.map(printJson).join(",")}]`;
+  }
+  const entries = Object.keys(value).map(
+    (key) => `${JSON.stringify(key)}:${printJson(value[key]!)}`,
+  );
+  return `{${entries.join(",")}}`;
+}

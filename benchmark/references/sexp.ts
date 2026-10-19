@@ -76,3 +76,13 @@ class SexpParser {
 export function parseSexp(text: string): Sexp {
   return new SexpParser(text).parse();
 }
+
+// Canonical printing paired with parseSexp for round-trip tests (#68): atoms
+// print verbatim and lists print space-separated in parens, so
+// parseSexp(printSexp(value)) deep-equals `value` for any parsed value.
+export function printSexp(value: Sexp): string {
+  if (Array.isArray(value)) {
+    return `(${value.map(printSexp).join(" ")})`;
+  }
+  return String(value);
+}

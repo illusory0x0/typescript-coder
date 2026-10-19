@@ -362,3 +362,22 @@ export function run(program: string): LispValue {
   }
   return toLispValue(result);
 }
+
+// Canonical printing paired with `run` for round-trip tests (#68). Data values
+// are not self-evaluating in minilisp - a bare list form is a call - so a pair
+// is printed as an explicit `cons` expression over its head and tail. An array
+// value is the evaluator's pair representation, so
+// `run(printLisp(value))` re-evaluates to a deep-equal `value`. Values that
+// are not cons pairs (fewer than two elements) cannot be produced by the
+// evaluator and are rejected rather than misprinted.
+export function printLisp(value: LispValue): string {
+  if (!Array.isArray(value)) {
+    return String(value);
+  }
+  if (value.length < 2) {
+    throw new Error("cannot print a value that is not a cons pair");
+  }
+  const head = value[0]!;
+  const tail: LispValue = value.length === 2 ? value[1]! : value.slice(1);
+  return `(cons ${printLisp(head)} ${printLisp(tail)})`;
+}
