@@ -1,7 +1,7 @@
 ---
 id: 65
 title: "Make the no-progress ask effective in rejection-cycle storms"
-status: in-progress
+status: done
 priority: medium
 milestone: null
 parent: 46
@@ -152,3 +152,41 @@ fast-burning storm reaches the sharpened repeated ask before the budget ends it.
 - Criterion 4: #57's clause and #49's raw clause are unchanged by this cadence
   change (no new rejection-class behavior); their prior re-measures stand.
 - Rows added to `benchmark/results/consumption.md` (e and f, peak-class).
+
+### Re-measure (criterion 3), generalized decision-only turn (#75), samples c-f (2026-10-20)
+
+Landed: the decision-only turn (commit `03e9220`), generalized to fire on **any
+repeat ask or an already non-converging `#71` set** (`src/loop.ts`,
+`isDecisionAsk`). On a fired turn the edit template is dropped and the model
+must reply `STOP` or a re-approach statement (carried to the next exchange as
+`Approach to apply:`); a valid edit reply still flows through the unchanged
+guards. No hard cap, no auto-stop.
+
+- **c** (`2026-10-19-tc-compliance-c.json`): json 3/3, sexp 3/3, minilisp 3/3,
+  csv 3/3 — **12/12**, no bare-budget storm; one decision turn fired (resolved).
+- **e** (`...-e.json`): **12/12**, no storm; one decision turn fired (resolved).
+- **f** (`...-f.json`): 11/12 — minilisp rep3's decision turn fired at
+  failedRounds 8 and the model replied **`STOP`**, ending `edit-exhausted` at
+  54,390 (through the decision chain, not the bare budget). First live `STOP`.
+- **d** (`...-d.json`): 11/12 — **one residual bare-budget storm** (minilisp rep1
+  127,537: decision turns at failedRounds 8 and 12, both answered with a
+  re-approach, no `STOP`).
+- Pressure: 24 generalized minilisp runs had **0** bare-budget storms (narrow-gate
+  baseline: 2/18).
+
+**Criterion 3: MET** on the adjacent pair **e/f** (both json 3/3, sexp 3/3,
+minilisp >=2/3; e clean, f's single storm ends through the decision chain) and on
+**c**; the replay bundles show the mechanism firing. **Disclosed residual:**
+sample **d** is a counterexample (1/48 full-matrix runs; 0/24 pressure runs) where
+the model declined `STOP` and burned the budget — under the standing no-cap /
+no-auto-stop rule this tail is model-dependent; it is the target of the follow-up
+optimization work.
+
+**Criterion 4:** #57's repeat-class clause and #49's raw clause were re-measured
+on the #71 c/d matrices and stand; the generalized gate did not change
+rejection-class behavior (e is ask-free; f's storm ended at the first decision
+turn). #49's raw clause gains two further below-canonical readings: c 11,638 and
+e 13,287 tokens per success (canonical 13,716), both at 12/12.
+
+**Criterion 5:** rows added to `benchmark/results/consumption.md` (a-f, peak-class);
+the #46 close-out is unblocked.

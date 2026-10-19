@@ -138,3 +138,33 @@ plus: read the new report's aggregates against the #47 baseline figures.
   written reason) and the final row lands.
 - Gates at this state: `bunx tsc --noEmit` 0, 812 tests pass, `bun run accept`
   5/5, `bun benchmark/check.ts` 4 PASS (csv frontend added).
+
+## Status (2026-10-20, post-#75 gated decision-only turn): storm chain resolved, minilisp cost gap remains
+
+- **#75 landed** (commit `03e9220`): the decision-only turn is generalized to fire
+  on any repeat ask or an already non-converging `#71` set; the edit template is
+  replaced by a forced decision (`STOP` or a re-approach carried to the next
+  exchange). No hard cap, no auto-stop, guards unchanged.
+- **Storm outcome.** Six generalized-gate full matrices
+  (`2026-10-19-tc-compliance-{c,d,e,f}` + `2026-10-19-tc-final-{1,2}`; rows in
+  `consumption.md`): c 12/12, e 12/12, final-1 12/12, f 11/12, final-2 11/12,
+  d 11/12. **Five of six had zero bare-budget storms**; the storm runs in f and
+  final-2 ended through the decision chain (`STOP`), and the 24-run generalized
+  pressure set had 0 bare-budget storms (narrow-gate baseline 2/18). The single
+  exception is **d** (minilisp rep1 127,537: the model declined `STOP` twice) —
+  a model-dependent tail (~1/72 full-matrix runs). #75 and #65 close with this
+  residual disclosed.
+- **Goal vs the #47 baseline** (json 15,963 / sexp 11,770 / minilisp 30,398 /
+  overall 19,377 tokens per success): on the clean samples the tc side is far
+  below on json (~4.8k), sexp (~3.2k), and overall (final-1 17,636; c 11,638;
+  e 13,287; holdout 12,381) — but **minilisp is not reliably below** (holdout
+  18,425 and e 26,328 below; c 30,112 ~ par; final-1 **38,027 above**; storms
+  push it to 64k-82k). The goal is therefore **not met**: minilisp tokens per
+  success stays at or above the baseline on an ordinary sample. The remaining gap
+  is *minilisp repair cost*, not storms.
+- **Children:** #47/#48/#49/#50/#57/#60/#71 open-closed earlier; #65 and #75 now
+  close. The follow-up that owns the minilisp cost gap is the opencode2
+  structured-checkpoint absorption (**#76**, root). This issue stays in-progress
+  until that gap closes and the final row lands.
+- Gates at this state: `bunx tsc --noEmit` 0, 820 tests pass, `bun run accept`
+  5/5, `bun benchmark/check.ts` 4 PASS.

@@ -2,22 +2,6 @@
 # rewrites it; `add` appends; other writes keep it. `check` enforces it.
 # A dep, and every child of an umbrella, must be listed before its dependent.
 
-- id: 75
-  title: "Storm compliance: the model ignores the sharpened no-progress ask and never STOPs (help wanted)"
-  status: in-progress
-  priority: high
-  milestone: null
-  parent: 65
-  deps: []
-  file: 0075-storm-compliance-the-model-ignores-the-sharpened-no-progress-ask-and-never-stops-help-wanted.md
-- id: 65
-  title: "Make the no-progress ask effective in rejection-cycle storms"
-  status: in-progress
-  priority: medium
-  milestone: null
-  parent: 46
-  deps: []
-  file: 0065-make-the-no-progress-ask-effective-in-rejection-cycle-storms.md
 - id: 46
   title: "Harness optimization v3: agent-loop, context, structure-editor"
   status: in-progress
@@ -26,3 +10,11 @@
   parent: null
   deps: []
   file: 0046-harness-optimization-v3-agent-loop-context-structure-editor.md
+- id: 76
+  title: "Structure the attempt digest as a bounded update-in-place repair checkpoint (opencode2 absorption)"
+  status: todo
+  priority: medium
+  milestone: null
+  parent: null
+  deps: []
+  file: 0076-structure-the-attempt-digest-as-a-bounded-update-in-place-repair-checkpoint-opencode2-absorption.md

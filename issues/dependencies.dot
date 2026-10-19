@@ -80,6 +80,7 @@ digraph issues {
   "73" [label="#73 Repair self-verification: let the model request one bounded read or check per repair round"];
   "74" [label="#74 Provider: retry timed-out chat requests (max 5 additional attempts)"];
   "75" [label="#75 Storm compliance: the model ignores the sharpened no-progress ask and never STOPs (help wanted)"];
+  "76" [label="#76 Structure the attempt digest as a bounded update-in-place repair checkpoint (opencode2 absorption)"];
 
   // parent edges (parent -> child), solid
   "1" -> "2";
