@@ -7,7 +7,7 @@ rewritten by `replace`. One selection is a **viewer** when it stops at `match`,
 and an **editor** when it carries `replace`.
 
 Status: **specified here, not yet implemented.** The children that build it are
-#107 (parse/serialize), #108 (resolve the cascade), #109 (regex selector), #110
+#107 (parse/serialize), #108 (resolve the cascade), #109 (regex in match), #110
 (record the resolved stage) and #111 (few-shot examples + A/B). Until they land,
 the shipped wire protocol is still the JSON payload in
 [docs/spec.md](./spec.md); §9 maps the two.
@@ -85,7 +85,7 @@ Lexical notes:
 ## 3. Selection cascade
 
 Each stage narrows the one before it and is optional; omit a stage and it falls
-back as stated. The cascade is `path → symbol → matcher → selector`, with
+back as stated. The cascade is `select → match → pick → replace`, with
 `match` producing a candidate set and `pick` filtering it.
 
 ```
@@ -251,7 +251,7 @@ the compact syntax carries several clauses in one reply, applied per §6.
 
 Specified by #106; built by #107–#111. This file is grammar and semantics only —
 it defines no code and changes no prompt. The few-shot examples and the measured
-A/B live in #111; recording the resolved stage and selector per applied edit
+A/B live in #111; recording the resolved stage and matcher per applied edit
 lives in #110.
 
 ---
