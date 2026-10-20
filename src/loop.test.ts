@@ -1060,7 +1060,7 @@ describe("attempt digest (#57)", () => {
     const digest = renderAttemptDigest(state);
     const ruledOut = digest.split("\n").filter((line) => line.startsWith("Ruled out"));
     expect(ruledOut).toEqual([
-      'Ruled out after 4 repeats: matcher-not-found — This attempt MUST omit "matcher" and return the complete declaration in "replacement".',
+      'Ruled out after 4 repeats: matcher-not-found — This attempt MUST omit "matcher" and return the complete declaration in "replacement". When the target is a contiguous run you can pin exactly, you may instead send the optional "range" {"line","column","endLine","endColumn"} selector (all 1-based, end inclusive, inside the declaration): it takes precedence over "matcher" and needs no verbatim copy.',
       "Ruled out after 3 repeats: tsc — change the declaration structure instead of re-editing the same spot",
     ]);
     expect(DIGEST_RULED_OUT_REPEATS).toBe(3);
@@ -6413,6 +6413,120 @@ describe("runLoop", () => {
         action: "terminate",
         reason: "harness-fault",
       });
+    });
+
+    test("matcher corrections and escalations offer the range selector (#102)", () => {
+      const previous = process.env.TC_MATCHER_RANGE_HINT;
+      delete process.env.TC_MATCHER_RANGE_HINT;
+      try {
+        const cases = [
+          "matcher-unparseable",
+          "matcher-not-found",
+          "matcher-ambiguous",
+        ] as const;
+        for (const cause of cases) {
+          const policy = rejectionPolicy(cause);
+          if (
+            policy.action !== "retry" ||
+            policy.correction === null ||
+            policy.escalation === null
+          ) {
+            throw new Error(`expected a retryable ${cause} policy`);
+          }
+          // Both levels carry the hint: it names the range shape, its
+          // precedence, and that the matcher can be omitted...
+          for (const text of [policy.correction, policy.escalation]) {
+            expect(text).toContain('"range"');
+            expect(text).toContain('{"line","column","endLine","endColumn"}');
+            expect(text).toContain('takes precedence over "matcher"');
+            expect(text).toContain('omit "matcher"');
+          }
+          // ...the correction keeps its "whole-symbol rewrite" alternative...
+          expect(policy.correction).toContain("for a whole-symbol rewrite");
+          // ...and the escalation keeps MATCHER_ESCALATION's omit demand.
+          expect(policy.escalation).toContain(
+            'This attempt MUST omit "matcher" and return the complete declaration in "replacement".',
+          );
+        }
+        // The ambiguous class keeps its "extend" wording alongside the hint.
+        const ambiguous = rejectionPolicy("matcher-ambiguous");
+        if (ambiguous.action !== "retry") {
+          throw new Error("expected a retryable matcher-ambiguous policy");
+        }
+        expect(ambiguous.correction).toContain('Extend "matcher" with more surrounding context');
+      } finally {
+        if (previous === undefined) {
+          delete process.env.TC_MATCHER_RANGE_HINT;
+        } else {
+          process.env.TC_MATCHER_RANGE_HINT = previous;
+        }
+      }
+    });
+
+    test("TC_MATCHER_RANGE_HINT=off renders the pre-#102 matcher text byte-identically (#102)", () => {
+      const previous = process.env.TC_MATCHER_RANGE_HINT;
+      const preUnparseable =
+        'Copy "matcher" verbatim from the current source as one complete statement, expression, or contiguous run of statements, or omit "matcher" for a whole-symbol rewrite.';
+      const preNotFound =
+        'Copy "matcher" verbatim from the current source, or omit "matcher" for a whole-symbol rewrite.';
+      const preAmbiguous =
+        'Extend "matcher" with more surrounding context copied from the current source, or omit "matcher" for a whole-symbol rewrite.';
+      const preEscalation =
+        'This attempt MUST omit "matcher" and return the complete declaration in "replacement".';
+      for (const setting of ["off", "0", "false"]) {
+        process.env.TC_MATCHER_RANGE_HINT = setting;
+        try {
+          const unparseable = rejectionPolicy("matcher-unparseable");
+          const notFound = rejectionPolicy("matcher-not-found");
+          const ambiguous = rejectionPolicy("matcher-ambiguous");
+          if (
+            unparseable.action !== "retry" ||
+            notFound.action !== "retry" ||
+            ambiguous.action !== "retry"
+          ) {
+            throw new Error("expected retryable matcher policies");
+          }
+          expect(unparseable.correction).toBe(preUnparseable);
+          expect(unparseable.escalation).toBe(preEscalation);
+          expect(notFound.correction).toBe(preNotFound);
+          expect(notFound.escalation).toBe(preEscalation);
+          expect(ambiguous.correction).toBe(preAmbiguous);
+          expect(ambiguous.escalation).toBe(preEscalation);
+        } finally {
+          if (previous === undefined) {
+            delete process.env.TC_MATCHER_RANGE_HINT;
+          } else {
+            process.env.TC_MATCHER_RANGE_HINT = previous;
+          }
+        }
+      }
+    });
+
+    test("non-matcher causes ignore the range toggle (#102)", () => {
+      const previous = process.env.TC_MATCHER_RANGE_HINT;
+      delete process.env.TC_MATCHER_RANGE_HINT;
+      try {
+        for (const cause of ["range-invalid", "protocol", "gate"] as const) {
+          const enabled = rejectionPolicy(cause);
+          if (enabled.action !== "retry") {
+            throw new Error(`expected a retryable ${cause} policy`);
+          }
+          process.env.TC_MATCHER_RANGE_HINT = "off";
+          const disabled = rejectionPolicy(cause);
+          if (disabled.action !== "retry") {
+            throw new Error(`expected a retryable ${cause} policy`);
+          }
+          expect(enabled.correction).toBe(disabled.correction);
+          expect(enabled.escalation).toBe(disabled.escalation);
+          expect(enabled.correction).not.toContain("takes precedence over");
+        }
+      } finally {
+        if (previous === undefined) {
+          delete process.env.TC_MATCHER_RANGE_HINT;
+        } else {
+          process.env.TC_MATCHER_RANGE_HINT = previous;
+        }
+      }
     });
 
     test("rejectionLead escalates by streak and adds the #65 context", () => {

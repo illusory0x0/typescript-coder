@@ -651,7 +651,7 @@ round-tripping must fail the suite before any measured number can move.
 | R3  | LLM tool-call / JSON flakiness (gateway models)        | strict JSON schema, low temperature, bounded re-asks                                                                   |
 | R4  | whole-project `tsc` per iteration is slow              | incremental / changed-files scope; check/test commands bounded at 120s by default (`commandTimeoutMs`)                 |
 | R5  | overload / namespace address ambiguity                 | strict-AND `path × symbol × kind` lookup; ambiguity diagnostics list every candidate instead of picking one            |
-| R6  | repeated / ambiguous matchers inside a symbol          | one matcher per edit with an exactly-one-match rule and an extend-the-matcher hint; omit it for a whole-symbol rewrite, or address the span with the optional `range` `(line,column)` selector (#72; the matcher-ambiguous re-ask does not yet name it — #102) |
+| R6  | repeated / ambiguous matchers inside a symbol          | one matcher per edit with an exactly-one-match rule and an extend-the-matcher hint; omit it for a whole-symbol rewrite, or address the span with the optional `range` `(line,column)` selector (#72; the matcher-failure re-ask now offers it — #102) |
 | R7  | re-ask context growth / prompt drift                   | stable system + issue/context prefix; bounded rebuilt context                                                          |
 
 ## 13. Open items (defaults)

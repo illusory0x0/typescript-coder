@@ -1468,6 +1468,20 @@ export type RejectionPolicy =
 const MATCHER_ESCALATION =
   'This attempt MUST omit "matcher" and return the complete declaration in "replacement".';
 
+// #102: a matcher failure can also be escaped with the #72 `range` selector,
+// whose coordinates pin a contiguous run without a verbatim copy. Steered on by
+// default; a benchmark can run byte-identical arms by setting
+// TC_MATCHER_RANGE_HINT=off (trimmed, lowercased; only off/0/false disable).
+// Read once per rejectionPolicy call so tests can flip it in-process.
+const MATCHER_RANGE_HINT =
+  'When the target is a contiguous run you can pin exactly, you may instead send the optional "range" {"line","column","endLine","endColumn"} selector (all 1-based, end inclusive, inside the declaration): it takes precedence over "matcher" and needs no verbatim copy.';
+
+function matcherRangeHint(): string {
+  const setting = (process.env.TC_MATCHER_RANGE_HINT ?? "").trim().toLowerCase();
+  const disabled = setting === "off" || setting === "0" || setting === "false";
+  return disabled ? "" : MATCHER_RANGE_HINT;
+}
+
 // #65 resend classes: `repeat` means the byte-identical payload was already
 // submitted (applied and still failing, or rejected), `duplicate` means the
 // candidate would add a second top-level copy of a declaration the file
@@ -1558,6 +1572,11 @@ export function rejectionLead(
 }
 
 export function rejectionPolicy(cause: RejectionCause): RejectionPolicy {
+  // #102: read the toggle once per call; `withRangeHint` no-ops when disabled
+  // so the off render stays byte-identical to the pre-#102 strings.
+  const rangeHint = matcherRangeHint();
+  const withRangeHint = (text: string): string =>
+    rangeHint === "" ? text : `${text} ${rangeHint}`;
   switch (cause) {
     case "format-export-duplication":
       return { action: "terminate", reason: "harness-fault" };
@@ -1596,23 +1615,26 @@ export function rejectionPolicy(cause: RejectionCause): RejectionPolicy {
     case "matcher-unparseable":
       return {
         action: "retry",
-        correction:
+        correction: withRangeHint(
           'Copy "matcher" verbatim from the current source as one complete statement, expression, or contiguous run of statements, or omit "matcher" for a whole-symbol rewrite.',
-        escalation: MATCHER_ESCALATION,
+        ),
+        escalation: withRangeHint(MATCHER_ESCALATION),
       };
     case "matcher-not-found":
       return {
         action: "retry",
-        correction:
+        correction: withRangeHint(
           'Copy "matcher" verbatim from the current source, or omit "matcher" for a whole-symbol rewrite.',
-        escalation: MATCHER_ESCALATION,
+        ),
+        escalation: withRangeHint(MATCHER_ESCALATION),
       };
     case "matcher-ambiguous":
       return {
         action: "retry",
-        correction:
+        correction: withRangeHint(
           'Extend "matcher" with more surrounding context copied from the current source, or omit "matcher" for a whole-symbol rewrite.',
-        escalation: MATCHER_ESCALATION,
+        ),
+        escalation: withRangeHint(MATCHER_ESCALATION),
       };
     case "range-invalid":
       return {
