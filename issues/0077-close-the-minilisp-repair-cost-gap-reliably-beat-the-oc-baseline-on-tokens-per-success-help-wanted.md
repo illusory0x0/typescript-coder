@@ -1,7 +1,7 @@
 ---
 id: 77
 title: "Close the minilisp repair-cost gap: reliably beat the oc baseline on tokens per success (help wanted)"
-status: todo
+status: in-progress
 priority: medium
 milestone: null
 parent: 46
@@ -78,3 +78,5 @@ bun benchmark/check.ts
 - Parent #46. Sequences after #75 (landed) and #76 (reverted with a recorded
   negative result).
 - Non-goals: hard caps, auto-stops, weakening guards, unified-diff bypasses.
+- 2026-10-20 main-agent recon: live runs work (minilisp tc rep1 clean, 26,253 tokens, 23.8s). Replay tmp/replays-scope shows 7 calls; 5 repair calls each re-send the WHOLE file (7,682 chars, 252 lines) as the numbered current-source block (src/loop.ts:4003 sets wholeFile=repair||create; rangeFileRelative=repair at 4358/4402). That source block is ~67% of each repair prompt (11.5k chars; diagnostics 0.6-2.2k). Candidate mechanism under test: bounded anchored repair-source view = pinned declaration in full (declaration-relative, as the non-repair modify path already does) + a signatures-only outline of the other top-level declarations, with the self-check {"request":"read"} still offering the whole file. Target: cut ~1.5k tokens/exchange to bring a clean minilisp run from ~23.5k toward ~16k, below the 30,398 baseline.
+- 2026-10-20 bounded-repair-source-view mechanism measured NEGATIVE, reverted. Implemented: repair rounds show the pinned declaration in full + a signatures-only outline of the other declarations (declaration-relative range) instead of the whole file; unit tests green, tsc 0. Two live tc matrices: Matrix 1 (benchmark/results/2026-10-20-tc-bounded-1.json; replays tmp/replays-77-1): json 3/3 (4,880 tps), sexp 3/3 (3,217), minilisp 2/3 (53,256 tps: rep1 13,203, rep2 23,738, rep3 edit-exhausted 69,572); 3-task overall 16,351 (below 19,377). Matrix 2 (benchmark/results/2026-10-20-tc-bounded-2.json; replays tmp/replays-77-2): json 3/3, sexp 3/3, minilisp 1/3 (171,154 tps: rep2 success 38,542; rep1/rep3 edit-exhausted 73,691/58,921); 3-task overall 27,895. Criterion 2 unmet on both (minilisp tps > 30,398; matrix 2 below the >=2/3 success bar). Clean-path repairs got much cheaper (~13k/~24k vs ~26k-38k) but the storm rate rose to 3/6 minilisp reps (committed #75 campaign: ~0-1 per matrix), so the per-task bar fails. Likely cause: hiding other declarations' bodies worsens the coordinated-type-change whack-a-mole that #78 targets. Reverted to HEAD (no code change). Negative result recorded per criterion 1; #77 stays in-progress, next lever #78.

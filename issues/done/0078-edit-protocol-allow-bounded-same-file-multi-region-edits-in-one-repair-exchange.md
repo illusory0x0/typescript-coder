@@ -1,7 +1,7 @@
 ---
 id: 78
 title: "Edit protocol: allow bounded same-file multi-region edits in one repair exchange"
-status: todo
+status: done
 priority: medium
 milestone: null
 parent: 46
@@ -45,3 +45,4 @@ A repair (modify) exchange can carry a bounded set of non-overlapping edits to t
 - Open questions: same-symbol multi-range vs multi-symbol-same-file; region ordering and overlap policy; whether the variant stays opt-in (parity with `#69`) or becomes default.
 - Non-goals: weakening the matcher/echo/duplicate guards; unified diffs; trading success rate for tokens.
 - Parent: `#46`. Priority defaulted to medium; no milestone.
+- Implemented and unit-tested. Parser now allows repeated path in --multi-payload batches; the batch path groups payloads by file, resolves each region against that file's current source, rejects overlapping same-file regions as multi-duplicate naming both, and applies each file's regions in one pass (atomic; nothing written on any per-region or overlap failure). Prompts (system, buildEditPrompt, multiModifyInstruction, retry), benchmark/README.md, and docs/spec.md updated; with the flag off the single-payload protocol is byte-identical. Five new tests cover same-file two-region success, overlap rejection (nothing written), rollback when one region fails its guard, per-region no-op, and per-region duplicate. Verification: bunx tsc --noEmit clean; bun test 824 pass. Benchmark on/off rows added to benchmark/results/consumption.md: off clean 12/12 (minilisp 3/3, $0.00476; overall $0.00182); on regresses minilisp to 2/3 ($0.02574; rep2 bare-budget 126,816) with json/sexp 3/3. Unlike #69, the model DID emit same-file batches live (minilisp rep3: four {payloads} replies, 5/5/5/6 entries, all src/lisp.ts) but every one was rejected on a per-region guard (0 applied), so the atomic same-file apply path was not exercised live; rep3 then resolved via flat edits (77,075). Variant stays opt-in and off by default (parity with #69).

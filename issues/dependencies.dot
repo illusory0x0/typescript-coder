@@ -83,6 +83,12 @@ digraph issues {
   "76" [label="#76 Structure the attempt digest as a bounded update-in-place repair checkpoint (opencode2 absorption)"];
   "77" [label="#77 Close the minilisp repair-cost gap: reliably beat the oc baseline on tokens per success (help wanted)"];
   "78" [label="#78 Edit protocol: allow bounded same-file multi-region edits in one repair exchange"];
+  "79" [label="#79 Ship typescript-coder as an opencode sub-agent (umbrella)"];
+  "80" [label="#80 CLI sub-agent contract: --format json result, budget/verify/cwd flags, tc bin"];
+  "81" [label="#81 Explicit-targets multi-file mode (--targets)"];
+  "82" [label="#82 Document the opencode to tc delegation recipe"];
+  "83" [label="#83 Self-host proof: opencode delegates a multi-file task to tc"];
+  "84" [label="#84 Feedback pool and critique-to-triage convention"];
 
   // parent edges (parent -> child), solid
   "1" -> "2";
@@ -139,6 +145,11 @@ digraph issues {
   "46" -> "77";
   "46" -> "78";
   "65" -> "75";
+  "79" -> "80";
+  "79" -> "81";
+  "79" -> "82";
+  "79" -> "83";
+  "79" -> "84";
 
   // dependency edges (blocker -> blocked), dashed
   "2" -> "3" [style=dashed, label="blocks"];
@@ -173,4 +184,8 @@ digraph issues {
   "52" -> "53" [style=dashed, label="blocks"];
   "52" -> "54" [style=dashed, label="blocks"];
   "61" -> "62" [style=dashed, label="blocks"];
+  "80" -> "81" [style=dashed, label="blocks"];
+  "80" -> "82" [style=dashed, label="blocks"];
+  "81" -> "83" [style=dashed, label="blocks"];
+  "82" -> "83" [style=dashed, label="blocks"];
 }

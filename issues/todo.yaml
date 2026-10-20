@@ -4,20 +4,12 @@
 
 - id: 77
   title: "Close the minilisp repair-cost gap: reliably beat the oc baseline on tokens per success (help wanted)"
-  status: todo
+  status: in-progress
   priority: medium
   milestone: null
   parent: 46
   deps: []
   file: 0077-close-the-minilisp-repair-cost-gap-reliably-beat-the-oc-baseline-on-tokens-per-success-help-wanted.md
-- id: 78
-  title: "Edit protocol: allow bounded same-file multi-region edits in one repair exchange"
-  status: todo
-  priority: medium
-  milestone: null
-  parent: 46
-  deps: []
-  file: 0078-edit-protocol-allow-bounded-same-file-multi-region-edits-in-one-repair-exchange.md
 - id: 46
   title: "Harness optimization v3: agent-loop, context, structure-editor"
   status: in-progress
@@ -26,3 +18,51 @@
   parent: null
   deps: []
   file: 0046-harness-optimization-v3-agent-loop-context-structure-editor.md
+- id: 80
+  title: "CLI sub-agent contract: --format json result, budget/verify/cwd flags, tc bin"
+  status: todo
+  priority: medium
+  milestone: null
+  parent: 79
+  deps: []
+  file: 0080-cli-sub-agent-contract-format-json-result-budget-verify-cwd-flags-tc-bin.md
+- id: 81
+  title: "Explicit-targets multi-file mode (--targets)"
+  status: todo
+  priority: medium
+  milestone: null
+  parent: 79
+  deps: [80]
+  file: 0081-explicit-targets-multi-file-mode-targets.md
+- id: 82
+  title: "Document the opencode to tc delegation recipe"
+  status: todo
+  priority: medium
+  milestone: null
+  parent: 79
+  deps: [80]
+  file: 0082-document-the-opencode-to-tc-delegation-recipe.md
+- id: 83
+  title: "Self-host proof: opencode delegates a multi-file task to tc"
+  status: todo
+  priority: medium
+  milestone: null
+  parent: 79
+  deps: [81, 82]
+  file: 0083-self-host-proof-opencode-delegates-a-multi-file-task-to-tc.md
+- id: 84
+  title: "Feedback pool and critique-to-triage convention"
+  status: todo
+  priority: medium
+  milestone: null
+  parent: 79
+  deps: []
+  file: 0084-feedback-pool-and-critique-to-triage-convention.md
+- id: 79
+  title: "Ship typescript-coder as an opencode sub-agent (umbrella)"
+  status: todo
+  priority: medium
+  milestone: null
+  parent: null
+  deps: []
+  file: 0079-ship-typescript-coder-as-an-opencode-sub-agent-umbrella.md
