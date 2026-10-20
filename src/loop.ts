@@ -8,8 +8,8 @@ import {
   writeFileSync,
 } from "node:fs";
 import { basename, dirname, isAbsolute, join, relative, resolve, sep } from "node:path";
-import { applyAnchorSplice, extractJsonObject, findAnchor, stripCodeFences } from "./anchor";
-import type { AnchorResult } from "./anchor";
+import { applyMatcherSplice, extractJsonObject, findMatcher, stripCodeFences } from "./matcher";
+import type { MatcherResult } from "./matcher";
 import { formatSource } from "./editor";
 import { LexError } from "./lexer";
 import { ParseError, Parser } from "./parser";
@@ -2751,24 +2751,24 @@ function stripLeadingExport(replacement: string, modifier: string | null): strin
   return replacement.replace(EXPORT_PATTERN, "");
 }
 
-// One anchor attempt with the leading-`export` tolerance: strip once, only at
+// One matcher attempt with the leading-`export` tolerance: strip once, only at
 // the very start, and only when the declaration already has a modifier.
-function findAnchorWithModifier(
+function findMatcherWithModifier(
   sourceBefore: string,
   node: Node,
   matcher: string,
   modifier: string | null,
-): AnchorResult {
-  const anchored = findAnchor(sourceBefore, node, matcher);
-  if ((anchored.kind === "not-found" || anchored.kind === "unparseable") && modifier !== null) {
+): MatcherResult {
+  const matched = findMatcher(sourceBefore, node, matcher);
+  if ((matched.kind === "not-found" || matched.kind === "unparseable") && modifier !== null) {
     if (EXPORT_DEFAULT_MODIFIER_PATTERN.test(modifier) && EXPORT_DEFAULT_PATTERN.test(matcher)) {
-      return findAnchor(sourceBefore, node, matcher.replace(EXPORT_DEFAULT_PATTERN, ""));
+      return findMatcher(sourceBefore, node, matcher.replace(EXPORT_DEFAULT_PATTERN, ""));
     }
     if (EXPORT_PATTERN.test(matcher)) {
-      return findAnchor(sourceBefore, node, matcher.replace(EXPORT_PATTERN, ""));
+      return findMatcher(sourceBefore, node, matcher.replace(EXPORT_PATTERN, ""));
     }
   }
-  return anchored;
+  return matched;
 }
 
 // A not-found matcher may actually belong to a different declaration of the
@@ -2788,13 +2788,13 @@ function relocationNote(
       continue;
     }
     // Each candidate carries its own preceding modifier, not the pinned one.
-    const anchored = findAnchorWithModifier(
+    const matched = findMatcherWithModifier(
       sourceBefore,
       candidate.node,
       matcher,
       precedingExportModifier(sourceBefore, candidate),
     );
-    if (anchored.kind !== "match") {
+    if (matched.kind !== "match") {
       continue;
     }
     matches.push(candidate);
@@ -2887,15 +2887,15 @@ function resolveEntrySplice(
     end = entry.node.end;
     text = stripLeadingExport(replacement, modifier);
   } else {
-    const anchored = findAnchorWithModifier(sourceBefore, entry.node, matcher, modifier);
-    if (anchored.kind === "unparseable") {
+    const matched = findMatcherWithModifier(sourceBefore, entry.node, matcher, modifier);
+    if (matched.kind === "unparseable") {
       return {
         ok: false,
         cause: "matcher-unparseable",
-        diagnostics: `stage: matcher\nthe matcher could not be parsed as TypeScript: ${anchored.message}; a matcher must be a single copied statement or expression, or a contiguous run of statements copied from one block; omitting "matcher" gives a whole-symbol rewrite`,
+        diagnostics: `stage: matcher\nthe matcher could not be parsed as TypeScript: ${matched.message}; a matcher must be a single copied statement or expression, or a contiguous run of statements copied from one block; omitting "matcher" gives a whole-symbol rewrite`,
       };
     }
-    if (anchored.kind === "not-found") {
+    if (matched.kind === "not-found") {
       const { line, column } = lineColumnAt(sourceBefore, entry.node.start);
       const base = `stage: matcher\nthe matcher was not found inside ${locator.kind} ${JSON.stringify(locator.name)} in ${target} (line ${line}, column ${column}); copy a complete snippet from the current source, or omit "matcher" for a whole-symbol rewrite`;
       const note = relocationNote(sourceBefore, target, entry, matcher);
@@ -2905,22 +2905,22 @@ function resolveEntrySplice(
         diagnostics: note === null ? base : `${base}\n${note}`,
       };
     }
-    if (anchored.kind === "ambiguous") {
+    if (matched.kind === "ambiguous") {
       const { line, column } = lineColumnAt(sourceBefore, entry.node.start);
       return {
         ok: false,
         cause: "matcher-ambiguous",
-        diagnostics: `stage: matcher\nthe matcher matches ${anchored.matches} places inside ${locator.kind} ${JSON.stringify(locator.name)} in ${target} (line ${line}, column ${column}); extend it with more surrounding context`,
+        diagnostics: `stage: matcher\nthe matcher matches ${matched.matches} places inside ${locator.kind} ${JSON.stringify(locator.name)} in ${target} (line ${line}, column ${column}); extend it with more surrounding context`,
       };
     }
     // A match over the whole declaration gets the same modifier tolerance as a
     // whole-symbol rewrite; a body-level match must not strip (#48).
     text =
-      modifier !== null && anchored.start === entry.node.start
+      modifier !== null && matched.start === entry.node.start
         ? stripLeadingExport(replacement, modifier)
         : replacement;
-    start = anchored.start;
-    end = anchored.end;
+    start = matched.start;
+    end = matched.end;
   }
   // Per-region no-op guard (#59): the replacement equals the exact text it
   // replaces, so this region alone would change nothing.
@@ -2958,7 +2958,7 @@ function spliceEntryEdit(
   }
   return {
     ok: true,
-    candidate: applyAnchorSplice(sourceBefore, resolved.start, resolved.end, resolved.text),
+    candidate: applyMatcherSplice(sourceBefore, resolved.start, resolved.end, resolved.text),
     gateStart: resolved.gateStart,
   };
 }
@@ -3432,7 +3432,7 @@ async function executeDeletion(input: DeletionInput): Promise<LoopResult> {
     );
   }
   const range = deleteRange(prevCheck.program, node);
-  const spliced = applyAnchorSplice(baseSource, range.start, range.end, "");
+  const spliced = applyMatcherSplice(baseSource, range.start, range.end, "");
   const gate = parseCheck(spliced);
   if (!gate.ok) {
     return await fail(
@@ -5310,7 +5310,7 @@ export async function runLoop(options: LoopOptions): Promise<LoopResult> {
               if (region === undefined) {
                 continue;
               }
-              spliced = applyAnchorSplice(spliced, region.start, region.end, region.text);
+              spliced = applyMatcherSplice(spliced, region.start, region.end, region.text);
             }
             const payloadCheck = path === target ? prevCheck : parseCheck(payloadSource);
             if (!payloadCheck.ok) {

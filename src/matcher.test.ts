@@ -1,12 +1,12 @@
 import { describe, expect, test } from "bun:test";
 import {
-  applyAnchorSplice,
+  applyMatcherSplice,
   extractJsonObject,
-  findAnchor,
-  parseAnchorFragment,
+  findMatcher,
+  parseMatcherFragment,
   structurallyEqual,
-} from "./anchor";
-import type { AnchorFragmentResult, SymbolRange } from "./anchor";
+} from "./matcher";
+import type { MatcherFragmentResult, SymbolRange } from "./matcher";
 import { buildIndexTolerant, findDefinition } from "./utility";
 
 describe("extractJsonObject", () => {
@@ -45,8 +45,8 @@ describe("extractJsonObject", () => {
   });
 });
 
-describe("parseAnchorFragment", () => {
-  function kinds(result: AnchorFragmentResult): string[] {
+describe("parseMatcherFragment", () => {
+  function kinds(result: MatcherFragmentResult): string[] {
     if (result.kind !== "parsed") {
       throw new Error(`expected a parsed fragment, got ${result.message}`);
     }
@@ -54,22 +54,22 @@ describe("parseAnchorFragment", () => {
   }
 
   test("parses a statement", () => {
-    expect(kinds(parseAnchorFragment("return 1;"))).toEqual(["ReturnStatement"]);
+    expect(kinds(parseMatcherFragment("return 1;"))).toEqual(["ReturnStatement"]);
   });
 
   test("parses a class member", () => {
-    expect(kinds(parseAnchorFragment('render(): string {\n  return "x";\n}'))).toContain(
+    expect(kinds(parseMatcherFragment('render(): string {\n  return "x";\n}'))).toContain(
       "MethodDeclaration",
     );
-    expect(kinds(parseAnchorFragment("count = 1;"))).toContain("PropertyDeclaration");
+    expect(kinds(parseMatcherFragment("count = 1;"))).toContain("PropertyDeclaration");
   });
 
   test("parses a sub-expression", () => {
-    expect(kinds(parseAnchorFragment("x + 1"))).toContain("BinaryExpression");
+    expect(kinds(parseMatcherFragment("x + 1"))).toContain("BinaryExpression");
   });
 
   test("reports unparseable fragments with a message", () => {
-    const result = parseAnchorFragment("if (");
+    const result = parseMatcherFragment("if (");
     expect(result.kind).toBe("unparseable");
     if (result.kind === "unparseable") {
       expect(result.message).not.toBe("");
@@ -77,7 +77,7 @@ describe("parseAnchorFragment", () => {
   });
 
   test("records a multi-statement fragment as a run alternative", () => {
-    const result = parseAnchorFragment("const a = 1;\nconst b = 2;\nreturn a;");
+    const result = parseMatcherFragment("const a = 1;\nconst b = 2;\nreturn a;");
     expect(result.kind).toBe("parsed");
     if (result.kind !== "parsed") {
       return;
@@ -90,7 +90,7 @@ describe("parseAnchorFragment", () => {
   });
 
   test("keeps a single statement as a node without a run", () => {
-    const result = parseAnchorFragment("return 1;");
+    const result = parseMatcherFragment("return 1;");
     expect(result.kind).toBe("parsed");
     if (result.kind !== "parsed") {
       return;
@@ -143,11 +143,11 @@ function symbolRange(source: string, name: string, kind: string): SymbolRange {
   return entry.node;
 }
 
-describe("findAnchor", () => {
+describe("findMatcher", () => {
   test("matches an exact nested statement and only inside the symbol", () => {
     const range = symbolRange(HELPER, "answer", "function");
     const start = HELPER.indexOf("return 1;", range.start);
-    const result = findAnchor(HELPER, range, "return 1;");
+    const result = findMatcher(HELPER, range, "return 1;");
     expect(result).toEqual({ kind: "match", start, end: start + "return 1;".length });
     if (result.kind === "match") {
       expect(HELPER.slice(result.start, result.end)).toBe("return 1;");
@@ -156,35 +156,35 @@ describe("findAnchor", () => {
 
   test("does not match a structurally equal node elsewhere in the file", () => {
     const range = symbolRange(HELPER, "answer", "function");
-    expect(findAnchor(HELPER, range, "const x = 1;")).toEqual({ kind: "not-found" });
+    expect(findMatcher(HELPER, range, "const x = 1;")).toEqual({ kind: "not-found" });
   });
 
   test("matches the whole symbol as the prompt shows it", () => {
     const range = symbolRange(HELPER, "answer", "function");
-    const anchor = HELPER.slice(range.start, range.end);
-    expect(findAnchor(HELPER, range, anchor)).toEqual({
+    const matcher = HELPER.slice(range.start, range.end);
+    expect(findMatcher(HELPER, range, matcher)).toEqual({
       kind: "match",
       start: range.start,
       end: range.end,
     });
   });
 
-  test("ignores whitespace and comments in the anchor", () => {
+  test("ignores whitespace and comments in the matcher", () => {
     const range = symbolRange(HELPER, "answer", "function");
     const start = HELPER.indexOf("return 1;", range.start);
-    const result = findAnchor(HELPER, range, "return   /* keep */   1;");
+    const result = findMatcher(HELPER, range, "return   /* keep */   1;");
     expect(result).toEqual({ kind: "match", start, end: start + "return 1;".length });
   });
 
   test("reports identifier mismatches as not-found", () => {
     const range = symbolRange(HELPER, "answer", "function");
-    expect(findAnchor(HELPER, range, "return 2;")).toEqual({ kind: "not-found" });
+    expect(findMatcher(HELPER, range, "return 2;")).toEqual({ kind: "not-found" });
   });
 
   test("reports duplicates as ambiguous", () => {
     const source = ["function twice(): number {", "  return 1;", "  return 1;", "}", ""].join("\n");
     const range = symbolRange(source, "twice", "function");
-    expect(findAnchor(source, range, "return 1;")).toEqual({ kind: "ambiguous", matches: 2 });
+    expect(findMatcher(source, range, "return 1;")).toEqual({ kind: "ambiguous", matches: 2 });
   });
 
   test("matches a sub-expression fragment", () => {
@@ -196,7 +196,7 @@ describe("findAnchor", () => {
       "",
     ].join("\n");
     const range = symbolRange(source, "f", "function");
-    const result = findAnchor(source, range, "x + 1");
+    const result = findMatcher(source, range, "x + 1");
     expect(result.kind).toBe("match");
     if (result.kind === "match") {
       expect(source.slice(result.start, result.end)).toBe("x + 1");
@@ -213,17 +213,17 @@ describe("findAnchor", () => {
       "",
     ].join("\n");
     const range = symbolRange(source, "Widget", "class");
-    const anchor = ["render(): string {", '    return "x";', "  }"].join("\n");
-    const result = findAnchor(source, range, anchor);
+    const matcher = ["render(): string {", '    return "x";', "  }"].join("\n");
+    const result = findMatcher(source, range, matcher);
     expect(result.kind).toBe("match");
     if (result.kind === "match") {
-      expect(source.slice(result.start, result.end)).toBe(anchor);
+      expect(source.slice(result.start, result.end)).toBe(matcher);
     }
   });
 
-  test("reports unparseable anchors", () => {
+  test("reports unparseable matchers", () => {
     const range = symbolRange(HELPER, "answer", "function");
-    const result = findAnchor(HELPER, range, "if (");
+    const result = findMatcher(HELPER, range, "if (");
     expect(result.kind).toBe("unparseable");
   });
 
@@ -237,13 +237,13 @@ describe("findAnchor", () => {
       "",
     ].join("\n");
     const range = symbolRange(source, "f", "function");
-    const anchor = ["const a = 1;", "  const b = 2;", "  return a + b;"].join("\n");
+    const matcher = ["const a = 1;", "  const b = 2;", "  return a + b;"].join("\n");
     const start = source.indexOf("const a = 1;");
     const end = source.indexOf("return a + b;") + "return a + b;".length;
-    const result = findAnchor(source, range, anchor);
+    const result = findMatcher(source, range, matcher);
     expect(result).toEqual({ kind: "match", start, end });
     if (result.kind === "match") {
-      expect(source.slice(result.start, result.end)).toBe(anchor);
+      expect(source.slice(result.start, result.end)).toBe(matcher);
     }
   });
 
@@ -258,8 +258,8 @@ describe("findAnchor", () => {
       "",
     ].join("\n");
     const range = symbolRange(source, "f", "function");
-    const anchor = ["const a = 1;", "  const b = 9;", "  const c = 3;"].join("\n");
-    expect(findAnchor(source, range, anchor)).toEqual({ kind: "not-found" });
+    const matcher = ["const a = 1;", "  const b = 9;", "  const c = 3;"].join("\n");
+    expect(findMatcher(source, range, matcher)).toEqual({ kind: "not-found" });
   });
 
   test("reports two identical runs as ambiguous", () => {
@@ -275,8 +275,8 @@ describe("findAnchor", () => {
       "",
     ].join("\n");
     const range = symbolRange(source, "f", "function");
-    const anchor = ["const a = 1;", "  const b = 2;", "  return a;"].join("\n");
-    expect(findAnchor(source, range, anchor)).toEqual({ kind: "ambiguous", matches: 2 });
+    const matcher = ["const a = 1;", "  const b = 2;", "  return a;"].join("\n");
+    expect(findMatcher(source, range, matcher)).toEqual({ kind: "ambiguous", matches: 2 });
   });
 
   test("does not match a run across a container boundary", () => {
@@ -290,22 +290,22 @@ describe("findAnchor", () => {
       "",
     ].join("\n");
     const range = symbolRange(source, "f", "function");
-    const anchor = ["const a = 1;", "  return a;"].join("\n");
-    expect(findAnchor(source, range, anchor)).toEqual({ kind: "not-found" });
+    const matcher = ["const a = 1;", "  return a;"].join("\n");
+    expect(findMatcher(source, range, matcher)).toEqual({ kind: "not-found" });
   });
 });
 
-describe("applyAnchorSplice", () => {
+describe("applyMatcherSplice", () => {
   test("replaces the matched range", () => {
-    expect(applyAnchorSplice("abcdef", 1, 3, "XY")).toBe("aXYdef");
+    expect(applyMatcherSplice("abcdef", 1, 3, "XY")).toBe("aXYdef");
   });
 
   test("supports deleting the matched range with an empty replacement", () => {
     const source = "function f() {\n  return 1;\n}\n";
-    const result = findAnchor(source, symbolRange(source, "f", "function"), "return 1;");
+    const result = findMatcher(source, symbolRange(source, "f", "function"), "return 1;");
     expect(result.kind).toBe("match");
     if (result.kind === "match") {
-      expect(applyAnchorSplice(source, result.start, result.end, "")).toBe(
+      expect(applyMatcherSplice(source, result.start, result.end, "")).toBe(
         "function f() {\n  \n}\n",
       );
     }

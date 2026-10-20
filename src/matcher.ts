@@ -63,12 +63,12 @@ export function extractJsonObject(text: string): unknown {
   throw new Error("no complete JSON object found in the response");
 }
 
-export type AnchorFragmentResult =
+export type MatcherFragmentResult =
   | { kind: "parsed"; nodes: Node[]; runs?: Node[][] }
   | { kind: "unparseable"; message: string };
 
-const ANCHOR_SHAPE_ERROR =
-  "the anchor does not form a single statement, member, expression, or contiguous run of statements";
+const MATCHER_SHAPE_ERROR =
+  "the matcher does not form a single statement, member, expression, or contiguous run of statements";
 
 interface FragmentAttempt {
   node: Node | null;
@@ -116,18 +116,18 @@ function attemptRunFragment(source: string): RunAttempt {
 }
 
 /**
- * Parses an anchor with wrapper heuristics in priority order: a whole
+ * Parses a matcher with wrapper heuristics in priority order: a whole
  * statement, then a single class-body member, then an expression, and finally
  * a contiguous run of statements (>1 top-level statement). Each successful
  * single-node wrapper contributes one node; a multi-statement fragment
  * contributes one run. Matching tries the single nodes first, then the runs.
  */
-export function parseAnchorFragment(anchor: string): AnchorFragmentResult {
+export function parseMatcherFragment(matcher: string): MatcherFragmentResult {
   const nodes: Node[] = [];
   const runs: Node[][] = [];
   let firstError: string | null = null;
 
-  const statement = attemptFragment(anchor, (program) =>
+  const statement = attemptFragment(matcher, (program) =>
     program.body.length === 1 ? (program.body[0] ?? null) : null,
   );
   firstError ??= statement.error;
@@ -135,7 +135,7 @@ export function parseAnchorFragment(anchor: string): AnchorFragmentResult {
     nodes.push(statement.node);
   }
 
-  const member = attemptFragment(`class __Anchor { ${anchor} }`, (program) => {
+  const member = attemptFragment(`class __Matcher { ${matcher} }`, (program) => {
     const declaration = program.body.length === 1 ? (program.body[0] ?? null) : null;
     if (
       declaration === null ||
@@ -151,7 +151,7 @@ export function parseAnchorFragment(anchor: string): AnchorFragmentResult {
     nodes.push(member.node);
   }
 
-  const expression = attemptFragment(`const __anchor = ${anchor};`, (program) => {
+  const expression = attemptFragment(`const __matcher = ${matcher};`, (program) => {
     const declaration = program.body.length === 1 ? (program.body[0] ?? null) : null;
     if (
       declaration === null ||
@@ -167,14 +167,14 @@ export function parseAnchorFragment(anchor: string): AnchorFragmentResult {
     nodes.push(expression.node);
   }
 
-  const run = attemptRunFragment(anchor);
+  const run = attemptRunFragment(matcher);
   firstError ??= run.error;
   if (run.run !== null) {
     runs.push(run.run);
   }
 
   if (nodes.length === 0 && runs.length === 0) {
-    return { kind: "unparseable", message: firstError ?? ANCHOR_SHAPE_ERROR };
+    return { kind: "unparseable", message: firstError ?? MATCHER_SHAPE_ERROR };
   }
   return runs.length === 0 ? { kind: "parsed", nodes } : { kind: "parsed", nodes, runs };
 }
@@ -219,7 +219,7 @@ export interface SymbolRange {
   end: number;
 }
 
-export type AnchorResult =
+export type MatcherResult =
   | { kind: "match"; start: number; end: number }
   | { kind: "unparseable"; message: string }
   | { kind: "not-found" }
@@ -304,8 +304,8 @@ function collectCandidateNodes(value: unknown, symbol: SymbolRange, out: Candida
   collectChildNodes(record, symbol, out);
 }
 
-export function findAnchor(source: string, symbol: SymbolRange, anchor: string): AnchorResult {
-  const fragment = parseAnchorFragment(anchor);
+export function findMatcher(source: string, symbol: SymbolRange, matcher: string): MatcherResult {
+  const fragment = parseMatcherFragment(matcher);
   if (fragment.kind === "unparseable") {
     return fragment;
   }
@@ -365,7 +365,7 @@ export function findAnchor(source: string, symbol: SymbolRange, anchor: string):
   return { kind: "not-found" };
 }
 
-export function applyAnchorSplice(
+export function applyMatcherSplice(
   source: string,
   start: number,
   end: number,
