@@ -1,8 +1,13 @@
+import { readFileSync } from "node:fs";
+import type { Locator } from "./utility";
+
 export interface CliOptions {
   help: boolean;
   model: string;
   /** Opt-in multi-payload exchanges (#69); default off. */
   multiPayload: boolean;
+  /** Explicit addresses to edit (#81); null = the default discovery path. */
+  targets: Locator[] | null;
   /** stdout format (#80): `text` (default) or the machine-readable `json` result. */
   format: "text" | "json";
   /** Hard per-call token budget (#80); null = the loop default. */
@@ -53,10 +58,77 @@ function parseTokenBudget(value: string): number {
   return parsed;
 }
 
+function isRecord(value: unknown): value is Record<string, unknown> {
+  return typeof value === "object" && value !== null && !Array.isArray(value);
+}
+
+// One `--targets` entry: a non-empty string triple, mapped to a Locator with
+// `symbol` renamed to `name` (#81). Never silently drops an entry.
+function locatorFromTarget(value: unknown, index: number, file: string): Locator {
+  const where = `--targets entry ${index + 1} of ${JSON.stringify(file)}`;
+  if (!isRecord(value)) {
+    throw new Error(`${where} must be an object {"path": ..., "symbol": ..., "kind": ...}`);
+  }
+  const fields: readonly [string, unknown][] = [
+    ["path", value["path"]],
+    ["symbol", value["symbol"]],
+    ["kind", value["kind"]],
+  ];
+  for (const [key, field] of fields) {
+    if (typeof field !== "string" || field.trim() === "") {
+      throw new Error(`${where} must carry a non-empty string "${key}"`);
+    }
+  }
+  return {
+    path: value["path"] as string,
+    name: value["symbol"] as string,
+    kind: value["kind"] as string,
+  };
+}
+
+/**
+ * Read the `--targets <file.json>` address list (#81): either a top-level array
+ * or `{"targets": [...]}`, each entry a `{path, symbol, kind}` string triple.
+ * Throws a clear error for a missing file, invalid JSON, or a malformed entry.
+ */
+export function readTargetsFile(file: string): Locator[] {
+  let text: string;
+  try {
+    text = readFileSync(file, "utf8");
+  } catch (error) {
+    throw new Error(
+      `--targets could not read ${JSON.stringify(file)}: ${error instanceof Error ? error.message : String(error)}`,
+    );
+  }
+  let parsed: unknown;
+  try {
+    parsed = JSON.parse(text);
+  } catch (error) {
+    throw new Error(
+      `--targets file ${JSON.stringify(file)} is not valid JSON: ${error instanceof Error ? error.message : String(error)}`,
+    );
+  }
+  const entries = Array.isArray(parsed)
+    ? parsed
+    : isRecord(parsed) && Array.isArray(parsed["targets"])
+      ? (parsed["targets"] as unknown[])
+      : null;
+  if (entries === null) {
+    throw new Error(
+      `--targets file ${JSON.stringify(file)} must be a JSON array or an object with a "targets" array`,
+    );
+  }
+  if (entries.length === 0) {
+    throw new Error(`--targets file ${JSON.stringify(file)} lists no targets`);
+  }
+  return entries.map((entry, index) => locatorFromTarget(entry, index, file));
+}
+
 export function parseArgs(argv: string[]): CliOptions {
   let help = false;
   let model = DEFAULT_MODEL;
   let multiPayload = false;
+  let targets: Locator[] | null = null;
   let format: "text" | "json" = "text";
   let tokenBudget: number | null = null;
   let checkCommand: string[] | null = null;
@@ -78,6 +150,12 @@ export function parseArgs(argv: string[]): CliOptions {
     if (arg === "--model" || arg.startsWith("--model=")) {
       const { value, next } = flagValue(argv, index, "--model");
       model = value;
+      index = next;
+      continue;
+    }
+    if (arg === "--targets" || arg.startsWith("--targets=")) {
+      const { value, next } = flagValue(argv, index, "--targets");
+      targets = readTargetsFile(value);
       index = next;
       continue;
     }
@@ -116,7 +194,7 @@ export function parseArgs(argv: string[]): CliOptions {
     }
     throw new Error(`unknown argument: ${arg}`);
   }
-  return { help, model, multiPayload, format, tokenBudget, checkCommand, testCommand, cwd };
+  return { help, model, multiPayload, targets, format, tokenBudget, checkCommand, testCommand, cwd };
 }
 
 export function helpText(): string {
@@ -124,8 +202,8 @@ export function helpText(): string {
     "typescript-coder — read an issue on stdin and apply a verified LLM edit",
     "",
     "Usage:",
-    "  tc [--model <id>] [--format <text|json>] [--token-budget <n>] [--multi-payload] < issue.txt",
-    "  bun run src/main.ts [--model <id>] [--format <text|json>] [--token-budget <n>] [--multi-payload] < issue.txt",
+    "  tc [--model <id>] [--format <text|json>] [--token-budget <n>] [--multi-payload] [--targets <file>] < issue.txt",
+    "  bun run src/main.ts [--model <id>] [--format <text|json>] [--token-budget <n>] [--multi-payload] [--targets <file>] < issue.txt",
     "",
     "Options:",
     "  --model <id>       model id for the OpenAI-compatible provider (default: deepseek-v4.1-flash)",
@@ -142,6 +220,10 @@ export function helpText(): string {
     "  --multi-payload    opt in to multi-payload exchanges (#69): a modify reply may",
     '                     batch path-independent edits in one {"payloads": [...]} object',
     "                     (default: off, one flat payload per exchange)",
+    "  --targets <file>   edit an explicit address list from a JSON file (#81); the",
+    '                     file is an array or {"targets": [...]} of {"path","symbol",',
+    '                     "kind"} entries; each file is edited once per exchange and',
+    "                     same-file targets are sequenced across exchanges",
     "  -h, --help         show this help and exit",
     "",
     "Environment:",

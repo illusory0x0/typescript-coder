@@ -7,6 +7,7 @@ import { OpenAIProvider, readConfigFromEnv } from "./openai";
 import type { CliOptions } from "./cli";
 import type { LoopResult, ProviderLike } from "./loop";
 import type { SubagentResult } from "./result";
+import type { Locator } from "./utility";
 
 export interface MainIo {
   out: (line: string) => void;
@@ -20,6 +21,8 @@ export interface RunMainOptions {
   io?: MainIo;
   /** Opt-in multi-payload exchanges (#69); default off. */
   multiPayload?: boolean;
+  /** Explicit addresses to edit (#81); absent = the default discovery path. */
+  targets?: Locator[];
   /** stdout format (#80); default "text". */
   format?: "text" | "json";
   /** Hard per-call token budget (#80); defaults to the loop's own default. */
@@ -67,7 +70,12 @@ function emitTextResult(io: MainIo, cwd: string, result: LoopResult): number {
 
 // JSON path (#80): exactly one result object on stdout; every other line
 // (failure artifact, diagnostics, explanation) goes to stderr.
-function emitJsonResult(io: MainIo, cwd: string, result: LoopResult): number {
+function emitJsonResult(
+  io: MainIo,
+  cwd: string,
+  result: LoopResult,
+  targets?: Locator[],
+): number {
   if (!result.ok) {
     const artifactPath = writeFailureArtifact({ rootDir: cwd, result });
     if (artifactPath !== null) {
@@ -76,7 +84,19 @@ function emitJsonResult(io: MainIo, cwd: string, result: LoopResult): number {
     io.err(result.diagnostics ?? "verification failed");
     io.err(result.explanation ?? NO_EXPLANATION);
   }
-  io.out(serializeSubagentResult(buildSubagentResult({ result, tokens: result.tokens })));
+  io.out(
+    serializeSubagentResult(
+      buildSubagentResult({
+        result,
+        tokens: result.tokens,
+        targets: targets?.map((target) => ({
+          path: target.path,
+          symbol: target.name,
+          kind: target.kind,
+        })),
+      }),
+    ),
+  );
   return result.ok ? 0 : 1;
 }
 
@@ -101,6 +121,7 @@ export async function runMain(options: RunMainOptions): Promise<number> {
       issue,
       provider: options.provider,
       multiPayload: options.multiPayload === true,
+      targets: options.targets,
       tokenBudget: options.tokenBudget,
       checkCommand: options.checkCommand,
       testCommand: options.testCommand,
@@ -116,7 +137,7 @@ export async function runMain(options: RunMainOptions): Promise<number> {
     return 1;
   }
   return format === "json"
-    ? emitJsonResult(io, options.cwd, result)
+    ? emitJsonResult(io, options.cwd, result, options.targets)
     : emitTextResult(io, options.cwd, result);
 }
 
@@ -150,6 +171,7 @@ if (import.meta.main) {
     provider,
     io: { out: console.log, err: console.error },
     multiPayload: cli.multiPayload,
+    targets: cli.targets ?? undefined,
     format: cli.format,
     tokenBudget: cli.tokenBudget ?? undefined,
     checkCommand: cli.checkCommand ?? undefined,

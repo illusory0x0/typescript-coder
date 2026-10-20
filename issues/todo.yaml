@@ -18,14 +18,6 @@
   parent: null
   deps: []
   file: 0046-harness-optimization-v3-agent-loop-context-structure-editor.md
-- id: 81
-  title: "Explicit-targets multi-file mode (--targets)"
-  status: todo
-  priority: medium
-  milestone: null
-  parent: 79
-  deps: [80]
-  file: 0081-explicit-targets-multi-file-mode-targets.md
 - id: 82
   title: "Document the opencode to tc delegation recipe"
   status: todo

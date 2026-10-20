@@ -1,7 +1,7 @@
 ---
 id: 81
 title: "Explicit-targets multi-file mode (--targets)"
-status: todo
+status: done
 priority: medium
 milestone: null
 parent: 79
@@ -50,3 +50,4 @@ bun test
 
 - Depends on C1. Builds on #69; same-file multi-declaration is #78 (non-goal).
 - Fallback for correctness: sequence one declaration per exchange.
+- Implemented. LoopOptions.targets seeds targets mode: the model pick is skipped, seedNextTarget resolves each pending target strictly (#48) and pins it (a miss/ambiguity is an address record, never a silent pick), and every content prompt (retries included) uses buildTargetsEditPrompt naming the pending addresses and demanding one flat payload per file in a {"payloads"} batch — closing the #69 compliance gap. validateTargetsReply requires the first payload to echo the pin, every payload to name a pending target, and at most one payload per file; same-file targets are sequenced across exchanges (re-pin + continue) so a round's edits land before its single verification; a passing round with targets still pending opens a fresh round, and unapplied targets are reported via withTargetsReport (run not ok). Targets mode forces the batch shape on; with no targets the default path is byte-identical. LoopResult.appliedTargets / LoopRecord.appliedLocators feed result.files. CLI --targets <file> reads an array or {"targets":[...]} of {path,symbol,kind} triples (validated, both flag forms); main.ts threads targets and echoes them in the JSON result. Tests: cross-file batch success (asserts the prompt names both addresses and payloads), same-file sequencing (one passing verification, two applied rows), missed target reported, non-unique target staged-rejected, parseArgs shapes/throws, and a result files-expansion test. Verification: bunx tsc --noEmit clean; bun test 851 pass; bun run accept 5/5.

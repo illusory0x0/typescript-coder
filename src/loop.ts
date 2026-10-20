@@ -297,6 +297,44 @@ ${numbered}\n\`\`\`
 `;
 }
 
+// Explicit-targets mode (#81): names the pending target addresses the model must
+// cover with a batch, one flat payload per file. Same-file targets are named one
+// at a time because they are sequenced across exchanges. The same lead is
+// repeated on a retry so a non-batch reply cannot pass.
+export function buildTargetsEditPrompt(
+  pinnedAddressJson: string,
+  symbolSource: string,
+  pending: readonly Locator[],
+): string {
+  const numbered = numberedSourceBlock(symbolSource);
+  const listed = pending
+    .map(
+      (target) =>
+        `- {"path": ${JSON.stringify(target.path)}, "symbol": ${JSON.stringify(target.name)}, "kind": ${JSON.stringify(target.kind)}}`,
+    )
+    .join("\n");
+  return `Output the edit(s) for the requested targets, with no markdown fences and no explanations. Reply with a {"payloads": [ ... ]} object carrying exactly one flat edit payload per file: the first payload echoes the pinned address below, and each further payload names one of the other requested addresses (a different file). A single target may still be sent as one flat object. Every payload's address must be one of the requested targets, and at most one target per file may appear in one exchange — same-file targets are addressed in successive exchanges.
+
+Requested targets:
+${listed}
+
+"matcher" is optional per payload: a complete snippet copied from the current source; omit it for a whole-symbol rewrite. ${RANGE_SELECTOR_NOTE} Keep leading keywords and modifiers consistent (do not re-add \`export\` the declaration omitted). Every replacement must keep its file parseable.
+
+Pinned selection:
+
+\`\`\`json
+${pinnedAddressJson}
+\`\`\`
+
+Current source:
+
+Each line below is prefixed with its 1-based line number (the optional "range" coordinates; columns count the source text after the \`N | \` prefix).
+
+\`\`\`ts
+${numbered}\n\`\`\`
+`;
+}
+
 export function buildCreatePrompt(addressJson: string, path: string): string {
   return `The pinned selection uses mode "create". Output ONE flat JSON object {"path": ..., "symbol": ..., "kind": ..., "replacement": ...} with no markdown fences and no explanations: echo the pinned address {path, symbol, kind}, put the COMPLETE declaration in "replacement", and omit "matcher" and "range". The target file may not exist yet; the declaration is appended to it. The replacement must keep the file parseable.
 
@@ -1102,6 +1140,48 @@ function echoDiagnostics(pinned: Locator, payload: Locator): string {
   ].join("\n");
 }
 
+/**
+ * Validate one explicit-targets reply (#81): the first payload must echo the
+ * pinned address, every payload must address one of the pending targets, and at
+ * most one payload may appear per file (same-file targets are sequenced across
+ * exchanges). Returns the covered addresses or a staged diagnostic — never a
+ * silent pick.
+ */
+function validateTargetsReply(
+  payloads: readonly { locator: Locator }[],
+  pinnedLocator: Locator,
+  queue: readonly Locator[],
+): { ok: true; covered: Locator[] } | { ok: false; diagnostics: string } {
+  const first = payloads[0];
+  if (first === undefined) {
+    return { ok: false, diagnostics: "stage: protocol\nthe reply carried no edit payloads" };
+  }
+  if (!addressEquals(pinnedLocator, first.locator)) {
+    return { ok: false, diagnostics: echoDiagnostics(pinnedLocator, first.locator) };
+  }
+  const pendingJson = new Set(queue.map((target) => addressJson(target)));
+  const paths = new Set<string>();
+  const covered: Locator[] = [];
+  for (const payload of payloads) {
+    const key = addressJson(payload.locator);
+    if (!pendingJson.has(key)) {
+      return {
+        ok: false,
+        diagnostics: `stage: address\nthe payload ${key} is not one of the requested pending targets; address only the named targets`,
+      };
+    }
+    if (paths.has(payload.locator.path)) {
+      return {
+        ok: false,
+        diagnostics: `stage: address\nthis exchange carries two payloads for ${JSON.stringify(payload.locator.path)}; allow at most one target per file per exchange and sequence same-file targets across exchanges`,
+      };
+    }
+    paths.add(payload.locator.path);
+    covered.push(payload.locator);
+  }
+  return { ok: true, covered };
+}
+
 function selectionFromResponse(response: ChatResponse): SelectionResponse {
   const toolCall = response.toolCalls[0];
   if (toolCall === undefined) {
@@ -1205,6 +1285,13 @@ export interface LoopOptions {
    * off keeps the exact single-payload behavior.
    */
   multiPayload?: boolean;
+  /**
+   * Explicit-targets mode (#81): the addresses to edit, one entry per desired
+   * declaration. When non-empty the run skips model selection, forces the
+   * batch shape, names the pending addresses in each edit prompt, and sequences
+   * same-file targets across exchanges. Absent/empty keeps the discovery path.
+   */
+  targets?: readonly Locator[];
 }
 
 /** Outcome of one model exchange inside Edit. */
@@ -1554,6 +1641,11 @@ export interface LoopRecord {
   payloads?: number;
   /** Provider tool calls in the reply that produced this row (#69); 0 on verification rows. */
   toolCalls?: number;
+  /**
+   * Addresses this applied exchange covered (#81): one per batch payload in
+   * explicit-targets mode, so the result can name every file the exchange wrote.
+   */
+  appliedLocators?: Locator[];
   /** Verification rows: failure signature (tsc diagnostics + failing tests) observation (#36). */
   signature: number | null;
   /** Typed edit-rejection cause (#56); absent on success and verification rows. */
@@ -1663,6 +1755,11 @@ export interface LoopResult {
   terminationReason?: TerminationReason;
   /** Provider token spend of the run (#80); zeros when no provider usage was seen. */
   tokens: LoopTokens;
+  /**
+   * Explicit-targets mode (#81): every requested address that was applied, in
+   * order. Absent on the default discovery path.
+   */
+  appliedTargets?: Locator[];
 }
 
 type Selection =
@@ -1772,6 +1869,8 @@ function recordRow(input: {
   payloads?: number;
   /** Provider tool calls in the reply (#69); defaults 0. */
   toolCalls?: number;
+  /** Explicit addresses covered by an applied exchange (#81); omitted by default. */
+  appliedLocators?: Locator[];
   /** Exact replacement size when it differs from `replacement.length` (batch sum, #69). */
   replacementChars?: number;
 }): LoopRecord {
@@ -1792,6 +1891,7 @@ function recordRow(input: {
     toolCalls: input.toolCalls ?? 0,
     signature: input.signature ?? null,
     cause: input.cause,
+    appliedLocators: input.appliedLocators,
   };
 }
 
@@ -3631,9 +3731,18 @@ export async function runLoop(options: LoopOptions): Promise<LoopResult> {
   const index = build.index;
   const skipped = build.skipped;
   const specFiles = selectSpecFiles(options.issue, files);
+  // Explicit-targets mode (#81): the run edits exactly these addresses and
+  // forces the #69 batch shape so one exchange can cover several files.
+  const targets = options.targets ?? [];
+  const targetsMode = targets.length > 0;
+  const multiPayload = options.multiPayload === true || targetsMode;
+  // Pending targets (not yet applied), applied targets, and targets that never
+  // resolved to a unique modify-able declaration.
+  const targetQueue: Locator[] = [...targets];
+  const targetFailures: { locator: Locator; diagnostics: string }[] = [];
   const systemMessage: ChatMessage = {
     role: "system",
-    content: buildSystemPrompt(options.multiPayload === true),
+    content: buildSystemPrompt(multiPayload),
   };
   const issueMessage: ChatMessage = {
     role: "user",
@@ -3732,6 +3841,106 @@ export async function runLoop(options: LoopOptions): Promise<LoopResult> {
     diagnostics: string;
   } | null = null;
 
+  // Applied targets (#81): every address an applied exchange covered, in order,
+  // for the result report.
+  const appliedTargets: Locator[] = [];
+  // Set when a targets round passes verification but pending targets remain, so
+  // the outer loop opens a fresh round instead of returning success.
+  let continueTargets = false;
+  // The active coverable set for one exchange (#81): the first pending target
+  // per file, since same-file targets are sequenced across exchanges.
+  const activeTargets = (): Locator[] => {
+    const seen = new Set<string>();
+    const active: Locator[] = [];
+    for (const target of targetQueue) {
+      if (seen.has(target.path)) {
+        continue;
+      }
+      seen.add(target.path);
+      active.push(target);
+    }
+    return active;
+  };
+  // Resolve and pin the next pending target (#81), skipping any target that
+  // does not resolve to exactly one modify-able declaration — recorded as a
+  // staged diagnostic, never a silent pick. Returns false when none remain.
+  const seedNextTarget = (): boolean => {
+    while (targetQueue.length > 0) {
+      const next = targetQueue[0];
+      if (next === undefined) {
+        break;
+      }
+      const disk = readFileIfExists(join(cwd, next.path)) ?? "";
+      const resolution = resolveSelection(
+        cwd,
+        buildIndexTolerant([{ path: next.path, source: disk }]).index,
+        [{ path: next.path, source: disk }],
+        [],
+        { mode: "modify", locator: next },
+      );
+      if (!resolution.ok || resolution.selection.mode !== "modify") {
+        const diagnostic = resolution.ok
+          ? `stage: address\nthe target ${addressJson(next)} cannot be modified with mode "modify"`
+          : resolution.diagnostic;
+        targetQueue.shift();
+        targetFailures.push({ locator: next, diagnostics: diagnostic });
+        records.push(
+          recordRow({
+            row: records.length + 1,
+            iteration,
+            kind: "exchange",
+            exchange: null,
+            locator: next,
+            replacement: null,
+            diagnostics: diagnostic,
+            outcome: "address",
+            finishReason: null,
+          }),
+        );
+        continue;
+      }
+      const selection = resolution.selection;
+      pinned = { mode: "modify", locator: selection.locator };
+      pinnedAddressJson = pinJson(pinned);
+      baseSource = disk;
+      const symbolSource = disk.slice(selection.entry.node.start, selection.entry.node.end);
+      initialContentPrompt = buildTargetsEditPrompt(
+        addressJson(selection.locator),
+        symbolSource,
+        activeTargets(),
+      );
+      return true;
+    }
+    return false;
+  };
+  // The failure report naming any requested target that was never applied (#81).
+  const targetsDiagnostics = (): string | null => {
+    if (targetQueue.length === 0 && targetFailures.length === 0) {
+      return null;
+    }
+    const lines = ["requested targets not applied:"];
+    for (const failure of targetFailures) {
+      lines.push(`- ${addressJson(failure.locator)}: ${firstDiagnosticLine(failure.diagnostics)}`);
+    }
+    for (const pending of targetQueue) {
+      lines.push(`- ${addressJson(pending)}: never applied`);
+    }
+    return lines.join("\n");
+  };
+  const withTargetsReport = (diagnostics: string | null): string | null => {
+    if (!targetsMode) {
+      return diagnostics;
+    }
+    const report = targetsDiagnostics();
+    if (report === null) {
+      return diagnostics;
+    }
+    if (diagnostics === null || diagnostics.trim() === "") {
+      return report;
+    }
+    return `${diagnostics}\n\n${report}`;
+  };
+
   const success = (editedSource: string | null): LoopResult => ({
     ok: true,
     mode: pinned?.mode,
@@ -3744,27 +3953,31 @@ export async function runLoop(options: LoopOptions): Promise<LoopResult> {
     messages,
     skipped,
     tokens,
+    appliedTargets: targetsMode ? [...appliedTargets] : undefined,
   });
-
   // Termination step (#43): record rows are already pushed; the only remaining
   // action is exactly one summary call, then the run stops.
   const terminate = async (
     reason: TerminationReason,
     diagnostics: string | null,
-  ): Promise<LoopResult> => ({
-    ok: false,
-    mode: pinned?.mode,
-    locator: pinned?.locator ?? null,
-    filePath: pinned?.locator.path ?? null,
-    editedSource: null,
-    records,
-    diagnostics,
-    explanation: await explain(options.provider, messages, temperature, reason, diagnostics),
-    messages,
-    skipped,
-    terminationReason: reason,
-    tokens,
-  });
+  ): Promise<LoopResult> => {
+    const reported = withTargetsReport(diagnostics);
+    return {
+      ok: false,
+      mode: pinned?.mode,
+      locator: pinned?.locator ?? null,
+      filePath: pinned?.locator.path ?? null,
+      editedSource: null,
+      records,
+      diagnostics: reported,
+      explanation: await explain(options.provider, messages, temperature, reason, reported),
+      messages,
+      skipped,
+      terminationReason: reason,
+      tokens,
+      appliedTargets: targetsMode ? [...appliedTargets] : undefined,
+    };
+  };
 
   let iteration = 0;
   // STOP (#52/#54): the reply to a continuation prompt or to the no-progress
@@ -3799,6 +4012,7 @@ export async function runLoop(options: LoopOptions): Promise<LoopResult> {
       return await terminate("edit-exhausted", capDiagnostics(pendingDiagnostics));
     }
     initialContentPrompt = null;
+    continueTargets = false;
     let verificationFailed = false;
     // True once this round writes an edit; a round that ends without one is a
     // no-progress round (#60).
@@ -3869,6 +4083,7 @@ export async function runLoop(options: LoopOptions): Promise<LoopResult> {
     // previous round just crossed. A selection continuation has no pinned
     // target and keeps its own STOP framing.
     const stalledAsk =
+      !targetsMode &&
       pinned !== null &&
       isStalledAskMilestone(stalledRounds) &&
       (pendingContinuation !== null || iterationOpenedBy !== null);
@@ -3927,8 +4142,19 @@ export async function runLoop(options: LoopOptions): Promise<LoopResult> {
           digest: digestText(),
           failureHistory,
           stalled: stalledInfo,
-          multiPayload: options.multiPayload === true,
+          multiPayload: multiPayload,
         });
+      }
+    }
+
+    // Explicit-targets mode (#81): the target queue drives every round — there
+    // is no model pick and no #52 round continuation. Seed (or advance to) the
+    // next pending target and name the pending addresses in its edit prompt.
+    // With no pending target left, fall through to the ordinary repair path.
+    if (targetsMode && targetQueue.length > 0) {
+      continuation = null;
+      if (!seedNextTarget() && pendingDiagnostics === null) {
+        return await terminate("edit-exhausted", null);
       }
     }
 
@@ -4095,7 +4321,7 @@ export async function runLoop(options: LoopOptions): Promise<LoopResult> {
           initialContentPrompt = buildEditPrompt(
             addressJson(selection.locator),
             symbolSource,
-            options.multiPayload === true,
+            multiPayload,
           );
         } else {
           initialContentPrompt = buildCreatePrompt(addressJson(selection.locator), selection.path);
@@ -4118,7 +4344,27 @@ export async function runLoop(options: LoopOptions): Promise<LoopResult> {
       // #52 continuation — never the fresh post-pick edit prompt. Only a repair
       // exchange accepts a self-verification request and offers it in the prompt.
       let repairExchange: boolean;
-      if (exchange === 1 && continuationPrompt !== null) {
+      if (targetsMode && targetQueue.length > 0) {
+        // Explicit-targets mode (#81): every content prompt names the pending
+        // targets (and, after a rejection, the diagnostics) so the model must
+        // emit the batch covering them.
+        const currentSource = currentSourceForPrompt(
+          "modify",
+          target,
+          pinnedTarget.locator,
+          diskSource,
+        );
+        let targetsPrompt = buildTargetsEditPrompt(
+          addressJson(pinnedTarget.locator),
+          truncateSource(currentSource),
+          activeTargets(),
+        );
+        if (lastDiagnostics !== null) {
+          targetsPrompt += `\nThe previous exchange was rejected. Diagnostics:\n\n\`\`\`\n${lastDiagnostics}\n\`\`\`\n`;
+        }
+        contentPrompt = targetsPrompt;
+        repairExchange = lastDiagnostics !== null;
+      } else if (exchange === 1 && continuationPrompt !== null) {
         // Round-level continuation (#52): the first exchange of a continued
         // round shows the continuation prompt instead of the echo of a pick.
         contentPrompt = continuationPrompt;
@@ -4178,7 +4424,7 @@ export async function runLoop(options: LoopOptions): Promise<LoopResult> {
           // Per-cause rejection correction (#56): only edit retries carry the
           // class-specific lead; verification-repair prompts keep the default.
           correction: lastFailure === "edit" ? (lastCorrection ?? undefined) : undefined,
-          multiPayload: options.multiPayload === true,
+          multiPayload: multiPayload,
           selfCheck: selfCheck ?? undefined,
         });
         repairExchange = true;
@@ -4193,7 +4439,7 @@ export async function runLoop(options: LoopOptions): Promise<LoopResult> {
       try {
         response = await options.provider.chat(messages, undefined, exchangeOptions);
       } catch (error) {
-        const diagnostics = `provider error: ${errorMessage(error)}`;
+        const diagnostics = withTargetsReport(`provider error: ${errorMessage(error)}`) ?? "";
         return {
           ok: false,
           mode: pinnedTarget.mode,
@@ -4250,7 +4496,7 @@ export async function runLoop(options: LoopOptions): Promise<LoopResult> {
       if (
         exchange === 1 &&
         decisionTurn &&
-        !isEditPayloadReply(response.content ?? "", options.multiPayload === true)
+        !isEditPayloadReply(response.content ?? "", multiPayload)
       ) {
         pendingApproach = clampText(response.content ?? "", APPROACH_LIMIT);
         continue;
@@ -4302,11 +4548,15 @@ export async function runLoop(options: LoopOptions): Promise<LoopResult> {
             return await terminate("edit-exhausted", capDiagnostics(iterationOpenedBy));
           }
           // Round exhaustion below the cap (#52): continue with a fresh round.
-          continuation = {
-            round: iteration,
-            pick: false,
-            diagnostics: combinedDiagnostics(iterationOpenedBy, lastDiagnostics),
-          };
+          // In explicit-targets mode the queue drives the run, so exhaustion
+          // ends the round and the next one re-seeds the pending target.
+          if (!targetsMode) {
+            continuation = {
+              round: iteration,
+              pick: false,
+              diagnostics: combinedDiagnostics(iterationOpenedBy, lastDiagnostics),
+            };
+          }
           break;
         }
         continue;
@@ -4358,6 +4608,9 @@ export async function runLoop(options: LoopOptions): Promise<LoopResult> {
         }
       }
       let payload: EditPayload | null = null;
+      // Explicit-targets mode (#81): the pending targets this exchange covers,
+      // validated before any splice. Empty outside targets mode.
+      let coveredTargets: Locator[] = [];
       // Opt-in multi-payload variant (#69): the reply may carry a
       // `{"payloads": [...]}` batch. `batchCarried` keeps every payload that
       // parsed, even when the batch was rejected at parse time (duplicate
@@ -4392,7 +4645,7 @@ export async function runLoop(options: LoopOptions): Promise<LoopResult> {
       let addressUndeclaredName: string | null = null;
       if (failure !== null) {
         // Refused self-check request: no payload to parse.
-      } else if (options.multiPayload === true) {
+      } else if (multiPayload) {
         const parsed = parseEditResponseList(content);
         if (parsed.ok) {
           if (parsed.batch && pinnedTarget.mode !== "modify") {
@@ -4431,7 +4684,26 @@ export async function runLoop(options: LoopOptions): Promise<LoopResult> {
         );
         replacement = batchCarried[0]?.replacement ?? null;
       }
-      if (payload !== null) {
+      // Explicit-targets mode (#81): every payload must address one of the
+      // pending targets, one per file, with the first echoing the pin. A reply
+      // that is not a valid batch is a staged rejection, never a silent pick.
+      if (targetsMode && failure === null) {
+        const replyPayloads = payload !== null ? [payload] : batch !== null ? batch : [];
+        if (replyPayloads.length > 0) {
+          const validated = validateTargetsReply(
+            replyPayloads,
+            pinnedTarget.locator,
+            targetQueue,
+          );
+          if (!validated.ok) {
+            failure = validated.diagnostics;
+            failureStage = validated.diagnostics.startsWith("stage: echo") ? "echo" : "address";
+          } else {
+            coveredTargets = validated.covered;
+          }
+        }
+      }
+      if (failure === null && payload !== null) {
         replacement = payload.replacement;
         gateReplacement = payload.replacement;
         if (
@@ -4555,7 +4827,7 @@ export async function runLoop(options: LoopOptions): Promise<LoopResult> {
       // region, and nothing is written; the record's outcome and cause stay
       // those of the first failure.
       const batchWrites: { path: string; source: string }[] = [];
-      if (batch !== null) {
+      if (failure === null && batch !== null) {
         const first = batch[0];
         if (first === undefined) {
           // Unreachable: the parser guarantees a non-empty payload list.
@@ -4921,11 +5193,15 @@ export async function runLoop(options: LoopOptions): Promise<LoopResult> {
             return await terminate("edit-exhausted", capDiagnostics(iterationOpenedBy));
           }
           // Round exhaustion below the cap (#52): continue with a fresh round.
-          continuation = {
-            round: iteration,
-            pick: false,
-            diagnostics: combinedDiagnostics(iterationOpenedBy, lastDiagnostics),
-          };
+          // In explicit-targets mode the queue drives the run, so exhaustion
+          // ends the round and the next one re-seeds the pending target.
+          if (!targetsMode) {
+            continuation = {
+              round: iteration,
+              pick: false,
+              diagnostics: combinedDiagnostics(iterationOpenedBy, lastDiagnostics),
+            };
+          }
           break;
         }
         continue;
@@ -4943,6 +5219,18 @@ export async function runLoop(options: LoopOptions): Promise<LoopResult> {
       // An applied edit ends the rejection chain (#56): the next rejection
       // starts a fresh streak regardless of the verification outcome below.
       clearRejectionPolicy();
+      // Explicit-targets mode (#81): retire the targets this exchange covered
+      // and remember them for the result.
+      if (targetsMode) {
+        for (const covered of coveredTargets) {
+          const coveredJson = addressJson(covered);
+          const index = targetQueue.findIndex((target) => addressJson(target) === coveredJson);
+          if (index >= 0) {
+            targetQueue.splice(index, 1);
+          }
+          appliedTargets.push(covered);
+        }
+      }
       // Resubmission guard (#48): an applied modify submission is remembered
       // so the next iteration cannot re-apply the identical payload/batch.
       if (batch !== null) {
@@ -4964,8 +5252,17 @@ export async function runLoop(options: LoopOptions): Promise<LoopResult> {
           payloads: batch !== null ? batch.length : payload !== null ? 1 : 0,
           toolCalls: response.toolCalls.length,
           replacementChars: batchReplacementChars ?? undefined,
+          appliedLocators: targetsMode ? coveredTargets : undefined,
         }),
       );
+      // Same-file sequencing (#81): a path-independent batch covers at most one
+      // target per file, so apply the next pending target in the next exchange
+      // of this round before verifying.
+      if (targetsMode && targetQueue.length > 0 && exchange < MAX_EDIT_EXCHANGES) {
+        if (seedNextTarget()) {
+          continue;
+        }
+      }
       // Verification: tsc + test once per iteration, no model exchange.
       const check = await checkTool(cwd, options.checkCommand, options.commandTimeoutMs);
       const test = await runVerificationTests(cwd, target, options);
@@ -4983,6 +5280,16 @@ export async function runLoop(options: LoopOptions): Promise<LoopResult> {
             finishReason: response.finishReason,
           }),
         );
+        if (targetsMode && (targetQueue.length > 0 || targetFailures.length > 0)) {
+          // Not every requested target was applied: do not claim success. If
+          // work remains, open a fresh round for the next target; otherwise
+          // report the unresolved targets through the termination step.
+          if (targetQueue.length > 0) {
+            continueTargets = true;
+            break;
+          }
+          return await terminate("edit-exhausted", null);
+        }
         return success(newSource);
       }
       // No rollback (#30): the attempted state stays on disk for the next
@@ -5027,13 +5334,18 @@ export async function runLoop(options: LoopOptions): Promise<LoopResult> {
     if (!verificationFailed && !appliedEdit) {
       stalledRounds += 1;
     }
+    // Explicit-targets mode (#81): a passing partial verification with targets
+    // still pending opens a fresh round for the next target.
+    if (continueTargets) {
+      continue;
+    }
     if (verificationFailed) {
       continue;
     }
     // Round-level continuation (#52): a successful pick may have consumed the
     // last exchange (no content exchange is left); below the cap the round
     // continues through a continuation prompt instead of ending the run.
-    if (continuation === null && pinned !== null && iteration < MAX_RUN_ITERATIONS) {
+    if (!targetsMode && continuation === null && pinned !== null && iteration < MAX_RUN_ITERATIONS) {
       continuation = {
         round: iteration,
         pick: false,

@@ -7454,3 +7454,152 @@ describe("multi-payload exchanges (#69)", () => {
     expect(buildSystemPrompt(true)).toContain("multi-payload protocol");
   });
 });
+
+describe("explicit targets (#81)", () => {
+  test("applies one cross-file batch covering two explicit targets end to end", async () => {
+    const dir = multiFixtureDir();
+    const targets = [
+      { path: "src/a.ts", name: "one", kind: "function" },
+      { path: "src/b.ts", name: "two", kind: "function" },
+    ];
+    const provider = new ScriptedProvider([
+      batchResponse([
+        {
+          path: "src/a.ts",
+          symbol: "one",
+          kind: "function",
+          matcher: "return 1;",
+          replacement: "return 2;",
+        },
+        {
+          path: "src/b.ts",
+          symbol: "two",
+          kind: "function",
+          matcher: "return 1;",
+          replacement: "return 3;",
+        },
+      ]),
+    ]);
+    const result = await runLoop({
+      cwd: dir,
+      issue: "apply the two explicit targets",
+      provider,
+      checkCommand: TSC,
+      testCommand: ["bun", "test"],
+      targets,
+    });
+    expect(result.ok).toBe(true);
+    expect(readFileSync(join(dir, "src", "a.ts"), "utf8")).toContain("return 2;");
+    expect(readFileSync(join(dir, "src", "b.ts"), "utf8")).toContain("return 3;");
+    // The result names every applied target, and the applied row carries both.
+    expect(result.appliedTargets).toEqual(targets);
+    const applied = result.records.find((record) => record.outcome === "applied");
+    expect(applied?.appliedLocators?.map((locator) => locator.path)).toEqual([
+      "src/a.ts",
+      "src/b.ts",
+    ]);
+    // The first edit prompt names the pending addresses (target-naming lead).
+    const firstPrompt = provider.calls[0]?.at(-1)?.content ?? "";
+    expect(firstPrompt).toContain('"src/a.ts"');
+    expect(firstPrompt).toContain('"src/b.ts"');
+    expect(firstPrompt).toContain('"payloads"');
+  }, 30000);
+
+  test("sequences two same-file targets across exchanges and verifies once", async () => {
+    const dir = sameFileFixtureDir();
+    const targets = [
+      { path: "src/pair.ts", name: "one", kind: "function" },
+      { path: "src/pair.ts", name: "two", kind: "function" },
+    ];
+    const provider = new ScriptedProvider([
+      editResponse("return 1;", "return 2;", {
+        path: "src/pair.ts",
+        symbol: "one",
+        kind: "function",
+      }),
+      editResponse("return 1;", "return 3;", {
+        path: "src/pair.ts",
+        symbol: "two",
+        kind: "function",
+      }),
+    ]);
+    const result = await runLoop({
+      cwd: dir,
+      issue: "apply the two same-file targets",
+      provider,
+      checkCommand: TSC,
+      testCommand: ["bun", "test"],
+      targets,
+    });
+    expect(result.ok).toBe(true);
+    const source = pairSource(dir);
+    expect(source).toContain("return 2;");
+    expect(source).toContain("return 3;");
+    expect(result.appliedTargets).toEqual(targets);
+    // Both edits landed before the single passing verification of the round.
+    const verificationRows = result.records.filter((record) => record.kind === "verification");
+    expect(verificationRows).toHaveLength(1);
+    expect(verificationRows[0]?.outcome).toBe("ok");
+    expect(result.records.filter((record) => record.outcome === "applied")).toHaveLength(2);
+  }, 30000);
+
+  test("reports a target that is never covered and does not claim success", async () => {
+    const dir = multiFixtureDir();
+    const targets = [
+      { path: "src/a.ts", name: "one", kind: "function" },
+      { path: "src/b.ts", name: "two", kind: "function" },
+    ];
+    const provider = new ScriptedProvider([
+      // Covers only the first target, then exhausts the round with rejections.
+      batchResponse([
+        {
+          path: "src/a.ts",
+          symbol: "one",
+          kind: "function",
+          matcher: "return 1;",
+          replacement: "return 2;",
+        },
+      ]),
+      "not json",
+      "not json",
+    ]);
+    const result = await runLoop({
+      cwd: dir,
+      issue: "apply the two explicit targets",
+      provider,
+      checkCommand: TSC,
+      testCommand: ["bun", "test"],
+      targets,
+    });
+    expect(result.ok).toBe(false);
+    // The covered target landed...
+    expect(readFileSync(join(dir, "src", "a.ts"), "utf8")).toContain("return 2;");
+    expect(result.appliedTargets).toEqual([
+      { path: "src/a.ts", name: "one", kind: "function" },
+    ]);
+    // ...and the never-applied target is named in the diagnostics.
+    expect(result.diagnostics).toContain('"src/b.ts"');
+    expect(result.diagnostics).toContain("never applied");
+  }, 30000);
+
+  test("rejects a target that does not resolve uniquely as a staged diagnostic", async () => {
+    const dir = multiFixtureDir();
+    const before = readFileSync(join(dir, "src", "a.ts"), "utf8");
+    const targets = [{ path: "src/a.ts", name: "one", kind: "class" }];
+    const provider = new ScriptedProvider([]);
+    const result = await runLoop({
+      cwd: dir,
+      issue: "apply a mis-kinded target",
+      provider,
+      checkCommand: TSC,
+      testCommand: ["bun", "test"],
+      targets,
+    });
+    expect(result.ok).toBe(false);
+    // Never a silent pick: the miss is a staged `address` diagnostic, no edit.
+    expect(result.diagnostics).toContain("stage: address");
+    expect(result.records.some((record) => record.outcome === "address")).toBe(true);
+    expect(result.records.some((record) => record.outcome === "applied")).toBe(false);
+    expect(readFileSync(join(dir, "src", "a.ts"), "utf8")).toBe(before);
+  }, 30000);
+});

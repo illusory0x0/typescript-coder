@@ -90,6 +90,19 @@ describe("buildSubagentResult", () => {
     ]);
   });
 
+  test("names every address an applied targets row covered (#81)", () => {
+    const other = { path: "src/other.ts", name: "greet", kind: "function" };
+    const result = buildSubagentResult({
+      result: resultOf({
+        records: [recordOf({ outcome: "applied", appliedLocators: [LOCATOR, other] })],
+      }),
+    });
+    expect(result.files).toEqual([
+      { path: "src/helper.ts", symbol: "answer", kind: "function", outcome: "applied" },
+      { path: "src/other.ts", symbol: "greet", kind: "function", outcome: "applied" },
+    ]);
+  });
+
   test("echoes the passed targets and tokens", () => {
     const tokens = { input: 10, output: 4, total: 14, cacheRead: 2 };
     const targets = [{ path: "src/helper.ts", symbol: "answer", kind: "function" }];

@@ -45,9 +45,9 @@ function zeroResultTokens(): ResultTokens {
 /**
  * Build the sub-agent result from a finished run (#80): `verified` mirrors
  * `result.ok`; `files` is the de-duplicated set of declarations an applied
- * exchange addressed; `records` is the raw record count. `targets` defaults to
- * an empty list (the explicit multi-file mode is a later issue) and `tokens`
- * defaults to zeros.
+ * exchange addressed (an explicit-targets batch row may cover several, #81);
+ * `records` is the raw record count. `targets` echoes the requested addresses
+ * (empty for the default path-independent mode) and `tokens` defaults to zeros.
  */
 export function buildSubagentResult(input: {
   result: LoopResult;
@@ -61,13 +61,17 @@ export function buildSubagentResult(input: {
     if (record.kind !== "exchange" || record.outcome !== "applied") {
       continue;
     }
-    const { path, name, kind } = record.locator;
-    const key = `${path}\u0000${name}\u0000${kind}`;
-    if (seen.has(key)) {
-      continue;
+    // Explicit-targets mode (#81): one applied row can cover several addresses;
+    // fall back to the row's own locator for the classic single-payload path.
+    for (const locator of record.appliedLocators ?? [record.locator]) {
+      const { path, name, kind } = locator;
+      const key = `${path}\u0000${name}\u0000${kind}`;
+      if (seen.has(key)) {
+        continue;
+      }
+      seen.add(key);
+      files.push({ path, symbol: name, kind, outcome: "applied" });
     }
-    seen.add(key);
-    files.push({ path, symbol: name, kind, outcome: "applied" });
   }
   return {
     format: RESULT_FORMAT,

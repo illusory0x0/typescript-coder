@@ -42,6 +42,7 @@ describe("parseArgs", () => {
     help: false,
     model: "deepseek-v4.1-flash",
     multiPayload: false,
+    targets: null,
     format: "text" as const,
     tokenBudget: null,
     checkCommand: null,
@@ -141,6 +142,41 @@ describe("parseArgs", () => {
     expect(parseArgs(["--cwd=/abs/path"]).cwd).toBe("/abs/path");
   });
 
+  test("reads --targets from a JSON file in both value forms (#81)", () => {
+    const file = join(tempDir(), "targets.json");
+    writeFileSync(
+      file,
+      JSON.stringify({ targets: [{ path: "src/a.ts", symbol: "one", kind: "function" }] }),
+    );
+    const expected = [{ path: "src/a.ts", name: "one", kind: "function" }];
+    expect(parseArgs(["--targets", file]).targets).toEqual(expected);
+    expect(parseArgs([`--targets=${file}`]).targets).toEqual(expected);
+  });
+
+  test("accepts a top-level --targets array (#81)", () => {
+    const file = join(tempDir(), "targets.json");
+    writeFileSync(file, JSON.stringify([{ path: "src/a.ts", symbol: "one", kind: "function" }]));
+    expect(parseArgs(["--targets", file]).targets).toEqual([
+      { path: "src/a.ts", name: "one", kind: "function" },
+    ]);
+  });
+
+  test("throws on a missing or malformed --targets file (#81)", () => {
+    expect(() => parseArgs(["--targets", join(tempDir(), "missing.json")])).toThrow(
+      "--targets could not read",
+    );
+    const badJson = join(tempDir(), "bad.json");
+    writeFileSync(badJson, "{ not json");
+    expect(() => parseArgs(["--targets", badJson])).toThrow("not valid JSON");
+    const badShape = join(tempDir(), "shape.json");
+    writeFileSync(badShape, JSON.stringify({ nope: [] }));
+    expect(() => parseArgs(["--targets", badShape])).toThrow('"targets" array');
+    const badEntry = join(tempDir(), "entry.json");
+    writeFileSync(badEntry, JSON.stringify([{ path: "src/a.ts", symbol: "one" }]));
+    expect(() => parseArgs(["--targets", badEntry])).toThrow('non-empty string "kind"');
+    expect(() => parseArgs(["--targets="])).toThrow("--targets requires a value");
+  });
+
   test("parses the full sub-agent flag set together", () => {
     expect(
       parseArgs([
@@ -182,6 +218,7 @@ describe("helpText", () => {
     expect(text).toContain("--check <cmd>");
     expect(text).toContain("--test <cmd>");
     expect(text).toContain("--cwd <dir>");
+    expect(text).toContain("--targets <file>");
     expect(text).toContain("typescript-coder-result@1");
   });
 });
