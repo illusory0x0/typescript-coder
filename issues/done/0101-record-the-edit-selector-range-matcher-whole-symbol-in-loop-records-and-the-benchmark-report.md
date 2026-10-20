@@ -1,7 +1,7 @@
 ---
 id: 101
 title: "Record the edit selector (range / matcher / whole-symbol) in loop records and the benchmark report"
-status: todo
+status: done
 priority: medium
 milestone: null
 parent: 100
@@ -67,3 +67,4 @@ recorded several).
   (`src/loop.ts:3846-3853`, resubmission guard `:3896-3913`).
 - Non-goals: changing the payload protocol, adding a prompt field, or altering
   the resubmission guard's behavior.
+- Verified: tsc clean; bun test 896 pass; live tc matrix (--all --side tc --reps 1) 4 passed; report carries "## Selector adoption (#101)" (byTaskSide/bySide) and per-run exchangeStats selector counts; benchmark/check 4 passed/0 failed; docrefs unchanged at its 21 pre-existing. The live sample had 0 range payloads (15 payloads = matcher 9 + whole-symbol 6), consistent with the umbrella premise; the field is pinned by unit tests, including a real runLoop range edit recording ["range"].

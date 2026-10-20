@@ -2,14 +2,6 @@
 # rewrites it; `add` appends; other writes keep it. `check` enforces it.
 # A dep, and every child of an umbrella, must be listed before its dependent.
 
-- id: 101
-  title: "Record the edit selector (range / matcher / whole-symbol) in loop records and the benchmark report"
-  status: todo
-  priority: medium
-  milestone: null
-  parent: 100
-  deps: []
-  file: 0101-record-the-edit-selector-range-matcher-whole-symbol-in-loop-records-and-the-benchmark-report.md
 - id: 102
   title: "Steer matcher-failure repairs toward the range selector, measured A/B"
   status: todo
