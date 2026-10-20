@@ -1,7 +1,7 @@
 ---
 id: 102
 title: "Steer matcher-failure repairs toward the range selector, measured A/B"
-status: in-progress
+status: review
 priority: medium
 milestone: null
 parent: 100
@@ -72,3 +72,4 @@ tokens/USD columns from the reports.
   selector itself).
 - Non-goals: replacing or removing the matcher, weakening the ambiguity/echo/
   gate guards, or making `range` mandatory.
+- Implemented: `TC_MATCHER_RANGE_HINT` (default on) appends a `range` offer to all three matcher corrections and the shared escalation; `=off` renders byte-identical pre-#102 text. A/B (all 4 tasks, 3 reps, uniform `none`, byte-identical source, only the env differs): ON 12/12, OFF 12/12. Adoption: **range 0 in BOTH arms** (ON matcher 35 / whole-symbol 19; OFF 29 / 15); the steer fired once (1 vs 4 `matcher-unparseable`) and was never heeded. Cache-excluded tokens per success ON 8,784 vs OFF 7,658; USD per success $0.00431 vs $0.00385 — ON nominally higher, well inside the wide within-arm spread (csv 5,912–61,058). **Verdict: no adoption effect / not triggered**; non-regression cannot be claimed. Rows added to consumption.md (39 rows, 26 fresh, 0 failed). tsc clean, bun test 899 pass. Decision pending: keep the toggle default-on, or flip the default off / revert (the feature showed no benefit and a nominal token cost).
