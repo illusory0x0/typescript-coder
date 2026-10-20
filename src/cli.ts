@@ -131,7 +131,18 @@ export function readTargetsFile(file: string): Locator[] {
   if (entries.length === 0) {
     throw new Error(`--targets file ${JSON.stringify(file)} lists no targets`);
   }
-  return entries.map((entry, index) => locatorFromTarget(entry, index, file));
+  const locators = entries.map((entry, index) => locatorFromTarget(entry, index, file));
+  const seen = new Set<string>();
+  for (const locator of locators) {
+    const key = `${locator.path}\u0000${locator.name}\u0000${locator.kind}`;
+    if (seen.has(key)) {
+      throw new Error(
+        `--targets file ${JSON.stringify(file)} lists {path: ${JSON.stringify(locator.path)}, symbol: ${JSON.stringify(locator.name)}, kind: ${JSON.stringify(locator.kind)}} more than once`,
+      );
+    }
+    seen.add(key);
+  }
+  return locators;
 }
 
 export function parseArgs(argv: string[]): CliOptions {

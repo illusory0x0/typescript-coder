@@ -1160,6 +1160,15 @@ function validateTargetsReply(
     return { ok: false, diagnostics: echoDiagnostics(pinnedLocator, first.locator) };
   }
   const pendingJson = new Set(queue.map((target) => addressJson(target)));
+  const activePaths = new Set<string>();
+  const activeJson = new Set<string>();
+  for (const target of queue) {
+    if (activePaths.has(target.path)) {
+      continue;
+    }
+    activePaths.add(target.path);
+    activeJson.add(addressJson(target));
+  }
   const paths = new Set<string>();
   const covered: Locator[] = [];
   for (const payload of payloads) {
@@ -1168,6 +1177,12 @@ function validateTargetsReply(
       return {
         ok: false,
         diagnostics: `stage: address\nthe payload ${key} is not one of the requested pending targets; address only the named targets`,
+      };
+    }
+    if (!activeJson.has(key)) {
+      return {
+        ok: false,
+        diagnostics: `stage: address\nthe payload ${key} is not an active target; address only the first pending target of each file, one per file, and sequence the rest across exchanges`,
       };
     }
     if (paths.has(payload.locator.path)) {
