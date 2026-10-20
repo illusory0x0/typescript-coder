@@ -164,19 +164,22 @@ A selection is one composite address (`path` × `symbol` × `kind`) plus a mode
 (`modify`, `create`, `delete`; default `modify`). The address must match exactly
 one indexed declaration: a miss or an ambiguity is a staged `address` failure
 listing candidates, never a silent first-match pick. An edit is one flat
-payload (`{"path","symbol","kind","matcher"?,"replacement"}`) whose address must
-echo the pinned selection — except in a verification-repair round (a round
-opened by failing verification), where the payload may re-pin to another
-declaration in the same file (the new address must resolve uniquely against the
-current source, and the pin moves); `matcher` is an optional structural snippet
-matched inside the symbol (exactly one match) and omitted means a whole-symbol
-rewrite.
+payload (`{"path","symbol","kind","matcher"?,"range"?,"replacement"}`) whose
+address must echo the pinned selection — except in a verification-repair round
+(a round opened by failing verification), where the payload may re-pin to
+another declaration in the same file (the new address must resolve uniquely
+against the current source, and the pin moves); `matcher` is an optional
+structural snippet matched inside the symbol (exactly one match) and omitted
+means a whole-symbol rewrite; `range` `{line, column, endLine, endColumn}` (#72)
+is an optional 1-based inclusive span against the numbered current-source block
+the prompt shows (it must sit inside the declaration, and it takes precedence
+over `matcher`).
 The splice is gated: an edit whose result does not parse is discarded with a
 `gate` failure and nothing is written; a payload identical to the previous
 modify submission is discarded as `repeat`, and a candidate adding a duplicate
 top-level function/class/type name as `duplicate`. Then `oxfmt` formats and tsc
 
-- tests verify. `create` rejects a `matcher`, requires a safe parseable path,
+- tests verify. `create` rejects a `matcher` or `range`, requires a safe parseable path,
   and appends the complete declaration; a failed create whose kept file parses
   continues as a `modify` repair round, and an unparseable kept file is removed
   before the create re-runs. `delete` needs no payload and splices the resolved
@@ -199,7 +202,7 @@ the flag off a `{"payloads": …}` reply is a classic `stage: protocol` rejectio
 The tc loop nests Run and Edit (#43): each Run iteration repeats Edit →
 Verification. Every iteration grants a fresh Edit budget of at most 3 model
 exchanges, shared by target picking and content revision; soft failures
-(protocol, address, echo, matcher, no-op, repeat, duplicate, gate, format, truncation)
+(protocol, address, echo, matcher, range-invalid, no-op, repeat, duplicate, gate, format, truncated)
 consume an exchange and re-ask with staged diagnostics. Each soft failure is
 classified into a typed cause (#56) and the retry prompt's lead sentence is that
 cause's concrete correction; consecutive same-cause rejections accumulate in a

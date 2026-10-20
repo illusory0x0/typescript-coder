@@ -31,9 +31,10 @@ The old names are not separate terms; each is just part of the flow above:
 - **Attempt** → one iteration of the Run loop.
 - **Anchor / Locator** → merged into one payload: the old locator is the
   address, the old anchor is the optional `matcher`.
-- **Multi-payload batch (#69)** → an opt-in `modify` reply shape
-  (`{"payloads":[…]}`) carrying several **path-independent** edits, one per file,
-  applied atomically in one exchange; off by default.
+- **Multi-payload batch (#69/#78)** → an opt-in `modify` reply shape
+  (`{"payloads":[…]}`) carrying several edits — path-independent (one per file) or
+  bounded non-overlapping regions of one file (#78) — applied atomically in one
+  exchange; off by default.
 
 ## Notes
 
@@ -139,8 +140,9 @@ The old names are not separate terms; each is just part of the flow above:
   `{line, column, endLine, endColumn}` (#72) instead addresses the span by
   1-based inclusive positions against the numbered current-source block (takes
   precedence over `matcher`; must sit inside the declaration). One matcher or
-  range per edit —
-  multiple changes happen across Edit rounds (the old `edits[]` batch is gone).
+  range per edit; by default multiple changes happen across Edit rounds (the old
+  `edits[]` batch is gone), the opt-in `--multi-payload` batch (#69/#78) being
+  the exception.
 - **Syntax-preservation** (highest-priority invariant): the syntax gate rejects
   an edit whose `after` fails to parse — the splice is discarded, nothing is
   written. A broken `prev` ends the Run.

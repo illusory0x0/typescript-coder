@@ -62,8 +62,8 @@ These are the load-bearing choices; most smaller decisions follow from them.
    (keep-progress), and the next iteration re-asks against the freshly rebuilt
    context.
 5. **Failures are feedback, not dead ends.** Rejections are classified by
-   cause (protocol, address, echo, matcher, range, repeat, duplicate, gate, format,
-   truncated, …), corrections escalate when the same cause repeats, and the
+   cause (protocol, address, echo, matcher, range, no-op, repeat, duplicate, gate,
+   format, truncated, …), corrections escalate when the same cause repeats, and the
    harness adds structure as a run stalls: a **continuation prompt** when a
    round burns its exchanges, a **no-progress ask** at the 8-streak
    no-progress milestone and every 4 further failed rounds (#65), and a bounded

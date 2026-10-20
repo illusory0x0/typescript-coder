@@ -82,8 +82,9 @@ A selection carries one of three modes (default `modify`):
 - **`delete`** — the selection is the whole model exchange; the harness splices
   the resolved declaration out (range expanded to a wrapping `export`) and runs
   the syntax gate, `oxfmt`, and verification once. No edit payload is requested.
-  Any post-pick failure ends the run as `delete-verification-failed` (with the
-  written deletion kept on disk; gate/format failures write nothing).
+  A post-pick failure ends the run as `delete-verification-failed` (the written
+  deletion is kept on disk; gate/format failures write nothing), except a target
+  that stops parsing, which ends as `prev-broken`.
 
 ### Edit
 
@@ -251,7 +252,7 @@ model (Edit, ≤3 exchanges per Run iteration):
   - LLM reads context                          # yaml
   - LLM selects target + mode                  # json {mode, path, symbol, kind}
   - LLM outputs one flat edit payload          # {"path","symbol","kind","matcher"?,"range"?,"replacement"}
-                                               # or, with --multi-payload on, {"payloads":[…]} (one per file)
+                                               # or, with --multi-payload on, {"payloads":[…]} (one or more per file, #69/#78)
   - LLM (repair exchange only, once per round) # {"request":"read"|"check"|"test"}, harness returns a bounded result
 
 harness:
@@ -392,8 +393,8 @@ harness:
   opened by failing verification) may instead re-pin to a different declaration
   in the same file: the payload carries that declaration's own
   {path, symbol, kind}, which must resolve uniquely in the current source, and
-  the pin (with its echoed `mode`) moves to it; a different path fails with
-  `stage: address`.
+  the pin label (rebuilt with `mode`) moves to it, while the payload echoes only
+  `{path, symbol, kind}`; a different path fails with `stage: address`.
 - **matcher:** one optional structural matcher per edit; it is one copied
   statement, class member, expression, or contiguous run of statements from one
   block (a run matches only consecutive siblings inside the symbol). Zero matches
@@ -403,8 +404,9 @@ harness:
   after `export` (a matcher and a replacement splicing the declaration range keep
   exactly one copy), and a
   not-found matcher names a matching declaration of the same file together with
-  its re-pin address when one exists. Omitting it is a whole-symbol rewrite, and
-  multiple changes happen across edit rounds — the old `edits[]` batch is gone.
+  its re-pin address when one exists. Omitting it is a whole-symbol rewrite; by
+  default multiple changes happen across edit rounds (the old `edits[]` batch is
+  gone), the opt-in `--multi-payload` batch (#69/#78) being the exception.
 - **range (#72):** an alternative selector, `range` `{line, column, endLine,
   endColumn}`, all 1-based and end inclusive, addresses the span against the
   numbered current-source block shown in the prompt (the pinned declaration for
@@ -647,7 +649,7 @@ round-tripping must fail the suite before any measured number can move.
 | R3  | LLM tool-call / JSON flakiness (gateway models)        | strict JSON schema, low temperature, bounded re-asks                                                                   |
 | R4  | whole-project `tsc` per iteration is slow              | incremental / changed-files scope; check/test commands bounded at 120s by default (`commandTimeoutMs`)                 |
 | R5  | overload / namespace address ambiguity                 | strict-AND `path × symbol × kind` lookup; ambiguity diagnostics list every candidate instead of picking one            |
-| R6  | repeated / ambiguous matchers inside a symbol          | one matcher per edit with an exactly-one-match rule and an extend-the-matcher hint; omit it for a whole-symbol rewrite, or address the span with the optional `range` `(line,column)` selector (#72) |
+| R6  | repeated / ambiguous matchers inside a symbol          | one matcher per edit with an exactly-one-match rule and an extend-the-matcher hint; omit it for a whole-symbol rewrite, or address the span with the optional `range` `(line,column)` selector (#72; the matcher-ambiguous re-ask does not yet name it — #102) |
 | R7  | re-ask context growth / prompt drift                   | stable system + issue/context prefix; bounded rebuilt context                                                          |
 
 ## 13. Open items (defaults)
