@@ -20,7 +20,7 @@
   file: 0046-harness-optimization-v3-agent-loop-context-structure-editor.md
 - id: 83
   title: "Self-host proof: opencode delegates a multi-file task to tc"
-  status: todo
+  status: in-progress
   priority: medium
   milestone: null
   parent: 79

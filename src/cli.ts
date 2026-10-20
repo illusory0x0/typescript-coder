@@ -18,6 +18,8 @@ export interface CliOptions {
   testCommand: string[] | null;
   /** Working directory for the run (#80); null = the process cwd. */
   cwd: string | null;
+  /** Timeout in ms for each check/test command; null = the tools default. */
+  commandTimeoutMs: number | null;
 }
 
 const DEFAULT_MODEL = "deepseek-v4.1-flash";
@@ -54,6 +56,14 @@ function parseTokenBudget(value: string): number {
   const parsed = Number(value);
   if (!/^\d+$/.test(value) || !Number.isSafeInteger(parsed) || parsed <= 0) {
     throw new Error(`--token-budget must be a positive integer (got ${JSON.stringify(value)})`);
+  }
+  return parsed;
+}
+
+function parseTimeout(value: string): number {
+  const parsed = Number(value);
+  if (!/^\d+$/.test(value) || !Number.isSafeInteger(parsed) || parsed <= 0) {
+    throw new Error(`--timeout must be a positive integer (got ${JSON.stringify(value)})`);
   }
   return parsed;
 }
@@ -134,6 +144,7 @@ export function parseArgs(argv: string[]): CliOptions {
   let checkCommand: string[] | null = null;
   let testCommand: string[] | null = null;
   let cwd: string | null = null;
+  let commandTimeoutMs: number | null = null;
   for (let index = 0; index < argv.length; index += 1) {
     const arg = argv[index];
     if (arg === undefined) {
@@ -192,9 +203,15 @@ export function parseArgs(argv: string[]): CliOptions {
       index = next;
       continue;
     }
+    if (arg === "--timeout" || arg.startsWith("--timeout=")) {
+      const { value, next } = flagValue(argv, index, "--timeout");
+      commandTimeoutMs = parseTimeout(value);
+      index = next;
+      continue;
+    }
     throw new Error(`unknown argument: ${arg}`);
   }
-  return { help, model, multiPayload, targets, format, tokenBudget, checkCommand, testCommand, cwd };
+  return { help, model, multiPayload, targets, format, tokenBudget, checkCommand, testCommand, cwd, commandTimeoutMs };
 }
 
 export function helpText(): string {
@@ -217,6 +234,8 @@ export function helpText(): string {
     "  --test <cmd>       test command to run after an edit; the value is split",
     "                     on whitespace into argv",
     "  --cwd <dir>        working directory for the run (default: the process cwd)",
+    "  --timeout <ms>     timeout for each check/test command in milliseconds",
+    "                     (default: 120000)",
     "  --multi-payload    opt in to multi-payload exchanges (#69): a modify reply may",
     '                     batch path-independent edits in one {"payloads": [...]} object',
     "                     (default: off, one flat payload per exchange)",

@@ -31,6 +31,8 @@ export interface RunMainOptions {
   checkCommand?: string[];
   /** Test command run after an edit (#80). */
   testCommand?: string[];
+  /** Timeout in ms for each check/test command; absent = the tools default. */
+  commandTimeoutMs?: number;
 }
 
 const NO_EXPLANATION = "the model did not provide an explanation";
@@ -125,6 +127,7 @@ export async function runMain(options: RunMainOptions): Promise<number> {
       tokenBudget: options.tokenBudget,
       checkCommand: options.checkCommand,
       testCommand: options.testCommand,
+      commandTimeoutMs: options.commandTimeoutMs,
     });
   } catch (error) {
     const message = `error: ${error instanceof Error ? error.message : String(error)}`;
@@ -176,6 +179,7 @@ if (import.meta.main) {
     tokenBudget: cli.tokenBudget ?? undefined,
     checkCommand: cli.checkCommand ?? undefined,
     testCommand: cli.testCommand ?? undefined,
+    commandTimeoutMs: cli.commandTimeoutMs ?? undefined,
   });
   process.exit(code);
 }

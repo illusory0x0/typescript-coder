@@ -25,7 +25,7 @@ what still matters on a retry.
 
 ```
 tc --format json --token-budget <n> --model <id> \
-   [--cwd <dir>] [--check <cmd>] [--test <cmd>] [--targets <file.json>] \
+   [--cwd <dir>] [--check <cmd>] [--test <cmd>] [--timeout <ms>] [--targets <file.json>] \
    < task.txt
 ```
 
@@ -44,6 +44,7 @@ bun run src/main.ts --format json --token-budget <n> --model <id> … < task.txt
 | `--check <cmd>` | verification command to run after each edit; the value is split on whitespace into argv (default `bunx tsc --noEmit`) |
 | `--test <cmd>` | test command to run after each edit; whitespace-split (default `bun test`) |
 | `--cwd <dir>` | workspace root for the run (default the process cwd) |
+| `--timeout <ms>` | timeout in milliseconds for each `--check`/`--test` command, a positive integer (default `120000`) |
 | `--targets <file>` | explicit address list (JSON file, see below); absent ⇒ `tc`'s own model-driven selection |
 | `--multi-payload` | opt in to the `{"payloads":[…]}` batch reply on the discovery path; already implied by `--targets` |
 | `-h`, `--help` | print help and exit 0 |
@@ -131,7 +132,8 @@ the one result object. Example:
 `tc` owns verification. After each edit it runs its own check command
 (`--check`, default `bunx tsc --noEmit`) and test command (`--test`, default
 `bun test`), and only reports `verified: true` when both pass on the final
-state. Each check/test command is bounded by a 120 s timeout.
+state. Each check/test command is bounded by a 120 s timeout, raised per call
+with `--timeout <ms>`.
 
 The caller trusts `verified` and the exit code; it does not need to re-run
 `tsc`/tests to decide success. An optional final smoke (for example, a quick

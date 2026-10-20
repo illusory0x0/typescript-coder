@@ -1,7 +1,7 @@
 ---
 id: 83
 title: "Self-host proof: opencode delegates a multi-file task to tc"
-status: todo
+status: in-progress
 priority: medium
 milestone: null
 parent: 79

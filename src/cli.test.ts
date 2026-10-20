@@ -48,6 +48,7 @@ describe("parseArgs", () => {
     checkCommand: null,
     testCommand: null,
     cwd: null,
+    commandTimeoutMs: null,
   };
 
   test("defaults to no help, the deepseek-v4.1-flash model, and multi-payload off", () => {
@@ -142,6 +143,21 @@ describe("parseArgs", () => {
     expect(parseArgs(["--cwd=/abs/path"]).cwd).toBe("/abs/path");
   });
 
+  test("reads --timeout as a positive integer in both value forms", () => {
+    expect(parseArgs(["--timeout", "300000"]).commandTimeoutMs).toBe(300000);
+    expect(parseArgs(["--timeout=180000"]).commandTimeoutMs).toBe(180000);
+  });
+
+  test("defaults --timeout to null and rejects invalid values", () => {
+    expect(parseArgs([]).commandTimeoutMs).toBeNull();
+    expect(() => parseArgs(["--timeout", "0"])).toThrow("positive integer");
+    expect(() => parseArgs(["--timeout", "-5"])).toThrow("positive integer");
+    expect(() => parseArgs(["--timeout", "1.5"])).toThrow("positive integer");
+    expect(() => parseArgs(["--timeout", "abc"])).toThrow("positive integer");
+    expect(() => parseArgs(["--timeout"])).toThrow("--timeout requires a value");
+    expect(() => parseArgs(["--timeout="])).toThrow("--timeout requires a value");
+  });
+
   test("reads --targets from a JSON file in both value forms (#81)", () => {
     const file = join(tempDir(), "targets.json");
     writeFileSync(
@@ -188,6 +204,8 @@ describe("parseArgs", () => {
         "--test=bun test",
         "--cwd",
         "./work",
+        "--timeout",
+        "240000",
       ]),
     ).toEqual({
       ...DEFAULTS,
@@ -196,6 +214,7 @@ describe("parseArgs", () => {
       checkCommand: ["bun", "run", "typecheck"],
       testCommand: ["bun", "test"],
       cwd: "./work",
+      commandTimeoutMs: 240000,
     });
   });
 });
@@ -218,6 +237,7 @@ describe("helpText", () => {
     expect(text).toContain("--check <cmd>");
     expect(text).toContain("--test <cmd>");
     expect(text).toContain("--cwd <dir>");
+    expect(text).toContain("--timeout <ms>");
     expect(text).toContain("--targets <file>");
     expect(text).toContain("typescript-coder-result@1");
   });
