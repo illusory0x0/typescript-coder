@@ -117,6 +117,10 @@ digraph issues {
   "110" [label="#110 Record the resolved selection stage/selector per applied edit"];
   "111" [label="#111 Teach the compact syntax with few-shot examples, measured A/B"];
   "112" [label="#112 Rename the internal anchor vocabulary to matcher"];
+  "113" [label="#113 Fix edit-protocol.md's stale cascade line and selector synonym"];
+  "114" [label="#114 Align open tracker issues to the matcher vocabulary"];
+  "115" [label="#115 Reconcile #106's status and scope"];
+  "116" [label="#116 Add a body-edit command to the issue-tracker CLI"];
 
   // parent edges (parent -> child), solid
   "1" -> "2";

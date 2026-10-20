@@ -98,3 +98,35 @@
   parent: null
   deps: []
   file: 0105-llm-friendly-cascading-selection-protocol-compact-positional-syntax.md
+- id: 113
+  title: "Fix edit-protocol.md's stale cascade line and selector synonym"
+  status: todo
+  priority: medium
+  milestone: null
+  parent: null
+  deps: []
+  file: 0113-fix-edit-protocol-md-s-stale-cascade-line-and-selector-synonym.md
+- id: 114
+  title: "Align open tracker issues to the matcher vocabulary"
+  status: todo
+  priority: medium
+  milestone: null
+  parent: null
+  deps: []
+  file: 0114-align-open-tracker-issues-to-the-matcher-vocabulary.md
+- id: 115
+  title: "Reconcile #106's status and scope"
+  status: todo
+  priority: medium
+  milestone: null
+  parent: null
+  deps: []
+  file: 0115-reconcile-106-s-status-and-scope.md
+- id: 116
+  title: "Add a body-edit command to the issue-tracker CLI"
+  status: todo
+  priority: medium
+  milestone: null
+  parent: null
+  deps: []
+  file: 0116-add-a-body-edit-command-to-the-issue-tracker-cli.md

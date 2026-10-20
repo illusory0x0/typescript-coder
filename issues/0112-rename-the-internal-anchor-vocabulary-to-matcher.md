@@ -50,3 +50,4 @@ grep -rn "anchor" src/ docs/design.md docs/glossary.md
   **anchor**.
 - Historical artifacts (`issues/done/`, `issues/wontfix/`, `dependencies.dot`,
   dated results) keep their original labels and wording.
+- Scope also covers docs/spec.md (findAnchor/AnchorResult at :139, anchor.ts at :226) and docs/review-guide.md (:25, :72), which name the old anchor vocabulary — the rename must stay consistent across every editable doc.
