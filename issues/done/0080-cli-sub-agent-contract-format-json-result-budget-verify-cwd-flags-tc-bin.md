@@ -1,7 +1,7 @@
 ---
 id: 80
 title: "CLI sub-agent contract: --format json result, budget/verify/cwd flags, tc bin"
-status: todo
+status: done
 priority: medium
 milestone: null
 parent: 79
@@ -53,3 +53,4 @@ printf 'update greet to store the greeting\n' | tc --format json   # parses as o
 
 - Contract reference: plan §2. Blocks C2, C3, C4.
 - Non-goals: registry publish, `opencode` plugin.
+- Implemented. New src/result.ts (typescript-coder-result@1; buildSubagentResult/serializeSubagentResult) + src/result.test.ts. LoopResult gains a required tokens tally {input,output,total,cacheRead} accumulated from provider usage alongside the unchanged consumedTokens budget, threaded to every return (deletion path zeros). cli.ts adds --format text|json (validated), --token-budget, --check, --test, --cwd in both --flag value and --flag=value forms; main.ts adds a JSON path that prints exactly one result object on stdout with the failure artifact/diagnostics/explanation on stderr, leaving the text path byte-identical; package.json declares bin tc -> ./src/main.ts with a #!/usr/bin/env bun shebang. Supporting change: src/lexer.ts treats a byte-0 #!... as a line comment so the repo's own parser accepts the runnable entry (parser/utility/self-host tests otherwise break); two existing LoopResult fixtures gained the required tokens field. Verification: bunx tsc --noEmit clean; bun test 843 pass; bun run accept 5/5; printf '' | tc --format json emits exactly one result object on stdout, error on stderr, exit 1. The live 'printf ...greet... | tc --format json' check is deferred because it would mutate this repo's src/index.ts.

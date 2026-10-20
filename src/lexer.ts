@@ -389,6 +389,11 @@ export class Lexer {
     if (char === "/" && this.source[start + 1] === "*") {
       return this.scanBlockComment();
     }
+    // A shebang (`#!...`) is only meaningful on the very first line; lex it like
+    // a line comment so a runnable entry point still parses (#80).
+    if (char === "#" && start === 0 && this.source[1] === "!") {
+      return this.scanLineComment();
+    }
     if (isIdentifierStart(char) || (char === "\\" && this.source[start + 1] === "u")) {
       return this.scanIdentifier();
     }

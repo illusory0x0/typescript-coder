@@ -37,41 +37,33 @@ afterEach(() => {
 });
 
 describe("parseArgs", () => {
+  // The full default option set (#80): text format and no sub-agent overrides.
+  const DEFAULTS = {
+    help: false,
+    model: "deepseek-v4.1-flash",
+    multiPayload: false,
+    format: "text" as const,
+    tokenBudget: null,
+    checkCommand: null,
+    testCommand: null,
+    cwd: null,
+  };
+
   test("defaults to no help, the deepseek-v4.1-flash model, and multi-payload off", () => {
-    expect(parseArgs([])).toEqual({
-      help: false,
-      model: "deepseek-v4.1-flash",
-      multiPayload: false,
-    });
+    expect(parseArgs([])).toEqual(DEFAULTS);
   });
 
   test("recognizes --help and -h", () => {
-    expect(parseArgs(["--help"])).toEqual({
-      help: true,
-      model: "deepseek-v4.1-flash",
-      multiPayload: false,
-    });
-    expect(parseArgs(["-h"])).toEqual({
-      help: true,
-      model: "deepseek-v4.1-flash",
-      multiPayload: false,
-    });
+    expect(parseArgs(["--help"])).toEqual({ ...DEFAULTS, help: true });
+    expect(parseArgs(["-h"])).toEqual({ ...DEFAULTS, help: true });
   });
 
   test("reads --model with a separate value", () => {
-    expect(parseArgs(["--model", "qwen"])).toEqual({
-      help: false,
-      model: "qwen",
-      multiPayload: false,
-    });
+    expect(parseArgs(["--model", "qwen"])).toEqual({ ...DEFAULTS, model: "qwen" });
   });
 
   test("reads --model=<id>", () => {
-    expect(parseArgs(["--model=qwen"])).toEqual({
-      help: false,
-      model: "qwen",
-      multiPayload: false,
-    });
+    expect(parseArgs(["--model=qwen"])).toEqual({ ...DEFAULTS, model: "qwen" });
   });
 
   test("reads --multi-payload and its camelCase alias (#69)", () => {
@@ -98,10 +90,76 @@ describe("parseArgs", () => {
     expect(parseArgs(["--model=qwen", "--model=deepseek-v4.1-flash"]).model).toBe(
       "deepseek-v4.1-flash",
     );
-    expect(parseArgs(["--help", "--model", "qwen"])).toEqual({
-      help: true,
-      model: "qwen",
-      multiPayload: false,
+    expect(parseArgs(["--help", "--model", "qwen"])).toEqual({ ...DEFAULTS, help: true, model: "qwen" });
+  });
+
+  test("reads --format text and json, in both value forms, defaulting to text", () => {
+    expect(parseArgs([]).format).toBe("text");
+    expect(parseArgs(["--format", "text"]).format).toBe("text");
+    expect(parseArgs(["--format=json"]).format).toBe("json");
+    expect(parseArgs(["--format", "json"]).format).toBe("json");
+  });
+
+  test("throws on an invalid --format value", () => {
+    expect(() => parseArgs(["--format", "yaml"])).toThrow("--format must be");
+    expect(() => parseArgs(["--format=yaml"])).toThrow("--format must be");
+    expect(() => parseArgs(["--format="])).toThrow("--format requires a value");
+  });
+
+  test("reads --token-budget as a positive integer in both value forms", () => {
+    expect(parseArgs(["--token-budget", "1234"]).tokenBudget).toBe(1234);
+    expect(parseArgs(["--token-budget=5000"]).tokenBudget).toBe(5000);
+  });
+
+  test("throws on a non-positive or non-numeric --token-budget", () => {
+    expect(() => parseArgs(["--token-budget", "0"])).toThrow("positive integer");
+    expect(() => parseArgs(["--token-budget", "-5"])).toThrow("positive integer");
+    expect(() => parseArgs(["--token-budget", "abc"])).toThrow("positive integer");
+    expect(() => parseArgs(["--token-budget="])).toThrow("--token-budget requires a value");
+  });
+
+  test("splits --check and --test into argv in both value forms", () => {
+    expect(parseArgs(["--check", "bun run typecheck"]).checkCommand).toEqual([
+      "bun",
+      "run",
+      "typecheck",
+    ]);
+    expect(parseArgs(["--check=bun tsc --noEmit"]).checkCommand).toEqual(["bun", "tsc", "--noEmit"]);
+    expect(parseArgs(["--test", "bun test"]).testCommand).toEqual(["bun", "test"]);
+    expect(parseArgs(["--test=bun test"]).testCommand).toEqual(["bun", "test"]);
+  });
+
+  test("throws on an empty --check or --test value", () => {
+    expect(() => parseArgs(["--check", ""])).toThrow("--check requires a value");
+    expect(() => parseArgs(["--check="])).toThrow("--check requires a value");
+    expect(() => parseArgs(["--test", "   "])).toThrow("--test requires a value");
+    expect(() => parseArgs(["--test="])).toThrow("--test requires a value");
+  });
+
+  test("reads --cwd in both value forms", () => {
+    expect(parseArgs(["--cwd", "./project"]).cwd).toBe("./project");
+    expect(parseArgs(["--cwd=/abs/path"]).cwd).toBe("/abs/path");
+  });
+
+  test("parses the full sub-agent flag set together", () => {
+    expect(
+      parseArgs([
+        "--format",
+        "json",
+        "--token-budget=2000",
+        "--check",
+        "bun run typecheck",
+        "--test=bun test",
+        "--cwd",
+        "./work",
+      ]),
+    ).toEqual({
+      ...DEFAULTS,
+      format: "json",
+      tokenBudget: 2000,
+      checkCommand: ["bun", "run", "typecheck"],
+      testCommand: ["bun", "test"],
+      cwd: "./work",
     });
   });
 });
@@ -114,6 +172,17 @@ describe("helpText", () => {
     expect(text).toContain("--model");
     expect(text).toContain("OPENAI_API_KEY");
     expect(text).toContain("OPENAI_BASE_URL");
+  });
+
+  test("documents the tc bin and the sub-agent flags (#80)", () => {
+    const text = helpText();
+    expect(text).toContain("tc [");
+    expect(text).toContain("--format <text|json>");
+    expect(text).toContain("--token-budget <n>");
+    expect(text).toContain("--check <cmd>");
+    expect(text).toContain("--test <cmd>");
+    expect(text).toContain("--cwd <dir>");
+    expect(text).toContain("typescript-coder-result@1");
   });
 });
 
@@ -358,6 +427,120 @@ describe("runMain", () => {
     expect(errText).toContain("error:");
     expect(errText).not.toContain("\n    at ");
   });
+
+  test("--format json emits one result object on stdout for a verified edit (#80)", async () => {
+    const dir = fixtureDir();
+    const provider = new ScriptedProvider([LOCATOR, editResponse("return 1;", "return 2;")]);
+    const captured = captureIo();
+    const code = await runMain({
+      issue: "make the answer test pass",
+      cwd: dir,
+      provider,
+      io: captured.io,
+      format: "json",
+    });
+    expect(code).toBe(0);
+    // Exactly one line on stdout, and no prose beside it.
+    expect(captured.out).toHaveLength(1);
+    expect(captured.err).toEqual([]);
+    const parsed = JSON.parse(captured.out[0] ?? "");
+    expect(parsed.format).toBe("typescript-coder-result@1");
+    expect(parsed.status).toBe("ok");
+    expect(parsed.verified).toBe(true);
+    expect(parsed.files).toEqual([
+      { path: "src/helper.ts", symbol: "answer", kind: "function", outcome: "applied" },
+    ]);
+    expect(parsed.targets).toEqual([]);
+    expect(parsed.records).toBeGreaterThan(0);
+    expect(parsed.tokens).toEqual({ input: 0, output: 0, total: 0, cacheRead: 0 });
+    expect(parsed.terminationReason).toBeNull();
+    expect(parsed.diagnostics).toBeNull();
+    expect(readFileSync(join(dir, "src", "helper.ts"), "utf8")).toContain("return 2;");
+  }, 60000);
+
+  test("--format json reports a failing run on stdout and its prose on stderr (#80)", async () => {
+    const dir = fixtureDir();
+    const bad = editResponse("return 1;", 'return "no";');
+    const explanation = "the symbol cannot satisfy the test without a larger refactor";
+    const provider = new ScriptedProvider([
+      LOCATOR,
+      bad,
+      "junk",
+      "junk",
+      "junk",
+      "STOP",
+      explanation,
+    ]);
+    const captured = captureIo();
+    const code = await runMain({
+      issue: "make the answer test pass",
+      cwd: dir,
+      provider,
+      io: captured.io,
+      format: "json",
+    });
+    expect(code).toBe(1);
+    // stdout carries only the single result object.
+    expect(captured.out).toHaveLength(1);
+    const parsed = JSON.parse(captured.out[0] ?? "");
+    expect(parsed.format).toBe("typescript-coder-result@1");
+    expect(parsed.status).toBe("failed");
+    expect(parsed.verified).toBe(false);
+    expect(parsed.terminationReason).toBe("edit-exhausted");
+    expect(parsed.diagnostics).toContain("edit-exhausted");
+    // The explanation and the human-readable diagnostics are prose on stderr;
+    // stdout is only the one JSON line.
+    expect(captured.out[0]).not.toContain(explanation);
+    const errText = captured.err.join("\n");
+    expect(errText).toContain("not assignable");
+    expect(errText).toContain("edit-exhausted");
+    expect(errText).toContain(explanation);
+    // The failure-artifact line is prose, so it goes to stderr too.
+    expect(errText).toContain("failure artifact: ");
+    // No JSON leaks onto stderr.
+    expect(errText).not.toContain("typescript-coder-result@1");
+  }, 60000);
+
+  test("--format json emits a failed result for an empty issue (#80)", async () => {
+    const captured = captureIo();
+    const code = await runMain({
+      issue: "   \n\t ",
+      cwd: fixtureDir(),
+      provider: new ScriptedProvider([]),
+      io: captured.io,
+      format: "json",
+    });
+    expect(code).toBe(1);
+    expect(captured.out).toHaveLength(1);
+    const parsed = JSON.parse(captured.out[0] ?? "");
+    expect(parsed.format).toBe("typescript-coder-result@1");
+    expect(parsed.status).toBe("failed");
+    expect(parsed.verified).toBe(false);
+    expect(parsed.diagnostics).toContain("no issue");
+    expect(captured.err.join("\n")).toContain("no issue");
+  });
+
+  test("--format json emits a failed result when the provider throws (#80)", async () => {
+    const provider: ProviderLike = {
+      async chat() {
+        throw new Error("gateway unreachable");
+      },
+    };
+    const captured = captureIo();
+    const code = await runMain({
+      issue: "make the answer test pass",
+      cwd: fixtureDir(),
+      provider,
+      io: captured.io,
+      format: "json",
+    });
+    expect(code).toBe(1);
+    const parsed = JSON.parse(captured.out[0] ?? "");
+    expect(parsed.status).toBe("failed");
+    expect(parsed.verified).toBe(false);
+    expect(parsed.diagnostics).toContain("gateway unreachable");
+    expect(captured.err.join("\n")).toContain("gateway unreachable");
+  }, 60000);
 });
 
 function spawnHelp(script: string): { code: number | null; stdout: string; stderr: string } {
@@ -387,6 +570,14 @@ describe("cli entry points", () => {
     expect(result.stdout).toContain("typescript-coder");
     expect(result.stdout).toContain("--model");
   });
+
+  test("declares the tc bin and points it at a shebang-runnable file (#80)", () => {
+    const pkg = JSON.parse(readFileSync(join(repoRoot, "package.json"), "utf8"));
+    expect(pkg.bin.tc).toBe("./src/main.ts");
+    const target = join(repoRoot, pkg.bin.tc);
+    expect(existsSync(target)).toBe(true);
+    expect(readFileSync(target, "utf8").split("\n")[0]?.startsWith("#!")).toBe(true);
+  });
 });
 
 test.skipIf(nestedSmoke)(
@@ -395,6 +586,8 @@ test.skipIf(nestedSmoke)(
     const dir = tempDir();
     cpSync(join(repoRoot, "src"), join(dir, "src"), { recursive: true });
     cpSync(join(repoRoot, "tsconfig.json"), join(dir, "tsconfig.json"));
+    // The copied suite's bin test reads package.json (#80), so copy it too.
+    cpSync(join(repoRoot, "package.json"), join(dir, "package.json"));
     symlinkSync(join(repoRoot, "node_modules"), join(dir, "node_modules"), "dir");
     writeFileSync(join(dir, ".nested-smoke"), "this copy runs under the self-host smoke test\n");
     const provider = new ScriptedProvider([

@@ -1631,6 +1631,23 @@ export type TerminationReason =
   | "prev-broken"
   | "harness-fault";
 
+/**
+ * Token spend of one run (#80): the component breakdown of every provider
+ * response's raw usage, threaded onto the result so a sub-agent caller can
+ * account for the call. The `total` still drives the hard budget.
+ */
+export interface LoopTokens {
+  input: number;
+  output: number;
+  total: number;
+  cacheRead: number;
+}
+
+/** A fresh all-zero token tally (#80); safe to return and never mutate. */
+function zeroLoopTokens(): LoopTokens {
+  return { input: 0, output: 0, total: 0, cacheRead: 0 };
+}
+
 export interface LoopResult {
   ok: boolean;
   mode?: SelectionMode;
@@ -1644,6 +1661,8 @@ export interface LoopResult {
   skipped?: SkippedFile[];
   /** Set when the run ended through the termination matrix; absent on success and provider errors. */
   terminationReason?: TerminationReason;
+  /** Provider token spend of the run (#80); zeros when no provider usage was seen. */
+  tokens: LoopTokens;
 }
 
 type Selection =
@@ -1682,6 +1701,45 @@ function tokensFromResponse(response: ChatResponse): number {
     return 0;
   }
   return prompt + completion;
+}
+
+/** Tolerant component reader (#80): a finite number or 0. */
+function finiteTokenCount(value: unknown): number {
+  return typeof value === "number" && Number.isFinite(value) ? value : 0;
+}
+
+/**
+ * Component breakdown of one provider response's raw usage (#80), read from the
+ * same shape `tokensFromResponse` consumes: `input`/`output` prefer
+ * `prompt_tokens`/`completion_tokens` and fall back to
+ * `input_tokens`/`output_tokens`; `cacheRead` reads
+ * `prompt_tokens_details.cached_tokens` or `cache_read_input_tokens`; `total`
+ * prefers `total_tokens` and falls back to input+output. Unknown shapes count
+ * as zero.
+ */
+function loopTokensFromResponse(response: ChatResponse): LoopTokens {
+  const usage = usageFromRaw(response.raw);
+  if (typeof usage !== "object" || usage === null) {
+    return zeroLoopTokens();
+  }
+  const record = usage as Record<string, unknown>;
+  const input = finiteTokenCount(record["prompt_tokens"] ?? record["input_tokens"]);
+  const output = finiteTokenCount(record["completion_tokens"] ?? record["output_tokens"]);
+  let cacheRead = 0;
+  const details = record["prompt_tokens_details"];
+  if (typeof details === "object" && details !== null) {
+    cacheRead = finiteTokenCount((details as Record<string, unknown>)["cached_tokens"]);
+  }
+  if (cacheRead === 0) {
+    cacheRead = finiteTokenCount(record["cache_read_input_tokens"]);
+  }
+  const reportedTotal = finiteTokenCount(record["total_tokens"]);
+  return {
+    input,
+    output,
+    total: reportedTotal !== 0 ? reportedTotal : input + output,
+    cacheRead,
+  };
 }
 
 function tokenBudgetDiagnostics(consumedTokens: number, tokenBudget: number): string {
@@ -3018,6 +3076,7 @@ async function executeDeletion(input: DeletionInput): Promise<LoopResult> {
       messages: input.messages,
       skipped: input.skipped,
       terminationReason: reason,
+      tokens: zeroLoopTokens(),
     };
   };
   const prevCheck = parseCheck(baseSource);
@@ -3076,6 +3135,7 @@ async function executeDeletion(input: DeletionInput): Promise<LoopResult> {
       explanation: null,
       messages: input.messages,
       skipped: input.skipped,
+      tokens: zeroLoopTokens(),
     };
   }
   const diagnostics = formatDiagnostics({
@@ -3594,6 +3654,15 @@ export async function runLoop(options: LoopOptions): Promise<LoopResult> {
   let messages: ChatMessage[] = initialMessages;
   const records: LoopRecord[] = [];
   let consumedTokens = 0;
+  // Component token tally (#80), accumulated alongside `consumedTokens` (which
+  // keeps driving the budget unchanged).
+  const tokens: LoopTokens = zeroLoopTokens();
+  const addTokens = (delta: LoopTokens): void => {
+    tokens.input += delta.input;
+    tokens.output += delta.output;
+    tokens.total += delta.total;
+    tokens.cacheRead += delta.cacheRead;
+  };
 
   // Pinning (#43): the first successful pick fixes {mode, path, symbol, kind}
   // for the run; later exchanges revise content only and must echo the address.
@@ -3674,6 +3743,7 @@ export async function runLoop(options: LoopOptions): Promise<LoopResult> {
     explanation: null,
     messages,
     skipped,
+    tokens,
   });
 
   // Termination step (#43): record rows are already pushed; the only remaining
@@ -3693,6 +3763,7 @@ export async function runLoop(options: LoopOptions): Promise<LoopResult> {
     messages,
     skipped,
     terminationReason: reason,
+    tokens,
   });
 
   let iteration = 0;
@@ -3898,9 +3969,11 @@ export async function runLoop(options: LoopOptions): Promise<LoopResult> {
             ),
             messages,
             skipped,
+            tokens,
           };
         }
         consumedTokens += tokensFromResponse(response);
+        addTokens(loopTokensFromResponse(response));
         if (consumedTokens > tokenBudget) {
           return await terminate(
             "token-budget",
@@ -4138,9 +4211,11 @@ export async function runLoop(options: LoopOptions): Promise<LoopResult> {
           ),
           messages,
           skipped,
+          tokens,
         };
       }
       consumedTokens += tokensFromResponse(response);
+      addTokens(loopTokensFromResponse(response));
       if (consumedTokens > tokenBudget) {
         return await terminate("token-budget", tokenBudgetDiagnostics(consumedTokens, tokenBudget));
       }
