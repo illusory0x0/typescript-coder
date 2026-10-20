@@ -34,3 +34,59 @@
   parent: null
   deps: []
   file: 0104-ship-tc-as-an-opencode-sub-agent-over-a-bidirectional-stdin-stdout-protocol.md
+- id: 106
+  title: "Specify the compact positional syntax and the selection cascade"
+  status: todo
+  priority: medium
+  milestone: null
+  parent: 105
+  deps: []
+  file: 0106-specify-the-compact-positional-syntax-and-the-selection-cascade.md
+- id: 107
+  title: "Parse and serialize the compact positional selection syntax"
+  status: todo
+  priority: medium
+  milestone: null
+  parent: 105
+  deps: [106]
+  file: 0107-parse-and-serialize-the-compact-positional-selection-syntax.md
+- id: 108
+  title: "Resolve the selection cascade with optional stages and fallback"
+  status: todo
+  priority: medium
+  milestone: null
+  parent: 105
+  deps: [106]
+  file: 0108-resolve-the-selection-cascade-with-optional-stages-and-fallback.md
+- id: 109
+  title: "Add a regex selector to the selection cascade"
+  status: todo
+  priority: medium
+  milestone: null
+  parent: 105
+  deps: [106]
+  file: 0109-add-a-regex-selector-to-the-selection-cascade.md
+- id: 110
+  title: "Record the resolved selection stage/selector per applied edit"
+  status: todo
+  priority: medium
+  milestone: null
+  parent: 105
+  deps: [106, 108]
+  file: 0110-record-the-resolved-selection-stage-selector-per-applied-edit.md
+- id: 111
+  title: "Teach the compact syntax with few-shot examples, measured A/B"
+  status: todo
+  priority: medium
+  milestone: null
+  parent: 105
+  deps: [107, 108, 109, 110]
+  file: 0111-teach-the-compact-syntax-with-few-shot-examples-measured-a-b.md
+- id: 105
+  title: "LLM-friendly cascading selection protocol (compact positional syntax)"
+  status: todo
+  priority: medium
+  milestone: null
+  parent: null
+  deps: []
+  file: 0105-llm-friendly-cascading-selection-protocol-compact-positional-syntax.md

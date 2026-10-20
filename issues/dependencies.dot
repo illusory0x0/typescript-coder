@@ -109,6 +109,13 @@ digraph issues {
   "102" [label="#102 Steer matcher-failure repairs toward the range selector, measured A/B"];
   "103" [label="#103 Reconcile the loop vocabulary: folded terms are used as live nouns"];
   "104" [label="#104 Ship tc as an opencode sub-agent over a bidirectional stdin/stdout protocol"];
+  "105" [label="#105 LLM-friendly cascading selection protocol (compact positional syntax)"];
+  "106" [label="#106 Specify the compact positional syntax and the selection cascade"];
+  "107" [label="#107 Parse and serialize the compact positional selection syntax"];
+  "108" [label="#108 Resolve the selection cascade with optional stages and fallback"];
+  "109" [label="#109 Add a regex selector to the selection cascade"];
+  "110" [label="#110 Record the resolved selection stage/selector per applied edit"];
+  "111" [label="#111 Teach the compact syntax with few-shot examples, measured A/B"];
 
   // parent edges (parent -> child), solid
   "1" -> "2";
@@ -183,6 +190,12 @@ digraph issues {
   "91" -> "98";
   "100" -> "101";
   "100" -> "102";
+  "105" -> "106";
+  "105" -> "107";
+  "105" -> "108";
+  "105" -> "109";
+  "105" -> "110";
+  "105" -> "111";
 
   // dependency edges (blocker -> blocked), dashed
   "2" -> "3" [style=dashed, label="blocks"];
@@ -222,4 +235,13 @@ digraph issues {
   "81" -> "83" [style=dashed, label="blocks"];
   "82" -> "83" [style=dashed, label="blocks"];
   "101" -> "102" [style=dashed, label="blocks"];
+  "106" -> "107" [style=dashed, label="blocks"];
+  "106" -> "108" [style=dashed, label="blocks"];
+  "106" -> "109" [style=dashed, label="blocks"];
+  "106" -> "110" [style=dashed, label="blocks"];
+  "107" -> "111" [style=dashed, label="blocks"];
+  "108" -> "110" [style=dashed, label="blocks"];
+  "108" -> "111" [style=dashed, label="blocks"];
+  "109" -> "111" [style=dashed, label="blocks"];
+  "110" -> "111" [style=dashed, label="blocks"];
 }
