@@ -43,6 +43,7 @@ interface CliArgs {
   pilot: boolean;
   side: SideSelection;
   model: string;
+  ocModel: string | null;
   keep: boolean;
   json: string | null;
   replayDir: string | null;
@@ -216,6 +217,8 @@ export interface Report {
   reps: number;
   concurrency: number;
   model: string;
+  /** oc-side model override (`--oc-model`); null when the oc side uses `model`. */
+  ocModel: string | null;
   effort: ReasoningEffort | null;
   /** Opt-in multi-payload exchanges (#69): whether the tc side batched edits. */
   multiPayload: boolean;
@@ -369,6 +372,9 @@ Options:
                                              benchmark/results/pilot-<date>.json
   --side tc|oc|both                          which side(s) to run (default: both)
   --model <id>                               gateway model id (default: ${DEFAULT_MODEL})
+  --oc-model <id>                            model id for the oc side only, overriding --model
+                                             (e.g. to pin an oc variant such as
+                                             ${DEFAULT_MODEL}#none while tc uses the base id)
   --keep                                     keep workspaces and logs under ./tmp/benchmark/
   --json <path>                              report output path (default: benchmark/results/)
   --replay-dir <path>                        write per-run tc-side replay bundles to <path>
@@ -439,7 +445,7 @@ function parseTask(value: string): TaskName {
   return match.name;
 }
 
-function parseArgs(argv: string[]): CliArgs {
+export function parseArgs(argv: string[]): CliArgs {
   const args: CliArgs = {
     task: null,
     all: false,
@@ -448,6 +454,7 @@ function parseArgs(argv: string[]): CliArgs {
     pilot: false,
     side: "both",
     model: DEFAULT_MODEL,
+    ocModel: null,
     keep: false,
     json: null,
     replayDir: null,
@@ -524,6 +531,15 @@ function parseArgs(argv: string[]): CliArgs {
         index += 1;
         break;
       }
+      case "--oc-model": {
+        const value = argv[index + 1];
+        if (value === undefined || value.startsWith("-")) {
+          failUsage("missing value for --oc-model");
+        }
+        args.ocModel = value;
+        index += 1;
+        break;
+      }
       case "--json": {
         const value = argv[index + 1];
         if (value === undefined || value.startsWith("-")) {
@@ -574,6 +590,9 @@ function parseArgs(argv: string[]): CliArgs {
   }
   if (args.model === "") {
     failUsage("--model must not be empty");
+  }
+  if (args.ocModel === "") {
+    failUsage("--oc-model must not be empty");
   }
   return args;
 }
@@ -1186,6 +1205,11 @@ function opencodeModelId(model: string): string {
   return model.includes("/") ? model : `${OPENCODE_PROVIDER}/${model}`;
 }
 
+/** Model id for the oc side: `--oc-model` overrides `--model` when present. */
+export function opencodeModelFor(model: string, ocModel: string | null): string {
+  return opencodeModelId(ocModel ?? model);
+}
+
 // Give every workspace its own git repo so an agent cannot reach the enclosing
 // typescript-coder repository (and benchmark/references/) through git.
 function initWorkspaceGit(workspace: string): void {
@@ -1551,6 +1575,7 @@ export function writeMarkdownReport(mdPath: string, report: Report): void {
   lines.push(
     `- mode: ${report.mode}`,
     `- model: ${report.model}`,
+    ...(report.ocModel === null ? [] : [`- oc model: ${report.ocModel}`]),
     `- effort: ${report.effort ?? "none (default)"}`,
     `- multi-payload: ${report.multiPayload ? "on (#69)" : "off (default)"}`,
     `- concurrency: ${report.concurrency}`,
@@ -1823,6 +1848,7 @@ async function main(): Promise<number> {
     reps,
     concurrency: Math.min(args.concurrency, jobs.length),
     model: args.model,
+    ocModel: args.ocModel === null || args.ocModel === args.model ? null : args.ocModel,
     effort: args.effort,
     multiPayload: args.multiPayload,
     tokenBudget: args.tokenBudget,
@@ -1892,7 +1918,7 @@ async function main(): Promise<number> {
     tscBin,
     model: args.model,
     effort: args.effort,
-    opencodeModel: opencodeModelId(args.model),
+    opencodeModel: opencodeModelFor(args.model, args.ocModel),
     opencode,
     runRoot,
     replayDir,

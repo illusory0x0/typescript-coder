@@ -49,6 +49,8 @@ interface RunModule {
     byTaskSide: readonly AggregateLike[],
   ): string;
   writeMarkdownReport(path: string, report: unknown): void;
+  parseArgs(argv: string[]): { model: string; ocModel: string | null };
+  opencodeModelFor(model: string, ocModel: string | null): string;
 }
 
 async function loadRunModule(): Promise<RunModule> {
@@ -228,4 +230,80 @@ describe("rendered report (#89)", () => {
       }
     },
   );
+});
+
+describe("oc model override (--oc-model)", () => {
+  test.skipIf(!runModulePresent)("parses --oc-model and defaults to null", async () => {
+    const { parseArgs } = await loadRunModule();
+    expect(parseArgs([]).ocModel).toBeNull();
+    expect(parseArgs(["--model", "base"]).ocModel).toBeNull();
+    expect(parseArgs(["--model", "base", "--oc-model", "base#none"]).ocModel).toBe("base#none");
+    expect(parseArgs(["--oc-model", "base#none"]).model).toBe("deepseek-v4.1-flash");
+  });
+
+  test.skipIf(!runModulePresent)(
+    "an absent --oc-model falls back to --model for the oc side",
+    async () => {
+      const { opencodeModelFor, parseArgs } = await loadRunModule();
+      const fallback = parseArgs(["--model", "base"]);
+      expect(fallback.model).toBe("base");
+      expect(fallback.ocModel).toBeNull();
+      // Absent override: the oc side still qualifies the shared --model.
+      expect(opencodeModelFor(fallback.model, fallback.ocModel)).toBe("honghong/base");
+      // Explicit override: only the oc id changes; tc keeps `base`.
+      expect(opencodeModelFor("base", "base#none")).toBe("honghong/base#none");
+    },
+  );
+
+  test.skipIf(!runModulePresent)("the report carries ocModel and renders it when set", async () => {
+    const { computeAggregates, writeMarkdownReport } = await loadRunModule();
+    const runs = sampleRuns();
+    const tasks = ["json-parser", "sexp-parser"];
+    const sides = ["tc", "oc"];
+    const makeReport = (ocModel: string | null): Record<string, unknown> => ({
+      generatedAt: "2026-10-20T00:00:00.000Z",
+      date: "2026-10-20",
+      mode: "full",
+      tasks,
+      sides,
+      reps: 1,
+      concurrency: 1,
+      model: "deepseek-v4.1-flash",
+      ocModel,
+      effort: null,
+      multiPayload: false,
+      tokenBudget: null,
+      bunVersion: "1.0.0",
+      opencodeVersion: null,
+      pilotReference: null,
+      infraErrors: [],
+      runs,
+      aggregates: computeAggregates(runs, tasks, sides),
+      provenance: {
+        inputs: {
+          model: "m",
+          taskIssue: "t",
+          fixture: "f",
+          systemPrompt: "s",
+          loopConfig: "l",
+          pricing: "p",
+        },
+        inputHash: "h",
+        computedAt: "2026-10-20T00:00:00.000Z",
+      },
+    });
+
+    const dir = mkdtempSync(join(tmpdir(), "run-oc-model-"));
+    try {
+      const overridden = join(dir, "overridden.md");
+      writeMarkdownReport(overridden, makeReport("deepseek-v4.1-flash#none"));
+      expect(readFileSync(overridden, "utf8")).toContain("- oc model: deepseek-v4.1-flash#none");
+
+      const base = join(dir, "base.md");
+      writeMarkdownReport(base, makeReport(null));
+      expect(readFileSync(base, "utf8")).not.toContain("- oc model:");
+    } finally {
+      rmSync(dir, { recursive: true, force: true });
+    }
+  });
 });

@@ -2,14 +2,6 @@
 # rewrites it; `add` appends; other writes keep it. `check` enforces it.
 # A dep, and every child of an umbrella, must be listed before its dependent.
 
-- id: 93
-  title: "tc-vs-oc: canonical none-vs-none matrix under the #89 cache-excluded accounting"
-  status: todo
-  priority: medium
-  milestone: null
-  parent: 90
-  deps: []
-  file: 0093-tc-vs-oc-canonical-none-vs-none-matrix-under-the-89-cache-excluded-accounting.md
 - id: 99
   title: "Hygiene: gitignore the failures/ artifact directory"
   status: todo
@@ -18,14 +10,6 @@
   parent: null
   deps: []
   file: 0099-hygiene-gitignore-the-failures-artifact-directory.md
-- id: 90
-  title: "Prove the v3 measurement claims: isolated #87 causality and a like-for-like tc-vs-oc matrix"
-  status: todo
-  priority: high
-  milestone: null
-  parent: null
-  deps: []
-  file: 0090-prove-the-v3-measurement-claims-isolated-87-causality-and-a-like-for-like-tc-vs-oc-matrix.md
 - id: 94
   title: "Repair prompt: carry the newest exchange verbatim beside the attempt digest"
   status: todo
