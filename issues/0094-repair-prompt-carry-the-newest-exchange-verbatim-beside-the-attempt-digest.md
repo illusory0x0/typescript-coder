@@ -1,7 +1,7 @@
 ---
 id: 94
 title: "Repair prompt: carry the newest exchange verbatim beside the attempt digest"
-status: todo
+status: in-progress
 priority: low
 milestone: null
 parent: 91
@@ -53,3 +53,4 @@ Inspect a replay to confirm the newest diagnostics appear verbatim.
   negative; this candidate is narrower — the newest diagnostics text, not the
   prior replies.
 - Non-goals: widening the diagnostics cap; changing guards.
+- Recon 2026-10-20: premise appears already satisfied. Continuation/repair prompts render the newest exchange's diagnostics verbatim in the `Diagnostics:` block, not merely a one-line digest: on a #52 continuation `diagnostics = combinedDiagnostics(iterationOpenedBy, lastDiagnostics)` (`src/loop.ts:4722`; helper at `:3776`), and `buildRetryPrompt`/`buildContinuationPrompt` inline it as a fenced block (`src/loop.ts:582` and `:606`). Confirmed in the live replay `tmp/replays-93/minilisp-tc-rep2.json` (call 5, the round-2 continuation): the full `stage: tsc` + `stage: matcher` text appears verbatim in the Diagnostics block, immediately followed by the bounded one-line digest (`Prior attempts (4): - #1 tsc: …`). So candidate 2's stated gap ("carries only a one-line attempt digest, so the model re-derives the exact last failure from a summary") no longer holds — the newest verbatim text is already present, and re-adding it beside the digest would duplicate it. Paused for a scope decision instead of implementing a duplicate (wontfix vs a narrowed digest change).
