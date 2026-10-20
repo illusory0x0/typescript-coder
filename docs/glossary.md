@@ -109,7 +109,9 @@ The old names are not separate terms; each is just part of the flow above:
   (`matcher-unparseable`, `matcher-not-found`, `matcher-ambiguous`),
   `range-invalid`, `no-op`,
   `repeat`,
-  `duplicate`, `gate`, `format`, `truncated` — carried on the record row; the
+  `duplicate`, `gate`, `format`, `truncated` (plus the multi-payload causes
+  `multi-protocol`/`multi-duplicate` and the harness-fault
+  `format-export-duplication`) — carried on the record row; the
   re-ask's lead sentence is that cause's concrete correction instead of the
   generic "make minimal corrective changes". Consecutive same-cause rejections
   accumulate in a run-scope streak that spans rounds and #52 continuations,

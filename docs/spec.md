@@ -285,7 +285,9 @@ harness:
   cause — `protocol`, `echo`, `address`, the three matcher sub-causes
   (`matcher-unparseable`, `matcher-not-found`, `matcher-ambiguous`),
   `range-invalid`, `no-op`,
-  `repeat`, `duplicate`, `gate`, `format`, or `truncated` — carried on the record
+  `repeat`, `duplicate`, `gate`, `format`, or `truncated` (plus the multi-payload
+  causes `multi-protocol`/`multi-duplicate` and the harness-fault
+  `format-export-duplication`, §4) — carried on the record
   row, and the retry prompt's lead sentence is that cause's concrete correction
   instead of the generic "make minimal corrective changes" (matcher causes ask
   for a verbatim matcher or an omitted `matcher`; `range-invalid` asks for the
