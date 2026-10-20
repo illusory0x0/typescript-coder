@@ -2,6 +2,22 @@
 # rewrites it; `add` appends; other writes keep it. `check` enforces it.
 # A dep, and every child of an umbrella, must be listed before its dependent.
 
+- id: 87
+  title: "Repair prompt: name the failing declaration in the tsc diagnostics"
+  status: todo
+  priority: medium
+  milestone: null
+  parent: 77
+  deps: []
+  file: 0087-repair-prompt-name-the-failing-declaration-in-the-tsc-diagnostics.md
+- id: 88
+  title: "Repair prompt: show the model its own prior replies to cut within-round churn"
+  status: todo
+  priority: medium
+  milestone: null
+  parent: 77
+  deps: []
+  file: 0088-repair-prompt-show-the-model-its-own-prior-replies-to-cut-within-round-churn.md
 - id: 77
   title: "Close the minilisp repair-cost gap: reliably beat the oc baseline on tokens per success (help wanted)"
   status: in-progress
