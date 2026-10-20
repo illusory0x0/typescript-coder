@@ -99,3 +99,4 @@ bun run accept
   keep-progress, or weakening verification ownership.
 - Related: `docs/subagent.md` (one-shot contract), `acceptance/` (harness), and
   the reliability/cost umbrellas (#46).
+- Mode/CLI design (2026-10-20): two explicit modes — `--one-shot` (read stdin to EOF, one loop, one result, exit; the existing default behaviour made explicit) and `--serve` (persistent, line-delimited JSON request/response over stdin/stdout, one result line per request, stdout carries results only with diagnostics/progress on stderr). Default (no mode): stdin is a TTY → print help and exit 0; stdin is piped/a file → `--one-shot`, preserving the documented `tc < task.txt` contract. `--help` → stdout, exit 0; startup/usage error → stderr, exit 1. Chose `--one-shot` (hyphenated) over `--once`/`--oneshot` for consistency with the one-shot term. Binary stays `tc` (never `ts`).
