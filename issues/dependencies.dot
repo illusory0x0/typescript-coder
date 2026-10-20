@@ -107,6 +107,7 @@ digraph issues {
   "100" [label="#100 Raise range selector adoption, with mechanical measurement"];
   "101" [label="#101 Record the edit selector (range / matcher / whole-symbol) in loop records and the benchmark report"];
   "102" [label="#102 Steer matcher-failure repairs toward the range selector, measured A/B"];
+  "103" [label="#103 Reconcile the loop vocabulary: folded terms are used as live nouns"];
 
   // parent edges (parent -> child), solid
   "1" -> "2";

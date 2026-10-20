@@ -26,3 +26,11 @@
   parent: null
   deps: []
   file: 0100-raise-range-selector-adoption-with-mechanical-measurement.md
+- id: 103
+  title: "Reconcile the loop vocabulary: folded terms are used as live nouns"
+  status: todo
+  priority: medium
+  milestone: null
+  parent: null
+  deps: []
+  file: 0103-reconcile-the-loop-vocabulary-folded-terms-are-used-as-live-nouns.md
