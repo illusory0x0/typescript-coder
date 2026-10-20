@@ -95,6 +95,8 @@ interface RecordSummary {
   readonly payloads: number;
   /** Provider tool calls in the reply that produced this row (#69). */
   readonly toolCalls: number;
+  /** Selectors the exchange's payloads used (#101); null when it carried none. */
+  readonly selectors: string[] | null;
 }
 
 /**
@@ -110,6 +112,10 @@ export interface RecordExchangeStats {
   readonly rejected: number;
   readonly selected: number;
   readonly stopped: number;
+  /** Selector adoption across the run's payloads (#101). */
+  readonly range: number;
+  readonly matcher: number;
+  readonly wholeSymbol: number;
 }
 
 interface SideOutcome {
@@ -200,6 +206,8 @@ export interface AggregateRow {
   stepsMean: number | null;
   tokensPerSuccess: { in: number | null; out: number | null; total: number | null };
   costPerSuccess: number | null;
+  /** Selector adoption summed over the selected runs' exchanges (#101). */
+  selectors: { range: number; matcher: number; wholeSymbol: number };
 }
 
 export interface Aggregates {
@@ -869,7 +877,7 @@ async function runTypescriptCoderSide(options: {
     }
     const stats = exchangeStats(result.records);
     lines.push(
-      `exchangeStats: turns=${stats.turns} applied=${stats.applied} rejected=${stats.rejected} selected=${stats.selected} stopped=${stats.stopped} payloads=${stats.payloads} toolCalls=${stats.toolCalls}`,
+      `exchangeStats: turns=${stats.turns} applied=${stats.applied} rejected=${stats.rejected} selected=${stats.selected} stopped=${stats.stopped} payloads=${stats.payloads} toolCalls=${stats.toolCalls} range=${stats.range} matcher=${stats.matcher} wholeSymbol=${stats.wholeSymbol}`,
     );
     lines.push(`diagnostics: ${result.diagnostics ?? "none"}`);
     lines.push(`explanation: ${result.explanation ?? "none"}`);
@@ -906,6 +914,7 @@ async function runTypescriptCoderSide(options: {
           cause: record.cause ?? null,
           payloads: record.payloads ?? 0,
           toolCalls: record.toolCalls ?? 0,
+          selectors: record.selectors ?? null,
         }));
   const recordsExchangeStats =
     result === null ? null : (exchangeStats(result.records) as RecordExchangeStats);
@@ -1405,6 +1414,17 @@ export function aggregateRuns(
       : { mean: costTotal / costValues.length, total: costTotal };
   const perSuccess = (stats: TokenStats): number | null =>
     ok === 0 || stats.total === null ? null : stats.total / ok;
+  // Selector adoption: sum the per-run exchange counts (#101); runs without
+  // records contribute zero, so an aggregate row with no recorded selector
+  // adoption reports all-zero counts rather than null.
+  const selectors = selected.reduce(
+    (sum, run) => ({
+      range: sum.range + (run.exchangeStats?.range ?? 0),
+      matcher: sum.matcher + (run.exchangeStats?.matcher ?? 0),
+      wholeSymbol: sum.wholeSymbol + (run.exchangeStats?.wholeSymbol ?? 0),
+    }),
+    { range: 0, matcher: 0, wholeSymbol: 0 },
+  );
   return {
     task,
     side,
@@ -1427,6 +1447,7 @@ export function aggregateRuns(
       total: perSuccess(tokens.total),
     },
     costPerSuccess: perSuccess(cost),
+    selectors,
   };
 }
 
@@ -1697,6 +1718,30 @@ export function writeMarkdownReport(mdPath: string, report: Report): void {
     "a boundary splits its cost by elapsed-time share.",
     "",
   );
+
+  lines.push("## Selector adoption (#101)", "");
+  lines.push("Per task and side (payloads that used each selector):", "");
+  lines.push(
+    "| Task | Side | range | matcher | whole-symbol |",
+    "| --- | --- | ---: | ---: | ---: |",
+  );
+  for (const row of aggregates.byTaskSide) {
+    lines.push(
+      `| ${row.task ?? "all"} | ${row.side ?? "all"} | ${row.selectors.range} | ${
+        row.selectors.matcher
+      } | ${row.selectors.wholeSymbol} |`,
+    );
+  }
+  lines.push("");
+  lines.push("| Side | range | matcher | whole-symbol |", "| --- | ---: | ---: | ---: |");
+  for (const row of aggregates.bySide) {
+    lines.push(
+      `| ${row.side ?? "all"} | ${row.selectors.range} | ${row.selectors.matcher} | ${
+        row.selectors.wholeSymbol
+      } |`,
+    );
+  }
+  lines.push("");
 
   lines.push("## Anomalies", "");
   const failures = report.runs.filter((run) => !run.ok);

@@ -29,6 +29,7 @@ interface AggregateLike {
   side: string | null;
   tokens: { in: TokenStatsLike; out: TokenStatsLike; total: TokenStatsLike };
   tokensPerSuccess: { in: number | null; out: number | null; total: number | null };
+  selectors: { range: number; matcher: number; wholeSymbol: number };
 }
 
 interface AggregatesLike {
@@ -63,6 +64,7 @@ function makeRun(
   task: string,
   side: "tc" | "oc",
   buckets: { input: number; output: number; cacheRead?: number },
+  exchangeStats: Record<string, unknown> | null = null,
 ): Record<string, unknown> {
   const raw = {
     input: buckets.input,
@@ -89,7 +91,7 @@ function makeRun(
     rateClass: "off-peak",
     steps: 1,
     records: null,
-    exchangeStats: null,
+    exchangeStats,
     loopDiagnostics: null,
     terminationReason: null,
     model: "deepseek-v4.1-flash",
@@ -225,9 +227,46 @@ describe("rendered report (#89)", () => {
         expect(markdown).toContain("| json-parser | tc | 1/1 | 200 | 500 | 700 |");
         expect(markdown).toContain("oc 1.56x tc overall");
         expect(markdown).toContain("json-parser oc 1.86x tc");
+        // #101: adoption surfaces per task/side and per side.
+        expect(markdown).toContain("## Selector adoption (#101)");
+        expect(markdown).toContain("| Task | Side | range | matcher | whole-symbol |");
+        expect(markdown).toContain("| Side | range | matcher | whole-symbol |");
       } finally {
         rmSync(dir, { recursive: true, force: true });
       }
+    },
+  );
+});
+
+describe("selector adoption aggregates (#101)", () => {
+  const selectorStats = (range: number, matcher: number, wholeSymbol: number) => ({
+    turns: 3,
+    payloads: range + matcher + wholeSymbol,
+    toolCalls: 1,
+    applied: 2,
+    rejected: 1,
+    selected: 0,
+    stopped: 0,
+    range,
+    matcher,
+    wholeSymbol,
+  });
+
+  test.skipIf(!runModulePresent)(
+    "sums per-run selector counts onto byTaskSide and bySide; absent stats contribute zero",
+    async () => {
+      const { aggregateRuns, computeAggregates } = await loadRunModule();
+      const runs = [
+        makeRun("json-parser", "tc", { input: 10, output: 5 }, selectorStats(2, 1, 0)),
+        makeRun("json-parser", "tc", { input: 10, output: 5 }, selectorStats(0, 3, 1)),
+        makeRun("json-parser", "tc", { input: 10, output: 5 }),
+      ];
+      const jsonTc = aggregateRuns(runs, "json-parser", "tc");
+      expect(jsonTc.selectors).toEqual({ range: 2, matcher: 4, wholeSymbol: 1 });
+
+      const aggregates = computeAggregates(runs, ["json-parser"], ["tc"]);
+      const bySide = aggregates.bySide.find((row) => row.side === "tc");
+      expect(bySide?.selectors).toEqual({ range: 2, matcher: 4, wholeSymbol: 1 });
     },
   );
 });

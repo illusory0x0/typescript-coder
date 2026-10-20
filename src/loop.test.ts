@@ -46,6 +46,8 @@ import {
   renderSelfCheckRead,
   resolveEditRange,
   runLoop,
+  selectorOf,
+  selectorsOf,
   selectSpecFiles,
   SELF_CHECK_OUTPUT_LIMIT,
   SPEC_FILE_LIMIT,
@@ -55,7 +57,7 @@ import {
   updateAttemptDigest,
   verificationFingerprint,
 } from "./loop";
-import type { LoopRecord, ProviderLike, RetryPromptInput, StalledAsk } from "./loop";
+import type { EditPayload, LoopRecord, ProviderLike, RetryPromptInput, StalledAsk } from "./loop";
 import type { ChatMessage, ChatOptions, ChatResponse, ToolDefinition } from "./openai";
 import { ChatContextOverflowError, ChatPayloadTooLargeError } from "./openai";
 import { Parser } from "./parser";
@@ -1594,6 +1596,35 @@ describe("parseEditResponse", () => {
   });
 });
 
+describe("edit selector classification (#101)", () => {
+  const payload = (over: Partial<EditPayload> = {}): EditPayload => ({
+    locator: { path: "src/a.ts", name: "x", kind: "function" },
+    matcher: null,
+    range: null,
+    replacement: "y",
+    ...over,
+  });
+  const range = { line: 1, column: 1, endLine: 1, endColumn: 2 };
+
+  test("classifies a flat payload: range wins over matcher; neither = whole-symbol", () => {
+    expect(selectorOf(payload({ range }))).toBe("range");
+    expect(selectorOf(payload({ matcher: "return 1;" }))).toBe("matcher");
+    expect(selectorOf(payload({ matcher: "return 1;", range }))).toBe("range");
+    expect(selectorOf(payload())).toBe("whole-symbol");
+  });
+
+  test("selectorsOf maps a batch in order and a flat payload to one entry", () => {
+    expect(
+      selectorsOf(null, [payload({ range }), payload(), payload({ matcher: "return 1;" })]),
+    ).toEqual(["range", "whole-symbol", "matcher"]);
+    expect(selectorsOf(payload({ matcher: "return 1;" }), null)).toEqual(["matcher"]);
+  });
+
+  test("selectorsOf returns undefined when the exchange carried no payload", () => {
+    expect(selectorsOf(null, null)).toBeUndefined();
+  });
+});
+
 describe("exchangeStats (#69)", () => {
   const row = (
     over: Partial<LoopRecord> & { outcome: LoopRecord["outcome"]; kind: LoopRecord["kind"] },
@@ -1629,6 +1660,9 @@ describe("exchangeStats (#69)", () => {
       selected: 1,
       stopped: 1,
       selfChecks: 1,
+      range: 0,
+      matcher: 0,
+      wholeSymbol: 0,
     });
   });
 
@@ -1637,6 +1671,19 @@ describe("exchangeStats (#69)", () => {
     expect(stats.payloads).toBe(0);
     expect(stats.toolCalls).toBe(0);
     expect(stats.applied).toBe(1);
+  });
+
+  test("sums selector adoption per payload, including batch entries (#101)", () => {
+    const stats = exchangeStats([
+      row({ outcome: "applied", kind: "exchange", selectors: ["range"] }),
+      row({ outcome: "applied", kind: "exchange", selectors: ["range", "matcher"] }),
+      row({ outcome: "applied", kind: "exchange", selectors: ["matcher", "whole-symbol"] }),
+      row({ outcome: "selected", kind: "exchange", toolCalls: 1 }),
+      row({ outcome: "ok", kind: "verification", exchange: null }),
+    ]);
+    expect(stats.range).toBe(2);
+    expect(stats.matcher).toBe(2);
+    expect(stats.wholeSymbol).toBe(1);
   });
 });
 
@@ -1846,6 +1893,48 @@ describe("edit range selector (#72)", () => {
     expect(result.ok).toBe(true);
     expect(result.records.map((record) => record.outcome)).toEqual(["selected", "applied", "ok"]);
     expect(helperSource(dir)).toContain("return 2;");
+    // #101: the applied range edit records its selector; the payload-free
+    // selection row omits the field.
+    const applied = result.records.find((record) => record.outcome === "applied");
+    expect(applied?.selectors).toEqual(["range"]);
+    const selected = result.records.find((record) => record.outcome === "selected");
+    expect(selected?.selectors).toBeUndefined();
+  }, 30000);
+
+  test("records the matcher and whole-symbol selectors (#101)", async () => {
+    const dir = fixtureDir();
+    const provider = new ScriptedProvider([
+      selectionResponse(),
+      editResponse("return 1;", "return 2;"),
+    ]);
+    const result = await runLoop({
+      cwd: dir,
+      issue: "make the answer test pass",
+      provider,
+      checkCommand: TSC,
+      testCommand: ["bun", "test"],
+    });
+    expect(result.ok).toBe(true);
+    const applied = result.records.find((record) => record.outcome === "applied");
+    expect(applied?.selectors).toEqual(["matcher"]);
+
+    const wholeDir = fixtureDir();
+    const wholeProvider = new ScriptedProvider([
+      selectionResponse(),
+      editResponse(null, "export function answer(): number {\n  return 2;\n}"),
+    ]);
+    const wholeResult = await runLoop({
+      cwd: wholeDir,
+      issue: "make the answer test pass",
+      provider: wholeProvider,
+      checkCommand: TSC,
+      testCommand: ["bun", "test"],
+    });
+    expect(wholeResult.ok).toBe(true);
+    const wholeApplied = wholeResult.records.find((record) => record.outcome === "applied");
+    expect(wholeApplied?.selectors).toEqual(["whole-symbol"]);
+    const wholeStats = exchangeStats(wholeResult.records);
+    expect(wholeStats.wholeSymbol).toBe(1);
   }, 30000);
 
   test("applies a multi-line range", async () => {
@@ -7375,8 +7464,11 @@ describe("multi-payload exchanges (#69)", () => {
     expect(readFileSync(join(dir, "src", "b.ts"), "utf8")).toContain("return 3;");
     const applied = result.records.find((record) => record.outcome === "applied");
     expect(applied?.payloads).toBe(2);
+    // #101: a batch classifies each entry, in order.
+    expect(applied?.selectors).toEqual(["matcher", "matcher"]);
     const stats = exchangeStats(result.records);
     expect(stats.payloads).toBe(2);
+    expect(stats.matcher).toBe(2);
     expect(stats.applied).toBe(1);
     // The batch ran as one exchange, so it spent one of the shared budget slots.
     expect(applied?.exchange).toBe(2);
@@ -7442,6 +7534,111 @@ describe("multi-payload exchanges (#69)", () => {
     const stats = exchangeStats(result.records);
     expect(stats.rejected).toBe(1);
     expect(stats.applied).toBe(1);
+  }, 30000);
+
+  test("classifies carried batch entries on a parse-time multi-protocol rejection (#101)", async () => {
+    const dir = multiFixtureDir();
+    const malformedBatch = JSON.stringify({
+      payloads: [
+        {
+          path: "src/a.ts",
+          symbol: "one",
+          kind: "function",
+          range: { line: 2, column: 3, endLine: 2, endColumn: 11 },
+          replacement: "return 2;",
+        },
+        {
+          path: "src/b.ts",
+          symbol: "two",
+          kind: "function",
+          matcher: "return 1;",
+          replacement: "return 3;",
+        },
+        "not a flat edit object",
+      ],
+    });
+    const provider = new ScriptedProvider([
+      selectionResponse({ path: "src/a.ts", symbol: "one", kind: "function" }),
+      malformedBatch,
+      batchResponse([
+        {
+          path: "src/a.ts",
+          symbol: "one",
+          kind: "function",
+          matcher: "return 1;",
+          replacement: "return 2;",
+        },
+        {
+          path: "src/b.ts",
+          symbol: "two",
+          kind: "function",
+          matcher: "return 1;",
+          replacement: "return 3;",
+        },
+      ]),
+    ]);
+    const result = await runLoop({
+      cwd: dir,
+      issue: "make both declarations satisfy the pair test",
+      provider,
+      checkCommand: TSC,
+      testCommand: ["bun", "test"],
+      multiPayload: true,
+    });
+    expect(result.ok).toBe(true);
+    const rejected = result.records.find(
+      (record) => record.outcome !== "applied" && record.kind === "exchange" && record.row === 2,
+    );
+    expect(rejected?.payloads).toBe(2);
+    expect(rejected?.diagnostics).toContain("stage: multi");
+    expect(rejected?.diagnostics).toContain("payload 3");
+    // The two entries that parsed carry their own selectors, in order.
+    expect(rejected?.selectors).toEqual(["range", "matcher"]);
+    const stats = exchangeStats(result.records);
+    // The rejected record's carried entries (range, matcher) plus the applied
+    // batch's two matcher entries.
+    expect(stats.range).toBe(1);
+    expect(stats.matcher).toBe(3);
+    expect(stats.wholeSymbol).toBe(0);
+  }, 30000);
+
+  test("omits selectors on a protocol rejection whose reply carried no payload (#101)", async () => {
+    const dir = multiFixtureDir();
+    const provider = new ScriptedProvider([
+      selectionResponse({ path: "src/a.ts", symbol: "one", kind: "function" }),
+      "not json",
+      batchResponse([
+        {
+          path: "src/a.ts",
+          symbol: "one",
+          kind: "function",
+          matcher: "return 1;",
+          replacement: "return 2;",
+        },
+        {
+          path: "src/b.ts",
+          symbol: "two",
+          kind: "function",
+          matcher: "return 1;",
+          replacement: "return 3;",
+        },
+      ]),
+    ]);
+    const result = await runLoop({
+      cwd: dir,
+      issue: "make both declarations satisfy the pair test",
+      provider,
+      checkCommand: TSC,
+      testCommand: ["bun", "test"],
+      multiPayload: true,
+    });
+    expect(result.ok).toBe(true);
+    const rejected = result.records.find(
+      (record) => record.outcome !== "applied" && record.kind === "exchange" && record.row === 2,
+    );
+    expect(rejected?.payloads).toBe(0);
+    expect(rejected?.selectors).toBeUndefined();
+    expect(rejected?.diagnostics).toContain("stage: protocol");
   }, 30000);
 
   test("rejects a range on a batch payload in an unshown file", async () => {

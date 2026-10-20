@@ -765,6 +765,35 @@ export interface EditPayload {
   replacement: string;
 }
 
+/** Which selector an applied edit used (#101): range, matcher, or whole-symbol. */
+export type EditSelector = "range" | "matcher" | "whole-symbol";
+
+/**
+ * Classify one payload's selector (#101): `range` takes precedence over `matcher`
+ * when both are sent, and a payload with neither is a whole-symbol rewrite.
+ */
+export function selectorOf(payload: EditPayload): EditSelector {
+  if (payload.range !== null) {
+    return "range";
+  }
+  return payload.matcher !== null ? "matcher" : "whole-symbol";
+}
+
+/**
+ * Selectors of an exchange's parsed payloads (#101), in order: every entry of a
+ * `{"payloads": [...]}` batch, else the single flat payload's selector, else
+ * `undefined` when the exchange carried no payload.
+ */
+export function selectorsOf(
+  payload: EditPayload | null,
+  batch: readonly EditPayload[] | null,
+): EditSelector[] | undefined {
+  if (batch !== null) {
+    return batch.map(selectorOf);
+  }
+  return payload === null ? undefined : [selectorOf(payload)];
+}
+
 const SELECTION_EXPECTED =
   'expected {"mode":"modify"|"create"|"delete","path": ..., "symbol": ..., "kind": ...}';
 const EDIT_EXPECTED =
@@ -1669,6 +1698,12 @@ export interface LoopRecord {
    * explicit-targets mode, so the result can name every file the exchange wrote.
    */
   appliedLocators?: Locator[];
+  /**
+   * Selectors used by the exchange's parsed payloads (#101): one entry per
+   * payload in order (a batch contributes one per entry); omitted when the
+   * exchange carried no payload.
+   */
+  selectors?: EditSelector[];
   /** Verification rows: failure signature (tsc diagnostics + failing tests) observation (#36). */
   signature: number | null;
   /** Typed edit-rejection cause (#56); absent on success and verification rows. */
@@ -1696,6 +1731,12 @@ export interface ExchangeStats {
   stopped: number;
   /** Exchange rows that executed a self-verification request (`self-check`, #73). */
   selfChecks: number;
+  /** Applied/parsed payloads that used the `range` selector (#101). */
+  range: number;
+  /** Applied/parsed payloads that used the `matcher` selector (#101). */
+  matcher: number;
+  /** Applied/parsed payloads that rewrote the whole symbol (#101). */
+  wholeSymbol: number;
 }
 
 /**
@@ -1712,6 +1753,9 @@ export function exchangeStats(records: readonly LoopRecord[]): ExchangeStats {
     selected: 0,
     stopped: 0,
     selfChecks: 0,
+    range: 0,
+    matcher: 0,
+    wholeSymbol: 0,
   };
   for (const record of records) {
     if (record.kind !== "exchange") {
@@ -1720,6 +1764,15 @@ export function exchangeStats(records: readonly LoopRecord[]): ExchangeStats {
     stats.turns += 1;
     stats.payloads += record.payloads ?? 0;
     stats.toolCalls += record.toolCalls ?? 0;
+    for (const selector of record.selectors ?? []) {
+      if (selector === "range") {
+        stats.range += 1;
+      } else if (selector === "matcher") {
+        stats.matcher += 1;
+      } else {
+        stats.wholeSymbol += 1;
+      }
+    }
     if (record.outcome === "applied") {
       stats.applied += 1;
     } else if (record.outcome === "selected") {
@@ -1924,6 +1977,8 @@ function recordRow(input: {
   toolCalls?: number;
   /** Explicit addresses covered by an applied exchange (#81); omitted by default. */
   appliedLocators?: Locator[];
+  /** Selectors used by the exchange's parsed payloads (#101); omitted when none. */
+  selectors?: EditSelector[];
   /** Exact replacement size when it differs from `replacement.length` (batch sum, #69). */
   replacementChars?: number;
 }): LoopRecord {
@@ -1945,6 +2000,7 @@ function recordRow(input: {
     signature: input.signature ?? null,
     cause: input.cause,
     appliedLocators: input.appliedLocators,
+    selectors: input.selectors,
   };
 }
 
@@ -5377,6 +5433,12 @@ export async function runLoop(options: LoopOptions): Promise<LoopResult> {
             payloads: batch !== null ? batch.length : payload !== null ? 1 : batchPayloadCount,
             toolCalls: response.toolCalls.length,
             replacementChars: batchReplacementChars ?? undefined,
+            // #101: a batch rejected at parse time keeps `batch` null but still
+            // carries the entries that parsed; classify those so every entry is
+            // counted (the `payloads` field already counts `batchCarried`).
+            selectors:
+              selectorsOf(payload, batch) ??
+              (batchCarried.length > 0 ? batchCarried.map(selectorOf) : undefined),
           }),
         );
         // Resubmission guard (#48): remember every modify-mode payload with its
@@ -5465,6 +5527,7 @@ export async function runLoop(options: LoopOptions): Promise<LoopResult> {
           toolCalls: response.toolCalls.length,
           replacementChars: batchReplacementChars ?? undefined,
           appliedLocators: targetsMode ? coveredTargets : undefined,
+          selectors: selectorsOf(payload, batch),
         }),
       );
       // Same-file sequencing (#81): a path-independent batch covers at most one
