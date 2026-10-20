@@ -55,6 +55,7 @@ import {
 } from "./loop";
 import type { LoopRecord, ProviderLike, RetryPromptInput, StalledAsk } from "./loop";
 import type { ChatMessage, ChatOptions, ChatResponse, ToolDefinition } from "./openai";
+import { ChatContextOverflowError, ChatPayloadTooLargeError } from "./openai";
 import { Parser } from "./parser";
 import { buildIndexTolerant } from "./utility";
 import type { SourceFile } from "./utility";
@@ -7007,6 +7008,68 @@ describe("runLoop provider failures", () => {
     expect(result.explanation).toBe("no explanation available: gateway dropped");
     expect(helperSource(dir)).toContain('return "nope";');
     expect(helperSource(dir)).not.toBe(original);
+  }, 30000);
+
+  test("labels a context-overflow edit failure in diagnostics (#97)", async () => {
+    const dir = fixtureDir();
+    const scripted = new ScriptedProvider([selectionResponse(ANSWER, "modify")]);
+    let calls = 0;
+    const provider: ProviderLike = {
+      async chat(messages, tools, options) {
+        calls += 1;
+        if (calls >= 2) {
+          throw new ChatContextOverflowError(
+            "chat request failed: 400 maximum context length is 8192 tokens",
+          );
+        }
+        return scripted.chat(messages, tools, options);
+      },
+    };
+    const { unhandled, value: result } = await watchRejections(() =>
+      runLoop({
+        cwd: dir,
+        issue: "make the answer test pass",
+        provider,
+        checkCommand: TSC,
+        testCommand: ["bun", "test"],
+      }),
+    );
+    expect(unhandled).toEqual([]);
+    expect(result.ok).toBe(false);
+    // Terminates through the defined summary path, not a termination reason.
+    expect(result.terminationReason).toBeUndefined();
+    expect(result.mode).toBe("modify");
+    expect(result.records.map((record) => record.outcome)).toEqual(["selected"]);
+    expect(result.diagnostics).toContain("provider context-overflow:");
+    expect(result.explanation).toBe(
+      "no explanation available: chat request failed: 400 maximum context length is 8192 tokens",
+    );
+    expect(helperSource(dir)).toContain("return 1;");
+  }, 30000);
+
+  test("labels a payload-too-large edit failure in diagnostics (#97)", async () => {
+    const dir = fixtureDir();
+    const scripted = new ScriptedProvider([selectionResponse(ANSWER, "modify")]);
+    let calls = 0;
+    const provider: ProviderLike = {
+      async chat(messages, tools, options) {
+        calls += 1;
+        if (calls >= 2) {
+          throw new ChatPayloadTooLargeError("chat request failed: 413 request entity too large");
+        }
+        return scripted.chat(messages, tools, options);
+      },
+    };
+    const result = await runLoop({
+      cwd: dir,
+      issue: "make the answer test pass",
+      provider,
+      checkCommand: TSC,
+      testCommand: ["bun", "test"],
+    });
+    expect(result.ok).toBe(false);
+    expect(result.diagnostics).toContain("provider payload-too-large:");
+    expect(helperSource(dir)).toContain("return 1;");
   }, 30000);
 });
 

@@ -143,6 +143,39 @@ function errorMessage(error: unknown): string {
 
 class ChatTimeoutError extends Error {}
 
+/** A provider reply that reports the request exceeded the model context (#97). */
+export class ChatContextOverflowError extends Error {}
+
+/** A provider reply that reports the request payload was too large (#97). */
+export class ChatPayloadTooLargeError extends Error {}
+
+/**
+ * Classify a non-retryable provider failure (#97).
+ *
+ * Heuristic by necessity: gateways and vendors phrase these failures
+ * differently, so we match known markers rather than a strict schema. Retryable
+ * statuses (429/5xx) are handled before this classification and never reach it.
+ */
+export function classifyChatError(
+  status: number,
+  bodyText: string,
+): "context-overflow" | "payload-too-large" | "terminal" {
+  if (
+    status === 413 ||
+    /payload too large|request entity too large|request too large|content too large/i.test(bodyText)
+  ) {
+    return "payload-too-large";
+  }
+  if (
+    /context[_ -]?length|context window|maximum context|max(imum)? tokens|too many tokens|token limit|reduce the length|too long/i.test(
+      bodyText,
+    )
+  ) {
+    return "context-overflow";
+  }
+  return "terminal";
+}
+
 function isRetryableStatus(status: number): boolean {
   return status === 429 || status >= 500;
 }
@@ -276,7 +309,19 @@ export class OpenAIProvider {
       if (!response.ok) {
         const bodyText = await response.text();
         if (!isRetryableStatus(response.status) || failures >= retries) {
-          throw new Error(`chat request failed: ${response.status} ${bodyText.slice(0, 500)}`);
+          const snippet = bodyText.slice(0, 500);
+          switch (classifyChatError(response.status, bodyText)) {
+            case "context-overflow":
+              throw new ChatContextOverflowError(
+                `chat request failed: ${response.status} context overflow: ${snippet}`,
+              );
+            case "payload-too-large":
+              throw new ChatPayloadTooLargeError(
+                `chat request failed: ${response.status} payload too large: ${snippet}`,
+              );
+            default:
+              throw new Error(`chat request failed: ${response.status} ${snippet}`);
+          }
         }
         failures += 1;
         const retryAfter = retryAfterMs(response.headers.get("retry-after"));

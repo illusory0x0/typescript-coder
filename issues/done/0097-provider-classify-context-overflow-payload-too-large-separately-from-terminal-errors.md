@@ -1,7 +1,7 @@
 ---
 id: 97
 title: "Provider: classify context-overflow / payload-too-large separately from terminal errors"
-status: todo
+status: done
 priority: low
 milestone: null
 parent: 91
@@ -52,3 +52,4 @@ bun benchmark/check.ts
 - May share the shrink machinery with candidate 3 (repair-context ladder); note
   the dependency if it lands first.
 - Non-goals: hard caps; auto-stop.
+- Landed 2026-10-20. `src/openai.ts` exports `ChatContextOverflowError` / `ChatPayloadTooLargeError` and `classifyChatError(status, bodyText)` (413 or payload markers → payload-too-large; context-window / token-limit markers → context-overflow; else terminal); the non-ok terminal throw uses it, while the retryable 429/5xx path is byte-for-byte unchanged. `src/loop.ts` maps the typed errors to `provider context-overflow:` / `provider payload-too-large:` diagnostics via `providerErrorDiagnostics` at both provider-failure sites, so a classified failure ends through the existing `explain` defined summary path. Tests: 10 new (openai.test.ts classification + typed throws incl. 429-with-overflow-body still retrying; loop.test.ts termination labels). Gates: tsc clean, `bun test` 885 pass, `benchmark/check` 4 passed/0 failed. Live matrix `benchmark/results/2026-10-20-tc-overflow.json`: 11/12 (json/sexp/csv 3/3; minilisp 2/3 — rep3 token-budget storm, unrelated to the change); no live overflow was triggered, so the classification is covered by unit tests only. The shrink/trim-and-retry branch was not built because its machinery (#95) was declined — the AC's "or terminates through a defined summary path" branch is met. Ledger row added (36 rows).

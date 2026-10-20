@@ -1,5 +1,11 @@
 import { expect, test } from "bun:test";
-import { OpenAIProvider, readConfigFromEnv } from "./openai";
+import {
+  ChatContextOverflowError,
+  ChatPayloadTooLargeError,
+  classifyChatError,
+  OpenAIProvider,
+  readConfigFromEnv,
+} from "./openai";
 import type { ChatMessage, OpenAIConfig, ToolDefinition } from "./openai";
 
 const config: OpenAIConfig = {
@@ -602,6 +608,103 @@ test("does not retry other 4xx responses", async () => {
   );
   expect(requests).toHaveLength(1);
   expect(delays).toEqual([]);
+});
+
+test("classifyChatError flags a 413 as payload-too-large (#97)", () => {
+  expect(classifyChatError(413, "anything")).toBe("payload-too-large");
+});
+
+test("classifyChatError flags payload-too-large body markers (#97)", () => {
+  for (const body of [
+    "Payload Too Large",
+    "request entity too large",
+    "Request too large",
+    "content too large",
+  ]) {
+    expect(classifyChatError(400, body)).toBe("payload-too-large");
+  }
+});
+
+test("classifyChatError flags context-overflow body markers (#97)", () => {
+  for (const body of [
+    "This model's maximum context length is 8192 tokens",
+    "context_length_exceeded",
+    "the context window is exceeded",
+    "maximum context reached",
+    "too many tokens",
+    "token limit exceeded",
+    "please reduce the length of the messages",
+    "the prompt is too long",
+  ]) {
+    expect(classifyChatError(400, body)).toBe("context-overflow");
+  }
+});
+
+test("classifyChatError falls back to terminal for generic bodies (#97)", () => {
+  expect(classifyChatError(400, "bad request")).toBe("terminal");
+  expect(classifyChatError(401, "invalid api key")).toBe("terminal");
+});
+
+test("rejects an overflow response with ChatContextOverflowError (#97)", async () => {
+  const { fetchImpl, requests } = queueFetch([
+    () =>
+      new Response('{"error":{"message":"maximum context length is 8192 tokens"}}', {
+        status: 400,
+      }),
+  ]);
+  const { sleep, delays } = mockSleep();
+  const provider = new OpenAIProvider(config, fetchImpl, sleep);
+
+  await expect(provider.chat([{ role: "user", content: "hi" }])).rejects.toBeInstanceOf(
+    ChatContextOverflowError,
+  );
+  expect(requests).toHaveLength(1);
+  expect(delays).toEqual([]);
+});
+
+test("rejects a 413 with ChatPayloadTooLargeError (#97)", async () => {
+  const { fetchImpl, requests } = queueFetch([
+    () => new Response("request entity too large", { status: 413 }),
+  ]);
+  const { sleep, delays } = mockSleep();
+  const provider = new OpenAIProvider(config, fetchImpl, sleep);
+
+  await expect(provider.chat([{ role: "user", content: "hi" }])).rejects.toBeInstanceOf(
+    ChatPayloadTooLargeError,
+  );
+  expect(requests).toHaveLength(1);
+  expect(delays).toEqual([]);
+});
+
+test("a generic 400 still rejects with a plain Error (#97)", async () => {
+  const { fetchImpl } = queueFetch([() => new Response("bad request", { status: 400 })]);
+  const provider = new OpenAIProvider(config, fetchImpl);
+
+  let caught: unknown;
+  try {
+    await provider.chat([{ role: "user", content: "hi" }]);
+  } catch (error) {
+    caught = error;
+  }
+  expect(caught).toBeInstanceOf(Error);
+  expect(caught).not.toBeInstanceOf(ChatContextOverflowError);
+  expect(caught).not.toBeInstanceOf(ChatPayloadTooLargeError);
+  expect((caught as Error).message).toBe("chat request failed: 400 bad request");
+});
+
+test("still retries a 429 even with an overflow-looking body (#97)", async () => {
+  const { fetchImpl, requests } = queueFetch([
+    () => new Response("context length exceeded", { status: 429 }),
+    () => textResponse("hi"),
+  ]);
+  const { sleep, delays } = mockSleep();
+  const provider = new OpenAIProvider(config, fetchImpl, sleep);
+
+  const response = await provider.chat([{ role: "user", content: "hi" }]);
+
+  expect(response.content).toBe("hi");
+  expect(requests).toHaveLength(2);
+  expect(delays).toEqual([1000]);
 });
 
 test("retries network-level fetch failures", async () => {

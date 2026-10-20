@@ -17,6 +17,7 @@ import { buildIndexTolerant } from "./utility";
 import { buildSignatureViewFromEntry } from "./scroll";
 import { checkTool, testTool } from "./tools";
 import { usageFromRaw } from "./replay-format";
+import { ChatContextOverflowError, ChatPayloadTooLargeError } from "./openai";
 import type {
   ChatMessage,
   ChatOptions,
@@ -1788,6 +1789,19 @@ const DIAGNOSTICS_HEAD_LIMIT = 200;
 
 function errorMessage(error: unknown): string {
   return error instanceof Error ? error.message : String(error);
+}
+
+// Render a provider failure for diagnostics (#97): a context-overflow or
+// payload-too-large classification gets its own label so the run's defined
+// summary path names the cause; everything else keeps the generic text.
+function providerErrorDiagnostics(error: unknown): string {
+  if (error instanceof ChatContextOverflowError) {
+    return `provider context-overflow: ${errorMessage(error)}`;
+  }
+  if (error instanceof ChatPayloadTooLargeError) {
+    return `provider payload-too-large: ${errorMessage(error)}`;
+  }
+  return `provider error: ${errorMessage(error)}`;
 }
 
 // Tolerant provider usage reader (#36): prefer the reported total, fall back to
@@ -4342,7 +4356,7 @@ export async function runLoop(options: LoopOptions): Promise<LoopResult> {
         try {
           response = await options.provider.chat(messages, undefined, exchangeOptions);
         } catch (error) {
-          const diagnostics = `provider error: ${errorMessage(error)}`;
+          const diagnostics = providerErrorDiagnostics(error);
           return {
             ok: false,
             mode: pinned?.mode,
@@ -4604,7 +4618,7 @@ export async function runLoop(options: LoopOptions): Promise<LoopResult> {
       try {
         response = await options.provider.chat(messages, undefined, exchangeOptions);
       } catch (error) {
-        const diagnostics = withTargetsReport(`provider error: ${errorMessage(error)}`) ?? "";
+        const diagnostics = withTargetsReport(providerErrorDiagnostics(error)) ?? "";
         return {
           ok: false,
           mode: pinnedTarget.mode,

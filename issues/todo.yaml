@@ -2,14 +2,6 @@
 # rewrites it; `add` appends; other writes keep it. `check` enforces it.
 # A dep, and every child of an umbrella, must be listed before its dependent.
 
-- id: 97
-  title: "Provider: classify context-overflow / payload-too-large separately from terminal errors"
-  status: todo
-  priority: low
-  milestone: null
-  parent: 91
-  deps: []
-  file: 0097-provider-classify-context-overflow-payload-too-large-separately-from-terminal-errors.md
 - id: 98
   title: "Provider: bound output-limit continuations to a three-strike"
   status: todo
