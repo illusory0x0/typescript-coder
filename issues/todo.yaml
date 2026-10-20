@@ -18,14 +18,6 @@
   parent: null
   deps: []
   file: 0046-harness-optimization-v3-agent-loop-context-structure-editor.md
-- id: 82
-  title: "Document the opencode to tc delegation recipe"
-  status: todo
-  priority: medium
-  milestone: null
-  parent: 79
-  deps: [80]
-  file: 0082-document-the-opencode-to-tc-delegation-recipe.md
 - id: 83
   title: "Self-host proof: opencode delegates a multi-file task to tc"
   status: todo

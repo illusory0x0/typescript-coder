@@ -27,6 +27,10 @@ typecheck with `bunx tsc --noEmit`.
   vocabulary; `docs/review-guide.md` — where human review pays off (tiered by
   blast radius); `benchmark/README.md` — benchmark process, metrics, and the
   honest weak-spot list.
+- `docs/subagent.md` — delegating a scoped edit to `tc` (invocation, targets,
+  result schema, retry path). Delegate a scoped, verifiable edit with explicit
+  `{path,symbol,kind}` targets; edit directly for docs/config or changes with no
+  clear symbol target.
 
 ## Terminology
 

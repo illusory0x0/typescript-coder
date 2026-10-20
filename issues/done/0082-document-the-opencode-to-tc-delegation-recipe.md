@@ -1,7 +1,7 @@
 ---
 id: 82
 title: "Document the opencode to tc delegation recipe"
-status: todo
+status: done
 priority: medium
 milestone: null
 parent: 79
@@ -38,3 +38,4 @@ recipe during C4.
 ## Notes
 
 - Depends on C1. Non-goals: `opencode` plugin, a `/tc` command.
+- Wrote docs/subagent.md (invocation + flag table, stdin task, both --targets shapes, strict resolution / one-target-per-file / same-file sequencing / unapplied-target reporting, the typescript-coder-result@1 field table, exit codes and the stdout-only/stderr split, verification ownership with the 120s bound, the per-call budget, and a 7-step delegation recipe with the failure/retry path and same-file sequencing). Added an AGENTS.md Docs pointer plus when-to-delegate guidance. Read-through against src/cli.ts, src/result.ts, src/main.ts, src/loop.ts found no discrepancy (defaults verified: --token-budget 120000, check 'bunx tsc --noEmit', test 'bun test'). Docs-only change; tsc clean, tests unaffected.
