@@ -2,14 +2,6 @@
 # rewrites it; `add` appends; other writes keep it. `check` enforces it.
 # A dep, and every child of an umbrella, must be listed before its dependent.
 
-- id: 99
-  title: "Hygiene: gitignore the failures/ artifact directory"
-  status: todo
-  priority: low
-  milestone: null
-  parent: null
-  deps: []
-  file: 0099-hygiene-gitignore-the-failures-artifact-directory.md
 - id: 94
   title: "Repair prompt: carry the newest exchange verbatim beside the attempt digest"
   status: todo

@@ -1,7 +1,7 @@
 ---
 id: 99
 title: "Hygiene: gitignore the failures/ artifact directory"
-status: todo
+status: done
 priority: low
 milestone: null
 parent: null
@@ -43,3 +43,4 @@ bun test
 - Root issue; independent of the umbrella DAG.
 - Complements #51 (archive `failures/` per matrix); non-goals: changing the
   artifact-writing code or its path.
+- Landed 2026-10-20. Added `failures/` to `.gitignore`. The failure-artifact writer (`src/failure-artifact.ts`) writes to `<rootDir>/failures/`, so a failed live run (e.g. the #92/#93 minilisp storms) left the directory untracked and visible in `git status`. Verified: after creating `failures/scratch.json`, `git status --porcelain` lists nothing for it; `bunx tsc --noEmit` clean; `bun test` 875 pass. Complements #51 (which rotates `failures/` into `./tmp/` per matrix); no code change.
