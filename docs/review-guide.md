@@ -22,8 +22,8 @@ typos.
   until re-measured. Check the caps too (`MAX_EDIT_EXCHANGES`,
   `MAX_RUN_ITERATIONS`, `MAX_STALLED_ROUNDS`, `DEFAULT_TOKEN_BUDGET`).
 - **The edit protocol + syntax gate** — `src/loop.ts` payload checks and the
-  gate ("nothing is written" on rejection), `src/anchor.ts`
-  (`findAnchor` / `applyAnchorSplice`: exactly-one structural match), and
+  gate ("nothing is written" on rejection), `src/matcher.ts`
+  (`findMatcher` / `applyMatcherSplice`: exactly-one structural match), and
   `src/editor.ts` (`applyEdits` + `oxfmt`). A gate hole silently admits broken
   edits; a guard change moves rejection storms and therefore USD.
 - **The judge** — `benchmark/run.ts` `judgeWorkspace`: `tsc --noEmit`,
@@ -69,7 +69,7 @@ typos.
    provenance" first; then the ledger row a decision cites.
 2. `benchmark/run.ts` — judge, then aggregation/pricing.
 3. `src/loop.ts` alongside `docs/spec.md` §6 and `docs/glossary.md`.
-4. The edit protocol: `src/loop.ts` gate → `src/anchor.ts` → `src/editor.ts`.
+4. The edit protocol: `src/loop.ts` gate → `src/matcher.ts` → `src/editor.ts`.
 5. `src/replay-format.ts` + `src/replay-runner.ts`, then the acceptance suite.
 
 ## Gaps a reviewer should not assume are covered

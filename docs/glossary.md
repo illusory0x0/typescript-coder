@@ -1,8 +1,9 @@
 # Glossary — harness loop terminology
 
-Core flow vocabulary for the v2 loop redesign: **three terms** — Run / Edit /
-Verification. The old loop names (turn / selection / correction / attempt) are
-folded into them — see [Folded terms](#folded-terms).
+Core flow vocabulary for the v2 loop redesign: **three core terms** — Run /
+Edit / Verification — plus **Selection**, a live noun for the target a reply
+addresses (mode + address). The historical loop names (turn / correction /
+attempt) are folded into the flow — see [Folded terms](#folded-terms).
 
 ## Core flow
 
@@ -21,16 +22,15 @@ Run (运行) — top-level agent loop
 
 ## Folded terms
 
-The old names are not separate terms; each is just part of the flow above:
+The old names are historical only; each folds into a part of the flow above:
 
-- **Turn** → one model exchange inside the Edit loop.
-- **Selection** → the first round(s) of the Edit loop (picking mode + address).
-- **Correction** → a re-ask inside the Edit loop after a soft failure
-  (protocol / address / echo / matcher / range / no-op / repeat / duplicate /
-  gate / format / truncated); consumes the same ≤3.
-- **Attempt** → one iteration of the Run loop.
-- **Anchor / Locator** → merged into one payload: the old locator is the
-  address, the old anchor is the optional `matcher`.
+- **Turn** (historical) → one model exchange inside the Edit loop.
+- **Correction** (historical) → a re-ask inside the Edit loop after a soft
+  failure (protocol / address / echo / matcher / range / no-op / repeat /
+  duplicate / gate / format / truncated); consumes the same ≤3.
+- **Attempt** (historical) → one iteration of the Run loop.
+- **Locator** → the locator is the **matcher**: the address is
+  `path × symbol × kind`, and the optional locator is `matcher`.
 - **Multi-payload batch (#69/#78)** → an opt-in `modify` reply shape
   (`{"payloads":[…]}`) carrying several edits — path-independent (one per file) or
   bounded non-overlapping regions of one file (#78) — applied atomically in one

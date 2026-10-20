@@ -15,7 +15,7 @@ gate** plus `tsc --noEmit` and `bun test` pass. The loop is two nested levels:
 **Run** iterates **Edit → Verification**; each Run iteration grants a fresh Edit
 budget of **≤3 model exchanges** shared by target picking and content revision,
 and the run is capped at **32 Run iterations**. On failure it keeps the attempted
-state and re-asks with a per-cause correction (escalating when the same cause
+state and re-asks with a per-cause prompt (escalating when the same cause
 repeats; a splice-caused duplicate-modifier format failure exits immediately as
 a harness fault); a round that exhausts its exchanges below the cap continues
 through a **continuation prompt** (the model replies `STOP` to end the run, or a
@@ -136,11 +136,11 @@ single-payload path.
 ### apply-edit
 
 ```ts
-findAnchor(source: string, symbol: SymbolRange, anchor: string): AnchorResult
-applyAnchorSplice(source: string, start: number, end: number, replacement: string): string
+findMatcher(source: string, symbol: SymbolRange, matcher: string): MatcherResult
+applyMatcherSplice(source: string, start: number, end: number, replacement: string): string
 ```
 
-`findAnchor` matches the matcher structurally (AST equivalence: trivia and
+`findMatcher` matches the matcher structurally (AST equivalence: trivia and
 comments ignored, identifiers compared exactly) inside the resolved
 declaration. A matcher is one copied statement, one class member, one
 expression, or a contiguous run of ≥2 statements copied from one block. A run
@@ -163,7 +163,7 @@ payload address that would re-pin to it (up to two candidates are listed). A
 splice whose result is byte-identical to the source before the edit is rejected
 with `stage: no-op` before the gate, and one whose formatted result equals the
 formatted source is rejected at the format gate; either way nothing is written,
-verification never runs, and the retry carries the cause's correction. The
+verification never runs, and the next re-ask is steered by the cause. The
 splice is then gated: if the resulting source does not parse, the exchange fails
 with `stage: gate` and **nothing is written**; otherwise `oxfmt` formats the
 whole file before the write (a formatting failure is `stage: format`). Two
@@ -223,7 +223,7 @@ or unparseable kept file is removed and the create re-runs.
 | `lexer.ts`             | full TypeScript lexer, **no error tolerance** (throws with loc) |
 | `parser.ts`            | full TypeScript grammar parser, recursive descent → AST + spans |
 | `utility.ts`           | shared helpers + binder / symbol index                          |
-| `anchor.ts`            | matcher fragment parse, structural match, splice                |
+| `matcher.ts`           | matcher fragment parse, structural match, splice                |
 | `editor.ts`            | `oxfmt` formatting for the write path (`formatSource`)          |
 | `tools.ts`             | bounded `check`/`test` commands + located diagnostics           |
 | `failure-artifact.ts`  | renders + writes `failures/` artifacts for terminated runs      |
@@ -293,7 +293,7 @@ harness:
   `repeat`, `duplicate`, `gate`, `format`, or `truncated` (plus the multi-payload
   causes `multi-protocol`/`multi-duplicate` and the harness-fault
   `format-export-duplication`, §4) — carried on the record
-  row, and the retry prompt's lead sentence is that cause's concrete correction
+  row, and the retry prompt's lead sentence is a cause-specific re-ask
   instead of the generic "make minimal corrective changes" (matcher causes ask
   for a verbatim matcher or an omitted `matcher`; `range-invalid` asks for the
   1-based positions copied from the numbered current-source block, or omitting
@@ -304,7 +304,7 @@ harness:
   shape; truncated asks for a compact replacement; `repeat`/`duplicate` state
   that the file already reflects the submission — the change is in place or the
   rejection stands, or the declaration already exists — so a resend cannot
-  change anything and the next attempt must differ in target, matcher, or
+  change anything and the next reply must differ in target, matcher, or
   replacement; the rejected replacement text is never re-echoed). Consecutive
   same-cause rejections accumulate in a run-scope streak that spans iterations
   and #52 continuations and is reset only by an applied edit; from the second
@@ -313,12 +313,12 @@ harness:
   `repeat`/`duplicate`: this attempt MUST differ from the previous attempts and
   address the diagnostics). An `address` rejection
   whose name the current source does not declare uses the missing symbol's own
-  wording instead of the pin-echo correction: the lead and its escalation name
+  wording instead of the pin-echo re-ask: the lead and its escalation name
   the undeclared symbol, keep the add path open (carry its declaration inside
   the replacement of an address that resolves; mode `create` applies only while
   the run is still choosing a target), and never weaken the address guard. The
   #54 no-progress ask still overrides
-  the correction when both would apply. A `format` failure whose formatter
+  the re-ask when both would apply. A `format` failure whose formatter
   message carries the duplicate-modifier signature (`'export' modifier already
   seen`) is a harness fault: the rejection row is recorded, then the run exits
   through the termination matrix as `harness-fault` with the full diagnostics and
@@ -373,7 +373,7 @@ harness:
   and consumes that exchange).
 - **attempt digest (#57):** the #52 continuation prompts (both the edit and the
   selection variant) and the #54 no-progress ask carry a bounded `Prior attempts`
-  checkpoint appended after the diagnostics: one line per failed attempt
+  checkpoint appended after the diagnostics: one line per failure
   (`- #<n> <class>: <first informative diagnostics line>`), where the class is
   the #56 rejection cause (or the verification outcome `tsc`/`tests`). It is
   built incrementally from the record rows beyond a run-scope cursor — later
@@ -382,7 +382,7 @@ harness:
   rendered text is capped at 1,200 characters: the header, the omitted-entries
   line, and the ruled-out block are reserved first, then the oldest entries are
   evicted (the omitted count stays accurate; per-class counts keep every
-  attempt). A class repeated three or more times earns a
+  failure). A class repeated three or more times earns a
   `Ruled out after <n> repeats: <class> — <action>` line (most-repeated first),
   reusing the #56 escalation text for rejection causes and a fixed concrete
   sentence for `tsc`/`tests` (change the declaration structure instead of
@@ -441,7 +441,7 @@ harness:
 - **append/create:** the payload's replacement is the complete declaration of
   the missing symbol; the harness appends it to the target's file (creating file
   and parent directories when absent), formats with `oxfmt`, and runs the same
-  check + test gate. Keep-progress: an existing file keeps the failed attempt's
+  check + test gate. Keep-progress: an existing file keeps the failed create's
   content. A failed create whose kept file parses continues as a `modify` repair
   round (the pin is relabeled `modify`, current-file prompt + diagnostics); an
   absent or unparseable kept file is removed and the create re-runs.
@@ -452,7 +452,7 @@ harness:
   `matcher`, `range`, `no-op`, `repeat`, `duplicate`, `gate`, `format`, `tsc`,
   `tests`; plus
   `truncated` and `prev-broken`) → classify the rejection by typed cause and
-  pick the per-cause correction for the re-ask (see rejection policy) → keep the
+  pick the per-cause re-ask (see rejection policy) → keep the
   attempted state → re-ask within the same Edit budget. A verification failure
   starts the next Run iteration with a fresh budget; an exhausted round continues
   through the continuation prompt below the cap (#52), and the run is capped at
@@ -497,7 +497,7 @@ harness:
   opened by a `tsc`-stage verification failure omits the spec-file section from
   every content prompt of that round (its repair is driven by the diagnostics and
   the current source) and its #52 continuations stay lean; every other round —
-  selection, first, `tests`-stage, and edit-soft-failure rounds — keeps the
+  target-picking, first, `tests`-stage, and edit-soft-failure rounds — keeps the
   section.
 
 ## 7. Tools

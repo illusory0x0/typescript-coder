@@ -42,7 +42,7 @@ These are the load-bearing choices; most smaller decisions follow from them.
 2. **Strict addressing — reject, don't guess.** The address is resolved
    against the symbol index with a **strict AND** (every field must hold, and
    the resolution must be unique — never a silent first match). The optional
-   `matcher` is matched structurally (`anchor.ts`), or the optional `range`
+   `matcher` is matched structurally (`matcher.ts`), or the optional `range`
    `(line,column)` selector (#72) addresses the span directly against the
    numbered current-source block. On any mismatch the edit
    is rejected and fed back; it is not fuzzily patched in.
@@ -65,12 +65,12 @@ These are the load-bearing choices; most smaller decisions follow from them.
    context.
 5. **Failures are feedback, not dead ends.** Rejections are classified by
    cause (protocol, address, echo, matcher, range, no-op, repeat, duplicate, gate,
-   format, truncated, …), corrections escalate when the same cause repeats, and the
+   format, truncated, …), re-asks escalate when the same cause repeats, and the
    harness adds structure as a run stalls: a **continuation prompt** when a
    round burns its exchanges, a **no-progress ask** at the 8-streak
    no-progress milestone and every 4 further failed rounds (#65), and a bounded
-   **attempt digest** of prior failed
-   attempts; a non-converging repair chain additionally gets a **failure
+   **attempt digest** of prior failures;
+   a non-converging repair chain additionally gets a **failure
    history** note naming the unchanged failing set or the two cycling states
    (#71). A **repair exchange** may also make one bounded self-verification
    request (#73): `{"request":"read"|"check"|"test"}`, executed once per round
@@ -105,9 +105,9 @@ These are the load-bearing choices; most smaller decisions follow from them.
   `Locator` / `IndexEntry`, `findDefinition`.
 - `src/scroll.ts` — signature views and locator expansion: the bounded source
   views the loop shows the model.
-- `src/anchor.ts` — model-reply plumbing: `stripCodeFences`,
-  `extractJsonObject`, `parseAnchorFragment` (the `matcher`),
-  `structurallyEqual`, `findAnchor`, `applyAnchorSplice`.
+- `src/matcher.ts` — model-reply plumbing: `stripCodeFences`,
+  `extractJsonObject`, `parseMatcherFragment` (the `matcher`),
+  `structurallyEqual`, `findMatcher`, `applyMatcherSplice`.
 - `src/editor.ts` — `oxfmt` formatting for the write path (`formatSource`,
   called after a gate-passing splice); the legacy batch `applyEdits` is kept
   for `renameTool` and tests.
@@ -217,7 +217,7 @@ The scripted end-to-end contract, offline by default with a mock provider:
      and revising content: bounded context → model reply → parse
      (fences / JSON / matcher) → resolve the address (strict AND; classified
      rejection on failure) → payload → syntax gate → splice → `oxfmt`. A
-     rejected exchange consumes budget and feeds the next correction,
+     rejected exchange consumes budget and feeds the next re-ask,
      escalating when a cause repeats; a continuing round appends the bounded
      attempt digest.
    - A round that burns its exchanges below the cap gets a **continuation
@@ -240,7 +240,7 @@ The scripted end-to-end contract, offline by default with a mock provider:
 Rounds that end without an applied edit advance a run-scope no-progress
 streak (failed verifications count too). At the first 8-streak milestone on a
 pinned target — and then every 4 further failed rounds (#65), so a fast-burning
-storm still reaches it — the harness stops repeating the same correction and
+storm still reaches it — the harness stops repeating the same re-ask and
 asks the model to decide: `STOP`, or continue with a materially different
 approach.
 The ask carries the streak, the cause, and alternatives; the digest carries
@@ -265,11 +265,11 @@ and the README's weak-spot list are part of the result, not footnotes.
 - **No diff-based editing path.** Edits are target (mode + address) plus one
   flat JSON payload, spliced by the harness.
 - **No tolerant matching, silent first match, fuzzy echo acceptance, or gate
-  bypass.** The guards (`anchor.ts` matching, echo detection, syntax gate)
+  bypass.** The guards (`matcher.ts` matching, echo detection, syntax gate)
   stay strict; changes to them are Tier-1 review
   (`review-guide.md`).
 - **No new hard caps or auto-stops as storm fixes.** An unproductive
-  correction is dealt with by escalating and asking — the decision point must
+  re-ask is dealt with by escalating and asking — the decision point must
   stay passable so a recovering cycle can still succeed.
 - **Reject without writing.** A rejected edit is never partially applied.
 - **No number without provenance.** Compare only same-text runs; every row
