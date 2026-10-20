@@ -1,0 +1,2 @@
+# `.docrefsignore` hides paths from dm.
+# One glob per line; blank lines and `#` comments are ignored.
