@@ -4,7 +4,7 @@
 
 - id: 102
   title: "Steer matcher-failure repairs toward the range selector, measured A/B"
-  status: todo
+  status: in-progress
   priority: medium
   milestone: null
   parent: 100
@@ -26,3 +26,11 @@
   parent: null
   deps: []
   file: 0103-reconcile-the-loop-vocabulary-folded-terms-are-used-as-live-nouns.md
+- id: 104
+  title: "Ship tc as an opencode sub-agent over a bidirectional stdin/stdout protocol"
+  status: todo
+  priority: medium
+  milestone: null
+  parent: null
+  deps: []
+  file: 0104-ship-tc-as-an-opencode-sub-agent-over-a-bidirectional-stdin-stdout-protocol.md
