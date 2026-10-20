@@ -8,8 +8,8 @@ handled files move to `feedback/archive/`, so the pool shows only what still
 needs triage.
 
 The loop, end to end: `opencode` delegates → `tc` returns a result → `opencode`
-critiques and writes `feedback/` → `triage-feedback` files `issues/` →
-`resolve-issue` fixes `tc` → back to `opencode`.
+critiques and writes `feedback/` → `triage-feedback` screens the pool and
+`file-issue` files `issues/` → `resolve-issue` fixes `tc` → back to `opencode`.
 
 ## Artifact format
 

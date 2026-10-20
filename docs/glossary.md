@@ -29,8 +29,8 @@ The old names are historical only; each folds into a part of the flow above:
   failure (protocol / address / echo / matcher / range / no-op / repeat /
   duplicate / gate / format / truncated); consumes the same ≤3.
 - **Attempt** (historical) → one iteration of the Run loop.
-- **Locator** → the locator is the **matcher**: the address is
-  `path × symbol × kind`, and the optional locator is `matcher`.
+- **Locator** → the locator is the **matcher**; the address is
+  `path × symbol × kind`.
 - **Multi-payload batch (#69/#78)** → an opt-in `modify` reply shape
   (`{"payloads":[…]}`) carrying several edits — path-independent (one per file) or
   bounded non-overlapping regions of one file (#78) — applied atomically in one
@@ -55,11 +55,11 @@ The old names are historical only; each folds into a part of the flow above:
   keeping the retry shape (pinned selection, current source, diagnostics, JSON
   payload). After the first ask it recurs every `MAX_STALLED_ROUNDS / 2` (4)
   further failed rounds — 8, 12, 16, 20, … — so a fast-burning storm reaches
-  the later ask before the token budget ends the run (#65). The first ask uses
-  that wording; from the second decision point on it is **sharpened (#65)**: it names
+  the later ask before the token budget ends the run (#65). From the second
+  decision point on it is **sharpened (#65)**: it names
   the unchanged/cycling fact carried by the #71 `Failure history` note and
   requires the reply to address that unchanged failing set or reply exactly
-  `STOP` — framing only, no cap, no auto-stop, and the first ask is
+  `STOP` — framing only, no cap, no auto-stop; the first ask is
   byte-identical. A #52 continuation round
   keeps its own framing, except that the continuation directly following a
   milestone round carries the ask instead (how rejection-exhausted cycles,

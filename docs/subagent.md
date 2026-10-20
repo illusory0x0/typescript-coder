@@ -107,7 +107,7 @@ stdout — one line, `JSON.parse`-able, nothing else on stdout.
 | `targets` | `Array<{path,symbol,kind}>` | echoes the requested `--targets` addresses (empty on the discovery path) |
 | `records` | number | raw loop record rows (exchanges + verification steps), not a file count |
 | `tokens` | `{input,output,total,cacheRead}` | numbers; provider token spend of the call |
-| `terminationReason` | `null \| "token-budget" \| "edit-exhausted" \| "delete-verification-failed" \| "prev-broken" \| "harness-fault"` | why a failed run ended; `null` on success |
+| `terminationReason` | `null \| "token-budget" \| "edit-exhausted" \| "delete-verification-failed" \| "prev-broken" \| "harness-fault" \| "output-limit"` | why a failed run ended; `null` on success |
 | `diagnostics` | `string \| null` | bounded staged diagnostics (including the unapplied-target report); `null` when nothing failed |
 
 For a failed run the human prose — the failure-artifact path, diagnostics, and
@@ -178,9 +178,9 @@ budget.
   name does exist at; an ambiguity lists every declaration) and re-invoke.
 - `"token-budget"` means the call ran out of budget: raise it or narrow the
   task text.
-- `"prev-broken"` / `"harness-fault"` / `"delete-verification-failed"` are
-  terminal for that call's approach; adjust the task and start a fresh call
-  rather than resending the identical request.
+- `"prev-broken"` / `"harness-fault"` / `"delete-verification-failed"` /
+  `"output-limit"` are terminal for that call's approach; adjust the task and
+  start a fresh call rather than resending the identical request.
 - A resend of the identical edit is rejected (`stage: repeat`), so a retry must
   change something — the task text, the replacement intent, or the address.
 

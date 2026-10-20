@@ -9,8 +9,8 @@ hand-written TypeScript frontend plus a symbol index to select a target
 (`{"path","symbol","kind","matcher"?,"range"?,"replacement"}`) for that target,
 resolves the address with a strict AND (never a silent first match), splices the
 replacement over the structurally-matched range (or an explicit `(line,column)`
-`range`, or the whole symbol when both selectors are omitted), and accepts the
-result only after the mandatory **syntax
+`range`, or the whole symbol when neither `matcher` nor `range` is sent), and
+accepts the result only after the mandatory **syntax
 gate** plus `tsc --noEmit` and `bun test` pass. The loop is two nested levels:
 **Run** iterates **Edit → Verification**; each Run iteration grants a fresh Edit
 budget of **≤3 model exchanges** shared by target picking and content revision,
@@ -94,7 +94,7 @@ A selection carries one of three modes (default `modify`):
 | `symbol`      | string  | address echo, must equal the pinned selection                                                                           |
 | `kind`        | string  | address echo, must equal the pinned selection                                                                           |
 | `matcher`     | string? | optional snippet copied from the current source, structurally matched inside the symbol; omitted = whole-symbol rewrite |
-| `range`       | object? | optional position selector `{line, column, endLine, endColumn}` (#72): all 1-based, end inclusive, against the numbered current-source block shown in the prompt; an alternative to `matcher`, must sit inside the declaration; takes precedence over `matcher` when both are sent |
+| `range`       | object? | optional explicit range `{line, column, endLine, endColumn}` (#72): all 1-based, end inclusive, against the numbered current-source block shown in the prompt; an alternative to `matcher`, must sit inside the declaration; takes precedence over `matcher` when both are sent |
 | `replacement` | string  | the text spliced over exactly the matched (or whole-symbol) range                                                       |
 
 The model-facing compact form of this same selection — `select [kind] <symbol>
@@ -177,7 +177,7 @@ or type-alias name fails with `stage: duplicate`, naming the existing
 declaration and its line; overload signatures (bodyless functions) and
 interfaces/namespaces are exempt.
 
-**Range selector (#72):** a `modify` payload may carry `range` —
+**Range (#72):** a `modify` payload may carry `range` —
 `{line, column, endLine, endColumn}`, all positive integers and 1-based, end
 inclusive — as an alternative to `matcher` for the ambiguity class the
 structural matcher cannot resolve. The coordinates address the current-source
@@ -233,7 +233,7 @@ or unparseable kept file is removed and the create re-runs.
 | `replay-format.ts`     | replay bundle format (`typescript-coder-replay@1`) + recorder   |
 | `replay-runner.ts`     | offline replay provider + run comparison                        |
 | `benchmark-pricing.ts` | official rate card + per-run USD cost                           |
-| `cli.ts`               | entry point (currently `--help` only)                           |
+| `cli.ts`               | argument parser + `--help`                                      |
 | `main.ts`              | wires stdin → loop                                              |
 | `index.ts`             | scaffold placeholder (`greet`), self-host acceptance target     |
 
@@ -262,7 +262,7 @@ model (Edit, ≤3 exchanges per Run iteration):
 
 harness:
   - resolve address (strict AND)   # 0 or >1 matches = staged diagnostic, never a silent pick
-  - echo-check + range/matcher splice  # omitted selectors = whole-symbol rewrite
+  - echo-check + range/matcher splice  # omitted matcher/range = whole-symbol rewrite
   - syntax gate                    # unparseable after = discard, nothing written
   - format with oxfmt
   - write the edit (keep-progress, no rollback)
@@ -414,7 +414,7 @@ harness:
   its re-pin address when one exists. Omitting it is a whole-symbol rewrite; by
   default multiple changes happen across edit rounds (the old `edits[]` batch is
   gone), the opt-in `--multi-payload` batch (#69/#78) being the exception.
-- **range (#72):** an alternative selector, `range` `{line, column, endLine,
+- **range (#72):** an alternative to `matcher`: `range` `{line, column, endLine,
   endColumn}`, all 1-based and end inclusive, addresses the span against the
   numbered current-source block shown in the prompt (the pinned declaration for
   an ordinary modify round, the whole file in a create→repair round). The span
@@ -562,7 +562,9 @@ unchanged.
   under its own `timeoutRetries` budget (default 5, overridden by
   `OPENAI_TIMEOUT_RETRIES`) and never consumes `retries` (#74). Backoff is
   exponential (1 s base) with the two budgets tracked independently.
-- entry: issue via stdin; `cli.ts` currently provides `--help` only
+- entry: issue via stdin; `cli.ts` parses the flags (`--model`, `--targets`,
+  `--format`, `--token-budget`, `--multi-payload`, `--check`, `--test`, `--cwd`,
+  `--timeout`) and `--help`
 
 ## 9. Frontend decisions
 
@@ -656,7 +658,7 @@ round-tripping must fail the suite before any measured number can move.
 | R3  | LLM tool-call / JSON flakiness (gateway models)        | strict JSON schema, low temperature, bounded re-asks                                                                   |
 | R4  | whole-project `tsc` per iteration is slow              | incremental / changed-files scope; check/test commands bounded at 120s by default (`commandTimeoutMs`)                 |
 | R5  | overload / namespace address ambiguity                 | strict-AND `path × symbol × kind` lookup; ambiguity diagnostics list every candidate instead of picking one            |
-| R6  | repeated / ambiguous matchers inside a symbol          | one matcher per edit with an exactly-one-match rule and an extend-the-matcher hint; omit it for a whole-symbol rewrite, or address the span with the optional `range` `(line,column)` selector (#72; the matcher-failure re-ask now offers it — #102) |
+| R6  | repeated / ambiguous matchers inside a symbol          | one matcher per edit with an exactly-one-match rule and an extend-the-matcher hint; omit it for a whole-symbol rewrite, or address the span with the optional `range` (#72; the matcher-failure re-ask now offers it — #102) |
 | R7  | re-ask context growth / prompt drift                   | stable system + issue/context prefix; bounded rebuilt context                                                          |
 
 ## 13. Open items (defaults)

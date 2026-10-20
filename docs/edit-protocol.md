@@ -1,10 +1,10 @@
 # Edit protocol — the compact selection syntax
 
 The syntax the model emits to read or edit a TypeScript declaration. It replaces
-the flat JSON edit payload with a compiler-flavoured, positional, cascading
+the flat JSON edit payload with a compiler-flavored, positional, cascading
 selection: a target is named by `select`, narrowed by `match` / `pick`, and
-rewritten by `replace`. One selection is a **viewer** when it stops at `match`,
-and an **editor** when it carries `replace`.
+rewritten by `replace`. A selection that stops before `replace` is a **viewer**;
+one that carries `replace` is an **editor**.
 
 Status: **specified here, not yet implemented.** The children that build it are
 #107 (parse/serialize), #108 (resolve the cascade), #109 (regex in match), #110
@@ -265,7 +265,7 @@ Python 3.14.4, Node 22.17.1, Bun 1.3.13, tsc 7.0.2.
 
 ### The common shape
 
-Every tool puts `path:line:col` (or TypeScript's parenthesised `(line,col)`)
+Every tool puts `path:line:col` (or TypeScript's parenthesized `(line,col)`)
 first, then the message. A range beyond a single point is rare: only clang spells
 one in text (`path:l:c:{l:c-l:c}:`), and rustc spells one only in its JSON span.
 For humans, all of them render a `N | ...` gutter with a caret or tilde run under
@@ -369,7 +369,7 @@ error: Expected identifier but found "="
 
 ### tsc
 
-Machine form is parenthesised and point-only; the TTY "pretty" form uses the
+Machine form is parenthesized and point-only; the TTY "pretty" form uses the
 colon form and prints the source with a tilde span.
 
 ```

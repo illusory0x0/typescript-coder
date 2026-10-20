@@ -33,7 +33,7 @@ verification, and recording.
 These are the load-bearing choices; most smaller decisions follow from them.
 
 1. **Structured edits, never unified diffs.** The model does not emit diff
-   text. It picks a **target** — mode (`modify`/`create`/`delete`) plus an
+   text. It picks a **selection** — mode (`modify`/`create`/`delete`) plus an
    **address** (`path × symbol × kind`) — and returns **one flat JSON edit
    payload** (`{"path","symbol","kind","matcher"?,"range"?,"replacement"}`).
    Address
@@ -43,7 +43,7 @@ These are the load-bearing choices; most smaller decisions follow from them.
    against the symbol index with a **strict AND** (every field must hold, and
    the resolution must be unique — never a silent first match). The optional
    `matcher` is matched structurally (`matcher.ts`), or the optional `range`
-   `(line,column)` selector (#72) addresses the span directly against the
+   `(line,column)` (#72) addresses the span directly against the
    numbered current-source block. On any mismatch the edit
    is rejected and fed back; it is not fuzzily patched in.
 3. **A bounded, two-level loop.**
@@ -122,9 +122,10 @@ These are the load-bearing choices; most smaller decisions follow from them.
 
 - **Prompt builders** — all model-facing text lives here (a prompt-text change
   is an experimental intervention): `buildContextYaml`, `buildSystemPrompt`,
-  `buildUserPrompt`, `buildEditPrompt`, `buildCreatePrompt`,
-  `buildRetryPrompt`, `buildContinuationPrompt`, `buildSelectionRetryPrompt`,
-  `buildSelectionContinuationPrompt`, `buildSummaryPrompt`.
+  `buildUserPrompt`, `buildEditPrompt`, `buildTargetsEditPrompt`,
+  `buildCreatePrompt`, `buildRetryPrompt`, `buildContinuationPrompt`,
+  `buildSelectionRetryPrompt`, `buildSelectionContinuationPrompt`,
+  `buildSummaryPrompt`.
 - **Context** — `discoverSourceFiles(cwd)` and `buildContextYaml` render the
   bounded file/symbol view (≤500 symbols, ≤200-char signatures, ≤8000-char
   spec section; overflow marked `truncated`); `selectSpecFiles(issue, files)`
@@ -198,8 +199,9 @@ The scripted end-to-end contract, offline by default with a mock provider:
 
 - `issues/` — YAML-front-matter issues (`status`, `priority`, `deps`,
   `parent`) and the umbrella/dependency graph, driven by
-  `.opencode/scripts/issue-tracker.ts` (`check`, `list`, `set done`;
-  closing moves a file to `issues/done/`).
+  `.opencode/scripts/issue-tracker.ts` (`check`, `list`, `archive`;
+  filing a decided issue moves it to `issues/done/`, or `issues/wontfix/`
+  for a rejected one).
 - `.opencode/` — a local clone of the coding-skills bundle (untracked,
   ignored), workflow skills under `.opencode/skills/` (commit, diagnose,
   report, …); `AGENTS.md` — the agent entry point and doc map.
@@ -262,8 +264,8 @@ and the README's weak-spot list are part of the result, not footnotes.
 
 ## 5. Invariants
 
-- **No diff-based editing path.** Edits are target (mode + address) plus one
-  flat JSON payload, spliced by the harness.
+- **No diff-based editing path.** Each edit is a selection (mode + address)
+  plus one flat JSON payload, spliced by the harness.
 - **No tolerant matching, silent first match, fuzzy echo acceptance, or gate
   bypass.** The guards (`matcher.ts` matching, echo detection, syntax gate)
   stay strict; changes to them are Tier-1 review

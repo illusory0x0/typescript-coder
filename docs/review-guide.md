@@ -15,7 +15,8 @@ typos.
 
 - **`src/loop.ts`** — the experiment itself: Run/Edit/Verification semantics,
   the retry, continuation, and no-progress asks, the termination matrix, and
-  every model-facing prompt string (`buildSystemPrompt`, `buildEditPrompt`,
+  every model-facing prompt string (`buildContextYaml`, `buildSystemPrompt`,
+  `buildUserPrompt`, `buildEditPrompt`, `buildTargetsEditPrompt`,
   `buildCreatePrompt`, `buildRetryPrompt`, `buildContinuationPrompt`, the
   selection variants, the summary). **A change to the model-facing prompt text
   is a change to the experiment**: earlier ledger rows stop being comparable
@@ -77,5 +78,5 @@ typos.
 The weak-spot register is [`../benchmark/README.md`](../benchmark/README.md)
 §"What we know, and what we don't": n = 3, one model, three frozen fixtures, a
 coarse final-state judge, prompt text already tuned once against the fixtures,
-and the open residual items (#49, #60/#65, #71) that re-measure on future
+and the tracked residual (#65) that re-measures on future
 matrices.
