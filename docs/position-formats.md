@@ -149,3 +149,12 @@ Takeaways for the tc grammar:
 - Python's traceback form (no colon, no column before 3.11) is the outlier; do
   not adopt it.
 - tsc's `(line,col)` is machine-only; accept it leniently at most.
+
+## Adopted form (2026-10-20)
+
+tc adopts `path:line:col` as the primary position with an optional `-line:col`
+range suffix, i.e. `<path>[:<line>[:<col>[-<line>[:<col>]]]]: [`<anchor>`]`.
+This is clang's `{l:c-l:c}` range without the braces, spelled start → end the way
+rustc's JSON span is. The point-only tools (gcc, tsc, node, bun) and Python's
+traceback form are not adopted. The `N | ` gutter plus caret is kept for the
+viewer affordance.
