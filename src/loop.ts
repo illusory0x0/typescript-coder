@@ -159,7 +159,7 @@ export function buildContextYaml(files: SourceFile[], build?: TolerantIndex): st
 // Opt-in multi-payload protocol (#69): appended to the system prompt when the
 // variant is enabled, so the default prompt stays byte-identical.
 const MULTI_PAYLOAD_SYSTEM_PARAGRAPH =
-  'The multi-payload protocol is enabled: one edit reply may instead carry several path-independent edits as {"payloads": [{"path": ..., "symbol": ..., "kind": ..., "matcher": ..., "replacement": ...}, ...]}. Each entry targets a different file; the first entry echoes the pinned selection exactly, and every other entry names its own declaration in its own file (it must resolve uniquely there). The exchange applies atomically: if any entry fails its own guard, nothing is written and the exchange is rejected naming every failing entry\'s cause. A single edit may still be sent as one flat object, and "create"/"delete" selections never batch.';
+  'The multi-payload protocol is enabled: one edit reply may instead carry several edits as {"payloads": [{"path": ..., "symbol": ..., "kind": ..., "matcher": ..., "replacement": ...}, ...]} — different files and/or several non-overlapping regions of one file. The first entry echoes the pinned selection exactly, and every other entry names its own declaration (it must resolve uniquely in its file). Same-file entries must address non-overlapping regions; overlapping regions reject the exchange. The exchange applies atomically: if any entry fails its own guard or two same-file entries overlap, nothing is written and the exchange is rejected naming every failing entry\'s cause. A single edit may still be sent as one flat object, and "create"/"delete" selections never batch.';
 
 export function buildSystemPrompt(multiPayload = false): string {
   const lines = [
@@ -260,9 +260,9 @@ export function buildEditPrompt(
 ): string {
   const numbered = numberedSourceBlock(symbolSource);
   if (multiPayload) {
-    return `Output ONE flat JSON object {"path": ..., "symbol": ..., "kind": ..., "matcher": ..., "replacement": ...} for the pinned symbol, or a multi-payload object {"payloads": [ ... ]} that batches path-independent edits — one entry per file — with no markdown fences and no explanations.
+    return `Output ONE flat JSON object {"path": ..., "symbol": ..., "kind": ..., "matcher": ..., "replacement": ...} for the pinned symbol, or a multi-payload object {"payloads": [ ... ]} that batches edits — different files and/or several non-overlapping regions of one file — with no markdown fences and no explanations.
 
-The first payload echoes the pinned address {path, symbol, kind}; every further payload names a different file and its own declaration address, which must resolve to exactly one declaration in that file's current source. "matcher" is optional per payload: a complete snippet copied from the current source below; "replacement" replaces exactly the matched range. Omit "matcher" for a whole-symbol rewrite: "replacement" then replaces the whole declaration. ${RANGE_SELECTOR_NOTE} Keep leading keywords and modifiers consistent (do not re-add \`export\` the declaration omitted). Every replacement must keep its file parseable. The exchange applies atomically: if any payload fails its own guard, nothing is written and the exchange is rejected naming every failing payload.
+The first payload echoes the pinned address {path, symbol, kind}; every further payload names its own declaration, which must resolve to exactly one declaration in its file's current source. Same-file payloads must address non-overlapping regions. "matcher" is optional per payload: a complete snippet copied from the current source below; "replacement" replaces exactly the matched range. Omit "matcher" for a whole-symbol rewrite: "replacement" then replaces the whole declaration. ${RANGE_SELECTOR_NOTE} Keep leading keywords and modifiers consistent (do not re-add \`export\` the declaration omitted). Every replacement must keep its file parseable. The exchange applies atomically: if any payload fails its own guard or two same-file regions overlap, nothing is written and the exchange is rejected naming every failing payload.
 
 Pinned selection:
 
@@ -400,7 +400,7 @@ export interface RetryPromptInput {
   selfCheck?: string;
 }
 
-/** Multi-payload modify instruction (#69): one flat payload or a path-independent batch. */
+/** Multi-payload modify instruction (#69/#78): one flat payload or a same-file-or-cross-file batch. */
 function multiModifyInstruction(
   lead: string,
   status: string,
@@ -408,9 +408,9 @@ function multiModifyInstruction(
   modifierNote: string,
 ): string {
   const address = repin
-    ? 'return the full address of the declaration you are fixing — either the pinned selection or a different declaration in the same file to re-pin and edit it (it must resolve uniquely in the current source) — or a {"payloads": [...]} object batching path-independent edits whose first entry carries that pinned-or-re-pinned address and each further entry names a different file and its own declaration'
-    : 'echo the pinned selection in the first payload\'s address — or, to batch path-independent edits, return a {"payloads": [...]} object whose first entry echoes the pinned selection and each further entry names a different file and its own declaration';
-  return `${lead} ${status}Output either ONE flat JSON object {"path": ..., "symbol": ..., "kind": ..., "matcher": ..., "replacement": ...} (${address}), or exactly that {"payloads": [ ... ]} batch shape. "matcher" is optional per payload: a snippet copied from the current source, or omit it for a whole-symbol rewrite; "replacement" replaces the matched range (empty removes it). ${RANGE_SELECTOR_NOTE} The exchange applies atomically: if any payload fails its own guard, nothing is written and the rejection names every failing payload. ${modifierNote} No markdown fences and no explanations.`;
+    ? 'return the full address of the declaration you are fixing — either the pinned selection or a different declaration in the same file to re-pin and edit it (it must resolve uniquely in the current source) — or a {"payloads": [...]} object batching edits whose first entry carries that pinned-or-re-pinned address and each further entry names its own declaration, in the same or another file'
+    : 'echo the pinned selection in the first payload\'s address — or, to batch edits, return a {"payloads": [...]} object whose first entry echoes the pinned selection and each further entry names its own declaration, in the same or another file';
+  return `${lead} ${status}Output either ONE flat JSON object {"path": ..., "symbol": ..., "kind": ..., "matcher": ..., "replacement": ...} (${address}), or exactly that {"payloads": [ ... ]} batch shape. Same-file payloads must address non-overlapping regions. "matcher" is optional per payload: a snippet copied from the current source, or omit it for a whole-symbol rewrite; "replacement" replaces the matched range (empty removes it). ${RANGE_SELECTOR_NOTE} The exchange applies atomically: if any payload fails its own guard or two same-file regions overlap, nothing is written and the rejection names every failing payload. ${modifierNote} No markdown fences and no explanations.`;
 }
 
 /**
@@ -883,14 +883,15 @@ export const MULTI_PAYLOAD_KEY = "payloads";
  * Result of parsing a reply under the opt-in multi-payload protocol (#69): a
  * classic flat payload (`batch: false`) or a `{"payloads": [...]}` batch, or a
  * rejection carrying the payloads that did parse plus the batch-level cause
- * (`multi-protocol` for a malformed wrapper/entry, `multi-duplicate` when two
- * payloads target the same file, null for a classic protocol failure).
+ * (`multi-protocol` for a malformed wrapper/entry, null for a classic protocol
+ * failure). Same-file payloads parse cleanly (#78); their regions are checked
+ * for overlap when the batch is applied.
  */
 export type EditPayloadList =
   | { ok: true; batch: boolean; payloads: EditPayload[] }
   | {
       ok: false;
-      cause: "multi-protocol" | "multi-duplicate" | null;
+      cause: "multi-protocol" | null;
       diagnostics: string;
       payloads: EditPayload[];
     };
@@ -904,8 +905,10 @@ export function multiDiagnostics(message: string): string {
 /**
  * Parse one edit reply under the opt-in multi-payload protocol (#69): a flat
  * object stays the classic single payload; an object carrying `payloads` is a
- * batch whose entries are flat payloads, one per file. Batch-level errors are
- * typed (`multi-protocol`, `multi-duplicate`) and never silently repaired.
+ * batch whose entries are flat payloads. Repeated `path`s are allowed (#78):
+ * same-file entries are applied together and their regions checked for overlap
+ * at application time. Batch-level errors are typed (`multi-protocol`) and
+ * never silently repaired.
  */
 export function parseEditResponseList(content: string): EditPayloadList {
   let parsed: unknown;
@@ -980,24 +983,6 @@ export function parseEditResponseList(content: string): EditPayloadList {
         payloads,
       };
     }
-  }
-  // Path independence (#69): one payload per file; #72 reserves same-symbol
-  // multi-range batching for later.
-  const seen = new Map<string, number>();
-  for (let index = 0; index < payloads.length; index += 1) {
-    const path = payloads[index]?.locator.path ?? "";
-    const previous = seen.get(path);
-    if (previous !== undefined) {
-      return {
-        ok: false,
-        cause: "multi-duplicate",
-        diagnostics: multiDiagnostics(
-          `payload ${previous + 1} and payload ${index + 1} both target ${JSON.stringify(path)}; a multi-payload exchange carries at most one payload per file`,
-        ),
-        payloads,
-      };
-    }
-    seen.set(path, index);
   }
   return { ok: true, batch: true, payloads };
 }
@@ -1214,9 +1199,10 @@ export interface LoopOptions {
   /** Benchmark override: forces this effort on every Edit-loop call, bypassing the default policy (#35). */
   effortOverride?: ReasoningEffort;
   /**
-   * Opt-in multi-payload exchanges (#69): a modify reply may carry
-   * `{"payloads": [...]}`, one path-independent payload per file, applied
-   * atomically. Default off keeps the exact single-payload behavior.
+   * Opt-in multi-payload exchanges (#69/#78): a modify reply may carry
+   * `{"payloads": [...]}` — flat payloads addressing different files and/or
+   * several non-overlapping regions of one file — applied atomically. Default
+   * off keeps the exact single-payload behavior.
    */
   multiPayload?: boolean;
 }
@@ -1530,7 +1516,7 @@ export function rejectionPolicy(cause: RejectionCause): RejectionPolicy {
       return {
         action: "retry",
         correction:
-          'Return either one flat edit object, or a {"payloads": [...]} object whose entries are flat edit objects, one per file.',
+          'Return either one flat edit object, or a {"payloads": [...]} object whose entries are flat edit objects addressing different files or non-overlapping regions of one file.',
         escalation:
           'This attempt MUST return either exactly one flat {"path", "symbol", "kind", "matcher", "replacement"} object or a well-formed {"payloads": [ ... ]} batch: no other keys, no nesting beyond one array level.',
       };
@@ -1538,9 +1524,9 @@ export function rejectionPolicy(cause: RejectionCause): RejectionPolicy {
       return {
         action: "retry",
         correction:
-          "A multi-payload exchange carries at most one payload per file; target different files or split the edits across exchanges.",
+          "Two payloads of the multi-payload exchange addressed overlapping regions of the same file, so none of them was written. Make every same-file payload address a distinct, non-overlapping declaration or span, or split the edits across exchanges.",
         escalation:
-          "This attempt MUST carry at most one payload per file: batch edits to different files only, and edit the same file again in a later exchange.",
+          "This attempt MUST give the same file's payloads non-overlapping regions: address distinct declarations or disjoint spans, or batch one edit per file and edit the rest in later exchanges.",
       };
   }
 }
@@ -2544,11 +2530,24 @@ function relocationNote(
   return `note: the same snippet matches inside ${described.join(" and ")} — return the intended declaration's own {path, symbol, kind} to re-pin`;
 }
 
-// Apply one edit to an already-resolved entry: a `range` selector when present,
-// otherwise an omitted matcher = whole-symbol rewrite, otherwise the single
-// structural match inside the entry. Shared by the pinned modify branch and
-// verification-repair re-pins (#48).
-function spliceEntryEdit(
+// Resolve one edit against an already-resolved entry into the half-open splice
+// span it addresses: a `range` selector when present, otherwise an omitted
+// matcher = whole-symbol rewrite, otherwise the single structural match inside
+// the entry. The per-region no-op guard lives here so every region is checked
+// before a same-file batch is combined (#48, #72, #78).
+type EntrySpliceResolution =
+  | {
+      ok: true;
+      /** Half-open offsets into `sourceBefore`. */
+      start: number;
+      end: number;
+      /** Replacement text (a whole-declaration span strips a duplicate `export`). */
+      text: string;
+      gateStart: number;
+    }
+  | { ok: false; cause: EntrySpliceCause; diagnostics: string };
+
+function resolveEntrySplice(
   sourceBefore: string,
   target: string,
   locator: Locator,
@@ -2557,8 +2556,11 @@ function spliceEntryEdit(
   replacement: string,
   range: EditRange | null = null,
   rangeFileRelative = false,
-): EntrySplice {
+): EntrySpliceResolution {
   const modifier = precedingExportModifier(sourceBefore, entry);
+  let start: number;
+  let end: number;
+  let text: string;
   if (range !== null) {
     // Coordinate base (#72): the current source block shown in the prompt. A
     // declaration-relative block starts at the indexed node (after a wrapping
@@ -2585,74 +2587,96 @@ function spliceEntryEdit(
     }
     // A range covering the whole indexed declaration gets the same modifier
     // tolerance as a whole-symbol rewrite; a body-level range must not strip.
-    const spliced =
+    text =
       modifier !== null && located.start === entry.node.start
         ? stripLeadingExport(replacement, modifier)
         : replacement;
-    const candidate = applyAnchorSplice(sourceBefore, located.start, located.end, spliced);
-    if (candidate === sourceBefore) {
-      return { ok: false, cause: "no-op", diagnostics: NOOP_DIAGNOSTICS };
+    start = located.start;
+    end = located.end;
+  } else if (matcher === null) {
+    start = entry.node.start;
+    end = entry.node.end;
+    text = stripLeadingExport(replacement, modifier);
+  } else {
+    const anchored = findAnchorWithModifier(sourceBefore, entry.node, matcher, modifier);
+    if (anchored.kind === "unparseable") {
+      return {
+        ok: false,
+        cause: "matcher-unparseable",
+        diagnostics: `stage: matcher\nthe matcher could not be parsed as TypeScript: ${anchored.message}; a matcher must be a single copied statement or expression, or a contiguous run of statements copied from one block; omitting "matcher" gives a whole-symbol rewrite`,
+      };
     }
-    return { ok: true, candidate, gateStart: located.start };
-  }
-  if (matcher === null) {
-    const candidate = applyAnchorSplice(
-      sourceBefore,
-      entry.node.start,
-      entry.node.end,
-      stripLeadingExport(replacement, modifier),
-    );
-    if (candidate === sourceBefore) {
-      return { ok: false, cause: "no-op", diagnostics: NOOP_DIAGNOSTICS };
+    if (anchored.kind === "not-found") {
+      const { line, column } = lineColumnAt(sourceBefore, entry.node.start);
+      const base = `stage: matcher\nthe matcher was not found inside ${locator.kind} ${JSON.stringify(locator.name)} in ${target} (line ${line}, column ${column}); copy a complete snippet from the current source, or omit "matcher" for a whole-symbol rewrite`;
+      const note = relocationNote(sourceBefore, target, entry, matcher);
+      return {
+        ok: false,
+        cause: "matcher-not-found",
+        diagnostics: note === null ? base : `${base}\n${note}`,
+      };
     }
-    return { ok: true, candidate, gateStart: entry.node.start };
+    if (anchored.kind === "ambiguous") {
+      const { line, column } = lineColumnAt(sourceBefore, entry.node.start);
+      return {
+        ok: false,
+        cause: "matcher-ambiguous",
+        diagnostics: `stage: matcher\nthe matcher matches ${anchored.matches} places inside ${locator.kind} ${JSON.stringify(locator.name)} in ${target} (line ${line}, column ${column}); extend it with more surrounding context`,
+      };
+    }
+    // A match over the whole declaration gets the same modifier tolerance as a
+    // whole-symbol rewrite; a body-level match must not strip (#48).
+    text =
+      modifier !== null && anchored.start === entry.node.start
+        ? stripLeadingExport(replacement, modifier)
+        : replacement;
+    start = anchored.start;
+    end = anchored.end;
   }
-  const anchored = findAnchorWithModifier(sourceBefore, entry.node, matcher, modifier);
-  if (anchored.kind === "unparseable") {
-    return {
-      ok: false,
-      cause: "matcher-unparseable",
-      diagnostics: `stage: matcher\nthe matcher could not be parsed as TypeScript: ${anchored.message}; a matcher must be a single copied statement or expression, or a contiguous run of statements copied from one block; omitting "matcher" gives a whole-symbol rewrite`,
-    };
-  }
-  if (anchored.kind === "not-found") {
-    const { line, column } = lineColumnAt(sourceBefore, entry.node.start);
-    const base = `stage: matcher\nthe matcher was not found inside ${locator.kind} ${JSON.stringify(locator.name)} in ${target} (line ${line}, column ${column}); copy a complete snippet from the current source, or omit "matcher" for a whole-symbol rewrite`;
-    const note = relocationNote(sourceBefore, target, entry, matcher);
-    return {
-      ok: false,
-      cause: "matcher-not-found",
-      diagnostics: note === null ? base : `${base}\n${note}`,
-    };
-  }
-  if (anchored.kind === "ambiguous") {
-    const { line, column } = lineColumnAt(sourceBefore, entry.node.start);
-    return {
-      ok: false,
-      cause: "matcher-ambiguous",
-      diagnostics: `stage: matcher\nthe matcher matches ${anchored.matches} places inside ${locator.kind} ${JSON.stringify(locator.name)} in ${target} (line ${line}, column ${column}); extend it with more surrounding context`,
-    };
-  }
-  // A match over the whole declaration gets the same modifier tolerance as a
-  // whole-symbol rewrite; a body-level match must not strip (#48).
-  const spliced =
-    modifier !== null && anchored.start === entry.node.start
-      ? stripLeadingExport(replacement, modifier)
-      : replacement;
-  const candidate = applyAnchorSplice(sourceBefore, anchored.start, anchored.end, spliced);
-  if (candidate === sourceBefore) {
+  // Per-region no-op guard (#59): the replacement equals the exact text it
+  // replaces, so this region alone would change nothing.
+  if (text === sourceBefore.slice(start, end)) {
     return { ok: false, cause: "no-op", diagnostics: NOOP_DIAGNOSTICS };
+  }
+  return { ok: true, start, end, text, gateStart: start };
+}
+
+// Apply one edit to an already-resolved entry and build the whole-file
+// candidate. Shared by the pinned modify branch and verification-repair re-pins
+// (#48); a multi-payload region uses `resolveEntrySplice` directly (#78).
+function spliceEntryEdit(
+  sourceBefore: string,
+  target: string,
+  locator: Locator,
+  entry: IndexEntry,
+  matcher: string | null,
+  replacement: string,
+  range: EditRange | null = null,
+  rangeFileRelative = false,
+): EntrySplice {
+  const resolved = resolveEntrySplice(
+    sourceBefore,
+    target,
+    locator,
+    entry,
+    matcher,
+    replacement,
+    range,
+    rangeFileRelative,
+  );
+  if (!resolved.ok) {
+    return resolved;
   }
   return {
     ok: true,
-    candidate,
-    gateStart: anchored.start,
+    candidate: applyAnchorSplice(sourceBefore, resolved.start, resolved.end, resolved.text),
+    gateStart: resolved.gateStart,
   };
 }
 
-/** Splice outcome of one modify payload against its own file source (#69). */
-type PayloadSplice =
-  | { ok: true; entry: IndexEntry; candidate: string; gateStart: number }
+/** One modify payload resolved to its addressed region against its own file. */
+type PayloadSpan =
+  | { ok: true; entry: IndexEntry; start: number; end: number; text: string; gateStart: number }
   | {
       ok: false;
       stage: "address" | "matcher" | "range" | "no-op";
@@ -2661,16 +2685,16 @@ type PayloadSplice =
       undeclaredName?: string | null;
     };
 
-// Resolve one modify payload against the source that would be spliced and
-// splice it: strict-AND address resolution, then the range/matcher/no-op rules.
-// Shared by the pinned first payload and each self-addressed batch payload
-// (#69); the caller owns the echo/re-pin policy.
-function splicePayloadAtSource(
+// Resolve one modify payload against the source that would be spliced:
+// strict-AND address resolution, then the range/matcher/no-op rules. Shared by
+// the pinned first payload and each self-addressed batch payload (#69/#78); the
+// caller owns the echo/re-pin policy.
+function resolvePayloadSpan(
   sourceBefore: string,
   target: string,
   payload: EditPayload,
   rangeFileRelative = false,
-): PayloadSplice {
+): PayloadSpan {
   const resolved = resolveCurrentEntry(sourceBefore, target, payload.locator);
   if (!resolved.ok) {
     return {
@@ -2680,7 +2704,7 @@ function splicePayloadAtSource(
       undeclaredName: resolved.undeclared ? payload.locator.name : null,
     };
   }
-  const spliced = spliceEntryEdit(
+  const spliced = resolveEntrySplice(
     sourceBefore,
     target,
     payload.locator,
@@ -2694,7 +2718,9 @@ function splicePayloadAtSource(
     return {
       ok: true,
       entry: resolved.entry,
-      candidate: spliced.candidate,
+      start: spliced.start,
+      end: spliced.end,
+      text: spliced.text,
       gateStart: spliced.gateStart,
     };
   }
@@ -2725,6 +2751,34 @@ function multiPayloadDiagnostics(
     "stage: multi",
     `payload ${index} of ${total} (${addressJson(locator)} in ${JSON.stringify(path)}) failed; the whole exchange is discarded and nothing is written`,
     diagnostics,
+  ].join("\n");
+}
+
+/** One batch payload resolved to the splice region it addresses (#78). */
+interface ResolvedRegion {
+  /** Payload position in the batch (0-based), for diagnostics. */
+  index: number;
+  payload: EditPayload;
+  /** Half-open offsets into the file's current source. */
+  start: number;
+  end: number;
+  /** Text spliced over `[start, end)`. */
+  text: string;
+}
+
+// Overlap rejection (#78): two same-file regions share source text, so they
+// cannot both be applied in one pass. Names both positions and their spans; the
+// whole exchange is discarded.
+function multiOverlapDiagnostics(
+  total: number,
+  path: string,
+  earlier: ResolvedRegion,
+  later: ResolvedRegion,
+): string {
+  return [
+    "stage: multi",
+    `payload ${earlier.index + 1} and payload ${later.index + 1} of ${total} both edit ${JSON.stringify(path)} but their regions overlap (offsets ${earlier.start}..${earlier.end} and ${later.start}..${later.end}); the whole exchange is discarded and nothing is written`,
+    `payload ${earlier.index + 1} (${addressJson(earlier.payload.locator)}) and payload ${later.index + 1} (${addressJson(later.payload.locator)}) must address non-overlapping regions, or be split across exchanges`,
   ].join("\n");
 }
 
@@ -4237,7 +4291,7 @@ export async function runLoop(options: LoopOptions): Promise<LoopResult> {
       let batchCarried: EditPayload[] = [];
       let batchPayloadCount = 0;
       let batchReplacementChars: number | null = null;
-      // Batch-level rejection cause (#69): `multi-protocol`/`multi-duplicate`
+      // Batch-level rejection cause (#69/#78): `multi-protocol`/`multi-duplicate`
       // override the stage-derived classification; per-payload failures keep
       // the failing payload's own stage/cause.
       let failureCause: RejectionCause | null = null;
@@ -4418,11 +4472,13 @@ export async function runLoop(options: LoopOptions): Promise<LoopResult> {
           }
         }
       }
-      // Opt-in multi-payload exchanges (#69): every payload runs its own
-      // resolve → splice → gate → duplicate → format chain against its own
-      // file's current source. Any failure rejects the whole exchange naming
-      // each failing payload's cause, and nothing is written; the record's
-      // outcome and cause stay those of the first failing payload.
+      // Opt-in multi-payload exchanges (#69/#78): payloads are grouped by
+      // file. Every payload runs its own address/matcher/range/no-op guard
+      // against its file's current source; each file's resolved regions are
+      // combined in one pass. Any failure — a per-region guard or an
+      // overlapping pair — rejects the whole exchange naming each failing
+      // region, and nothing is written; the record's outcome and cause stay
+      // those of the first failure.
       const batchWrites: { path: string; source: string }[] = [];
       if (batch !== null) {
         const first = batch[0];
@@ -4466,22 +4522,43 @@ export async function runLoop(options: LoopOptions): Promise<LoopResult> {
               multiPayloadDiagnostics(index + 1, batch.length, path, locator, diagnostics),
             );
           };
+          // One source per file, resolved once: the pinned file is the current
+          // in-memory source and every other file is read from disk once, so
+          // same-file payloads combine in one pass instead of overwriting each
+          // other sequentially (#78).
+          const fileSource = new Map<string, string>();
+          const fileSourceOf = (path: string): string => {
+            if (path === target) {
+              return sourceBefore;
+            }
+            const cached = fileSource.get(path);
+            if (cached !== undefined) {
+              return cached;
+            }
+            const source = readFileIfExists(join(cwd, path)) ?? "";
+            fileSource.set(path, source);
+            return source;
+          };
+          // Resolve every payload to its addressed region. The first payload
+          // keeps the classic echo/re-pin policy; every further payload
+          // self-addresses its own declaration in its own file (same file
+          // allowed), resolved strictly against that file's current source.
+          const regions: ResolvedRegion[] = [];
           for (let index = 0; index < batch.length; index += 1) {
             const entryPayload = batch[index];
             if (entryPayload === undefined) {
               continue;
             }
             const path = entryPayload.locator.path;
-            const payloadSource =
-              index === 0 ? sourceBefore : (readFileIfExists(join(cwd, path)) ?? "");
-            let splice: PayloadSplice | null = null;
+            const payloadSource = fileSourceOf(path);
+            let span: PayloadSpan | null = null;
             if (index === 0) {
               // The first payload keeps the classic pin semantics: it echoes
               // the pinned address, and only a verification-repair round may
               // move the pin to another declaration in the pinned file.
               const locator = entryPayload.locator;
               if (addressEquals(pinnedTarget.locator, locator)) {
-                splice = splicePayloadAtSource(sourceBefore, target, entryPayload, repair);
+                span = resolvePayloadSpan(sourceBefore, target, entryPayload, repair);
               } else if (iterationOpenedBy !== null || stalledAsk) {
                 if (locator.path !== target) {
                   noteFailure(
@@ -4502,8 +4579,8 @@ export async function runLoop(options: LoopOptions): Promise<LoopResult> {
                     rangeUnshownDiagnostics(pinnedTarget.locator, locator, entryPayload.range),
                   );
                 } else {
-                  splice = splicePayloadAtSource(sourceBefore, target, entryPayload, repair);
-                  if (splice.ok) {
+                  span = resolvePayloadSpan(sourceBefore, target, entryPayload, repair);
+                  if (span.ok) {
                     pinnedTarget = { mode: "modify", locator };
                     pinned = pinnedTarget;
                     pinnedAddressJson = pinJson(pinnedTarget);
@@ -4519,8 +4596,8 @@ export async function runLoop(options: LoopOptions): Promise<LoopResult> {
                 );
               }
             } else if (entryPayload.range !== null) {
-              // A further multi-payload entry is in another file whose source
-              // the prompt never showed, so a range has no numbered block to
+              // A further multi-payload entry addresses a declaration the
+              // numbered block never showed, so a range has no block to
               // address (#72).
               noteFailure(
                 index,
@@ -4534,42 +4611,96 @@ export async function runLoop(options: LoopOptions): Promise<LoopResult> {
                 ),
               );
             } else {
-              // Path-independent payloads (#69): each names its own
+              // Self-addressed payloads (#69/#78): each names its own
               // declaration, which resolves strictly in its own file.
-              splice = splicePayloadAtSource(payloadSource, path, entryPayload);
+              span = resolvePayloadSpan(payloadSource, path, entryPayload);
             }
-            if (splice === null) {
+            if (span === null) {
               continue;
             }
-            if (!splice.ok) {
-              noteFailure(index, path, entryPayload.locator, splice.stage, splice.diagnostics, {
-                matcherCause: splice.matcherCause,
-                undeclaredName: splice.undeclaredName,
+            if (!span.ok) {
+              noteFailure(index, path, entryPayload.locator, span.stage, span.diagnostics, {
+                matcherCause: span.matcherCause,
+                undeclaredName: span.undeclaredName,
               });
               continue;
             }
-            const payloadCheck = index === 0 ? prevCheck : parseCheck(payloadSource);
-            if (!payloadCheck.ok) {
-              // Unreachable for extra payloads: a strict resolution succeeded,
-              // so the file parses.
-              noteFailure(
-                index,
-                path,
-                entryPayload.locator,
-                "address",
-                prevBrokenDiagnostics(path, payloadCheck.failure),
+            regions.push({
+              index,
+              payload: entryPayload,
+              start: span.start,
+              end: span.end,
+              text: span.text,
+            });
+          }
+          // Group the resolved regions by file and apply each file in one pass.
+          const groups = new Map<string, ResolvedRegion[]>();
+          for (const region of regions) {
+            const path = region.payload.locator.path;
+            const group = groups.get(path);
+            if (group === undefined) {
+              groups.set(path, [region]);
+            } else {
+              group.push(region);
+            }
+          }
+          for (const [path, group] of groups) {
+            const payloadSource = fileSourceOf(path);
+            const ordered = [...group].sort((left, right) => left.start - right.start);
+            // Overlap policy (#78): two regions share source text, so the whole
+            // exchange is discarded and both regions are named.
+            let overlapping: [ResolvedRegion, ResolvedRegion] | null = null;
+            for (let i = 1; i < ordered.length; i += 1) {
+              const previous = ordered[i - 1];
+              const current = ordered[i];
+              if (previous !== undefined && current !== undefined && current.start < previous.end) {
+                overlapping = [previous, current];
+                break;
+              }
+            }
+            if (overlapping !== null) {
+              failureCause = "multi-duplicate";
+              blocks.push(
+                multiOverlapDiagnostics(batch.length, path, overlapping[0], overlapping[1]),
               );
               continue;
             }
-            const gate = parseCheck(splice.candidate);
+            // Apply the file's splices together, from the end as `applyEdits`
+            // does, so earlier offsets stay valid.
+            let spliced = payloadSource;
+            for (let i = ordered.length - 1; i >= 0; i -= 1) {
+              const region = ordered[i];
+              if (region === undefined) {
+                continue;
+              }
+              spliced = applyAnchorSplice(spliced, region.start, region.end, region.text);
+            }
+            const payloadCheck = path === target ? prevCheck : parseCheck(payloadSource);
+            if (!payloadCheck.ok) {
+              // Unreachable for extra files: a strict resolution succeeded, so
+              // the file parses.
+              for (const region of ordered) {
+                noteFailure(
+                  region.index,
+                  path,
+                  region.payload.locator,
+                  "address",
+                  prevBrokenDiagnostics(path, payloadCheck.failure),
+                );
+              }
+              continue;
+            }
+            const gate = parseCheck(spliced);
             if (!gate.ok) {
-              noteFailure(
-                index,
-                path,
-                entryPayload.locator,
-                "gate",
-                gateDiagnostics(splice.gateStart, entryPayload.replacement, gate.failure),
-              );
+              for (const region of ordered) {
+                noteFailure(
+                  region.index,
+                  path,
+                  region.payload.locator,
+                  "gate",
+                  gateDiagnostics(region.start, region.payload.replacement, gate.failure),
+                );
+              }
               continue;
             }
             const duplicate = duplicateDeclarationDiagnostics(
@@ -4579,25 +4710,37 @@ export async function runLoop(options: LoopOptions): Promise<LoopResult> {
               gate.program,
             );
             if (duplicate !== null) {
-              noteFailure(index, path, entryPayload.locator, "duplicate", duplicate);
+              for (const region of ordered) {
+                noteFailure(region.index, path, region.payload.locator, "duplicate", duplicate);
+              }
               continue;
             }
             let formatted: string | null = null;
             try {
-              formatted = await formatSource(path, splice.candidate);
+              formatted = await formatSource(path, spliced);
             } catch (error) {
-              noteFailure(
-                index,
-                path,
-                entryPayload.locator,
-                "format",
-                `stage: format\n${errorMessage(error)}`,
-                { formatMessage: errorMessage(error) },
-              );
+              for (const region of ordered) {
+                noteFailure(
+                  region.index,
+                  path,
+                  region.payload.locator,
+                  "format",
+                  `stage: format\n${errorMessage(error)}`,
+                  { formatMessage: errorMessage(error) },
+                );
+              }
               continue;
             }
             if (await sameAfterFormatting(path, payloadSource, formatted)) {
-              noteFailure(index, path, entryPayload.locator, "no-op", NOOP_DIAGNOSTICS);
+              for (const region of ordered) {
+                noteFailure(
+                  region.index,
+                  path,
+                  region.payload.locator,
+                  "no-op",
+                  NOOP_DIAGNOSTICS,
+                );
+              }
               continue;
             }
             batchWrites.push({ path, source: formatted });

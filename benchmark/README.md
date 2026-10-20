@@ -169,6 +169,18 @@ top-level function/class/type name as `duplicate`. Then `oxfmt` formats and tsc
   before the create re-runs. `delete` needs no payload and splices the resolved
   declaration out directly.
 
+With `--multi-payload` (default off; #69/#78) a `modify` reply may instead carry
+a batch `{"payloads": [ … ]}` of flat payloads: the first entry echoes the
+pinned address (or the verification-repair re-pin), and every further entry
+names its own declaration, in the same file or another. Same-file entries must
+address non-overlapping regions: the payloads are grouped by file, each region
+is resolved against that file's current source, and the file's regions are
+spliced in one pass (from the end, like `applyEdits`). The exchange is atomic —
+if any entry fails its own guard or two same-file regions overlap, nothing is
+written and the rejection (`stage: multi`) names every failing entry. A single
+edit may still be sent as one flat object; `create`/`delete` never batch. With
+the flag off a `{"payloads": …}` reply is a classic `stage: protocol` rejection.
+
 ## Run budget (tc side)
 
 The tc loop nests Run and Edit (#43): each Run iteration repeats Edit →

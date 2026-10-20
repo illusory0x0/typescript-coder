@@ -1530,7 +1530,7 @@ describe("parseEditResponseList (#69)", () => {
     expect(parsed.payloads[1]?.matcher).toBe("return 1;");
   });
 
-  test("rejects a duplicate file across payloads as multi-duplicate", () => {
+  test("parses same-file payloads and keeps entry order (#78)", () => {
     const parsed = parseEditResponseList(
       JSON.stringify({
         [MULTI_PAYLOAD_KEY]: [
@@ -1539,12 +1539,16 @@ describe("parseEditResponseList (#69)", () => {
         ],
       }),
     );
-    expect(parsed.ok).toBe(false);
-    if (parsed.ok) {
+    expect(parsed.ok).toBe(true);
+    if (!parsed.ok) {
       return;
     }
-    expect(parsed.cause).toBe("multi-duplicate");
-    expect(parsed.diagnostics).toContain("at most one payload per file");
+    expect(parsed.batch).toBe(true);
+    expect(parsed.payloads.map((payload) => payload.locator.path)).toEqual([
+      "src/a.ts",
+      "src/a.ts",
+    ]);
+    expect(parsed.payloads.map((payload) => payload.locator.name)).toEqual(["make", "other"]);
   });
 
   test("rejects an empty array, a non-array, and unexpected keys as multi-protocol", () => {
@@ -6916,6 +6920,45 @@ function multiFixtureDir(): string {
   return dir;
 }
 
+// #78: a one-file fixture with two declarations whose single test needs both
+// changed, so same-file multi-region batching can satisfy it while a partial
+// apply cannot pass.
+function sameFileFixtureDir(): string {
+  const dir = tempDir();
+  mkdirSync(join(dir, "src"));
+  writeFileSync(
+    join(dir, "tsconfig.json"),
+    `${JSON.stringify(
+      {
+        compilerOptions: {
+          strict: true,
+          noEmit: true,
+          module: "ESNext",
+          moduleResolution: "bundler",
+          types: [],
+        },
+        include: ["src"],
+        exclude: ["src/**/*.test.ts"],
+      },
+      null,
+      2,
+    )}\n`,
+  );
+  writeFileSync(
+    join(dir, "src", "pair.ts"),
+    "export function one(): number {\n  return 1;\n}\nexport function two(): number {\n  return 1;\n}\n",
+  );
+  writeFileSync(
+    join(dir, "src", "pair.test.ts"),
+    'import { expect, test } from "bun:test";\nimport { one, two } from "./pair";\n\ntest("pair", () => {\n  expect(one()).toBe(2);\n  expect(two()).toBe(3);\n});\n',
+  );
+  return dir;
+}
+
+function pairSource(dir: string): string {
+  return readFileSync(join(dir, "src", "pair.ts"), "utf8");
+}
+
 function batchResponse(
   entries: {
     path: string;
@@ -7104,24 +7147,20 @@ describe("multi-payload exchanges (#69)", () => {
     expect(readFileSync(join(dir, "src", "b.ts"), "utf8")).toContain("return 3;");
   }, 30000);
 
-  test("rejects a batch that targets the same file twice before any splice", async () => {
-    const dir = multiFixtureDir();
+  test("applies two same-file regions atomically and verifies once (#78)", async () => {
+    const dir = sameFileFixtureDir();
     const provider = new ScriptedProvider([
-      selectionResponse({ path: "src/a.ts", symbol: "one", kind: "function" }),
-      batchResponse([
-        { path: "src/a.ts", symbol: "one", kind: "function", replacement: "return 2;" },
-        { path: "src/a.ts", symbol: "x", kind: "function", replacement: "return 9;" },
-      ]),
+      selectionResponse({ path: "src/pair.ts", symbol: "one", kind: "function" }),
       batchResponse([
         {
-          path: "src/a.ts",
+          path: "src/pair.ts",
           symbol: "one",
           kind: "function",
           matcher: "return 1;",
           replacement: "return 2;",
         },
         {
-          path: "src/b.ts",
+          path: "src/pair.ts",
           symbol: "two",
           kind: "function",
           matcher: "return 1;",
@@ -7138,12 +7177,246 @@ describe("multi-payload exchanges (#69)", () => {
       multiPayload: true,
     });
     expect(result.ok).toBe(true);
-    const duplicate = result.records.find(
-      (record) => record.diagnostics?.includes("at most one payload per file") === true,
+    const source = pairSource(dir);
+    expect(source).toContain("return 2;");
+    expect(source).toContain("return 3;");
+    const applied = result.records.find((record) => record.outcome === "applied");
+    expect(applied?.payloads).toBe(2);
+  }, 30000);
+
+  test("rejects overlapping same-file regions and writes nothing (#78)", async () => {
+    const dir = sameFileFixtureDir();
+    const before = pairSource(dir);
+    const provider = new ScriptedProvider([
+      selectionResponse({ path: "src/pair.ts", symbol: "one", kind: "function" }),
+      batchResponse([
+        {
+          path: "src/pair.ts",
+          symbol: "one",
+          kind: "function",
+          replacement: "export function one(): number {\n  return 7;\n}",
+        },
+        {
+          path: "src/pair.ts",
+          symbol: "one",
+          kind: "function",
+          matcher: "return 1;",
+          replacement: "return 9;",
+        },
+      ]),
+      batchResponse([
+        {
+          path: "src/pair.ts",
+          symbol: "one",
+          kind: "function",
+          matcher: "return 1;",
+          replacement: "return 2;",
+        },
+        {
+          path: "src/pair.ts",
+          symbol: "two",
+          kind: "function",
+          matcher: "return 1;",
+          replacement: "return 3;",
+        },
+      ]),
+    ]);
+    const result = await runLoop({
+      cwd: dir,
+      issue: "make both declarations satisfy the pair test",
+      provider,
+      checkCommand: TSC,
+      testCommand: ["bun", "test"],
+      multiPayload: true,
+    });
+    expect(result.ok).toBe(true);
+    const rejected = result.records.find(
+      (record) => record.outcome !== "applied" && record.kind === "exchange" && record.row === 2,
     );
-    expect(duplicate?.cause).toBe("multi-duplicate");
-    expect(duplicate?.payloads).toBe(2);
-    expect(duplicate?.outcome).toBe("protocol");
+    expect(rejected?.payloads).toBe(2);
+    expect(rejected?.diagnostics).toContain("stage: multi");
+    expect(rejected?.diagnostics).toContain("overlap");
+    expect(rejected?.cause).toBe("multi-duplicate");
+    expect(rejected?.outcome).toBe("protocol");
+    // Nothing was written: neither distinctive replacement survives, and the
+    // retry's matchers still resolve against the untouched source.
+    const source = pairSource(dir);
+    expect(source).not.toContain("return 7;");
+    expect(source).not.toContain("return 9;");
+    expect(source).toContain("return 2;");
+    expect(source).toContain("return 3;");
+    expect(before).toContain("return 1;");
+  }, 30000);
+
+  test("rolls back the whole exchange when one same-file region fails its guard (#78)", async () => {
+    const dir = sameFileFixtureDir();
+    const provider = new ScriptedProvider([
+      selectionResponse({ path: "src/pair.ts", symbol: "one", kind: "function" }),
+      batchResponse([
+        {
+          path: "src/pair.ts",
+          symbol: "one",
+          kind: "function",
+          matcher: "return 1;",
+          replacement: "return 2;",
+        },
+        {
+          path: "src/pair.ts",
+          symbol: "two",
+          kind: "function",
+          matcher: "return 999;",
+          replacement: "return 3;",
+        },
+      ]),
+      batchResponse([
+        {
+          path: "src/pair.ts",
+          symbol: "one",
+          kind: "function",
+          matcher: "return 1;",
+          replacement: "return 2;",
+        },
+        {
+          path: "src/pair.ts",
+          symbol: "two",
+          kind: "function",
+          matcher: "return 1;",
+          replacement: "return 3;",
+        },
+      ]),
+    ]);
+    const result = await runLoop({
+      cwd: dir,
+      issue: "make both declarations satisfy the pair test",
+      provider,
+      checkCommand: TSC,
+      testCommand: ["bun", "test"],
+      multiPayload: true,
+    });
+    expect(result.ok).toBe(true);
+    const rejected = result.records.find(
+      (record) => record.outcome !== "applied" && record.kind === "exchange" && record.row === 2,
+    );
+    expect(rejected?.payloads).toBe(2);
+    expect(rejected?.diagnostics).toContain("stage: multi");
+    expect(rejected?.diagnostics).toContain("payload 2");
+    expect(rejected?.diagnostics).toContain("not found");
+    // The retry's matchers resolved against the untouched source, so the failed
+    // batch's first region was rolled back too.
+    const source = pairSource(dir);
+    expect(source).toContain("return 2;");
+    expect(source).toContain("return 3;");
+  }, 30000);
+
+  test("rejects a no-op region of a same-file batch per region (#78)", async () => {
+    const dir = sameFileFixtureDir();
+    const provider = new ScriptedProvider([
+      selectionResponse({ path: "src/pair.ts", symbol: "one", kind: "function" }),
+      batchResponse([
+        {
+          path: "src/pair.ts",
+          symbol: "one",
+          kind: "function",
+          matcher: "return 1;",
+          replacement: "return 2;",
+        },
+        {
+          path: "src/pair.ts",
+          symbol: "two",
+          kind: "function",
+          matcher: "return 1;",
+          replacement: "return 1;",
+        },
+      ]),
+      batchResponse([
+        {
+          path: "src/pair.ts",
+          symbol: "one",
+          kind: "function",
+          matcher: "return 1;",
+          replacement: "return 2;",
+        },
+        {
+          path: "src/pair.ts",
+          symbol: "two",
+          kind: "function",
+          matcher: "return 1;",
+          replacement: "return 3;",
+        },
+      ]),
+    ]);
+    const result = await runLoop({
+      cwd: dir,
+      issue: "make both declarations satisfy the pair test",
+      provider,
+      checkCommand: TSC,
+      testCommand: ["bun", "test"],
+      multiPayload: true,
+    });
+    expect(result.ok).toBe(true);
+    const rejected = result.records.find(
+      (record) => record.outcome !== "applied" && record.kind === "exchange" && record.row === 2,
+    );
+    expect(rejected?.diagnostics).toContain("stage: multi");
+    expect(rejected?.diagnostics).toContain("payload 2");
+    expect(rejected?.diagnostics).toContain("no-op");
+    expect(rejected?.outcome).toBe("no-op");
+    expect(pairSource(dir)).toContain("return 3;");
+  }, 30000);
+
+  test("rejects a duplicate declaration from one same-file region per region (#78)", async () => {
+    const dir = sameFileFixtureDir();
+    const provider = new ScriptedProvider([
+      selectionResponse({ path: "src/pair.ts", symbol: "one", kind: "function" }),
+      batchResponse([
+        {
+          path: "src/pair.ts",
+          symbol: "one",
+          kind: "function",
+          matcher: "return 1;",
+          replacement: "return 2;",
+        },
+        {
+          path: "src/pair.ts",
+          symbol: "two",
+          kind: "function",
+          replacement: "export function one(): number {\n  return 5;\n}",
+        },
+      ]),
+      batchResponse([
+        {
+          path: "src/pair.ts",
+          symbol: "one",
+          kind: "function",
+          matcher: "return 1;",
+          replacement: "return 2;",
+        },
+        {
+          path: "src/pair.ts",
+          symbol: "two",
+          kind: "function",
+          matcher: "return 1;",
+          replacement: "return 3;",
+        },
+      ]),
+    ]);
+    const result = await runLoop({
+      cwd: dir,
+      issue: "make both declarations satisfy the pair test",
+      provider,
+      checkCommand: TSC,
+      testCommand: ["bun", "test"],
+      multiPayload: true,
+    });
+    expect(result.ok).toBe(true);
+    const rejected = result.records.find(
+      (record) => record.outcome !== "applied" && record.kind === "exchange" && record.row === 2,
+    );
+    expect(rejected?.diagnostics).toContain("stage: multi");
+    expect(rejected?.diagnostics).toContain("duplicate");
+    expect(rejected?.diagnostics).toContain("second top-level function");
+    expect(rejected?.outcome).toBe("duplicate");
+    expect(pairSource(dir)).toContain("return 3;");
   }, 30000);
 
   test("keeps single-payload behavior when the flag is off", async () => {

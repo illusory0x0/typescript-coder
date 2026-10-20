@@ -105,24 +105,27 @@ declaration in the current source, and the pin (with its echoed label) then
 points at it. A payload path outside the pinned file fails with `stage:
 address`. `create` rejects a present `matcher` or `range`.
 
-**Multi-payload exchanges (#69, opt-in, default off):** with the
+**Multi-payload exchanges (#69/#78, opt-in, default off):** with the
 `--multi-payload` flag (benchmark: `--multi-payload`; loop option
 `multiPayload`) a `modify` reply may instead carry
-`{"payloads": [ {…}, {…} ]}` — a batch of flat payloads, one per file
-(**path-independent** only: two entries naming the same file are rejected as
-`multi-duplicate` before any splice). The first entry carries the pinned
-address (or the verification-repair re-pin) exactly as the flat payload does;
-each further entry names its own declaration in its own file, which must
-resolve to exactly one declaration in the current source. Each entry runs the
-full per-payload chain — echo/address, splice, syntax gate, duplicate-name
-guard, `oxfmt` no-op check — against its own file. The exchange applies
-**atomically**: if any entry fails its own guard, nothing is written and the
-exchange is rejected with `stage: multi` naming every failing entry's position,
-file, and cause (the record's outcome and typed cause stay those of the first
-failing entry). `create`/`delete` selections never batch — a batch reply to a
-`create` round is a `multi-protocol` rejection. With the flag off, a
-`{"payloads": …}` reply is a classic `stage: protocol` rejection and behavior
-is byte-identical to the single-payload path.
+`{"payloads": [ {…}, {…} ]}` — a batch of flat payloads. Entries may be
+path-independent (one per file) or name the same file more than once
+(**bounded same-file multi-region**, #78): the regions they address must be
+non-overlapping, and an overlapping pair is rejected as `multi-duplicate`
+before any splice, naming both. The first entry carries the pinned address (or
+the verification-repair re-pin) exactly as the flat payload does; each further
+entry names its own declaration in its own file, which must resolve to exactly
+one declaration in the current source. Each entry runs the full per-payload
+chain — echo/address, splice, syntax gate, duplicate-name guard, `oxfmt` no-op
+check — and a file's regions are combined in one pass. The exchange applies
+**atomically**: if any entry fails its own guard, or two same-file regions
+overlap, nothing is written and the exchange is rejected with `stage: multi`
+naming every failing entry's position, file, and cause (the record's outcome
+and typed cause stay those of the first failing entry). `create`/`delete`
+selections never batch — a batch reply to a `create` round is a
+`multi-protocol` rejection. With the flag off, a `{"payloads": …}` reply is a
+classic `stage: protocol` rejection and behavior is byte-identical to the
+single-payload path.
 
 ### apply-edit
 
