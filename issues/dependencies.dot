@@ -93,6 +93,7 @@ digraph issues {
   "86" [label="#86 CLI: emit a JSON result object on usage errors under --format json"];
   "87" [label="#87 Repair prompt: name the failing declaration in the tsc diagnostics"];
   "88" [label="#88 Repair prompt: show the model its own prior replies to cut within-round churn"];
+  "89" [label="#89 Benchmark accounting: make token totals cache-excluded and like-for-like across sides, with a multiplier summary"];
 
   // parent edges (parent -> child), solid
   "1" -> "2";

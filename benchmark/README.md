@@ -72,6 +72,10 @@ baseline row.
   OpenAI side, a separate counter on the oc side).
 - `tokens.total`: reported total when available, otherwise the sum of reported
   input + output + reasoning; cache counters are not added in.
+- `tokens.billable`: the cache-excluded, like-for-like triple (#89) used by the
+  report — `in` = cache-miss input, `out` = output (reasoning included), and
+  `total = in + out`; cache-hit input is excluded. Computed from the raw buckets
+  through `normalizeBuckets` in `src/benchmark-pricing.ts`.
 - `usageSource`: `chat-completions` (tc) or `session-export` / `stats-project`
   (oc); `rawUsage` keeps the verbatim payload and null fields mean the
   side did not report them.
@@ -144,6 +148,15 @@ together with reasoning; `cacheWrite` is priced at the cache-miss rate (no
 current data reports it). The `opencode session export` payload's own `cost`
 stays in `rawUsage` and matches the computed value to within 1e-9 relative on the
 recorded baselines.
+
+The report's token totals are **cache-excluded and like-for-like** (#89):
+`total = cache-miss input + output` (reasoning counted as output), normalized
+for both sides through the same `normalizeBuckets` rule above; cache-hit input
+is excluded. Each report states the token multiplier between the sides, overall
+and per task. USD remains computed and recorded — in the result JSON and
+`consumption.md` — for decisions, but is marked decision-only and is not the
+headline comparison metric. Historical result files and ledger rows predate this
+change and are **not rewritten**; the new accounting applies to new runs.
 
 ## Edit protocol (tc side)
 
@@ -234,8 +247,10 @@ Limitation: the recorded responses were produced for the prompts current at
 recording time, so the runner validates mechanics (parsing, matching, state
 flow) — not model behavior under new prompts.
 
-Token conventions differ between the sides; compare like for like. USD costs
-normalize both through the same rate table.
+Token conventions differ between the sides; the report compares them like for
+like by normalizing both to a cache-excluded total (cache-miss input + output)
+through the shared bucket normalization. USD costs normalize both through the
+same rate table and are decision-only.
 
 ## What we know, and what we don't
 
@@ -244,8 +259,11 @@ The measured metric set supports three readings:
 - **USD per success** per task and overall, from the ledger
   (`results/consumption.md`; denominator rule below).
 - **Success counts** (`ok/runs` in each ledger row and report).
-- **Token readings**: the dated reports keep the token columns, and the result
-  JSONs keep every per-run bucket.
+- **Token readings**: the dated reports keep the cache-excluded token columns
+  (`in`, `out`, `total = in + out`) and a token-multiplier summary; the result
+  JSONs keep every per-run raw bucket plus the normalized `tokens.billable`
+  triple. USD stays recorded for decisions but is not the headline comparison
+  metric.
 
 Weak spots a reader should not assume away:
 

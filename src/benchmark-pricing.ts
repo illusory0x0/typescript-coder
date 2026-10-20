@@ -22,6 +22,11 @@
 // - `cacheWrite` is currently null/0 in every recorded run; if a side ever
 //   reports it, it is priced at the cache-miss rate.
 //
+// `normalizeBuckets` is also the single source of the report's like-for-like
+// token total (#89): total = cache-miss input + output, with cache-hit input
+// excluded. That is the cross-side comparison metric; the raw provider buckets
+// stay in each result row.
+//
 // Straddling runs: when a run crosses a peak/off-peak boundary, its cost is the
 // elapsed-time share blend of the peak and off-peak costs. This assumes tokens
 // are spent uniformly over the run's wall-clock window (a documented
@@ -197,6 +202,23 @@ export function normalizeBuckets(buckets: TokenBuckets, side: BenchmarkSide): No
   const miss = (side === "tc" ? Math.max(0, input - hit) : input) + write;
   const output = (buckets.output ?? 0) + (buckets.reasoning ?? 0);
   return { miss, hit, output };
+}
+
+/**
+ * Cache-excluded, like-for-like token triple (#89): `in` is cache-miss input,
+ * `out` is output (reasoning included), and `total = in + out`. This is the
+ * report's comparison view; cache-hit input is deliberately excluded.
+ */
+export interface BillableTokens {
+  readonly in: number;
+  readonly out: number;
+  readonly total: number;
+}
+
+/** Cache-excluded triple from raw buckets, via `normalizeBuckets` (#89). */
+export function billableTokens(buckets: TokenBuckets, side: BenchmarkSide): BillableTokens {
+  const { miss, output } = normalizeBuckets(buckets, side);
+  return { in: miss, out: output, total: miss + output };
 }
 
 /** Cost in USD of one bucket set at one rate card. */

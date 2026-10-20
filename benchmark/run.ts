@@ -16,14 +16,19 @@ import { exchangeStats, runLoop } from "../src/loop";
 import { OpenAIProvider, readConfigFromEnv } from "../src/openai";
 import type { ProviderLike, RejectionCause } from "../src/loop";
 import { ReplayRecorder, usageFromRaw } from "../src/replay-format";
-import { PRICING_FETCHED_ON, PRICING_SOURCE_URL, runCost } from "../src/benchmark-pricing";
+import {
+  PRICING_FETCHED_ON,
+  PRICING_SOURCE_URL,
+  billableTokens,
+  runCost,
+} from "../src/benchmark-pricing";
 import { currentInputHashes } from "../src/provenance";
-import type { RateClass } from "../src/benchmark-pricing";
+import type { BillableTokens, RateClass } from "../src/benchmark-pricing";
 import type { RecordedProvenance } from "../src/provenance";
 import type { ChatMessage, ChatResponse, ReasoningEffort, ToolDefinition } from "../src/openai";
 
-type TaskName = "json-parser" | "sexp-parser" | "minilisp" | "csv-parser";
-type Side = "tc" | "oc";
+export type TaskName = "json-parser" | "sexp-parser" | "minilisp" | "csv-parser";
+export type Side = "tc" | "oc";
 type SideSelection = Side | "both";
 
 interface TaskSpec {
@@ -54,6 +59,15 @@ interface TokenUsage {
   readonly cacheWrite: number | null;
   readonly reasoning: number | null;
   readonly total: number | null;
+}
+
+/**
+ * Cache-excluded, like-for-like token triple (#89): `in` is cache-miss input,
+ * `out` is output (reasoning included), and `total = in + out`. Cache-hit input
+ * is deliberately excluded so the two sides compare on the same basis.
+ */
+export interface RunTokens extends TokenUsage {
+  readonly billable: BillableTokens;
 }
 
 interface CommandOutcome {
@@ -134,13 +148,13 @@ interface LogPaths {
   readonly stats: string | null;
 }
 
-interface RunRecord {
+export interface RunRecord {
   readonly task: TaskName;
   readonly side: Side;
   readonly rep: number;
   readonly ok: boolean;
   readonly sideOk: boolean;
-  readonly tokens: TokenUsage;
+  readonly tokens: RunTokens;
   readonly usageAvailable: boolean;
   readonly usageSource: string;
   readonly rawUsage: unknown;
@@ -169,7 +183,7 @@ interface TokenStats {
   total: number | null;
 }
 
-interface AggregateRow {
+export interface AggregateRow {
   task: TaskName | null;
   side: Side | null;
   runs: number;
@@ -177,16 +191,17 @@ interface AggregateRow {
   failed: number;
   successRate: number;
   usageRuns: number;
-  tokens: { input: TokenStats; output: TokenStats; total: TokenStats };
+  /** Cache-excluded token stats (#89): `in` = cache-miss input, `out` = output. */
+  tokens: { in: TokenStats; out: TokenStats; total: TokenStats };
   /** USD cost stats over runs that carry a cost (same shape as tokens). */
   cost: TokenStats;
   durationMsMean: number | null;
   stepsMean: number | null;
-  tokensPerSuccess: { input: number | null; output: number | null; total: number | null };
+  tokensPerSuccess: { in: number | null; out: number | null; total: number | null };
   costPerSuccess: number | null;
 }
 
-interface Aggregates {
+export interface Aggregates {
   byTaskSide: AggregateRow[];
   bySide: AggregateRow[];
   overall: AggregateRow;
@@ -1265,7 +1280,7 @@ async function runOnce(
     // on the state left on disk (#43); judge fields stay as recorded.
     ok: outcome.terminationReason === null && judge.ok,
     sideOk: outcome.sideOk,
-    tokens: outcome.tokens,
+    tokens: { ...outcome.tokens, billable: billableTokens(outcome.tokens, side) },
     usageAvailable: outcome.usageAvailable,
     usageSource: outcome.usageSource,
     rawUsage: outcome.rawUsage,
@@ -1324,12 +1339,15 @@ function writeReport(path: string, report: Report): void {
 }
 
 // Aggregates are computed from the final `runs` array (matrix order) so reruns
-// never leak in: only final records are listed. Token means/totals cover runs
-// whose `tokens.total` is non-null; a field is skipped when its value is null.
+// never leak in: only final records are listed. Token means/totals are the
+// cache-excluded triple (#89): `in` = cache-miss input, `out` = output
+// (reasoning included), `total = in + out`, normalized per side through
+// `src/benchmark-pricing.ts`. Stats cover runs whose `tokens.total` is non-null.
 // `tokensPerSuccess` and `costPerSuccess` divide those sums by the number of
 // passing runs (judge-passing and not aborted at the token budget; null when
-// there were no successes). `cost` stats cover runs that carry a USD cost.
-function aggregateRuns(
+// there were no successes). `cost` (USD, decision-only) stats cover runs that
+// carry a USD cost.
+export function aggregateRuns(
   runs: readonly RunRecord[],
   task: TaskName | null,
   side: Side | null,
@@ -1339,14 +1357,8 @@ function aggregateRuns(
   );
   const usageRuns = selected.filter((run) => run.tokens.total !== null);
   const ok = selected.filter((run) => run.ok).length;
-  const tokenStats = (pick: (usage: TokenUsage) => number | null): TokenStats => {
-    const values: number[] = [];
-    for (const run of usageRuns) {
-      const value = pick(run.tokens);
-      if (value !== null) {
-        values.push(value);
-      }
-    }
+  const tokenStats = (pick: (triple: BillableTokens) => number): TokenStats => {
+    const values = usageRuns.map((run) => pick(billableTokens(run.tokens, run.side)));
     if (values.length === 0) {
       return { mean: null, total: null };
     }
@@ -1355,9 +1367,9 @@ function aggregateRuns(
   };
   const steps = selected.map((run) => run.steps).filter((value): value is number => value !== null);
   const tokens = {
-    input: tokenStats((usage) => usage.input),
-    output: tokenStats((usage) => usage.output),
-    total: tokenStats((usage) => usage.total),
+    in: tokenStats((triple) => triple.in),
+    out: tokenStats((triple) => triple.out),
+    total: tokenStats((triple) => triple.total),
   };
   const costValues = selected
     .map((run) => run.cost)
@@ -1386,15 +1398,15 @@ function aggregateRuns(
     stepsMean:
       steps.length === 0 ? null : steps.reduce((left, right) => left + right, 0) / steps.length,
     tokensPerSuccess: {
-      input: perSuccess(tokens.input),
-      output: perSuccess(tokens.output),
+      in: perSuccess(tokens.in),
+      out: perSuccess(tokens.out),
       total: perSuccess(tokens.total),
     },
     costPerSuccess: perSuccess(cost),
   };
 }
 
-function computeAggregates(
+export function computeAggregates(
   runs: readonly RunRecord[],
   tasks: readonly TaskName[],
   sides: readonly Side[],
@@ -1459,6 +1471,59 @@ function successRateSentence(rows: readonly AggregateRow[]): string {
   return equal ? `Success rates are equal: ${summaries}.` : `Success rates differ: ${summaries}.`;
 }
 
+// `higher X.XXx lower` for a two-side pair, or null when the pair cannot be
+// compared (a missing total or a zero lower side).
+function multiplierLabel(rows: readonly AggregateRow[]): string | null {
+  const [first, second] = rows;
+  if (first === undefined || second === undefined) {
+    return null;
+  }
+  const firstTotal = first.tokens.total.total;
+  const secondTotal = second.tokens.total.total;
+  if (firstTotal === null || secondTotal === null) {
+    return null;
+  }
+  const higher = firstTotal >= secondTotal ? first : second;
+  const lower = firstTotal >= secondTotal ? second : first;
+  const high = Math.max(firstTotal, secondTotal);
+  const low = Math.min(firstTotal, secondTotal);
+  if (low <= 0) {
+    return null;
+  }
+  return `${higher.side} ${(high / low).toFixed(2)}x ${lower.side}`;
+}
+
+/**
+ * Token multiplier summary (#89): the cache-excluded total of the higher side
+ * over the lower side, overall and per task. Says so plainly when both sides
+ * did not run (no comparable pair).
+ */
+export function tokenMultiplierSentence(
+  bySide: readonly AggregateRow[],
+  byTaskSide: readonly AggregateRow[],
+): string {
+  const sides = bySide.filter((row) => row.side !== null);
+  const overall = multiplierLabel(sides);
+  const taskParts: string[] = [];
+  const taskNames = [
+    ...new Set(byTaskSide.map((row) => row.task).filter((task): task is TaskName => task !== null)),
+  ];
+  for (const task of taskNames) {
+    const label = multiplierLabel(
+      byTaskSide.filter((row) => row.task === task && row.side !== null),
+    );
+    if (label !== null) {
+      taskParts.push(`${task} ${label}`);
+    }
+  }
+  if (overall === null && taskParts.length === 0) {
+    return "Token multiplier (cache-excluded): not comparable (both sides must run).";
+  }
+  const parts = overall === null ? [] : [`${overall} overall`];
+  parts.push(...taskParts);
+  return `Token multiplier (cache-excluded total, higher/lower): ${parts.join("; ")}.`;
+}
+
 // The references tree names one file per task (json/sexp/lisp today); probe the
 // variants so the report prints a path that actually exists in the checkout.
 function resolveReferencePath(repoRoot: string, task: TaskName): string {
@@ -1519,6 +1584,12 @@ export function writeMarkdownReport(mdPath: string, report: Report): void {
 
   lines.push("## Token and cost accounting", "");
   lines.push(
+    "Like-for-like tokens (#89): the comparison total is cache-excluded — total =",
+    "cache-miss input (`in`) + output, with reasoning counted as output — normalized for",
+    "both sides by the single bucket normalization in `src/benchmark-pricing.ts`.",
+    "Cache-hit input stays in each run's raw buckets but is excluded from the total, so",
+    "the two sides compare on the same basis.",
+    "",
     "tc: OpenAI-compatible `usage` from the provider, summed over every chat request",
     "(input/prompt, output/completion, total; cache and reasoning counters are kept per",
     "record).",
@@ -1534,20 +1605,22 @@ export function writeMarkdownReport(mdPath: string, report: Report): void {
     "(miss = input - cacheRead); oc `input` excludes them (miss = input, hit = cacheRead);",
     "output is priced together with reasoning; `cacheWrite` is priced at the cache-miss",
     "rate. A run that crosses a peak/off-peak boundary splits by elapsed-time share",
-    "(uniform-spend approximation).",
+    "(uniform-spend approximation). USD columns are decision-only: cost is recorded in the",
+    "result JSON and `consumption.md` for decisions, but the headline comparison metric is",
+    "the cache-excluded token total above.",
     "",
   );
 
   lines.push("## Per-task results", "");
   lines.push(
-    "| Task | Side | Success | Mean in | Mean out | Mean total | Mean $ | $/success | Mean dur (s) | Mean steps |",
+    "| Task | Side | Success | Mean in (no cache) | Mean out | Mean total | Mean $ | $/success | Mean dur (s) | Mean steps |",
     "| --- | --- | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: |",
   );
   for (const row of aggregates.byTaskSide) {
     lines.push(
       `| ${row.task ?? "all"} | ${row.side ?? "all"} | ${row.ok}/${row.runs} | ${formatTokenCount(
-        row.tokens.input.mean,
-      )} | ${formatTokenCount(row.tokens.output.mean)} | ${formatTokenCount(
+        row.tokens.in.mean,
+      )} | ${formatTokenCount(row.tokens.out.mean)} | ${formatTokenCount(
         row.tokens.total.mean,
       )} | ${formatUsd(row.cost?.mean ?? null)} | ${formatUsd(row.costPerSuccess)} | ${formatSeconds(
         row.durationMsMean,
@@ -1558,14 +1631,14 @@ export function writeMarkdownReport(mdPath: string, report: Report): void {
 
   lines.push("## Overall comparison", "");
   lines.push(
-    "| Side | Success | Mean in | Mean out | Mean total | Total tokens | Mean $ | Total $ | $/success | Mean dur (s) | Mean steps |",
+    "| Side | Success | Mean in (no cache) | Mean out | Mean total | Total tokens | Mean $ | Total $ | $/success | Mean dur (s) | Mean steps |",
     "| --- | --- | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: |",
   );
   for (const row of aggregates.bySide) {
     lines.push(
       `| ${row.side ?? "all"} | ${row.ok}/${row.runs} | ${formatTokenCount(
-        row.tokens.input.mean,
-      )} | ${formatTokenCount(row.tokens.output.mean)} | ${formatTokenCount(
+        row.tokens.in.mean,
+      )} | ${formatTokenCount(row.tokens.out.mean)} | ${formatTokenCount(
         row.tokens.total.mean,
       )} | ${formatTokenCount(row.tokens.total.total)} | ${formatUsd(
         row.cost?.mean ?? null,
@@ -1576,18 +1649,22 @@ export function writeMarkdownReport(mdPath: string, report: Report): void {
   }
   lines.push("");
   lines.push("Per success (usage-run sums divided by successful runs):", "");
-  lines.push("| Side | Input | Output | Total | Cost |", "| --- | ---: | ---: | ---: | ---: |");
+  lines.push(
+    "| Side | In (no cache) | Out | Total | Cost |",
+    "| --- | ---: | ---: | ---: | ---: |",
+  );
   for (const row of aggregates.bySide) {
     lines.push(
-      `| ${row.side ?? "all"} | ${formatTokenCount(row.tokensPerSuccess.input)} | ${formatTokenCount(
-        row.tokensPerSuccess.output,
+      `| ${row.side ?? "all"} | ${formatTokenCount(row.tokensPerSuccess.in)} | ${formatTokenCount(
+        row.tokensPerSuccess.out,
       )} | ${formatTokenCount(row.tokensPerSuccess.total)} | ${formatUsd(row.costPerSuccess)} |`,
     );
   }
   lines.push("");
   lines.push(successRateSentence(aggregates.bySide), "");
+  lines.push(tokenMultiplierSentence(aggregates.bySide, aggregates.byTaskSide), "");
   lines.push(
-    `*Pricing footnote:* USD costs use the official DeepSeek V4.1-Flash peak/off-peak`,
+    `*Pricing footnote (decision-only):* USD costs use the official DeepSeek V4.1-Flash peak/off-peak`,
     `rates (fetched ${PRICING_FETCHED_ON} from ${PRICING_SOURCE_URL}; USD per 1M tokens):`,
     "cache-hit input $0.006 peak / $0.003 off-peak; cache-miss input $0.30 / $0.15;",
     "output $1.20 / $0.60. Peak hours are Mon-Fri 01:00-04:00 and 06:00-10:00 UTC,",
@@ -1671,7 +1748,11 @@ export function writeMarkdownReport(mdPath: string, report: Report): void {
 
   lines.push("## Raw runs", "");
   lines.push(
-    "| Task | Side | Rep | OK | Input | Output | Total | Cost | Rate | Steps | Dur (s) |",
+    "Provider-reported buckets, verbatim: tc `Raw in`/`Raw total` include cache hits;",
+    "oc `Raw in` excludes them. The cache-excluded comparison total is in the tables",
+    "above (and each row's `tokens.billable`), not here.",
+    "",
+    "| Task | Side | Rep | OK | Raw in | Raw out | Raw total | Cost | Rate | Steps | Dur (s) |",
     "| --- | --- | ---: | --- | ---: | ---: | ---: | ---: | --- | ---: | ---: |",
   );
   for (const run of report.runs) {
