@@ -97,6 +97,11 @@ A selection carries one of three modes (default `modify`):
 | `range`       | object? | optional position selector `{line, column, endLine, endColumn}` (#72): all 1-based, end inclusive, against the numbered current-source block shown in the prompt; an alternative to `matcher`, must sit inside the declaration; takes precedence over `matcher` when both are sent |
 | `replacement` | string  | the text spliced over exactly the matched (or whole-symbol) range                                                       |
 
+The model-facing compact form of this same selection — `select [kind] <symbol>
+in <path>`, `match`, `pick`, `replace`, `end` — is specified in
+[docs/edit-protocol.md](./edit-protocol.md); its §9 maps this payload to that
+syntax. This section stays normative for the payload the harness accepts today.
+
 One flat payload per edit. The address is echoed back (`mode` is never echoed)
 and any mismatch fails the exchange with `stage: echo`, with one exception: in a
 verification-repair iteration (a round opened by failing verification) the pin

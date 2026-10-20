@@ -2,8 +2,9 @@
 
 How compilers and runtimes spell a source **position** (`path:line:col`) and a
 source **range** (start → end), captured live on 2026-10-20. This is the
-reference input to the selection grammar in issue #106 (the LLM-friendly
-cascading selection protocol); it is a survey, not a spec.
+reference input to the selection grammar specified in
+[docs/edit-protocol.md](./edit-protocol.md) (issue #106); it is a survey, not a
+spec.
 
 Versions: gcc 15.2.0, clang 21.1.8, rustc 1.96.0, Python 3.14.4, Node 22.17.1,
 Bun 1.3.13, tsc 7.0.2.
@@ -150,11 +151,10 @@ Takeaways for the tc grammar:
   not adopt it.
 - tsc's `(line,col)` is machine-only; accept it leniently at most.
 
-## Adopted form (2026-10-20)
+## Adopted form
 
-tc adopts `path:line:col` as the primary position with an optional `-line:col`
-range suffix, i.e. `<path>[:<line>[:<col>[-<line>[:<col>]]]]: [`<anchor>`]`.
-This is clang's `{l:c-l:c}` range without the braces, spelled start → end the way
-rustc's JSON span is. The point-only tools (gcc, tsc, node, bun) and Python's
-traceback form are not adopted. The `N | ` gutter plus caret is kept for the
-viewer affordance.
+The position and range form tc adopted — and the grammar that carries it
+(`select [kind] <symbol> in <path>`, `match`, `pick`, `replace`, `end`) — are
+specified in [docs/edit-protocol.md](./edit-protocol.md). This file is the
+survey behind that choice: the per-tool formats and takeaways above are its
+input, not the grammar itself.

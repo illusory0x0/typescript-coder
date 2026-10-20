@@ -144,7 +144,8 @@ The old names are not separate terms; each is just part of the flow above:
   precedence over `matcher`; must sit inside the declaration). One matcher or
   range per edit; by default multiple changes happen across Edit rounds (the old
   `edits[]` batch is gone), the opt-in `--multi-payload` batch (#69/#78) being
-  the exception.
+  the exception. The model-facing compact form of this payload is specified in
+  [docs/edit-protocol.md](./edit-protocol.md).
 - **Syntax-preservation** (highest-priority invariant): the syntax gate rejects
   an edit whose `after` fails to parse — the splice is discarded, nothing is
   written. A broken `prev` ends the Run.

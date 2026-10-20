@@ -2,10 +2,12 @@
 
 Audience: humans and agents who need the shape of the system before changing
 it. This is orientation, not contract: normative behavior lives in
-[`spec.md`](./spec.md), loop vocabulary in [`glossary.md`](./glossary.md),
-review priorities in [`review-guide.md`](./review-guide.md), and the
-measurement method plus the honest weak spots in
-[`../benchmark/README.md`](../benchmark/README.md). Measured numbers live in
+[`spec.md`](./spec.md), the model-facing edit syntax in
+[`edit-protocol.md`](./edit-protocol.md), loop vocabulary in
+[`glossary.md`](./glossary.md), review priorities in
+[`review-guide.md`](./review-guide.md), and the measurement method plus the
+honest weak spots in [`../benchmark/README.md`](../benchmark/README.md). Measured
+numbers live in
 [`../benchmark/results/consumption.md`](../benchmark/results/consumption.md).
 
 ## 1. What it is
