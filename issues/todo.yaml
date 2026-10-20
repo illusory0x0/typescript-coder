@@ -82,6 +82,14 @@
   parent: 105
   deps: [107, 108, 109, 110]
   file: 0111-teach-the-compact-syntax-with-few-shot-examples-measured-a-b.md
+- id: 112
+  title: "Rename the internal anchor vocabulary to matcher"
+  status: todo
+  priority: medium
+  milestone: null
+  parent: 105
+  deps: [106]
+  file: 0112-rename-the-internal-anchor-vocabulary-to-matcher.md
 - id: 105
   title: "LLM-friendly cascading selection protocol (compact positional syntax)"
   status: todo

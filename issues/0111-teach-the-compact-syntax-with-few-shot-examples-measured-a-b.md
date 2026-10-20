@@ -29,9 +29,9 @@ verdict.
 
 ## Acceptance criteria
 
-- [ ] The edit prompt carries few-shot examples showing: path-only (viewer),
-      path+line/point, path+range, and path+range+anchor
-      (`src/lexer.ts:10:1-20:2 \`xs.push\``).
+- [ ] The edit prompt carries few-shot examples showing: a viewer
+      (`select … match … end`), a bare declaration replace, a `match` + `pick`
+      disambiguation, and a `match` + `replace` rewrite.
 - [ ] The change is A/B-measurable on byte-identical source via a runtime
       opt-out in the style of `TC_DIAG_DECL_NAMING` (`#92`) /
       `TC_MATCHER_RANGE_HINT` (`#102`).

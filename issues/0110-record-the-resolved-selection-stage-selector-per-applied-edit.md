@@ -13,8 +13,8 @@ created: 2026-10-20
 ## Context
 
 `#101` records `LoopRecord.selectors` (`range | matcher | whole-symbol`) and the
-report's "Selector adoption" section. The cascade adds stages (path/symbol/
-line/point/regex) and a resolved-stage notion; unless the metric covers that
+report's "Selector adoption" section. The cascade adds stages (select / match /
+pick / replace) and a resolved-stage notion; unless the metric covers that
 vocabulary, adoption of the new syntax is unmeasurable — the exact gap `#100`
 hit, where a *successful* edit was indistinguishable from a whole-symbol edit.
 

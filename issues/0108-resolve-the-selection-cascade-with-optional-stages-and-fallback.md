@@ -13,11 +13,13 @@ created: 2026-10-20
 ## Context
 
 `resolveEntrySplice` (`src/loop.ts:2839`) short-circuits `range ▸ matcher ▸
-whole-symbol`, and the address `path × symbol × kind` is mandatory. The cascade
-model makes each stage optional: `path → symbol → matcher → selector`, where a
-supplied finer stage must narrow inside the coarser result and an omitted stage
-falls back to the coarser one — never a silent wrong match. The new coordinate
-kinds `line` and `(line,column)` are degenerate `range`s.
+whole-symbol`, and the address `path × symbol × kind` is mandatory. The compact
+protocol (grammar in `docs/edit-protocol.md`) keeps the address mandatory but
+makes the rest optional: `select` names the declaration, `match` locates a span
+in it, `pick` disambiguates among matches, `replace` rewrites the target; a
+supplied stage must narrow inside the coarser result, an omitted stage falls
+back to the coarser one — never a silent wrong match. The `pick` ranges are the
+coordinate selector.
 
 ## Goal
 
@@ -27,16 +29,14 @@ empty, or out-of-bounds selections fail with typed diagnostics.
 
 ## Acceptance criteria
 
-- [ ] `line` and `(line,column)` resolve as degenerate 1-based spans inside the
-      enclosing stage, with typed causes on out-of-bounds/empty.
-- [ ] A supplied anchor (matcher) plus a coordinate selector combine per the
-      rule settled in the specification (or explicitly "selector wins", matching
-      today's range-over-matcher), with a test.
-- [ ] Omitting `symbol`/`kind` (path-only, or path+line) resolves at the
-      file/line level for viewer use; ambiguity or a multi-declaration file
-      fails loudly.
-- [ ] Existing guards (echo/address/ambiguity/syntax gate) are unchanged; no
-      silent first match.
+- [ ] `pick` ranges resolve as 1-based file-absolute spans inside the enclosing
+      `match` scope, with typed causes on out-of-bounds/empty.
+- [ ] `match` is the locator and `pick` only narrows it (no bare-range replace):
+      the precedence settled in `docs/edit-protocol.md`, with a test.
+- [ ] An omitted `match` targets the whole declaration; an omitted `replace` is a
+      viewer; ambiguity (multiple matches) fails loudly, never a silent first
+      match.
+- [ ] Existing guards (echo/address/ambiguity/syntax gate) are unchanged.
 - [ ] Unit tests cover each omitted stage and each failure mode.
 
 ## Verification
@@ -48,6 +48,7 @@ bun test
 
 ## Notes
 
-- Depends on the specification (`#106`) for the cascade order and fallback rule.
-- Open question (settle in `#106`): whether a finer stage must sit inside the
-  matcher match or only inside the declaration.
+- Depends on the specification (`#106`) for the cascade order and fallback rule;
+  the grammar lives in `docs/edit-protocol.md`.
+- Settled in `#106`: `pick` sits inside `match` (it filters the match set),
+  never beside it.

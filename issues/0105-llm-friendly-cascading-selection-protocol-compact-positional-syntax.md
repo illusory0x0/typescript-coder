@@ -22,16 +22,19 @@ matcher-failure text showed **no effect** (`#102`, range 0 in both arms). The
 root cause is that JSON addressing is not the form the model reads text in.
 
 Compiler diagnostics (C and friends) put the position first in a compact,
-model-familiar form: `src/lexer.ts:10:1-20:2 \`xs.push\``. We want one such
-compact positional syntax whose optional prefix stages **are** the addressing
-cascade:
+model-familiar form (`src/lexer.ts:10:1-20:2`). We want one such compact syntax
+whose optional stages **are** the addressing cascade:
 
 ```
-<path>[:<line>[:<col>[-<line>[:<col>]]]] [`<anchor>`]
+select [kind] <symbol> in <path>
+  [ match (<snippet> | /regex/) [ pick <multiRange> ] ]
+  [ replace with <fence> ]
+end
 ```
 
-- Stages `path → symbol → matcher → selector`, where a selector is one of
-  `line | (line,column) | range | regex`.
+- Stages `select → match → pick → replace`: `select` names the declaration,
+  `match` locates a span in it, `pick` disambiguates among matches, `replace`
+  rewrites the target. The grammar is specified in `docs/edit-protocol.md`.
 - Each stage is optional: supplying a finer stage narrows inside the coarser
   one; omitting it resolves at the coarser stage, never as a silent wrong match
   ("if the model doesn't give it, it can still select").
@@ -46,8 +49,8 @@ adoption and cost.
 
 ## Acceptance criteria
 
-- [ ] The syntax grammar and the `path → symbol → matcher → selector` cascade
-      are specified in spec/glossary (child: specification).
+- [ ] The syntax grammar and the `select → match → pick → replace` cascade are
+      specified in `docs/edit-protocol.md` (child: specification).
 - [ ] The syntax parses and serializes with typed parse diagnostics (child:
       parser/serializer).
 - [ ] Optional stages resolve with fallback and never a silent wrong match, and

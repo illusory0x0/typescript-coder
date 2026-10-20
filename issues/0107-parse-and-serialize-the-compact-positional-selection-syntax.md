@@ -12,9 +12,9 @@ created: 2026-10-20
 
 ## Context
 
-The model must emit the compact line syntax, and the prompts must render a
-selection in it; today the wire form is JSON (`docs/spec.md:89-98`). A parser
-maps one line onto the existing payload model
+The model must emit the compact syntax (grammar in `docs/edit-protocol.md`), and
+the prompts must render a selection in it; today the wire form is JSON
+(`docs/spec.md:89-98`). A parser maps the clauses onto the existing payload model
 (`{path,symbol,kind,matcher,range,replacement}`), and a serializer renders a
 selection back into prompt text. Malformed lines need typed parse diagnostics
 in the existing `stage:` style.
@@ -27,14 +27,16 @@ selection in the syntax.
 
 ## Acceptance criteria
 
-- [ ] `parseSelection(line)` accepts
-      `<path>[:<line>[:<col>[-<line>[:<col>]]]] [\`<anchor>\`]` and returns the
-      payload-equivalent selection; it round-trips with the serializer.
+- [ ] `parseSelection(text)` accepts the `docs/edit-protocol.md` grammar
+      (`select [kind] <symbol> in <path> [ match (<snippet> | /regex/) [ pick
+      <multiRange> ] ] [ replace with <fence> ] end`, one or more clauses) and
+      returns the payload-equivalent selection; it round-trips with the
+      serializer.
 - [ ] Malformed input fails with a typed cause (new `stage: syntax`) naming the
       offending field; no partial selection is ever produced.
-- [ ] Escaping for a backtick in the anchor and a colon in a path is defined and
-      tested.
-- [ ] Unit tests cover each optional prefix and each failure mode.
+- [ ] Escaping for a backtick in a `snippet` and a colon in a `path` is defined
+      and tested.
+- [ ] Unit tests cover each optional clause and each failure mode.
 - [ ] `bunx tsc --noEmit` clean; the existing JSON path is untouched or
       explicitly bridged.
 
@@ -47,6 +49,7 @@ bun test
 
 ## Notes
 
-- Depends on the specification (`#106`) for the grammar and types.
+- Depends on the specification (`#106`) for the grammar and types; the grammar
+  lives in `docs/edit-protocol.md`.
 - Open question: whether the parser is the only accepted input or JSON remains
   accepted alongside it (settle with the specification).
