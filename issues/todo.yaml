@@ -18,11 +18,3 @@
   parent: null
   deps: []
   file: 0046-harness-optimization-v3-agent-loop-context-structure-editor.md
-- id: 79
-  title: "Ship typescript-coder as an opencode sub-agent (umbrella)"
-  status: todo
-  priority: medium
-  milestone: null
-  parent: null
-  deps: []
-  file: 0079-ship-typescript-coder-as-an-opencode-sub-agent-umbrella.md

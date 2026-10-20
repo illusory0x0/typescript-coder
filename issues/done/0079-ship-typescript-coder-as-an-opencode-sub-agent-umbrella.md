@@ -1,7 +1,7 @@
 ---
 id: 79
 title: "Ship typescript-coder as an opencode sub-agent (umbrella)"
-status: todo
+status: done
 priority: medium
 milestone: null
 parent: null
@@ -63,3 +63,4 @@ plus the C4 self-host branch and its recorded report.
 - Non-goals: publishing to a registry, an `opencode` plugin/tool, unified-diff
   bypasses.
 - Priorities defaulted to `medium`; no milestone (per file-issue defaults).
+- All children done: #80 (JSON sub-agent result, budget/verify/cwd flags, tc bin), #81 (explicit-targets --targets mode), #82 (delegation recipe docs), #83 (self-host worktree proof), #84 (feedback pool + triage dry-run), plus spin-offs #85 (--timeout) and #86 (JSON result on usage errors). Umbrella gates re-run on master: bunx tsc --noEmit clean; bun test 861 pass; bun run accept 5/5; bun benchmark/check.ts 4 passed/0 failed. C1-C5 met.
