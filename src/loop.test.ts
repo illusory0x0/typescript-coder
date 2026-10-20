@@ -4093,7 +4093,7 @@ describe("runLoop", () => {
     expect(continuation).toContain("Prior attempts (3):");
     expect(continuation).toContain("- #1 protocol:");
     expect(continuation).toContain(
-      'Ruled out after 3 repeats: protocol — This attempt MUST reply with exactly one flat JSON object carrying "path", "symbol", "kind", "matcher", and "replacement" as the entire response: no prose, no markdown fences, no nesting.',
+      'Ruled out after 3 repeats: protocol — This attempt MUST reply with exactly one flat JSON object carrying "path", "symbol", "kind", "matcher", "range", "replacement" as the entire response: no prose, no markdown fences, no nesting.',
     );
   }, 30000);
 

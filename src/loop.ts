@@ -1544,9 +1544,9 @@ export function rejectionPolicy(cause: RejectionCause): RejectionPolicy {
       return {
         action: "retry",
         correction:
-          'Return exactly one flat JSON object with the five keys "path", "symbol", "kind", "matcher", "replacement", and no fences.',
+          'Return exactly one flat JSON object with the keys "path", "symbol", "kind", "matcher", "range", "replacement" ("matcher" and "range" optional), and no fences.',
         escalation:
-          'This attempt MUST reply with exactly one flat JSON object carrying "path", "symbol", "kind", "matcher", and "replacement" as the entire response: no prose, no markdown fences, no nesting.',
+          'This attempt MUST reply with exactly one flat JSON object carrying "path", "symbol", "kind", "matcher", "range", "replacement" as the entire response: no prose, no markdown fences, no nesting.',
       };
     case "echo":
       return {
@@ -1628,7 +1628,7 @@ export function rejectionPolicy(cause: RejectionCause): RejectionPolicy {
         correction:
           'Return either one flat edit object, or a {"payloads": [...]} object whose entries are flat edit objects addressing different files or non-overlapping regions of one file.',
         escalation:
-          'This attempt MUST return either exactly one flat {"path", "symbol", "kind", "matcher", "replacement"} object or a well-formed {"payloads": [ ... ]} batch: no other keys, no nesting beyond one array level.',
+          'This attempt MUST return either exactly one flat {"path", "symbol", "kind", "matcher", "range", "replacement"} object or a well-formed {"payloads": [ ... ]} batch: no other keys, no nesting beyond one array level.',
       };
     case "multi-duplicate":
       return {
