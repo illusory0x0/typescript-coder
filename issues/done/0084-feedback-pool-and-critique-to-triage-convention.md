@@ -1,7 +1,7 @@
 ---
 id: 84
 title: "Feedback pool and critique-to-triage convention"
-status: todo
+status: done
 priority: medium
 milestone: null
 parent: 79
@@ -39,3 +39,4 @@ The dry-run triage output; the `.gitignore` entry; a read of the format doc.
 
 - Independent (no deps). Uses the `triage-feedback` and `file-issue` skills.
 - Non-goal: the GitHub-issue entry (`coding-skills-triage-from-github`).
+- Added feedback/ and feedback/archive/ to .gitignore (git check-ignore confirms the pool is ignored) and documented the artifact format in docs/feedback.md (feedback/<YYYY-MM-DD>-<topic>.md; atomic points carrying Point/Evidence/Concern/Suggested scope), with an AGENTS.md pointer. Dry-run triage over feedback/2026-10-20-tc-selfhost.md: adopted the CLI-usage-error point and filed it as #86; merged the 120s-timeout point into the already-filed #85; marked the fate line and moved the file to feedback/archive/. The pool now holds only archive/.

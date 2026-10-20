@@ -31,6 +31,8 @@ typecheck with `bunx tsc --noEmit`.
   result schema, retry path). Delegate a scoped, verifiable edit with explicit
   `{path,symbol,kind}` targets; edit directly for docs/config or changes with no
   clear symbol target.
+- `docs/feedback.md` — the critique-loop pool: the `feedback/` artifact format
+  (gitignored scratch) that `triage-feedback` screens into tracked issues.
 
 ## Terminology
 

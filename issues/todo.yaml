@@ -18,22 +18,6 @@
   parent: null
   deps: []
   file: 0046-harness-optimization-v3-agent-loop-context-structure-editor.md
-- id: 83
-  title: "Self-host proof: opencode delegates a multi-file task to tc"
-  status: in-progress
-  priority: medium
-  milestone: null
-  parent: 79
-  deps: [81, 82]
-  file: 0083-self-host-proof-opencode-delegates-a-multi-file-task-to-tc.md
-- id: 84
-  title: "Feedback pool and critique-to-triage convention"
-  status: todo
-  priority: medium
-  milestone: null
-  parent: 79
-  deps: []
-  file: 0084-feedback-pool-and-critique-to-triage-convention.md
 - id: 79
   title: "Ship typescript-coder as an opencode sub-agent (umbrella)"
   status: todo

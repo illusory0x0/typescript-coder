@@ -144,18 +144,44 @@ export async function runMain(options: RunMainOptions): Promise<number> {
     : emitTextResult(io, options.cwd, result);
 }
 
-function parseCliOptions(argv: string[]): CliOptions {
+/** True when argv requests JSON output (#86). Scans the whole argv so a
+ * JSON request placed after the offending flag is still honored. */
+export function argvRequestsJson(argv: readonly string[]): boolean {
+  for (let i = 0; i < argv.length; i += 1) {
+    const arg = argv[i];
+    if (arg === "--format" && argv[i + 1] === "json") {
+      return true;
+    }
+    if (arg === "--format=json") {
+      return true;
+    }
+  }
+  return false;
+}
+
+/** Report a CLI usage error (#86). When JSON output was requested, stdout
+ * carries exactly one result object; the error and help always go to stderr.
+ * Returns the exit code; never calls process.exit itself. */
+export function reportUsageError(io: MainIo, argv: readonly string[], message: string): number {
+  if (argvRequestsJson(argv)) {
+    io.out(serializeSubagentResult(emptyFailureResult(message)));
+  }
+  io.err(`error: ${message}`);
+  io.err(helpText());
+  return 1;
+}
+
+function parseCliOptions(argv: string[], io: MainIo): CliOptions {
   try {
     return parseArgs(argv);
   } catch (error) {
-    console.error(`error: ${error instanceof Error ? error.message : String(error)}`);
-    console.error(helpText());
-    process.exit(1);
+    process.exit(reportUsageError(io, argv, error instanceof Error ? error.message : String(error)));
   }
 }
 
 if (import.meta.main) {
-  const cli = parseCliOptions(process.argv.slice(2));
+  const io: MainIo = { out: console.log, err: console.error };
+  const cli = parseCliOptions(process.argv.slice(2), io);
   if (cli.help) {
     console.log(helpText());
     process.exit(0);
@@ -172,7 +198,7 @@ if (import.meta.main) {
     issue,
     cwd: cli.cwd ?? process.cwd(),
     provider,
-    io: { out: console.log, err: console.error },
+    io,
     multiPayload: cli.multiPayload,
     targets: cli.targets ?? undefined,
     format: cli.format,

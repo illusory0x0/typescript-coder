@@ -90,6 +90,7 @@ digraph issues {
   "83" [label="#83 Self-host proof: opencode delegates a multi-file task to tc"];
   "84" [label="#84 Feedback pool and critique-to-triage convention"];
   "85" [label="#85 CLI: expose a per-call command timeout (--timeout)"];
+  "86" [label="#86 CLI: emit a JSON result object on usage errors under --format json"];
 
   // parent edges (parent -> child), solid
   "1" -> "2";
@@ -152,6 +153,7 @@ digraph issues {
   "79" -> "83";
   "79" -> "84";
   "79" -> "85";
+  "79" -> "86";
 
   // dependency edges (blocker -> blocked), dashed
   "2" -> "3" [style=dashed, label="blocks"];
