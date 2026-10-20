@@ -3057,6 +3057,119 @@ function topLevelDeclarations(program: Program): TopLevelDeclaration[] {
   return declarations;
 }
 
+/**
+ * Top-level declaration span used to name the declaration a diagnostic sits in
+ * (#87). Unlike `topLevelDeclarations` (the #48 duplicate guard, limited to the
+ * kinds TypeScript rejects on duplicates), this covers every kind a repair
+ * prompt can point at, including type aliases and variable statements.
+ */
+interface DeclarationSpan {
+  kind: string;
+  name: string;
+  startLine: number;
+  endLine: number;
+}
+
+function lineNumberAt(source: string, offset: number): number {
+  let line = 1;
+  const limit = Math.min(Math.max(offset, 0), source.length);
+  for (let index = 0; index < limit; index += 1) {
+    if (source.charCodeAt(index) === 10) {
+      line += 1;
+    }
+  }
+  return line;
+}
+
+// Parse `source` and return its top-level declaration spans in source order.
+// A parse failure yields no spans: annotation is best-effort and must never
+// throw out of the diagnostics renderer.
+function declarationSpans(source: string): DeclarationSpan[] {
+  let program: Program;
+  try {
+    program = new Parser(source).parseProgram();
+  } catch (error) {
+    if (error instanceof ParseError || error instanceof LexError) {
+      return [];
+    }
+    throw error;
+  }
+  const spans: DeclarationSpan[] = [];
+  const push = (node: Node, name: string, kind: string): void => {
+    spans.push({
+      name,
+      kind,
+      startLine: lineNumberAt(source, node.start),
+      // `end` is exclusive, so the last included character is `end - 1`.
+      endLine: lineNumberAt(source, Math.max(node.start, node.end - 1)),
+    });
+  };
+  // `wrapper` is the enclosing `export` statement whose span the annotation
+  // should cover, so a diagnostic on the modifier still maps to the name.
+  const collect = (statement: Statement | Expression, wrapper?: Node): void => {
+    const node = wrapper ?? statement;
+    switch (statement.kind) {
+      case "FunctionDeclaration":
+        if (statement.name !== null) {
+          push(node, statement.name.name, "function");
+        }
+        return;
+      case "ClassDeclaration":
+        if (statement.name !== null) {
+          push(node, statement.name.name, "class");
+        }
+        return;
+      case "InterfaceDeclaration":
+        push(node, statement.name.name, "interface");
+        return;
+      case "TypeAliasDeclaration":
+        push(node, statement.name.name, "type");
+        return;
+      case "EnumDeclaration":
+        push(node, statement.name.name, "enum");
+        return;
+      case "NamespaceDeclaration":
+        push(node, statement.name, "namespace");
+        return;
+      case "VariableStatement":
+        for (const declarator of statement.declarations) {
+          if (declarator.name.kind === "Identifier") {
+            push(node, declarator.name.name, statement.declarationKind);
+          }
+        }
+        return;
+      case "ExportNamedDeclaration":
+        if (statement.declaration !== null) {
+          collect(statement.declaration, statement);
+        }
+        return;
+      case "ExportDefaultDeclaration":
+        collect(statement.declaration, statement);
+        return;
+      default:
+        return;
+    }
+  };
+  for (const statement of program.body) {
+    collect(statement);
+  }
+  return spans;
+}
+
+// The first top-level span covering `line` (spans do not nest at top level, so
+// the order is deterministic).
+function enclosingDeclaration(
+  spans: readonly DeclarationSpan[],
+  line: number,
+): DeclarationSpan | null {
+  for (const span of spans) {
+    if (line >= span.startLine && line <= span.endLine) {
+      return span;
+    }
+  }
+  return null;
+}
+
 // Duplicate-declaration guard (#48): reject a candidate that raises the
 // top-level count of a (kind, name) TypeScript rejects on duplicates, naming
 // the existing declaration.
@@ -3259,6 +3372,7 @@ async function executeDeletion(input: DeletionInput): Promise<LoopResult> {
     targetPath,
     baseSource,
     newSource,
+    sourceFor: (file) => readFileIfExists(join(cwd, file)),
   });
   const signature = check.diagnostics.length + failingTestNames(test.output).length;
   return await fail(
@@ -3343,6 +3457,12 @@ export interface DiagnosticsInput {
   baseSource: string;
   /** Formatted content that was written. */
   newSource: string;
+  /**
+   * Optional resolver for a diagnostic's file source, used to name the
+   * declaration a diagnostic sits in (#87). When absent or returning null, a
+   * diagnostic outside the target file renders as today.
+   */
+  sourceFor?: (file: string) => string | null;
 }
 
 export interface LineRange {
@@ -3457,12 +3577,33 @@ function testOutputTail(output: string): string {
 }
 
 export function formatDiagnostics(input: DiagnosticsInput): string {
-  const { check, test, targetPath, baseSource, newSource } = input;
+  const { check, test, targetPath, baseSource, newSource, sourceFor } = input;
   const lines: string[] = [];
   if (!check.ok) {
     lines.push("stage: tsc");
     const range = editedRange(baseSource, newSource);
     const replacementLines = toLines(newSource);
+    // Lazily parse each diagnostic's file once so a located diagnostic can name
+    // the declaration whose span contains it (#87). The target file uses the
+    // content that was written; other files go through the optional resolver.
+    const spanCache = new Map<string, DeclarationSpan[]>();
+    const spansFor = (file: string): DeclarationSpan[] => {
+      const cached = spanCache.get(file);
+      if (cached !== undefined) {
+        return cached;
+      }
+      const source = file === targetPath ? newSource : (sourceFor?.(file) ?? null);
+      const spans = source === null ? [] : declarationSpans(source);
+      spanCache.set(file, spans);
+      return spans;
+    };
+    const declarationSuffix = (diagnostic: CheckDiagnostic): string => {
+      if (diagnostic.file === "") {
+        return "";
+      }
+      const span = enclosingDeclaration(spansFor(diagnostic.file), diagnostic.line);
+      return span === null ? "" : ` — in declaration \`${span.name}\` (${span.kind})`;
+    };
     const mapped: CheckDiagnostic[] = [];
     const elsewhere: CheckDiagnostic[] = [];
     for (const diagnostic of check.diagnostics) {
@@ -3474,7 +3615,7 @@ export function formatDiagnostics(input: DiagnosticsInput): string {
     }
     for (const diagnostic of mapped.slice(0, MAPPED_DIAGNOSTIC_LIMIT)) {
       lines.push(
-        `replacement line ${diagnostic.line - range.start + 1}: ${messageWithCode(diagnostic)}`,
+        `replacement line ${diagnostic.line - range.start + 1}: ${messageWithCode(diagnostic)}${declarationSuffix(diagnostic)}`,
       );
       lines.push(...codeFrame(replacementLines, diagnostic.line));
     }
@@ -3484,7 +3625,7 @@ export function formatDiagnostics(input: DiagnosticsInput): string {
     if (elsewhere.length > 0) {
       lines.push("elsewhere in file:");
       for (const diagnostic of elsewhere) {
-        lines.push(renderElsewhere(diagnostic));
+        lines.push(`${renderElsewhere(diagnostic)}${declarationSuffix(diagnostic)}`);
       }
     }
     if (check.diagnostics.length === 0 && check.output.trim() !== "") {
@@ -5316,6 +5457,7 @@ export async function runLoop(options: LoopOptions): Promise<LoopResult> {
         targetPath: target,
         baseSource: sourceBefore,
         newSource,
+        sourceFor: (file) => readFileIfExists(join(cwd, file)),
       });
       const signature = check.diagnostics.length + failingTestNames(test.output).length;
       records.push(

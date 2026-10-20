@@ -1,7 +1,7 @@
 ---
 id: 87
 title: "Repair prompt: name the failing declaration in the tsc diagnostics"
-status: todo
+status: done
 priority: medium
 milestone: null
 parent: 77
@@ -53,3 +53,4 @@ plus replay inspection that a repair prompt renders the enclosing-declaration an
 - Makes the prompt's existing "re-pin to a declaration the diagnostics name" instruction true rather than aspirational.
 - Non-goals: hard caps, auto-stops, weakening guards; no unified-diff bypass.
 - Priority defaulted to medium; no milestone.
+- Landed 2026-10-20. `declarationSpans`/`enclosingDeclaration` (`src/loop.ts`) parse a file with the existing `Parser` and collect top-level spans (function, class, interface, type, enum, namespace, variable statements); `formatDiagnostics` appends " — in declaration `Name` (kind)" to both the `replacement line N` and `elsewhere in file:` renderings when a diagnostic maps to a covering declaration, with an optional `sourceFor` resolver for cross-file diagnostics; unlocated and out-of-declaration diagnostics render byte-identically; no guard/cap/auto-stop change. Gates: `bunx tsc --noEmit` 0, `bun test` 865 pass, `bun run accept` 5/5, `bun benchmark/check.ts` 4 PASS. Live: two tc-side matrices `benchmark/results/2026-10-20-tc-diagdecl-{1,2}.json` (replays `tmp/replays-87-{1,2}/`) are both 12/12 — json 3/3 (~4.8k tps), sexp 3/3 (~3.2k), minilisp 3/3 at **16,269** / **25,497** tokens/success (below the #47 baseline 30,398), overall below 19,377 (three-task 8,106 / 11,176; four-task 11,139 / 10,565); the annotation renders live (`— in declaration `evaluate` (function)`, 41x in minilisp rep2). Criterion 6 met. Caveat: not an isolated A/B, so the causal share is unmeasured. Rows added to `benchmark/results/consumption.md`.

@@ -271,7 +271,7 @@ describe("formatDiagnostics", () => {
     expect(result).toMatch(/\.\.\. \[\d+ characters truncated\] \.\.\./);
   });
 
-  test("returns short diagnostics unchanged", () => {
+  test("annotates a diagnostic with its enclosing declaration", () => {
     const check = {
       ok: false,
       exitCode: 1,
@@ -285,7 +285,104 @@ describe("formatDiagnostics", () => {
       baseSource: "",
       newSource: "const a = 1;\n",
     });
-    expect(result).toBe("stage: tsc\nreplacement line 1: boom\n  1 | const a = 1;");
+    expect(result).toBe(
+      "stage: tsc\nreplacement line 1: boom — in declaration `a` (const)\n  1 | const a = 1;",
+    );
+  });
+
+  test("leaves a diagnostic outside every declaration byte-identical", () => {
+    const result = formatDiagnostics({
+      check: {
+        ok: false,
+        exitCode: 1,
+        output: "",
+        diagnostics: [
+          { file: "src/a.ts", line: 1, column: 1, message: "boom", code: "TS1000" },
+        ],
+      },
+      test: { ok: true, exitCode: 0, output: "" },
+      targetPath: "src/a.ts",
+      baseSource: "",
+      newSource: "foo();\n",
+    });
+    // No top-level declaration contains line 1, so the line keeps its old shape.
+    const line = result.split("\n").find((text) => text.startsWith("replacement line "));
+    expect(line).toBe("replacement line 1: TS1000: boom");
+  });
+
+  test("names a type alias a diagnostic falls inside", () => {
+    const newSource = "type LispValue = Missing;\n";
+    const result = formatDiagnostics({
+      check: {
+        ok: false,
+        exitCode: 1,
+        output: "",
+        diagnostics: [
+          {
+            file: "src/lisp.ts",
+            line: 1,
+            column: 18,
+            message: "Cannot find name 'Missing'.",
+            code: "TS2304",
+          },
+        ],
+      },
+      test: { ok: true, exitCode: 0, output: "" },
+      targetPath: "src/lisp.ts",
+      baseSource: "",
+      newSource,
+    });
+    expect(result).toContain(
+      "replacement line 1: TS2304: Cannot find name 'Missing'. — in declaration `LispValue` (type)",
+    );
+  });
+
+  test("names the declaration an elsewhere diagnostic in another file falls inside", () => {
+    const other = "export interface Shape {\n  width: number;\n}\n";
+    const result = formatDiagnostics({
+      check: {
+        ok: false,
+        exitCode: 1,
+        output: "",
+        diagnostics: [
+          {
+            file: "src/shape.ts",
+            line: 2,
+            column: 3,
+            message: "Property 'width' does not exist on type 'Shape'.",
+            code: "TS2339",
+          },
+        ],
+      },
+      test: { ok: true, exitCode: 0, output: "" },
+      targetPath: "src/other.ts",
+      baseSource: "const a = 1;\n",
+      newSource: "const a = 2;\n",
+      sourceFor: (file) => (file === "src/shape.ts" ? other : null),
+    });
+    expect(result).toContain("elsewhere in file:");
+    expect(result).toContain(
+      "src/shape.ts(2,3): error TS2339: Property 'width' does not exist on type 'Shape'. — in declaration `Shape` (interface)",
+    );
+  });
+
+  test("renders without annotation when a source does not parse", () => {
+    const result = formatDiagnostics({
+      check: {
+        ok: false,
+        exitCode: 1,
+        output: "",
+        diagnostics: [
+          { file: "src/a.ts", line: 1, column: 1, message: "boom", code: "TS1000" },
+        ],
+      },
+      test: { ok: true, exitCode: 0, output: "" },
+      targetPath: "src/a.ts",
+      baseSource: "",
+      newSource: "const a = ;\n",
+    });
+    expect(result).toContain("replacement line 1: TS1000: boom\n");
+    expect(result).not.toContain("in declaration");
   });
 
   test("maps an in-range diagnostic to the replacement with a code frame", () => {
@@ -3626,7 +3723,9 @@ describe("runLoop", () => {
     expect(ask).toContain("This is round 9 of 32.");
     // The digest mixes both no-progress shapes: 7 verifications + 3 rejections.
     expect(ask).toContain("Prior attempts (10):");
-    expect(ask).toContain("- #1 tsc: replacement line 1: TS2322: synthetic 0");
+    expect(ask).toContain(
+      "tsc: replacement line 1: TS2322: synthetic 0 — in declaration `answer` (function)",
+    );
     expect(ask).toContain("- #8 protocol: expected");
     // The ask replaces the round-exhausted header of the #52 continuation.
     expect(ask).not.toContain("exhausted its 3-exchange edit budget");
@@ -3961,8 +4060,12 @@ describe("runLoop", () => {
     const ask = provider.calls[9]?.at(-1)?.content ?? "";
     expect(ask).toContain(`No progress: ${MAX_STALLED_ROUNDS} consecutive failed rounds.`);
     expect(ask).toContain(`Prior attempts (${MAX_STALLED_ROUNDS}):`);
-    expect(ask).toContain("- #1 tsc: replacement line 1: TS2322: synthetic 0");
-    expect(ask).toContain(`- #${MAX_STALLED_ROUNDS} tsc: replacement line 1: TS2322: synthetic 0`);
+    expect(ask).toContain(
+      "- #1 tsc: replacement line 1: TS2322: synthetic 0 — in declaration `answer` (function)",
+    );
+    expect(ask).toContain(
+      `- #${MAX_STALLED_ROUNDS} tsc: replacement line 1: TS2322: synthetic 0 — in declaration \`answer\` (function)`,
+    );
     expect(ask).toContain(
       `Ruled out after ${MAX_STALLED_ROUNDS} repeats: tsc — change the declaration structure instead of re-editing the same spot`,
     );
@@ -6321,7 +6424,7 @@ describe("runLoop", () => {
       // failures still are (the mapped replacement line); the escalation
       // framing is not used yet.
       expect(retry).toContain(
-        "The remaining failures still point at replacement line 1: TS2322: synthetic 0.",
+        "The remaining failures still point at replacement line 1: TS2322: synthetic 0 — in declaration `answer` (function).",
       );
       expect(retry).not.toContain(policy.escalation);
       expect(helperSource(dir)).toContain("return 3;");
