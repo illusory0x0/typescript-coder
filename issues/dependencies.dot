@@ -94,6 +94,16 @@ digraph issues {
   "87" [label="#87 Repair prompt: name the failing declaration in the tsc diagnostics"];
   "88" [label="#88 Repair prompt: show the model its own prior replies to cut within-round churn"];
   "89" [label="#89 Benchmark accounting: make token totals cache-excluded and like-for-like across sides, with a multiplier summary"];
+  "90" [label="#90 Prove the v3 measurement claims: isolated #87 causality and a like-for-like tc-vs-oc matrix"];
+  "91" [label="#91 Absorb the #64 context-management shortlist (candidates 2-6)"];
+  "92" [label="#92 minilisp: isolated A/B to measure #87's causal share"];
+  "93" [label="#93 tc-vs-oc: canonical none-vs-none matrix under the #89 cache-excluded accounting"];
+  "94" [label="#94 Repair prompt: carry the newest exchange verbatim beside the attempt digest"];
+  "95" [label="#95 Repair-context shrink ladder on repeated rejection"];
+  "96" [label="#96 Anchor harness context-size decisions to provider-reported usage"];
+  "97" [label="#97 Provider: classify context-overflow / payload-too-large separately from terminal errors"];
+  "98" [label="#98 Provider: bound output-limit continuations to a three-strike"];
+  "99" [label="#99 Hygiene: gitignore the failures/ artifact directory"];
 
   // parent edges (parent -> child), solid
   "1" -> "2";
@@ -159,6 +169,13 @@ digraph issues {
   "79" -> "84";
   "79" -> "85";
   "79" -> "86";
+  "90" -> "92";
+  "90" -> "93";
+  "91" -> "94";
+  "91" -> "95";
+  "91" -> "96";
+  "91" -> "97";
+  "91" -> "98";
 
   // dependency edges (blocker -> blocked), dashed
   "2" -> "3" [style=dashed, label="blocks"];

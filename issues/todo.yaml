@@ -1,3 +1,84 @@
 # Open issues in picking order. This order is authoritative: `reorder`
 # rewrites it; `add` appends; other writes keep it. `check` enforces it.
 # A dep, and every child of an umbrella, must be listed before its dependent.
+
+- id: 92
+  title: "minilisp: isolated A/B to measure #87's causal share"
+  status: todo
+  priority: high
+  milestone: null
+  parent: 90
+  deps: []
+  file: 0092-minilisp-isolated-a-b-to-measure-87-s-causal-share.md
+- id: 93
+  title: "tc-vs-oc: canonical none-vs-none matrix under the #89 cache-excluded accounting"
+  status: todo
+  priority: medium
+  milestone: null
+  parent: 90
+  deps: []
+  file: 0093-tc-vs-oc-canonical-none-vs-none-matrix-under-the-89-cache-excluded-accounting.md
+- id: 90
+  title: "Prove the v3 measurement claims: isolated #87 causality and a like-for-like tc-vs-oc matrix"
+  status: todo
+  priority: high
+  milestone: null
+  parent: null
+  deps: []
+  file: 0090-prove-the-v3-measurement-claims-isolated-87-causality-and-a-like-for-like-tc-vs-oc-matrix.md
+- id: 94
+  title: "Repair prompt: carry the newest exchange verbatim beside the attempt digest"
+  status: todo
+  priority: low
+  milestone: null
+  parent: 91
+  deps: []
+  file: 0094-repair-prompt-carry-the-newest-exchange-verbatim-beside-the-attempt-digest.md
+- id: 95
+  title: "Repair-context shrink ladder on repeated rejection"
+  status: todo
+  priority: low
+  milestone: null
+  parent: 91
+  deps: []
+  file: 0095-repair-context-shrink-ladder-on-repeated-rejection.md
+- id: 96
+  title: "Anchor harness context-size decisions to provider-reported usage"
+  status: todo
+  priority: low
+  milestone: null
+  parent: 91
+  deps: []
+  file: 0096-anchor-harness-context-size-decisions-to-provider-reported-usage.md
+- id: 97
+  title: "Provider: classify context-overflow / payload-too-large separately from terminal errors"
+  status: todo
+  priority: low
+  milestone: null
+  parent: 91
+  deps: []
+  file: 0097-provider-classify-context-overflow-payload-too-large-separately-from-terminal-errors.md
+- id: 98
+  title: "Provider: bound output-limit continuations to a three-strike"
+  status: todo
+  priority: low
+  milestone: null
+  parent: 91
+  deps: []
+  file: 0098-provider-bound-output-limit-continuations-to-a-three-strike.md
+- id: 91
+  title: "Absorb the #64 context-management shortlist (candidates 2-6)"
+  status: todo
+  priority: low
+  milestone: null
+  parent: null
+  deps: []
+  file: 0091-absorb-the-64-context-management-shortlist-candidates-2-6.md
+- id: 99
+  title: "Hygiene: gitignore the failures/ artifact directory"
+  status: todo
+  priority: low
+  milestone: null
+  parent: null
+  deps: []
+  file: 0099-hygiene-gitignore-the-failures-artifact-directory.md
