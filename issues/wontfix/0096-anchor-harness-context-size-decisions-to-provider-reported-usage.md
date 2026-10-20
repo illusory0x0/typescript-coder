@@ -1,7 +1,7 @@
 ---
 id: 96
 title: "Anchor harness context-size decisions to provider-reported usage"
-status: todo
+status: wontfix
 priority: low
 milestone: null
 parent: 91
@@ -48,3 +48,5 @@ bun benchmark/check.ts
 - Parent: the #64 absorption umbrella.
 - Related: #49 (context audit and cut), #57 (attempt digest), #65 (storm ask).
 - Non-goals: changing the token budget; new mechanisms beyond the trigger.
+- Recon 2026-10-20: premise does not map to tc. Candidate 4 assumes a "context-size/digest trigger predicate" that decides when to compact/emit a checkpoint. tc has none: the attempt digest is rendered unconditionally on every continuation and stalled-ask prompt (`digestText()` at `src/loop.ts:4271`, `:4307`, `:4584`), and stall detection is round-milestone-based (`isStalledAskMilestone(stalledRounds)`), not size-based. Provider usage is already read and threaded into the token budget (`addTokens`/`tokensFromResponse`, `src/loop.ts:1333-1354`), but there is no other size decision to anchor it to. So "thread usage into the trigger" has no predicate to feed, and "skip after a checkpoint landed" has no trigger to skip — implementing it would mean inventing the trigger first (the same missing mechanism as #95).
+- Wontfix (2026-10-20): Premise does not map to tc: there is no context-size/digest trigger predicate to anchor provider usage to (the digest renders unconditionally on continuation/stalled-ask prompts, src/loop.ts:4271/:4307/:4584; stall detection is round-milestone-based). Nothing for the measured-usage trigger to replace.
