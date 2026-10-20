@@ -1,6 +1,6 @@
 ---
 id: 110
-title: "Record the resolved selection stage/selector per applied edit"
+title: "Record the resolved selection stage/matcher per applied edit"
 status: todo
 priority: medium
 milestone: null
@@ -20,14 +20,14 @@ hit, where a *successful* edit was indistinguishable from a whole-symbol edit.
 
 ## Goal
 
-Per applied edit, record which stage/selector resolved it, and surface the
+Per applied edit, record which stage/matcher resolved it, and surface the
 totals in the benchmark report.
 
 ## Acceptance criteria
 
-- [ ] `LoopRecord` and the report record the resolved stage and selector kind
+- [ ] `LoopRecord` and the report record the resolved stage and matcher kind
       for every applied edit (success included), not only failures.
-- [ ] The report's adoption section lists each selector kind and each resolved
+- [ ] The report's adoption section lists each matcher kind and each resolved
       stage, and an aggregate row is available for the A/B.
 - [ ] Unit tests cover the classification; a live `--all --side tc --reps 1` run
       shows non-zero attribution for the kinds exercised.

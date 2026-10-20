@@ -44,7 +44,7 @@ end
 
 The model addresses and edits with a compact positional syntax over an
 optional-stage cascade; every stage may be omitted with fallback; the resolved
-stage/selector is instrumented; few-shot examples teach it; and an A/B measures
+stage/matcher is instrumented; few-shot examples teach it; and an A/B measures
 adoption and cost.
 
 ## Acceptance criteria
@@ -53,11 +53,11 @@ adoption and cost.
       specified in `docs/edit-protocol.md` (child: specification).
 - [ ] The syntax parses and serializes with typed parse diagnostics (child:
       parser/serializer).
-- [ ] Optional stages resolve with fallback and never a silent wrong match, and
-      the coordinate kinds `line`/`(line,column)` are supported (child: cascade
+- [ ] Optional stages resolve with fallback and never a silent wrong match;
+      `pick` scopes the match set by 1-based file-absolute ranges (child: cascade
       resolution).
-- [ ] `regex` is a supported selector kind (child: regex selector).
-- [ ] The resolved stage/selector is recorded per applied edit and surfaced in
+- [ ] `regex` is a supported `match` form (child: regex matcher).
+- [ ] The resolved stage/matcher is recorded per applied edit and surfaced in
       the benchmark report (child: instrumentation).
 - [ ] Few-shot examples exist and an A/B reports adoption plus cache-excluded
       tokens/USD per success with an honest verdict (child: few-shot + A/B).

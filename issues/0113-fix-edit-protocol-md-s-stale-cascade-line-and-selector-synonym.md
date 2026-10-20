@@ -1,7 +1,7 @@
 ---
 id: 113
 title: "Fix edit-protocol.md's stale cascade line and selector synonym"
-status: todo
+status: review
 priority: medium
 milestone: null
 parent: null
@@ -37,14 +37,14 @@ match → pick → replace`, with **matcher** / **viewer** / **editor**.
       synonym for it remains (§9 may keep the shipped JSON payload's own field
       names).
 - [ ] wording only — no grammar or semantics change.
-- [ ] `bun .opencode/scripts/docrefs.ts check` stays at the 21-reference
+- [ ] `dm xref` stays at the 21-reference
       baseline.
 
 ## Verification
 
 ```
 grep -n "path → symbol\|selector" docs/edit-protocol.md
-bun .opencode/scripts/docrefs.ts check
+dm xref
 ```
 
 ## Notes

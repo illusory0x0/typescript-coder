@@ -1,7 +1,7 @@
 ---
 id: 114
 title: "Align open tracker issues to the matcher vocabulary"
-status: todo
+status: review
 priority: medium
 milestone: null
 parent: null

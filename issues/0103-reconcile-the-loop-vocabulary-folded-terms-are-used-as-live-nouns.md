@@ -1,7 +1,7 @@
 ---
 id: 103
 title: "Reconcile the loop vocabulary: folded terms are used as live nouns"
-status: todo
+status: review
 priority: medium
 milestone: null
 parent: null
@@ -48,7 +48,7 @@ historical-only — decided explicitly and then applied.
 ## Verification
 
 ```
-bun .opencode/scripts/docrefs.ts check
+dm xref
 grep -rnE "\b(selection|turn|correction|attempt)\b" docs/
 ```
 
@@ -60,3 +60,4 @@ Review the remaining uses against the recorded decision.
   the range-adoption work (#100–#102).
 - Non-goals: renaming the protocol or changing prompts — this is vocabulary
   reconciliation in the docs.
+- Decision (2026-10-20): retain **Selection** as a live noun = the target a reply addresses (mode + address); **Turn / Correction / Attempt** are historical-only, folding into the flow as exchange / re-ask / Run iteration. Applied to docs/glossary.md, docs/spec.md and docs/design.md; inline code identifiers and named prompt sections (e.g. LoopRecord.selectors, 'Prior attempts') are left unchanged.

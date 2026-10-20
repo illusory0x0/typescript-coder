@@ -20,7 +20,7 @@
   file: 0100-raise-range-selector-adoption-with-mechanical-measurement.md
 - id: 103
   title: "Reconcile the loop vocabulary: folded terms are used as live nouns"
-  status: todo
+  status: review
   priority: medium
   milestone: null
   parent: null
@@ -36,7 +36,7 @@
   file: 0104-ship-tc-as-an-opencode-sub-agent-over-a-bidirectional-stdin-stdout-protocol.md
 - id: 106
   title: "Specify the compact positional syntax and the selection cascade"
-  status: todo
+  status: review
   priority: medium
   milestone: null
   parent: 105
@@ -59,7 +59,7 @@
   deps: [106]
   file: 0108-resolve-the-selection-cascade-with-optional-stages-and-fallback.md
 - id: 109
-  title: "Add a regex selector to the selection cascade"
+  title: "Add a regex matcher to the selection cascade"
   status: todo
   priority: medium
   milestone: null
@@ -67,7 +67,7 @@
   deps: [106]
   file: 0109-add-a-regex-selector-to-the-selection-cascade.md
 - id: 110
-  title: "Record the resolved selection stage/selector per applied edit"
+  title: "Record the resolved selection stage/matcher per applied edit"
   status: todo
   priority: medium
   milestone: null
@@ -84,7 +84,7 @@
   file: 0111-teach-the-compact-syntax-with-few-shot-examples-measured-a-b.md
 - id: 112
   title: "Rename the internal anchor vocabulary to matcher"
-  status: todo
+  status: review
   priority: medium
   milestone: null
   parent: 105
@@ -100,7 +100,7 @@
   file: 0105-llm-friendly-cascading-selection-protocol-compact-positional-syntax.md
 - id: 113
   title: "Fix edit-protocol.md's stale cascade line and selector synonym"
-  status: todo
+  status: review
   priority: medium
   milestone: null
   parent: null
@@ -108,7 +108,7 @@
   file: 0113-fix-edit-protocol-md-s-stale-cascade-line-and-selector-synonym.md
 - id: 114
   title: "Align open tracker issues to the matcher vocabulary"
-  status: todo
+  status: review
   priority: medium
   milestone: null
   parent: null
@@ -116,7 +116,7 @@
   file: 0114-align-open-tracker-issues-to-the-matcher-vocabulary.md
 - id: 115
   title: "Reconcile #106's status and scope"
-  status: todo
+  status: review
   priority: medium
   milestone: null
   parent: null

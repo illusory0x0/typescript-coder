@@ -1,7 +1,7 @@
 ---
 id: 115
 title: "Reconcile #106's status and scope"
-status: todo
+status: review
 priority: medium
 milestone: null
 parent: null
