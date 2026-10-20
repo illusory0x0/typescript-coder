@@ -385,6 +385,62 @@ describe("formatDiagnostics", () => {
     expect(result).not.toContain("in declaration");
   });
 
+  test("includes the declaration suffix when TC_DIAG_DECL_NAMING is unset (#92)", () => {
+    const previous = process.env.TC_DIAG_DECL_NAMING;
+    delete process.env.TC_DIAG_DECL_NAMING;
+    try {
+      const result = formatDiagnostics({
+        check: {
+          ok: false,
+          exitCode: 1,
+          output: "",
+          diagnostics: [{ file: "src/a.ts", line: 1, column: 1, message: "boom" }],
+        },
+        test: { ok: true, exitCode: 0, output: "" },
+        targetPath: "src/a.ts",
+        baseSource: "",
+        newSource: "const a = 1;\n",
+      });
+      expect(result).toBe(
+        "stage: tsc\nreplacement line 1: boom — in declaration `a` (const)\n  1 | const a = 1;",
+      );
+    } finally {
+      if (previous === undefined) {
+        delete process.env.TC_DIAG_DECL_NAMING;
+      } else {
+        process.env.TC_DIAG_DECL_NAMING = previous;
+      }
+    }
+  });
+
+  test("omits the declaration suffix and matches the pre-#87 render when TC_DIAG_DECL_NAMING=off (#92)", () => {
+    const previous = process.env.TC_DIAG_DECL_NAMING;
+    process.env.TC_DIAG_DECL_NAMING = "off";
+    try {
+      const result = formatDiagnostics({
+        check: {
+          ok: false,
+          exitCode: 1,
+          output: "",
+          diagnostics: [{ file: "src/a.ts", line: 1, column: 1, message: "boom" }],
+        },
+        test: { ok: true, exitCode: 0, output: "" },
+        targetPath: "src/a.ts",
+        baseSource: "",
+        newSource: "const a = 1;\n",
+      });
+      expect(result).not.toContain("in declaration");
+      // Byte-identical to the render before #87 appended the suffix.
+      expect(result).toBe("stage: tsc\nreplacement line 1: boom\n  1 | const a = 1;");
+    } finally {
+      if (previous === undefined) {
+        delete process.env.TC_DIAG_DECL_NAMING;
+      } else {
+        process.env.TC_DIAG_DECL_NAMING = previous;
+      }
+    }
+  });
+
   test("maps an in-range diagnostic to the replacement with a code frame", () => {
     const result = formatDiagnostics({
       check: {

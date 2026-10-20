@@ -2,14 +2,6 @@
 # rewrites it; `add` appends; other writes keep it. `check` enforces it.
 # A dep, and every child of an umbrella, must be listed before its dependent.
 
-- id: 92
-  title: "minilisp: isolated A/B to measure #87's causal share"
-  status: todo
-  priority: high
-  milestone: null
-  parent: 90
-  deps: []
-  file: 0092-minilisp-isolated-a-b-to-measure-87-s-causal-share.md
 - id: 93
   title: "tc-vs-oc: canonical none-vs-none matrix under the #89 cache-excluded accounting"
   status: todo

@@ -1,7 +1,7 @@
 ---
 id: 92
 title: "minilisp: isolated A/B to measure #87's causal share"
-status: todo
+status: done
 priority: high
 milestone: null
 parent: 90
@@ -50,3 +50,4 @@ Inspect replays to confirm the arms differ only in the diagnostic rendering.
 - #87 is a rendering-only change (no guard/cap/auto-stop), so an A/B toggle is
   self-contained.
 - Non-goals: changing #87; new mechanisms.
+- Landed 2026-10-20. Added a runtime opt-out for #87's declaration suffix: `formatDiagnostics` (`src/loop.ts:3581`) reads `process.env.TC_DIAG_DECL_NAMING` once per call and `declarationSuffix` (`src/loop.ts:3610`) returns "" when it is `off`/`0`/`false`; absent/anything else keeps today's behavior, so both A/B arms run byte-identical source (provenance-identical). Two tests in `src/loop.test.ts:388` cover the unset and `off` renders. Verify: tsc clean, `bun test` 872 pass, `bun benchmark/check.ts` 4 passed/0 failed. A/B: `bun run benchmark/run.ts --task minilisp --side tc --reps 5` with the env on vs off → cache-excluded tokens per success 35,254 (5/5) vs 33,533 (4/5), within-arm spread ~5x, medians 32,470 vs 33,048. Verdict: **confounded** — no isolated #87 effect detectable at n=5 (the minilisp win is within variance); rows added to `consumption.md` (34 rows) and the finding recorded on #46. No behavior change beyond the toggle.

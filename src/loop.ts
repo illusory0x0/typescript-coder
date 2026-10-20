@@ -3578,6 +3578,15 @@ function testOutputTail(output: string): string {
 
 export function formatDiagnostics(input: DiagnosticsInput): string {
   const { check, test, targetPath, baseSource, newSource, sourceFor } = input;
+  // #87's declaration suffix can be toggled at runtime so a benchmark can run
+  // byte-identical arms. Read once per call so tests can flip it in-process.
+  // Disabled only for `off`, `0`, or `false` (trimmed, lowercased); anything
+  // else, including unset, keeps today's behavior.
+  const declNamingSetting = (process.env.TC_DIAG_DECL_NAMING ?? "").trim().toLowerCase();
+  const declNamingEnabled =
+    declNamingSetting !== "off" &&
+    declNamingSetting !== "0" &&
+    declNamingSetting !== "false";
   const lines: string[] = [];
   if (!check.ok) {
     lines.push("stage: tsc");
@@ -3598,7 +3607,7 @@ export function formatDiagnostics(input: DiagnosticsInput): string {
       return spans;
     };
     const declarationSuffix = (diagnostic: CheckDiagnostic): string => {
-      if (diagnostic.file === "") {
+      if (!declNamingEnabled || diagnostic.file === "") {
         return "";
       }
       const span = enclosingDeclaration(spansFor(diagnostic.file), diagnostic.line);
