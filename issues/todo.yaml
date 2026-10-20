@@ -18,6 +18,14 @@
   parent: 90
   deps: []
   file: 0093-tc-vs-oc-canonical-none-vs-none-matrix-under-the-89-cache-excluded-accounting.md
+- id: 99
+  title: "Hygiene: gitignore the failures/ artifact directory"
+  status: todo
+  priority: low
+  milestone: null
+  parent: null
+  deps: []
+  file: 0099-hygiene-gitignore-the-failures-artifact-directory.md
 - id: 90
   title: "Prove the v3 measurement claims: isolated #87 causality and a like-for-like tc-vs-oc matrix"
   status: todo
@@ -74,11 +82,3 @@
   parent: null
   deps: []
   file: 0091-absorb-the-64-context-management-shortlist-candidates-2-6.md
-- id: 99
-  title: "Hygiene: gitignore the failures/ artifact directory"
-  status: todo
-  priority: low
-  milestone: null
-  parent: null
-  deps: []
-  file: 0099-hygiene-gitignore-the-failures-artifact-directory.md
