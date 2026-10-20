@@ -1,7 +1,7 @@
 ---
 id: 91
 title: "Absorb the #64 context-management shortlist (candidates 2-6)"
-status: todo
+status: done
 priority: low
 milestone: null
 parent: null
@@ -52,3 +52,4 @@ Every child is decided with its evidence recorded; `bun test`, `bunx tsc --noEmi
 - Source: `issues/done/0064-study-opencode2-context-management-e-g-compaction-for-absorption-candidates.md`.
 - Non-goals: candidate 1 (already landed as #65); re-opening #64.
 - Children: #94 carry newest exchange verbatim beside the digest, #95 repair-context shrink ladder, #96 anchor context-size decisions to provider usage, #97 classify context-overflow / payload-too-large, #98 bound output-limit continuations to a three-strike. Umbrella closes when all five are decided.
+- Closed 2026-10-20 with every child decided, so the #64 shortlist (candidates 2-6) is fully consumed. #94 wontfix (the newest exchange is already carried verbatim in the continuation `Diagnostics:` block). #95 wontfix (no accumulated/growable continuation context to shrink, no overflow trigger). #96 wontfix (no context-size/digest trigger predicate to anchor provider usage to). #97 done (classify provider context-overflow / payload-too-large separately, end through the defined summary path). #98 done (three-strike cap on consecutive `finish_reason == "length"` replies). Each carries a note with the evidence; tracker `check --strict` is green and the consumption ledger holds the #97/#98 non-regression rows.

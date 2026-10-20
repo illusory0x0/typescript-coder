@@ -452,8 +452,10 @@ harness:
   `edit-exhausted` (the model replied `STOP` to a continuation prompt or to the
   no-progress ask, or the 32-round cap was reached without a valid edit),
   `delete-verification-failed`, `harness-fault` (the format gate rejected a
-  splice with the duplicate-modifier signature; see rejection policy), or
-  `prev-broken` (the target itself stops parsing before an edit). Each ends
+  splice with the duplicate-modifier signature; see rejection policy),
+  `prev-broken` (the target itself stops parsing before an edit), or
+  `output-limit` (three consecutive `finish_reason == "length"` replies burned
+  without a usable edit). Each ends
   with exactly one LLM summary call — not an Edit exchange — whose reply carries
   the four labeled sections (accomplished / failed and why / remaining / next
   step) for the planner.

@@ -1,20 +1,3 @@
 # Open issues in picking order. This order is authoritative: `reorder`
 # rewrites it; `add` appends; other writes keep it. `check` enforces it.
 # A dep, and every child of an umbrella, must be listed before its dependent.
-
-- id: 98
-  title: "Provider: bound output-limit continuations to a three-strike"
-  status: todo
-  priority: low
-  milestone: null
-  parent: 91
-  deps: []
-  file: 0098-provider-bound-output-limit-continuations-to-a-three-strike.md
-- id: 91
-  title: "Absorb the #64 context-management shortlist (candidates 2-6)"
-  status: todo
-  priority: low
-  milestone: null
-  parent: null
-  deps: []
-  file: 0091-absorb-the-64-context-management-shortlist-candidates-2-6.md

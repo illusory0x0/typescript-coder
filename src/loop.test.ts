@@ -15,6 +15,7 @@ import {
   buildSystemPrompt,
   buildUserPrompt,
   classifyRejection,
+  consecutiveLengthFinishes,
   createAttemptDigestState,
   detectFailurePattern,
   DIGEST_MAX_CHARS,
@@ -30,6 +31,7 @@ import {
   MAX_EDIT_EXCHANGES,
   MAX_RUN_ITERATIONS,
   MAX_STALLED_ROUNDS,
+  MAX_CONSECUTIVE_LENGTH,
   MULTI_PAYLOAD_KEY,
   numberedSourceBlock,
   parseEditResponse,
@@ -6112,6 +6114,141 @@ describe("runLoop", () => {
     expect(retryPrompt).toContain("shorter, more compact replacement");
     expect(retryPrompt).toContain("Edit exchange 3 of 3 failed.");
   }, 30000);
+
+  describe("output-limit strike cap (#98)", () => {
+    const lengthRow = (row: number, finishReason: string | null): LoopRecord => ({
+      row,
+      iteration: 1,
+      kind: "exchange",
+      exchange: row,
+      outcome: finishReason === "length" ? "truncated" : "applied",
+      locator: { path: "src/helper.ts", name: "answer", kind: "function" },
+      replacement: null,
+      diagnostics: null,
+      diagnosticsHead: null,
+      replacementChars: null,
+      finishReason,
+      signature: null,
+    });
+
+    test("consecutiveLengthFinishes counts the trailing length run and resets", () => {
+      expect(consecutiveLengthFinishes([])).toBe(0);
+      expect(consecutiveLengthFinishes([lengthRow(1, "stop")])).toBe(0);
+      expect(
+        consecutiveLengthFinishes([
+          lengthRow(1, "length"),
+          lengthRow(2, "length"),
+          lengthRow(3, "stop"),
+        ]),
+      ).toBe(0);
+      expect(
+        consecutiveLengthFinishes([
+          lengthRow(1, "stop"),
+          lengthRow(2, "length"),
+          lengthRow(3, "length"),
+        ]),
+      ).toBe(2);
+      expect(
+        consecutiveLengthFinishes([
+          lengthRow(1, "length"),
+          lengthRow(2, "length"),
+          lengthRow(3, "length"),
+        ]),
+      ).toBe(MAX_CONSECUTIVE_LENGTH);
+    });
+
+    test("three consecutive length finishes terminate through the summary path", async () => {
+      const dir = fixtureDir();
+      const calls: ChatMessage[][] = [];
+      const provider: ProviderLike = {
+        async chat(messages) {
+          calls.push(structuredClone(messages));
+          if (calls.length === 1) {
+            return { content: selectionResponse(), toolCalls: [], finishReason: "stop", raw: {} };
+          }
+          if (calls.length <= 4) {
+            return {
+              content: 'function answer(): number {\n  return "cut off',
+              toolCalls: [],
+              finishReason: "length",
+              raw: {},
+            };
+          }
+          return {
+            content: "the completions kept hitting the output limit",
+            toolCalls: [],
+            finishReason: "stop",
+            raw: {},
+          };
+        },
+      };
+      const result = await runLoop({
+        cwd: dir,
+        issue: "make the answer test pass",
+        provider,
+        checkCommand: TSC,
+        testCommand: ["bun", "test"],
+      });
+      expect(result.ok).toBe(false);
+      expect(result.terminationReason).toBe("output-limit");
+      expect(result.records.map((record) => record.outcome)).toEqual([
+        "selected",
+        "truncated",
+        "truncated",
+        "truncated",
+      ]);
+      expect(
+        result.records.filter((record) => record.outcome === "truncated"),
+      ).toHaveLength(MAX_CONSECUTIVE_LENGTH);
+      expect(result.records.at(-1)?.finishReason).toBe("length");
+      expect(result.explanation).toBe("the completions kept hitting the output limit");
+      const summaryPrompt = calls.at(-1)?.at(-1)?.content ?? "";
+      expect(summaryPrompt).toContain("output limit three times in a row");
+      expectStructuredSummaryPrompt(summaryPrompt);
+      // The partial truncated output is never applied or written.
+      expect(helperSource(dir)).not.toContain("cut off");
+    }, 30000);
+
+    test("two consecutive length finishes do not trigger the three-strike", async () => {
+      const dir = fixtureDir();
+      let calls = 0;
+      const provider: ProviderLike = {
+        async chat() {
+          calls += 1;
+          if (calls === 1) {
+            return { content: selectionResponse(), toolCalls: [], finishReason: "stop", raw: {} };
+          }
+          if (calls === 2 || calls === 3) {
+            return {
+              content: 'function answer(): number {\n  return "cut off',
+              toolCalls: [],
+              finishReason: "length",
+              raw: {},
+            };
+          }
+          return {
+            content: editResponse("return 1;", "return 2;"),
+            toolCalls: [],
+            finishReason: "stop",
+            raw: {},
+          };
+        },
+      };
+      const result = await runLoop({
+        cwd: dir,
+        issue: "make the answer test pass",
+        provider,
+        checkCommand: TSC,
+        testCommand: ["bun", "test"],
+      });
+      expect(result.ok).toBe(true);
+      expect(result.terminationReason).toBeUndefined();
+      expect(
+        result.records.filter((record) => record.outcome === "truncated"),
+      ).toHaveLength(2);
+      expect(helperSource(dir)).toContain("return 2;");
+    }, 30000);
+  });
 
   describe("rejection causes and per-cause policy (#56)", () => {
     test("classifyRejection routes every structured stage to its cause", () => {

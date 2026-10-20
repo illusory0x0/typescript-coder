@@ -136,7 +136,7 @@ These are the load-bearing choices; most smaller decisions follow from them.
   whitelisted kind and renders the bounded `Self-check result` block.
 - **Termination matrix** — `TerminationReason` = `token-budget` |
   `edit-exhausted` | `delete-verification-failed` | `prev-broken` |
-  `harness-fault`; a run that verifies green carries no reason. `LoopResult`
+  `harness-fault` | `output-limit`; a run that verifies green carries no reason. `LoopResult`
   keeps records and diagnostics for the benchmark, the failure artifact, and
   the replay runner.
 - **Provider boundary** — `ProviderLike` keeps the loop testable; the default

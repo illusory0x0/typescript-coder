@@ -667,6 +667,7 @@ const TERMINATION_SUMMARY: Record<TerminationReason | "provider-error", string> 
   "prev-broken": "the current source of the target no longer parses",
   "provider-error": "the provider call failed",
   "harness-fault": "the harness produced an invalid edit candidate at the format gate",
+  "output-limit": "the completion hit the output limit three times in a row without a usable edit",
 };
 
 /**
@@ -1235,6 +1236,12 @@ export const MAX_RUN_ITERATIONS = 32;
  * the model to decide (reply `STOP` or take a materially different approach).
  */
 export const MAX_STALLED_ROUNDS = 8;
+/**
+ * Output-limit strike cap (#98): consecutive `finish_reason == "length"`
+ * replies are counted from `records`; the third in a row ends the run through
+ * the summary/stop path instead of continuing to burn budget.
+ */
+export const MAX_CONSECUTIVE_LENGTH = 3;
 
 /**
  * No-progress ask cadence after the first decision point (#65): the first ask
@@ -1729,6 +1736,22 @@ export function exchangeStats(records: readonly LoopRecord[]): ExchangeStats {
 }
 
 /**
+ * Output-limit strike counter (#98): walk `records` from the end while the row's
+ * `finishReason` is `"length"` and return that trailing run's length. Returns 0
+ * when the most recent row is not a length finish, which resets the strike.
+ */
+export function consecutiveLengthFinishes(records: readonly LoopRecord[]): number {
+  let count = 0;
+  for (let index = records.length - 1; index >= 0; index -= 1) {
+    if (records[index]?.finishReason !== "length") {
+      break;
+    }
+    count += 1;
+  }
+  return count;
+}
+
+/**
  * v2 termination matrix (#43): a run ends through one of these, and each ends
  * with exactly one LLM-written summary as its final action.
  */
@@ -1737,7 +1760,8 @@ export type TerminationReason =
   | "edit-exhausted"
   | "delete-verification-failed"
   | "prev-broken"
-  | "harness-fault";
+  | "harness-fault"
+  | "output-limit";
 
 /**
  * Token spend of one run (#80): the component breakdown of every provider
@@ -4722,6 +4746,15 @@ export async function runLoop(options: LoopOptions): Promise<LoopResult> {
         registerRejection(cause);
         lastDiagnostics = retryDiagnostics(diagnostics);
         lastFailure = "edit";
+        // Output-limit strike cap (#98): the just-pushed row is counted, so the
+        // third consecutive length finish terminates through the summary path
+        // rather than continuing into another exchange or round.
+        if (consecutiveLengthFinishes(records) >= MAX_CONSECUTIVE_LENGTH) {
+          return await terminate(
+            "output-limit",
+            "stage: output-limit\nthe completion hit the output limit on 3 consecutive attempts; ending the run through the summary path",
+          );
+        }
         if (exchange === MAX_EDIT_EXCHANGES) {
           if (iteration >= MAX_RUN_ITERATIONS) {
             return await terminate("edit-exhausted", capDiagnostics(iterationOpenedBy));
