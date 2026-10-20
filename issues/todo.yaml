@@ -1,28 +1,3 @@
 # Open issues in picking order. This order is authoritative: `reorder`
 # rewrites it; `add` appends; other writes keep it. `check` enforces it.
 # A dep, and every child of an umbrella, must be listed before its dependent.
-
-- id: 88
-  title: "Repair prompt: show the model its own prior replies to cut within-round churn"
-  status: todo
-  priority: medium
-  milestone: null
-  parent: 77
-  deps: []
-  file: 0088-repair-prompt-show-the-model-its-own-prior-replies-to-cut-within-round-churn.md
-- id: 77
-  title: "Close the minilisp repair-cost gap: reliably beat the oc baseline on tokens per success (help wanted)"
-  status: in-progress
-  priority: medium
-  milestone: null
-  parent: 46
-  deps: []
-  file: 0077-close-the-minilisp-repair-cost-gap-reliably-beat-the-oc-baseline-on-tokens-per-success-help-wanted.md
-- id: 46
-  title: "Harness optimization v3: agent-loop, context, structure-editor"
-  status: in-progress
-  priority: high
-  milestone: null
-  parent: null
-  deps: []
-  file: 0046-harness-optimization-v3-agent-loop-context-structure-editor.md

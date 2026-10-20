@@ -1,7 +1,7 @@
 ---
 id: 88
 title: "Repair prompt: show the model its own prior replies to cut within-round churn"
-status: todo
+status: wontfix
 priority: medium
 milestone: null
 parent: 77
@@ -48,3 +48,5 @@ plus replay inspection that the prior reply is present in the repair prompt.
 - Non-goals: replaying the full conversation history or re-sending all messages; weakening guards; unified-diff bypass.
 - Open question: how many prior attempts to show, and whether to show the rejected reply verbatim or its replacement text only.
 - Priority defaulted to medium; no milestone.
+- Negative result (2026-10-20). Implemented `renderPriorAttempts` plus the retry/continuation "Your previous attempts (most recent last):" section and wired it from `runLoop`; gates were green (tsc 0, 872 tests, accept 5/5, benchmark/check 4 PASS) and the section rendered live. Two tc-side matrices (`benchmark/results/2026-10-20-tc-priorattempts-{1,2}.json`; replays `tmp/replays-88-{1,2}/`) each came back 11/12 with minilisp 2/3 at **31,081** and **30,624** tokens/success — above the #47 baseline (30,398) — each losing a run to a storm (matrix 1 rep1 bare token budget 132,743; matrix 2 rep3 STOP -> edit-exhausted 53,397). The section fired in the storm replays (9x / 5x), so it is not inert; it produced no measured benefit and the samples did not clear the bar. Reverted to the landed #87 state (tsc 0, 865 tests) per the series rule that improvements stay measured. Criterion 5's negative clause met.
+- Wontfix (2026-10-20): Implemented and measured; the prior-attempts section fired but produced no benefit — two live matrices were minilisp 2/3 at 31,081 and 30,624 tokens/success (above the 30,398 baseline), each with a storm; reverted per the series rule that improvements stay measured.

@@ -1,7 +1,7 @@
 ---
 id: 46
 title: "Harness optimization v3: agent-loop, context, structure-editor"
-status: in-progress
+status: done
 priority: high
 milestone: null
 parent: null
@@ -195,3 +195,4 @@ plus: read the new report's aggregates against the #47 baseline figures.
   #46 stays **in-progress** rather than close on an overclaim.
 - Gates at this state: `bunx tsc --noEmit` 0, 820 tests pass, `bun run accept`
   5/5, `bun benchmark/check.ts` 4 PASS.
+- 2026-10-20 close-out. The minilisp cost gap closed via #87 (name the failing declaration in the tsc diagnostics), landed at `856f9c9`. Two post-improvement tc-side matrices (`benchmark/results/2026-10-20-tc-diagdecl-{1,2}.json`, rows in `consumption.md`) are 12/12 with json 3/3 (~4.8k tps), sexp 3/3 (~3.2k), minilisp 3/3 at **16,269** and **25,497** tokens/success (below the #47 baseline 30,398), and overall below 19,377 (three-task 8,106 / 11,176; four-task 11,139 / 10,565). The goal ("beats the fair none-effort baseline per task and overall") is therefore met on two matrices. #87's sibling lever #88 was measured and reverted-negative. All children are done or wontfix. Gates at close: tsc 0, bun test 865 pass, accept 5/5, benchmark/check 4 PASS. Caveat disclosed: two matrices are a small sample and #87's causal share is unmeasured (no isolated A/B); the criterion is on the metric, which holds.
