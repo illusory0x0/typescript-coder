@@ -12,10 +12,7 @@ import { applyMatcherSplice, extractJsonObject, findMatcher, stripCodeFences } f
 import type { MatcherResult } from "./matcher";
 import { parseSelection, serializeSelections, SelectionSyntaxError } from "./selection";
 import type { Selection as CompactSelection } from "./selection";
-import {
-  renderViewerFeedback,
-  resolveCompactReply,
-} from "./compact";
+import { renderViewerFeedback, resolveCompactReply } from "./compact";
 import type { CompactFailure, CompactRegion, CompactResolution, CompactViewer } from "./compact";
 import { formatSource } from "./editor";
 import { LexError } from "./lexer";
@@ -188,10 +185,17 @@ const COMPACT_ROUNDS_SYSTEM_PARAGRAPH =
 export const COMPACT_FORCE_DIAGNOSTICS =
   "stage: protocol\nthe reply must be one or more `select … end` clauses; a JSON edit payload is not accepted in this mode";
 
-export function buildSystemPrompt(
-  multiPayload = false,
-  format: ProtocolFormat = "json",
-): string {
+// #117/#119: under the compact protocol a `protocol` rejection means the reply
+// was not `select … end` (usually a JSON edit payload). The retry must re-teach
+// the compact form; the JSON-flavored #56 correction would drive the model
+// straight back to the payload this mode rejects (the observed rep1
+// `address ↔ protocol` loop).
+const COMPACT_PROTOCOL_CORRECTION =
+  "Reply with one or more `select … end` clauses as the entire response (`select [kind] <symbol> in <path> [ match (<snippet> | /regex/) [ pick <range> ] ] [ replace with <fence> ] end`); a JSON edit payload is not accepted in this mode.";
+const COMPACT_PROTOCOL_ESCALATION =
+  "This attempt MUST reply with only `select … end` clauses — one or more, with no prose, no markdown fences, and no JSON edit payload.";
+
+export function buildSystemPrompt(multiPayload = false, format: ProtocolFormat = "json"): string {
   const lines = [
     "You are a TypeScript coding agent.",
     "",
@@ -432,13 +436,14 @@ export function buildEditPrompt(
   // #111: under the compact format the JSON instruction is replaced with the
   // clause instruction and its few-shot examples. Under `json` this is exactly
   // the pre-#111 string.
-  const instruction = format === "compact"
-    ? compactInstruction()
-    : multiPayload
-      ? `Output ONE flat JSON object {"path": ..., "symbol": ..., "kind": ..., "matcher": ..., "replacement": ...} for the pinned symbol, or a multi-payload object {"payloads": [ ... ]} that batches edits — different files and/or several non-overlapping regions of one file — with no markdown fences and no explanations.
+  const instruction =
+    format === "compact"
+      ? compactInstruction()
+      : multiPayload
+        ? `Output ONE flat JSON object {"path": ..., "symbol": ..., "kind": ..., "matcher": ..., "replacement": ...} for the pinned symbol, or a multi-payload object {"payloads": [ ... ]} that batches edits — different files and/or several non-overlapping regions of one file — with no markdown fences and no explanations.
 
 The first payload echoes the pinned address {path, symbol, kind}; every further payload names its own declaration, which must resolve to exactly one declaration in its file's current source. Same-file payloads must address non-overlapping regions. "matcher" is optional per payload: a complete snippet copied from the current source below; "replacement" replaces exactly the matched range. Omit "matcher" for a whole-symbol rewrite: "replacement" then replaces the whole declaration. ${RANGE_SELECTOR_NOTE} Keep leading keywords and modifiers consistent (do not re-add \`export\` the declaration omitted). Every replacement must keep its file parseable. The exchange applies atomically: if any payload fails its own guard or two same-file regions overlap, nothing is written and the exchange is rejected naming every failing payload.`
-      : `Output ONE flat JSON object {"path": ..., "symbol": ..., "kind": ..., "matcher": ..., "replacement": ...} for the pinned symbol, with no markdown fences and no explanations.
+        : `Output ONE flat JSON object {"path": ..., "symbol": ..., "kind": ..., "matcher": ..., "replacement": ...} for the pinned symbol, with no markdown fences and no explanations.
 
 Echo the pinned address {path, symbol, kind}. "matcher" is optional: a complete snippet copied from the current source below; "replacement" replaces exactly the matched range. Omit "matcher" for a whole-symbol rewrite: "replacement" then replaces the whole declaration. ${RANGE_SELECTOR_NOTE} Keep leading keywords and modifiers consistent (do not re-add \`export\` the declaration omitted). The replacement must keep the file parseable.`;
   return `${instruction}
@@ -501,9 +506,10 @@ export function buildCreatePrompt(
   path: string,
   format: ProtocolFormat = "json",
 ): string {
-  const instruction = format === "compact"
-    ? compactCreateInstruction()
-    : `The pinned selection uses mode "create". Output ONE flat JSON object {"path": ..., "symbol": ..., "kind": ..., "replacement": ...} with no markdown fences and no explanations: echo the pinned address {path, symbol, kind}, put the COMPLETE declaration in "replacement", and omit "matcher" and "range". The target file may not exist yet; the declaration is appended to it. The replacement must keep the file parseable.`;
+  const instruction =
+    format === "compact"
+      ? compactCreateInstruction()
+      : `The pinned selection uses mode "create". Output ONE flat JSON object {"path": ..., "symbol": ..., "kind": ..., "replacement": ...} with no markdown fences and no explanations: echo the pinned address {path, symbol, kind}, put the COMPLETE declaration in "replacement", and omit "matcher" and "range". The target file may not exist yet; the declaration is appended to it. The replacement must keep the file parseable.`;
   return `${instruction}
 
 Target file:
@@ -746,16 +752,18 @@ export function buildRetryPrompt(input: RetryPromptInput): string {
     stalled !== undefined || input.continuation !== undefined
       ? ""
       : `Edit exchange ${exchangeNumber} of ${maxExchanges} ${label}. ${remaining} exchange(s) remain in this iteration. `;
-  const modifyInstruction = input.protocolFormat === "compact"
-    ? `${modifyLead} ${status}${compactInstruction()}`
-    : input.multiPayload === true
-      ? multiModifyInstruction(modifyLead, status, repin, modifierNote)
-      : repin
-        ? `${modifyLead} ${status}Output ONLY one flat JSON object {"path": ..., "symbol": ..., "kind": ..., "matcher": ..., "replacement": ...}: return the full address of the declaration you are fixing — either the pinned selection or a different declaration in the same file to re-pin and edit it (it must resolve uniquely in the current source). "matcher" is optional: a snippet copied from the current source, or omit it for a whole-symbol rewrite; "replacement" replaces the matched range (empty removes it). ${RANGE_SELECTOR_NOTE} ${modifierNote} No markdown fences and no explanations.`
-        : `${modifyLead} ${status}Output ONLY one flat JSON object {"path": ..., "symbol": ..., "kind": ..., "matcher": ..., "replacement": ...}: echo the pinned selection in the address. "matcher" is optional: a snippet copied from the current source, or omit it for a whole-symbol rewrite; "replacement" replaces the matched range (empty removes it). ${RANGE_SELECTOR_NOTE} ${modifierNote} No markdown fences and no explanations.`;
-  const createInstruction = input.protocolFormat === "compact"
-    ? `${createLead} ${status}${compactCreateInstruction()}`
-    : `${createLead} ${status}Output ONLY one flat JSON object {"path": ..., "symbol": ..., "kind": ..., "replacement": ...}: echo the pinned selection in the address, put the COMPLETE corrected declaration in "replacement", and omit "matcher" and "range". No markdown fences and no explanations.`;
+  const modifyInstruction =
+    input.protocolFormat === "compact"
+      ? `${modifyLead} ${status}${compactInstruction()}`
+      : input.multiPayload === true
+        ? multiModifyInstruction(modifyLead, status, repin, modifierNote)
+        : repin
+          ? `${modifyLead} ${status}Output ONLY one flat JSON object {"path": ..., "symbol": ..., "kind": ..., "matcher": ..., "replacement": ...}: return the full address of the declaration you are fixing — either the pinned selection or a different declaration in the same file to re-pin and edit it (it must resolve uniquely in the current source). "matcher" is optional: a snippet copied from the current source, or omit it for a whole-symbol rewrite; "replacement" replaces the matched range (empty removes it). ${RANGE_SELECTOR_NOTE} ${modifierNote} No markdown fences and no explanations.`
+          : `${modifyLead} ${status}Output ONLY one flat JSON object {"path": ..., "symbol": ..., "kind": ..., "matcher": ..., "replacement": ...}: echo the pinned selection in the address. "matcher" is optional: a snippet copied from the current source, or omit it for a whole-symbol rewrite; "replacement" replaces the matched range (empty removes it). ${RANGE_SELECTOR_NOTE} ${modifierNote} No markdown fences and no explanations.`;
+  const createInstruction =
+    input.protocolFormat === "compact"
+      ? `${createLead} ${status}${compactCreateInstruction()}`
+      : `${createLead} ${status}Output ONLY one flat JSON object {"path": ..., "symbol": ..., "kind": ..., "replacement": ...}: echo the pinned selection in the address, put the COMPLETE corrected declaration in "replacement", and omit "matcher" and "range". No markdown fences and no explanations.`;
   const instruction = mode === "modify" ? modifyInstruction : createInstruction;
   const header =
     stalled !== undefined
@@ -1028,7 +1036,6 @@ export function stageOf(payload: EditPayload): SelectionStage {
 export function matcherKindOf(payload: EditPayload): MatcherKind | null {
   return stageOf(payload) === "match" ? "snippet" : null;
 }
-
 
 /**
  * Selectors of an exchange's parsed payloads (#101), in order: every entry of a
@@ -1864,7 +1871,14 @@ export function shrinkRepairSource(
   for (const entry of kept) {
     const firstLine = source.slice(0, entry.node.start).split("\n").length;
     if (previousEndLine !== null && firstLine > previousEndLine) {
-      rendered.push(omissionMarker(build.index.entries, previousNodeEnd, entry.node.start, firstLine - previousEndLine));
+      rendered.push(
+        omissionMarker(
+          build.index.entries,
+          previousNodeEnd,
+          entry.node.start,
+          firstLine - previousEndLine,
+        ),
+      );
     }
     const raw = source.slice(entry.node.start, entry.node.end);
     const body = raw.endsWith("\n") ? raw.slice(0, -1) : raw;
@@ -1950,6 +1964,12 @@ export interface RejectionLeadContext {
   pendingDiagnostics?: string | null;
   /** The rejected address names a declaration the current source lacks (#65). */
   undeclaredName?: string;
+  /**
+   * The edit protocol the run uses (#117/#119): a compact run re-teaches the
+   * `select … end` form on a `protocol` rejection instead of the JSON payload
+   * the mode rejects. Defaults to `json`.
+   */
+  protocolFormat?: ProtocolFormat;
 }
 
 /**
@@ -1965,8 +1985,9 @@ export function rejectionLead(
   context: RejectionLeadContext = {},
 ): string | null {
   const escalated = streak >= 2;
+  const format = context.protocolFormat ?? "json";
   if (cause === "no-op") {
-    const policy = rejectionPolicy(cause);
+    const policy = rejectionPolicy(cause, format);
     if (policy.action !== "retry") {
       return null;
     }
@@ -1982,14 +2003,17 @@ export function rejectionLead(
       ? addressUndeclaredEscalation(context.undeclaredName)
       : addressUndeclaredCorrection(context.undeclaredName);
   }
-  const policy = rejectionPolicy(cause);
+  const policy = rejectionPolicy(cause, format);
   if (policy.action !== "retry" || policy.correction === null) {
     return null;
   }
   return escalated && policy.escalation !== null ? policy.escalation : policy.correction;
 }
 
-export function rejectionPolicy(cause: RejectionCause): RejectionPolicy {
+export function rejectionPolicy(
+  cause: RejectionCause,
+  format: ProtocolFormat = "json",
+): RejectionPolicy {
   // #102: read the toggle once per call; `withRangeHint` no-ops when disabled
   // so the off render stays byte-identical to the pre-#102 strings.
   const rangeHint = matcherRangeHint();
@@ -2007,13 +2031,19 @@ export function rejectionPolicy(cause: RejectionCause): RejectionPolicy {
         escalation: DUPLICATE_ESCALATION,
       };
     case "protocol":
-      return {
-        action: "retry",
-        correction:
-          'Return exactly one flat JSON object with the keys "path", "symbol", "kind", "matcher", "range", "replacement" ("matcher" and "range" optional), and no fences.',
-        escalation:
-          'This attempt MUST reply with exactly one flat JSON object carrying "path", "symbol", "kind", "matcher", "range", "replacement" as the entire response: no prose, no markdown fences, no nesting.',
-      };
+      return format === "compact"
+        ? {
+            action: "retry",
+            correction: COMPACT_PROTOCOL_CORRECTION,
+            escalation: COMPACT_PROTOCOL_ESCALATION,
+          }
+        : {
+            action: "retry",
+            correction:
+              'Return exactly one flat JSON object with the keys "path", "symbol", "kind", "matcher", "range", "replacement" ("matcher" and "range" optional), and no fences.',
+            escalation:
+              'This attempt MUST reply with exactly one flat JSON object carrying "path", "symbol", "kind", "matcher", "range", "replacement" as the entire response: no prose, no markdown fences, no nesting.',
+          };
     case "echo":
       return {
         action: "retry",
@@ -2531,10 +2561,12 @@ export interface AttemptDigestState {
   attempts: number;
   /** Entry lines evicted by the character bound. */
   dropped: number;
+  /** Edit protocol the run uses, so a `protocol` alternative re-teaches the right form (#117/#119). */
+  format: ProtocolFormat;
 }
 
-export function createAttemptDigestState(): AttemptDigestState {
-  return { entries: [], counts: new Map(), cursor: 0, attempts: 0, dropped: 0 };
+export function createAttemptDigestState(format: ProtocolFormat = "json"): AttemptDigestState {
+  return { entries: [], counts: new Map(), cursor: 0, attempts: 0, dropped: 0, format };
 }
 
 /** One digest detail line is truncated to this many characters, `…` included. */
@@ -2647,12 +2679,12 @@ function digestDetail(diagnostics: string): string {
 
 // Reuse the #56 escalation text for rejection causes; tsc/tests get a fixed
 // concrete sentence (#57).
-function digestAlternative(className: string): string {
+function digestAlternative(className: string, format: ProtocolFormat): string {
   if (className === "tsc" || className === "tests") {
     return DIGEST_VERIFICATION_ALTERNATIVE;
   }
   if (REJECTION_CAUSES.has(className)) {
-    const policy = rejectionPolicy(className as RejectionCause);
+    const policy = rejectionPolicy(className as RejectionCause, format);
     if (policy.action === "retry" && policy.escalation !== null) {
       return policy.escalation;
     }
@@ -2663,13 +2695,16 @@ function digestAlternative(className: string): string {
 // One `Ruled out` line per class repeated at least DIGEST_RULED_OUT_REPEATS
 // times (#57): most-repeated first, then by class name, so the block is
 // deterministic.
-function digestRuledOutLines(counts: ReadonlyMap<string, number>): string[] {
+function digestRuledOutLines(
+  counts: ReadonlyMap<string, number>,
+  format: ProtocolFormat,
+): string[] {
   return [...counts.entries()]
     .filter(([, count]) => count >= DIGEST_RULED_OUT_REPEATS)
     .sort((left, right) => right[1] - left[1] || comparePaths(left[0], right[0]))
     .map(
       ([className, count]) =>
-        `Ruled out after ${count} repeats: ${className} — ${digestAlternative(className)}`,
+        `Ruled out after ${count} repeats: ${className} — ${digestAlternative(className, format)}`,
     );
 }
 
@@ -2708,7 +2743,7 @@ export function updateAttemptDigest(
  */
 export function renderAttemptDigest(state: AttemptDigestState): string {
   const header = `Prior attempts (${state.attempts}):`;
-  const ruledOut = digestRuledOutLines(state.counts);
+  const ruledOut = digestRuledOutLines(state.counts, state.format);
   for (;;) {
     const omitted = state.dropped === 0 ? [] : [`- (${state.dropped} earlier attempts omitted)`];
     const text = [header, ...omitted, ...state.entries, ...ruledOut].join("\n");
@@ -4563,9 +4598,7 @@ export function formatDiagnostics(input: DiagnosticsInput): string {
   // else, including unset, keeps today's behavior.
   const declNamingSetting = (process.env.TC_DIAG_DECL_NAMING ?? "").trim().toLowerCase();
   const declNamingEnabled =
-    declNamingSetting !== "off" &&
-    declNamingSetting !== "0" &&
-    declNamingSetting !== "false";
+    declNamingSetting !== "off" && declNamingSetting !== "0" && declNamingSetting !== "false";
   const lines: string[] = [];
   if (!check.ok) {
     lines.push("stage: tsc");
@@ -4882,9 +4915,7 @@ export async function runLoop(options: LoopOptions): Promise<LoopResult> {
   const multiPayload = options.multiPayload === true || targetsMode;
   // #119: the selected edit protocol. Explicit-targets mode (#81) is JSON-only,
   // so it overrides the flag to keep the batch/pick path byte-identical.
-  const protocolFormat: ProtocolFormat = targetsMode
-    ? "json"
-    : (options.protocolFormat ?? "json");
+  const protocolFormat: ProtocolFormat = targetsMode ? "json" : (options.protocolFormat ?? "json");
   // #119: compact is only required outside explicit-targets mode.
   const compactRequired = protocolFormat === "compact" && !targetsMode;
   // Pending targets (not yet applied), applied targets, and targets that never
@@ -4964,7 +4995,7 @@ export async function runLoop(options: LoopOptions): Promise<LoopResult> {
       lastRejectionCause = cause;
       lastRejectionStreak = 1;
     }
-    lastCorrection = rejectionLead(cause, lastRejectionStreak, context);
+    lastCorrection = rejectionLead(cause, lastRejectionStreak, { ...context, protocolFormat });
   };
   const clearRejectionPolicy = (): void => {
     lastRejectionCause = null;
@@ -4975,7 +5006,7 @@ export async function runLoop(options: LoopOptions): Promise<LoopResult> {
   // the failing chain. It is rendered into the #52 round-continuation prompts
   // and the #54 no-progress ask only; `digestText` advances it over the records
   // the previous prompt has not seen yet, immediately before rendering.
-  const attemptDigest = createAttemptDigestState();
+  const attemptDigest = createAttemptDigestState(protocolFormat);
   const digestText = (): string => {
     updateAttemptDigest(attemptDigest, records);
     return renderAttemptDigest(attemptDigest);
@@ -5938,11 +5969,7 @@ export async function runLoop(options: LoopOptions): Promise<LoopResult> {
       if (targetsMode && failure === null) {
         const replyPayloads = payload !== null ? [payload] : batch !== null ? batch : [];
         if (replyPayloads.length > 0) {
-          const validated = validateTargetsReply(
-            replyPayloads,
-            pinnedTarget.locator,
-            targetQueue,
-          );
+          const validated = validateTargetsReply(replyPayloads, pinnedTarget.locator, targetQueue);
           if (!validated.ok) {
             failure = validated.diagnostics;
             failureStage = validated.diagnostics.startsWith("stage: echo") ? "echo" : "address";
@@ -6299,7 +6326,13 @@ export async function runLoop(options: LoopOptions): Promise<LoopResult> {
             firstCompactUndeclared = origin.undeclaredName ?? null;
           }
           blocks.push(
-            compactClauseDiagnostics(failureIndex + 1, totalClauses, failurePath, locator, diagnostics),
+            compactClauseDiagnostics(
+              failureIndex + 1,
+              totalClauses,
+              failurePath,
+              locator,
+              diagnostics,
+            ),
           );
         };
         for (const clauseFailure of compactResolution.failures) {
@@ -6587,7 +6620,13 @@ export async function runLoop(options: LoopOptions): Promise<LoopResult> {
           diagnostics: null,
           outcome: "applied",
           finishReason: response.finishReason,
-          payloads: compactReply ? compactSelections.length : batch !== null ? batch.length : payload !== null ? 1 : 0,
+          payloads: compactReply
+            ? compactSelections.length
+            : batch !== null
+              ? batch.length
+              : payload !== null
+                ? 1
+                : 0,
           toolCalls: response.toolCalls.length,
           replacementChars: batchReplacementChars ?? undefined,
           appliedLocators: targetsMode ? coveredTargets : undefined,
@@ -6669,9 +6708,7 @@ export async function runLoop(options: LoopOptions): Promise<LoopResult> {
       // #111: a mixed compact reply's viewer occurrences ride into the next
       // round's prompt alongside the verification failure.
       pendingDiagnostics =
-        carriedViewerFeedback !== null
-          ? `${carriedViewerFeedback}\n\n${diagnostics}`
-          : diagnostics;
+        carriedViewerFeedback !== null ? `${carriedViewerFeedback}\n\n${diagnostics}` : diagnostics;
       carriedViewerFeedback = null;
       pendingVerificationStage = check.ok ? "tests" : "tsc";
       // One more consecutive verification-failed round (#54): the count spans
@@ -6700,7 +6737,12 @@ export async function runLoop(options: LoopOptions): Promise<LoopResult> {
     // Round-level continuation (#52): a successful pick may have consumed the
     // last exchange (no content exchange is left); below the cap the round
     // continues through a continuation prompt instead of ending the run.
-    if (!targetsMode && continuation === null && pinned !== null && iteration < MAX_RUN_ITERATIONS) {
+    if (
+      !targetsMode &&
+      continuation === null &&
+      pinned !== null &&
+      iteration < MAX_RUN_ITERATIONS
+    ) {
       continuation = {
         round: iteration,
         pick: false,

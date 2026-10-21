@@ -104,7 +104,7 @@ function fail(message: string): never {
 }
 
 function printUsage(): void {
-  process.stdout.write(`Usage: bun run acceptance/run.ts [options]
+  process.stdout.write(`Usage: just accept [options]
 
 Options:
   --all                    include slow scenarios

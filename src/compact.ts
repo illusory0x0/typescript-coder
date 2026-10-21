@@ -235,7 +235,13 @@ export function resolveCompactReply(
         stage: viewed.stage,
         occurrences: viewed.spans.map((span) => {
           const { line, column } = positionAt(source, span.start);
-          return { start: span.start, end: span.end, line, column, lines: occurrenceLines(source, span.start, span.end) };
+          return {
+            start: span.start,
+            end: span.end,
+            line,
+            column,
+            lines: occurrenceLines(source, span.start, span.end),
+          };
         }),
       });
       continue;
@@ -279,7 +285,8 @@ export function renderViewerFeedback(viewers: readonly CompactViewer[]): string 
   const lines = ["Located occurrences (viewer clauses write nothing):"];
   for (const viewer of viewers) {
     const { kind, name } = viewer.locator;
-    const head = kind === "" ? `select ${name} in ${viewer.path}` : `select ${kind} ${name} in ${viewer.path}`;
+    const head =
+      kind === "" ? `select ${name} in ${viewer.path}` : `select ${kind} ${name} in ${viewer.path}`;
     lines.push("", head);
     if (viewer.occurrences.length === 0) {
       lines.push("  (no occurrences)");
@@ -293,9 +300,6 @@ export function renderViewerFeedback(viewers: readonly CompactViewer[]): string 
       }
     }
   }
-  lines.push(
-    "",
-    "Reply with an edit clause (add `replace`) or narrow a viewer with `pick`.",
-  );
+  lines.push("", "Reply with an edit clause (add `replace`) or narrow a viewer with `pick`.");
   return lines.join("\n");
 }

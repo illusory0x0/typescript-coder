@@ -192,11 +192,7 @@ describe("resolveCascade: ambiguity and misses", () => {
   test("a malformed regex is regex-invalid, not a not-implemented failure", () => {
     const entry = entryFor(ONCE, "once", "function");
     const result = failure(
-      resolveCascade(
-        ONCE,
-        entry,
-        firstSelection("select function once in a.ts\nmatch /(/\nend"),
-      ),
+      resolveCascade(ONCE, entry, firstSelection("select function once in a.ts\nmatch /(/\nend")),
     );
     expect(result.cause).toBe("regex-invalid");
     expect(result.diagnostics).toContain("invalid");

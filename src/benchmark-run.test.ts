@@ -236,7 +236,9 @@ describe("rendered report (#89)", () => {
         expect(markdown).toContain("| Side | range | matcher | whole-symbol |");
         // #110: resolved stages and matcher kinds surface alongside.
         expect(markdown).toContain("Resolved cascade stages and matcher kinds (#110)");
-        expect(markdown).toContain("| Task | Side | whole-symbol | match | pick | snippet | regex |");
+        expect(markdown).toContain(
+          "| Task | Side | whole-symbol | match | pick | snippet | regex |",
+        );
         expect(markdown).toContain("| Side | whole-symbol | match | pick | snippet | regex |");
         // #111: compact implicit-create clauses surface alongside.
         expect(markdown).toContain("Implicit creates (#111):");
@@ -419,54 +421,51 @@ describe("edit protocol override (--protocol-format) (#119)", () => {
     expect(parseArgs(["--protocol-format", "json"]).protocolFormat).toBe("json");
   });
 
-  test.skipIf(!runModulePresent)(
-    "the report renders the selected protocol format",
-    async () => {
-      const { computeAggregates, writeMarkdownReport } = await loadRunModule();
-      const runs = sampleRuns();
-      const tasks = ["json-parser"];
-      const sides = ["tc"];
-      const report = {
-        generatedAt: "2026-10-20T00:00:00.000Z",
-        date: "2026-10-20",
-        mode: "full",
-        tasks,
-        sides,
-        reps: 1,
-        concurrency: 1,
-        model: "deepseek-v4.1-flash",
-        ocModel: null,
-        effort: null,
-        multiPayload: false,
-        protocolFormat: "compact",
-        tokenBudget: null,
-        bunVersion: "1.0.0",
-        opencodeVersion: null,
-        pilotReference: null,
-        infraErrors: [],
-        runs,
-        aggregates: computeAggregates(runs, tasks, sides),
-        provenance: {
-          inputs: {
-            model: "m",
-            taskIssue: "t",
-            fixture: "f",
-            systemPrompt: "s",
-            loopConfig: "l",
-            pricing: "p",
-          },
-          inputHash: "h",
-          computedAt: "2026-10-20T00:00:00.000Z",
+  test.skipIf(!runModulePresent)("the report renders the selected protocol format", async () => {
+    const { computeAggregates, writeMarkdownReport } = await loadRunModule();
+    const runs = sampleRuns();
+    const tasks = ["json-parser"];
+    const sides = ["tc"];
+    const report = {
+      generatedAt: "2026-10-20T00:00:00.000Z",
+      date: "2026-10-20",
+      mode: "full",
+      tasks,
+      sides,
+      reps: 1,
+      concurrency: 1,
+      model: "deepseek-v4.1-flash",
+      ocModel: null,
+      effort: null,
+      multiPayload: false,
+      protocolFormat: "compact",
+      tokenBudget: null,
+      bunVersion: "1.0.0",
+      opencodeVersion: null,
+      pilotReference: null,
+      infraErrors: [],
+      runs,
+      aggregates: computeAggregates(runs, tasks, sides),
+      provenance: {
+        inputs: {
+          model: "m",
+          taskIssue: "t",
+          fixture: "f",
+          systemPrompt: "s",
+          loopConfig: "l",
+          pricing: "p",
         },
-      };
-      const dir = mkdtempSync(join(tmpdir(), "run-protocol-format-"));
-      try {
-        const md = join(dir, "compact.md");
-        writeMarkdownReport(md, report);
-        expect(readFileSync(md, "utf8")).toContain("- protocol-format: compact (#119)");
-      } finally {
-        rmSync(dir, { recursive: true, force: true });
-      }
-    },
-  );
+        inputHash: "h",
+        computedAt: "2026-10-20T00:00:00.000Z",
+      },
+    };
+    const dir = mkdtempSync(join(tmpdir(), "run-protocol-format-"));
+    try {
+      const md = join(dir, "compact.md");
+      writeMarkdownReport(md, report);
+      expect(readFileSync(md, "utf8")).toContain("- protocol-format: compact (#119)");
+    } finally {
+      rmSync(dir, { recursive: true, force: true });
+    }
+  });
 });

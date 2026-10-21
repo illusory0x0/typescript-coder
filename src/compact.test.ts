@@ -58,9 +58,7 @@ describe("resolveCompactReply (#111)", () => {
   });
 
   test("a viewer enumerates every candidate occurrence and resolves no region", () => {
-    const selections = parseSelection(
-      "select function twice in a.ts\nmatch `return 1;`\nend",
-    );
+    const selections = parseSelection("select function twice in a.ts\nmatch `return 1;`\nend");
     const result = resolveCompactReply(selections, deps(TWICE));
     expect(result.regions).toEqual([]);
     expect(result.failures).toEqual([]);
@@ -123,9 +121,7 @@ describe("resolveCompactReply (#111)", () => {
     expect(region?.matcherKind).toBeNull();
     expect(region?.start).toBe(ONCE.length);
     expect(region?.end).toBe(ONCE.length);
-    expect(region?.text).toBe(
-      "\nfunction missing(): number {\n  return 0;\n}\n",
-    );
+    expect(region?.text).toBe("\nfunction missing(): number {\n  return 0;\n}\n");
   });
 
   test("a create appends with no leading newline to an empty file", () => {

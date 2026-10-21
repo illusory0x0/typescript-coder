@@ -54,7 +54,7 @@ is frozen by #61's discipline: its model-facing issue text is fixed in
 
 **`csv-parser` is held out (#67):** it is never the target of prompt or loop
 iteration. Prompt/loop changes must not be tuned against it, and a held-out
-result is never a change-set's evidence of *prompt fit* — it gates only
+result is never a change-set's evidence of _prompt fit_ — it gates only
 "generalizes beyond the tuned fixtures" claims. Every series matrix includes it
 (`--all`), so its result is recorded in every row's `Notes` (the per-task
 columns stay the three tuned fixtures and `Overall` now spans all four tasks),
@@ -348,14 +348,14 @@ same tree the runs read). Text pieces are newline-normalized to `\n`; object
 pieces go through a stable, recursively key-sorted JSON encoding, so insertion
 order never changes a hash.
 
-| Digest | What it covers | Computation point |
-| ------ | -------------- | ----------------- |
-| `model` | the gateway model id | `report.model` |
-| `taskIssue` | the frozen task text of every task in the report, keyed by task | `TASK_ISSUES` (`run.ts`) |
-| `fixture` | the on-disk content of `benchmark/fixtures/<task>/`, keyed by task and relative path | current tree |
-| `systemPrompt` | the model-facing system + protocol text | `buildSystemPrompt(multiPayload, protocolFormat)` (`src/loop.ts`) |
-| `loopConfig` | token budget, edit/iteration/stall caps, `effort`, `reps`, `multiPayload` | loop constants + run flags |
-| `pricing` | the peak/off-peak rate table plus `PRICING_FETCHED_ON` | `src/benchmark-pricing.ts` |
+| Digest         | What it covers                                                                       | Computation point                                                 |
+| -------------- | ------------------------------------------------------------------------------------ | ----------------------------------------------------------------- |
+| `model`        | the gateway model id                                                                 | `report.model`                                                    |
+| `taskIssue`    | the frozen task text of every task in the report, keyed by task                      | `TASK_ISSUES` (`run.ts`)                                          |
+| `fixture`      | the on-disk content of `benchmark/fixtures/<task>/`, keyed by task and relative path | current tree                                                      |
+| `systemPrompt` | the model-facing system + protocol text                                              | `buildSystemPrompt(multiPayload, protocolFormat)` (`src/loop.ts`) |
+| `loopConfig`   | token budget, edit/iteration/stall caps, `effort`, `reps`, `multiPayload`            | loop constants + run flags                                        |
+| `pricing`      | the peak/off-peak rate table plus `PRICING_FETCHED_ON`                               | `src/benchmark-pricing.ts`                                        |
 
 `inputHash` is sha256 over the stable JSON of that digest object. A change to
 the fixture text, the prompt, the loop config, or the pricing table changes the

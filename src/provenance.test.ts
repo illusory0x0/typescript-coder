@@ -65,12 +65,8 @@ describe("computeInputHashes", () => {
   });
 
   test("stable key order: loop-config insertion order does not change the hash", () => {
-    const first = computeInputHashes(
-      measured({ loopConfig: { a: 1, b: { d: 4, c: 3 } } }),
-    );
-    const second = computeInputHashes(
-      measured({ loopConfig: { b: { c: 3, d: 4 }, a: 1 } }),
-    );
+    const first = computeInputHashes(measured({ loopConfig: { a: 1, b: { d: 4, c: 3 } } }));
+    const second = computeInputHashes(measured({ loopConfig: { b: { c: 3, d: 4 }, a: 1 } }));
     expect(first.inputs.loopConfig).toBe(second.inputs.loopConfig);
     expect(first.inputHash).toBe(second.inputHash);
   });

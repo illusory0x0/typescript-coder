@@ -59,7 +59,10 @@ describe("buildSubagentResult", () => {
         ok: false,
         diagnostics: "stage: tsc\nerror TS2322",
         terminationReason: "edit-exhausted",
-        records: [recordOf({ outcome: "protocol" }), recordOf({ kind: "verification", outcome: "tsc" })],
+        records: [
+          recordOf({ outcome: "protocol" }),
+          recordOf({ kind: "verification", outcome: "tsc" }),
+        ],
       }),
     });
     expect(result.status).toBe("failed");

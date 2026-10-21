@@ -317,12 +317,7 @@ export function parseConsumptionRows(markdown: string): ConsumptionRow[] {
     const sexpParser = parseClaimedValue(cells[3] ?? "");
     const minilisp = parseClaimedValue(cells[4] ?? "");
     const overall = parseClaimedValue(cells[5] ?? "");
-    if (
-      jsonParser === null ||
-      sexpParser === null ||
-      minilisp === null ||
-      overall === null
-    ) {
+    if (jsonParser === null || sexpParser === null || minilisp === null || overall === null) {
       // A malformed value cell is a row the check must name; keep it so the
       // ledger pass fails loudly instead of silently dropping it.
       rows.push({
@@ -444,10 +439,7 @@ function deriveValue(
  * JSON may be an older record labelled `ts`/`opencode` or a current one labelled
  * `tc`/`oc`.
  */
-export function deriveRowFromJson(
-  row: ConsumptionRow,
-  json: unknown,
-): DerivedRow {
+export function deriveRowFromJson(row: ConsumptionRow, json: unknown): DerivedRow {
   if (!isRecord(json)) {
     throw new Error(`ledger row ${row.date} ${row.changeSet}: source JSON is not an object`);
   }
@@ -457,9 +449,7 @@ export function deriveRowFromJson(
       `ledger row ${row.date} ${row.changeSet}: source JSON carries no coder side (tc/ts)`,
     );
   }
-  const runs = Array.isArray(json["runs"])
-    ? (json["runs"] as unknown[]).filter(isRecord)
-    : [];
+  const runs = Array.isArray(json["runs"]) ? (json["runs"] as unknown[]).filter(isRecord) : [];
   const values = {} as Record<RowValueKey, ConsumptionValue>;
   for (const task of TASK_NAMES) {
     values[task] = deriveValue(
@@ -481,9 +471,7 @@ export interface LedgerCheckOptions {
    * Current-tree hashes for a source report (or null to skip the staleness
    * pass). Receives the parsed source JSON.
    */
-  readonly currentFor?: (
-    json: Record<string, unknown>,
-  ) => Provenance | null;
+  readonly currentFor?: (json: Record<string, unknown>) => Provenance | null;
 }
 
 export interface LedgerCheckResult {
@@ -532,10 +520,7 @@ const INPUT_KEYS: readonly (keyof InputHashes)[] = [
  * stale-flagged, not failed. A row without exactly one `.json` source, or with a
  * missing cited file, fails.
  */
-export function checkLedger(
-  markdown: string,
-  options: LedgerCheckOptions,
-): LedgerCheckResult {
+export function checkLedger(markdown: string, options: LedgerCheckOptions): LedgerCheckResult {
   const rows = parseConsumptionRows(markdown);
   const failures: string[] = [];
   const staleFlags: string[] = [];
@@ -590,18 +575,14 @@ export function checkLedger(
     const current = options.currentFor(json);
     if (!isRecord(recorded) || !isRecord(recorded["inputs"])) {
       stale += 1;
-      staleFlags.push(
-        `stale: ${label} (${sourcePath}): no provenance recorded (predates #66)`,
-      );
+      staleFlags.push(`stale: ${label} (${sourcePath}): no provenance recorded (predates #66)`);
       continue;
     }
     if (current === null) {
       continue;
     }
     const recordedInputs = recorded["inputs"] as Record<string, unknown>;
-    const differing = INPUT_KEYS.filter(
-      (key) => recordedInputs[key] !== current.inputs[key],
-    );
+    const differing = INPUT_KEYS.filter((key) => recordedInputs[key] !== current.inputs[key]);
     const hashDiffers = recorded["inputHash"] !== current.inputHash;
     if (differing.length > 0 || hashDiffers) {
       stale += 1;

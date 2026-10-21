@@ -8,15 +8,15 @@ covered in [Live checks](#live-checks).
 
 ## Running
 
-- `bun run accept` - fast scenarios only
-- `bun run accept --all` - also runs the slow `self-host` scenario
-- `bun run accept --live` - also runs live scenarios against the real model
-- `bun run accept --model <id>` - model id for live scenarios
+- `just accept` - fast scenarios only
+- `just accept --all` - also runs the slow `self-host` scenario
+- `just accept --live` - also runs live scenarios against the real model
+- `just accept --model <id>` - model id for live scenarios
   (default `$ACCEPT_MODEL` or `deepseek-v4.1-flash`)
-- `bun run accept --only <id>` - run a single scenario by id
-- `bun run accept --keep` - keep per-scenario temp dirs (paths are printed)
-- `bun run accept --json <path>` - write the JSON report to `<path>`
-- `bun run accept --induce-failure [id]` - meta-check: injects a synthetic
+- `just accept --only <id>` - run a single scenario by id
+- `just accept --keep` - keep per-scenario temp dirs (paths are printed)
+- `just accept --json <path>` - write the JSON report to `<path>`
+- `just accept --induce-failure [id]` - meta-check: injects a synthetic
   failing assertion so the run exits non-zero
 
 ## Scenarios
@@ -44,11 +44,11 @@ scenarios run only with `--live` and are excluded from default runs, `--all`,
 and `bun test`. Each request is wrapped in a 90s timeout and the loop runs at
 temperature 0.
 
-- `bun run accept --live` - fast scenarios plus live scenarios
-- `bun run accept --live --all` - everything, including slow and live scenarios
-- `bun run accept --only live-fix-answer --live` - a single live scenario
-- `bun run accept --model <id> --live` - override the model id
-- `bun run accept --live --only live-fix-answer --induce-failure` - confirms the
+- `just accept --live` - fast scenarios plus live scenarios
+- `just accept --live --all` - everything, including slow and live scenarios
+- `just accept --only live-fix-answer --live` - a single live scenario
+- `just accept --model <id> --live` - override the model id
+- `just accept --live --only live-fix-answer --induce-failure` - confirms the
   synthetic failure path exits non-zero for live runs too
 
 Warnings:

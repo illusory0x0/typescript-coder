@@ -311,9 +311,7 @@ describe("formatDiagnostics", () => {
         ok: false,
         exitCode: 1,
         output: "",
-        diagnostics: [
-          { file: "src/a.ts", line: 1, column: 1, message: "boom", code: "TS1000" },
-        ],
+        diagnostics: [{ file: "src/a.ts", line: 1, column: 1, message: "boom", code: "TS1000" }],
       },
       test: { ok: true, exitCode: 0, output: "" },
       targetPath: "src/a.ts",
@@ -387,9 +385,7 @@ describe("formatDiagnostics", () => {
         ok: false,
         exitCode: 1,
         output: "",
-        diagnostics: [
-          { file: "src/a.ts", line: 1, column: 1, message: "boom", code: "TS1000" },
-        ],
+        diagnostics: [{ file: "src/a.ts", line: 1, column: 1, message: "boom", code: "TS1000" }],
       },
       test: { ok: true, exitCode: 0, output: "" },
       targetPath: "src/a.ts",
@@ -1093,6 +1089,39 @@ describe("attempt digest (#57)", () => {
       "Ruled out after 3 repeats: repeat — That exact submission has now been rejected repeatedly, and resending it cannot change the file.",
     );
     expect(digest).not.toContain("take a materially different approach instead of repeating");
+  });
+
+  test("the protocol ruled-out line re-teaches the selected format (#117)", () => {
+    const protocolRecords = [1, 2, 3].map((row) =>
+      digestRecord(
+        row,
+        "protocol",
+        "stage: protocol\nthe reply must be one or more `select … end` clauses; a JSON edit payload is not accepted in this mode",
+        "protocol",
+      ),
+    );
+    const compact = renderAttemptDigest(
+      (() => {
+        const state = createAttemptDigestState("compact");
+        updateAttemptDigest(state, protocolRecords);
+        return state;
+      })(),
+    );
+    expect(compact).toContain(
+      "Ruled out after 3 repeats: protocol — This attempt MUST reply with only `select … end` clauses",
+    );
+    expect(compact).not.toContain("exactly one flat JSON object");
+    // The default json format is unchanged.
+    const json = renderAttemptDigest(
+      (() => {
+        const state = createAttemptDigestState();
+        updateAttemptDigest(state, protocolRecords);
+        return state;
+      })(),
+    );
+    expect(json).toContain(
+      'Ruled out after 3 repeats: protocol — This attempt MUST reply with exactly one flat JSON object carrying "path", "symbol", "kind", "matcher", "range", "replacement" as the entire response: no prose, no markdown fences, no nesting.',
+    );
   });
 
   test("prefers the tsc error line over the elsewhere section label", () => {
@@ -6376,9 +6405,9 @@ describe("runLoop", () => {
         "truncated",
         "truncated",
       ]);
-      expect(
-        result.records.filter((record) => record.outcome === "truncated"),
-      ).toHaveLength(MAX_CONSECUTIVE_LENGTH);
+      expect(result.records.filter((record) => record.outcome === "truncated")).toHaveLength(
+        MAX_CONSECUTIVE_LENGTH,
+      );
       expect(result.records.at(-1)?.finishReason).toBe("length");
       expect(result.explanation).toBe("the completions kept hitting the output limit");
       const summaryPrompt = calls.at(-1)?.at(-1)?.content ?? "";
@@ -6422,9 +6451,7 @@ describe("runLoop", () => {
       });
       expect(result.ok).toBe(true);
       expect(result.terminationReason).toBeUndefined();
-      expect(
-        result.records.filter((record) => record.outcome === "truncated"),
-      ).toHaveLength(2);
+      expect(result.records.filter((record) => record.outcome === "truncated")).toHaveLength(2);
       expect(helperSource(dir)).toContain("return 2;");
     }, 30000);
   });
@@ -6505,15 +6532,31 @@ describe("runLoop", () => {
       });
     });
 
+    test("a protocol rejection re-teaches the selected edit format (#117)", () => {
+      const json = rejectionPolicy("protocol");
+      if (json.action !== "retry") {
+        throw new Error("expected a retryable protocol policy");
+      }
+      expect(json.correction).toContain("flat JSON object");
+      const compact = rejectionPolicy("protocol", "compact");
+      if (compact.action !== "retry") {
+        throw new Error("expected a retryable protocol policy");
+      }
+      expect(compact.correction).toContain("`select … end`");
+      expect(compact.correction).not.toContain("flat JSON object");
+      expect(compact.escalation).toContain("`select … end`");
+      expect(compact.escalation).not.toContain("flat JSON object");
+      // The retry lead follows the format; json stays the default.
+      expect(rejectionLead("protocol", 1, { protocolFormat: "compact" })).toBe(compact.correction);
+      expect(rejectionLead("protocol", 2, { protocolFormat: "compact" })).toBe(compact.escalation);
+      expect(rejectionLead("protocol", 1)).toBe(json.correction);
+    });
+
     test("matcher corrections and escalations offer the range selector (#102)", () => {
       const previous = process.env.TC_MATCHER_RANGE_HINT;
       process.env.TC_MATCHER_RANGE_HINT = "on";
       try {
-        const cases = [
-          "matcher-unparseable",
-          "matcher-not-found",
-          "matcher-ambiguous",
-        ] as const;
+        const cases = ["matcher-unparseable", "matcher-not-found", "matcher-ambiguous"] as const;
         for (const cause of cases) {
           const policy = rejectionPolicy(cause);
           if (
@@ -8350,9 +8393,7 @@ describe("explicit targets (#81)", () => {
     expect(result.ok).toBe(false);
     // The covered target landed...
     expect(readFileSync(join(dir, "src", "a.ts"), "utf8")).toContain("return 2;");
-    expect(result.appliedTargets).toEqual([
-      { path: "src/a.ts", name: "one", kind: "function" },
-    ]);
+    expect(result.appliedTargets).toEqual([{ path: "src/a.ts", name: "one", kind: "function" }]);
     // ...and the never-applied target is named in the diagnostics.
     expect(result.diagnostics).toContain('"src/b.ts"');
     expect(result.diagnostics).toContain("never applied");
@@ -8441,7 +8482,8 @@ describe("compact protocol (#111/#119)", () => {
     const currentSource = 'export function make(): number {\n  return "nope";\n}';
     const diagnostics = "src/a.ts(2,3): error TS2322: Type 'string' is not assignable";
     const numbered = numberedSourceBlock(currentSource);
-    const modifierNote = "A leading `export` matching the declaration's existing modifier is accepted.";
+    const modifierNote =
+      "A leading `export` matching the declaration's existing modifier is accepted.";
     const modifyLead = "Make minimal corrective changes to the current source below.";
     const status =
       "Edit exchange 2 of 3 failed verification. 1 exchange(s) remain in this iteration. ";
@@ -8562,6 +8604,33 @@ describe("compact protocol (#111/#119)", () => {
     expect(applied?.selectors).toEqual(["matcher"]);
   }, 30000);
 
+  test("under compact a JSON reply's retry re-teaches `select … end`, not JSON (#117)", async () => {
+    const dir = fixtureDir();
+    const provider = new ScriptedProvider([
+      selectionResponse(),
+      editResponse("return 1;", "return 2;"),
+      compactReply(answerEditor("return 2;", { kind: "snippet", value: "return 1;" })),
+    ]);
+    const result = await runLoop({
+      cwd: dir,
+      issue: "make the answer test pass",
+      provider,
+      protocolFormat: "compact",
+      checkCommand: TSC,
+      testCommand: ["bun", "test"],
+    });
+    expect(result.ok).toBe(true);
+    const rejected = result.records.find((record) => record.outcome === "protocol");
+    expect(rejected?.diagnostics).toContain("stage: protocol");
+    // The retry prompt after the rejected JSON payload re-teaches the compact
+    // form instead of repeating the JSON edit rule (the rep1 loop, #117).
+    const retryPrompt = (provider.calls[2] ?? [])
+      .map((message) => (typeof message.content === "string" ? message.content : ""))
+      .join("\n");
+    expect(retryPrompt).toContain("Reply with one or more `select … end` clauses");
+    expect(retryPrompt).not.toContain("Return exactly one flat JSON object");
+  }, 30000);
+
   test("under compact a fenced reply applies end-to-end", async () => {
     const dir = fixtureDir();
     const provider = new ScriptedProvider([
@@ -8591,9 +8660,7 @@ describe("compact protocol (#111/#119)", () => {
     const dir = fixtureDir();
     const provider = new ScriptedProvider([
       selectionResponse(),
-      compactReply(
-        answerEditor("export function answer(): number {\n  return 2;\n}", null),
-      ),
+      compactReply(answerEditor("export function answer(): number {\n  return 2;\n}", null)),
     ]);
     const result = await runLoop({
       cwd: dir,
@@ -8782,7 +8849,7 @@ describe("compact protocol (#111/#119)", () => {
     expect(create).toContain("does not take `match` or `pick`");
     expect(create).toContain("appends the COMPLETE declaration");
     expect(create).toContain("select function f in src/x.ts");
-    expect(create).not.toContain('Output ONE flat JSON object');
+    expect(create).not.toContain("Output ONE flat JSON object");
     const retry = buildRetryPrompt({
       exchangeNumber: 2,
       maxExchanges: 3,
@@ -8796,13 +8863,15 @@ describe("compact protocol (#111/#119)", () => {
     });
     expect(retry).toContain("does not take `match` or `pick`");
     expect(retry).toContain("select function f in src/x.ts");
-    expect(retry).not.toContain('Output ONLY one flat JSON object {"path": ..., "symbol": ..., "kind": ..., "replacement": ...}');
+    expect(retry).not.toContain(
+      'Output ONLY one flat JSON object {"path": ..., "symbol": ..., "kind": ..., "replacement": ...}',
+    );
   });
 
   test("under json the create prompts stay the JSON form", () => {
     const addressJson = '{"path":"src/new.ts","symbol":"make","kind":"function"}';
     const create = buildCreatePrompt(addressJson, "src/new.ts");
-    expect(create).toContain('Output ONE flat JSON object');
+    expect(create).toContain("Output ONE flat JSON object");
     expect(create).toContain('omit "matcher" and "range"');
     expect(create).not.toContain("does not take `match` or `pick`");
     const retry = buildRetryPrompt({
@@ -8992,7 +9061,8 @@ describe("compact protocol (#111/#119)", () => {
     expect(result.ok).toBe(true);
     expect(readFileSync(join(dir, "src", "extra.ts"), "utf8")).toContain("export function extra");
     const rejected = result.records.find(
-      (record) => record.kind === "exchange" && record.diagnostics?.includes("created (do not resend):"),
+      (record) =>
+        record.kind === "exchange" && record.diagnostics?.includes("created (do not resend):"),
     );
     expect(rejected).toBeDefined();
     expect(rejected?.diagnostics).toContain("created (do not resend):");
@@ -9033,19 +9103,21 @@ describe("compact protocol (#111/#119)", () => {
     // The compact edit rule and its create/delete semantics replace the JSON rule.
     expect(prompt).toContain("select [kind] <symbol> in <path>");
     expect(prompt).toContain("a clause that stops before `replace` is a viewer");
-    expect(prompt).toContain("A bare `select … replace with … end` with no `match` rewrites the whole declaration");
+    expect(prompt).toContain(
+      "A bare `select … replace with … end` with no `match` rewrites the whole declaration",
+    );
     expect(prompt).toContain("an empty fence deletes it");
     expect(prompt).toContain("no JSON edit payload");
     expect(prompt).toContain("naming it in the clause's own `select`");
     // The target-selection paragraph (the JSON pick turn) is unchanged.
-    expect(prompt).toContain(
-      '{"mode": "modify", "path": ..., "symbol": ..., "kind": ...}',
-    );
+    expect(prompt).toContain('{"mode": "modify", "path": ..., "symbol": ..., "kind": ...}');
     // The JSON edit rule and create/delete paragraphs are gone.
     expect(prompt).not.toContain(
       "Then you will be asked to edit the selected symbol. Reply with ONLY one flat JSON object",
     );
-    expect(prompt).not.toContain('A "create" selection asks for the COMPLETE declaration in "replacement"');
+    expect(prompt).not.toContain(
+      'A "create" selection asks for the COMPLETE declaration in "replacement"',
+    );
     expect(prompt).not.toContain('{"payloads": [{"path": ...');
   });
 
@@ -9283,13 +9355,15 @@ describe("repair-context shrink", () => {
 
   test("with the toggle off the create→repair retry prompt is byte-identical to the pre-change string", () => {
     const TICK = "\u0060";
-    const locatorJson = '{"mode":"modify","path":"src/generated.ts","symbol":"make","kind":"function"}';
+    const locatorJson =
+      '{"mode":"modify","path":"src/generated.ts","symbol":"make","kind":"function"}';
     const currentSource = 'export function make(): number {\n  return "no";\n}';
     const promptDiagnostics =
       "src/generated.ts(3,3): error TS2322: Type 'string' is not assignable to type 'number' " +
       `— in declaration ${TICK}make${TICK} (function)`;
     const numbered = numberedSourceBlock(currentSource);
-    const modifierNote = "A leading `export` matching the declaration's existing modifier is accepted.";
+    const modifierNote =
+      "A leading `export` matching the declaration's existing modifier is accepted.";
     const modifyLead = "Make minimal corrective changes to the current source below.";
     const status =
       "Edit exchange 1 of 3 failed verification. 2 exchange(s) remain in this iteration. ";
@@ -9341,7 +9415,8 @@ describe("repair-context shrink", () => {
   });
 
   test("with the toggle on a supplied pre-rendered block replaces the source and fixes the note", () => {
-    const preRendered = " 12 | function isClosure(v: LispValue): boolean {\n// … [omitted: filler0] …";
+    const preRendered =
+      " 12 | function isClosure(v: LispValue): boolean {\n// … [omitted: filler0] …";
     const prompt = buildRetryPrompt({
       exchangeNumber: 1,
       maxExchanges: 3,
@@ -9354,9 +9429,7 @@ describe("repair-context shrink", () => {
       repin: true,
     });
     expect(prompt).toContain(preRendered);
-    expect(prompt).toContain(
-      "Each line below carries its ORIGINAL 1-based file line number",
-    );
+    expect(prompt).toContain("Each line below carries its ORIGINAL 1-based file line number");
     expect(prompt).not.toContain(
       'Each line below is prefixed with its 1-based line number (the optional "range" coordinates',
     );
@@ -9387,9 +9460,7 @@ describe("repair-context shrink", () => {
     const runOnce = async (setting: string | undefined): Promise<string> => {
       setFlag(setting);
       const dir = passingFixtureDir();
-      const large: string[] = [
-        "export type LispValue = number | string | LispValue[] | null;",
-      ];
+      const large: string[] = ["export type LispValue = number | string | LispValue[] | null;"];
       for (let i = 0; i < 120; i += 1) {
         large.push(`export function filler${i}(x: number): number {\n  return x + ${i};\n}`);
       }
