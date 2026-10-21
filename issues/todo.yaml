@@ -1,3 +1,52 @@
 # Open issues in picking order. This order is authoritative: `reorder`
 # rewrites it; `add` appends; other writes keep it. `check` enforces it.
 # A dep, and every child of an umbrella, must be listed before its dependent.
+
+- id: 7
+  title: "Record the edit protocol in replay bundles"
+  status: todo
+  priority: medium
+  milestone: null
+  parent: 6
+  deps: []
+  file: 0007-record-the-edit-protocol-in-replay-bundles.md
+- id: 8
+  title: "Keep a confirmation edit after the last normal exchange"
+  status: todo
+  priority: medium
+  milestone: null
+  parent: 6
+  deps: []
+  file: 0008-keep-a-confirmation-edit-after-the-last-normal-exchange.md
+- id: 9
+  title: "Make compact retry and decision prompts consistently select-first"
+  status: todo
+  priority: medium
+  milestone: null
+  parent: 6
+  deps: []
+  file: 0009-make-compact-retry-and-decision-prompts-consistently-select-first.md
+- id: 10
+  title: "Mark matches in the first select viewer's details"
+  status: todo
+  priority: medium
+  milestone: null
+  parent: 6
+  deps: []
+  file: 0010-mark-matches-in-the-first-select-viewer-s-details.md
+- id: 11
+  title: "Re-baseline the compact benchmark with replay evidence"
+  status: todo
+  priority: medium
+  milestone: null
+  parent: 6
+  deps: [7, 8, 9, 10]
+  file: 0011-re-baseline-the-compact-benchmark-with-replay-evidence.md
+- id: 6
+  title: "Close the remaining compact protocol follow-ups"
+  status: todo
+  priority: medium
+  milestone: null
+  parent: null
+  deps: []
+  file: 0006-close-the-remaining-compact-protocol-follow-ups.md
