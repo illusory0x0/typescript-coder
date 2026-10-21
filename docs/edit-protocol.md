@@ -6,11 +6,12 @@ selection: a target is named by `select`, narrowed by `match` / `pick`, and
 rewritten by `replace`. A selection that stops before `replace` is a **viewer**;
 one that carries `replace` is an **editor**.
 
-Status: **specified here, not yet implemented.** The children that build it are
-#107 (parse/serialize), #108 (resolve the cascade), #109 (regex in match), #110
-(record the resolved stage) and #111 (few-shot examples + A/B). Until they land,
-the shipped wire protocol is still the JSON payload in
-[docs/spec.md](./spec.md); §9 maps the two.
+Status: **implemented and selectable.** The parser/serializer (#107), cascade
+resolver (#108), regex matcher (#109), resolved-stage instrumentation (#110) and
+few-shot examples + A/B (#111) have landed. The protocol is chosen on the `tc`
+CLI with `--protocol-format=json|compact` (`json` is the default, #119); the
+shipped default wire protocol is the JSON payload in
+[docs/spec.md](./spec.md) — §9 maps the two.
 
 Companion reading: [docs/glossary.md](./glossary.md) defines the loop
 vocabulary. This file is the grammar and semantics; where a term matters it uses
@@ -37,6 +38,12 @@ replace →  rewrite the located span (optional)
 Each clause is applied independently (§6). Nothing is guessed: when a stage
 cannot resolve uniquely the clause fails with a typed cause (§5, §7) — there is
 never a silent wrong match.
+
+A whole-declaration rewrite is also how a **create** is spelled: `select … replace
+with <fence> end` whose symbol is not declared anywhere in the target file
+appends the fence body as a new declaration, creating the file (and its parent
+directories) when absent. This is the compact counterpart of the JSON
+`"mode":"create"` selection (§9); its exact guards are in §3.1.
 
 ## 2. Grammar (ISO/IEC 14977 EBNF)
 
@@ -74,9 +81,15 @@ Lexical notes:
   current bytes exactly.
 - `regex` is an ECMA-262 pattern between slashes and takes **no flags** (`g`
   would contradict the single-match rule).
+- Escaping: inside a `snippet` a literal backtick is written `` \` `` and a
+  literal backslash is `` \\ ``; the snippet is otherwise verbatim. A `path` is
+  the token after `in`, so it may carry a colon verbatim (for example
+  `C:/src/a.ts`) — a colon never needs escaping. A literal slash inside a `regex`
+  is escaped with a backslash (an ECMA-262 pattern).
 - `fence` is a Markdown-style fenced block: at least three backticks, a body
   that contains no run of that many backticks, and a closing fence of the same
-  length. A body is mandatory; **an empty body means delete**.
+  length. The fence itself is mandatory and its body may be empty; **an empty
+  body means delete**.
 - `pick` sugar: `pick 10` means `pick {10}`.
 - Whitespace is insignificant except inside a `fence`; the multi-line layout of
   the examples is convention, not syntax.
@@ -112,12 +125,39 @@ select [kind] <symbol> in <path>    the container: that declaration, resolved
 | --------------------- | ------------------------------- |
 | `match` present       | the unique occurrence in scope  |
 | no `match`, `replace` | the whole declaration           |
+| no `match`, `replace`, symbol absent | a create — append (§3.1) |
 | no `match`, no `replace` | nothing — a viewer          |
 
 For a `match`, the scope is the declaration, restricted to `pick` ranges when
 present. Exactly one occurrence in scope is the target; zero is
 `matcher-not-found`; more than one is `matcher-ambiguous` (the reply lists each
 occurrence so the model can add `pick` or lengthen the snippet).
+
+### 3.1 Implicit create
+
+A whole-declaration editor — `select [kind] <symbol> in <path> replace with
+<fence> end` with **no** `match`, **no** `pick`, and a **non-empty** fence body —
+whose symbol is undeclared in `path`'s current source is a **create**: the fence
+body is appended as a new top-level declaration. The file is created when it
+does not exist, along with any missing parent directories. `kind` is optional
+here as everywhere: omitting it is the usual spelling, and same-name /
+different-kind collisions are caught downstream by the duplicate guard and tsc,
+never guessed.
+
+The create is placed **append-only**, at the end of the file; there is no
+`after`/anchor form. A create's offset is the file's pre-reply length, so a
+same-file clause that resolves to a create lands after any earlier clause's
+splice (§6).
+
+A create passes exactly the same guards as any other whole-declaration edit: the
+syntax gate (the resulting file must parse), the duplicate-declaration guard (a
+fence that would add a second top-level `function`/`class`/`type` of an existing
+name is rejected), and the formatting no-op guard.
+
+A miss that is **not** a create still fails at the address stage as
+`symbol-not-found` (§5): a clause that carries `match` or `pick`, a fence whose
+body is empty (an empty body means delete, §2 — never create), or a viewer (no
+`replace`).
 
 ### Range arithmetic
 
@@ -142,6 +182,11 @@ Each clause is classified into one typed cause, carried to the repair prompt:
 `matcher-not-found`, `matcher-ambiguous`, `regex-invalid`, `range-invalid`,
 `overlap-conflict`, `parse-error`.
 
+An undeclared name reached by a clause that is not a create — it carries `match`
+or `pick`, its fence body is empty, or it is a viewer — is `symbol-not-found`.
+Only the whole-declaration, non-empty-fence editor of §3.1 turns the same miss
+into an append.
+
 ## 6. Application model
 
 - A reply's clauses are processed in **document order** (the order they appear).
@@ -155,6 +200,12 @@ Each clause is classified into one typed cause, carried to the repair prompt:
 - When two clauses target **overlapping** spans, the earlier in document order
   wins; the later fails with `overlap-conflict`, naming the winner.
 - Within one clause, an edit that would change nothing is `no-op`.
+- A **create** (§3.1) resolves against the same pre-reply document, so a clause
+  cannot reference a symbol another clause creates in the same reply: the create
+  is not in the original source. Write the dependent declaration in a later
+  reply. A create still lands immediately under the non-atomic model — a
+  half-built file is caught by the parse gate and tsc, not by a per-file
+  rollback.
 
 ## 7. Feedback
 
@@ -162,7 +213,10 @@ A failed clause is re-asked with its own text and its typed cause. When a reply
 has several failures, **all** of them are fed back together. Because the model's
 successful clauses have already been applied, the feedback also carries a short
 list of the applied clauses so the model does not resend them (a resend would
-fail as `matcher-not-found`).
+fail as `matcher-not-found`). Created declarations are listed separately under
+`created (do not resend):` — the declaration now exists, so a resend would miss
+the address rather than the matcher — while every other applied clause stays
+under `already applied (do not resend):`.
 
 ## 8. Examples
 
@@ -183,7 +237,21 @@ Delete a whole declaration (empty fence):
 ```
 select const MAX_TOKENS in src/lexer.ts
 replace with
+```
+```
+end
+```
 
+Create a declaration (the symbol is undeclared, or the file is absent):
+
+```
+select makeToken in src/token.ts
+replace with
+```
+export function makeToken(kind: string): Token {
+  return { kind, text: "" };
+}
+```
 end
 ```
 
@@ -241,6 +309,7 @@ positionally:
 | `replacement`              | `replace with <fence>`                   |
 | whole-symbol rewrite       | `replace` with no `match`                |
 | delete                     | `replace with` an empty fence            |
+| `"mode":"create"`          | `select [kind] <symbol> in <path>` + `replace with <fence>`, no `match`/`pick`, non-empty fence; appends when the symbol/file is absent (§3.1) |
 
 Differences to note: the JSON `range` *takes precedence over* `matcher`; in the
 compact syntax `match` is the locator and `pick` only narrows it. The JSON
@@ -253,6 +322,15 @@ Specified by #106; built by #107–#111. This file is grammar and semantics only
 it defines no code and changes no prompt. The few-shot examples and the measured
 A/B live in #111; recording the resolved stage and matcher per applied edit
 lives in #110.
+
+The protocol is selected per run with `--protocol-format=json|compact` (#119).
+`json` is the **default**: every prompt and code path stays byte-identical to
+the JSON-only protocol in [docs/spec.md](./spec.md). `compact` makes the compact
+syntax the **required** reply form: the system prompt teaches `select … end` in
+place of the JSON edit rule (the target-selection pick turn stays JSON), compact
+is parsed first, and a JSON edit payload is rejected as a `stage: protocol`
+failure. The §8 few-shot block adds a create form and a viewer-then-editor
+multi-clause form. Explicit-targets mode (`--targets`, #81) stays JSON.
 
 ---
 

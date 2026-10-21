@@ -32,6 +32,8 @@ import {
   MAX_RUN_ITERATIONS,
   MAX_STALLED_ROUNDS,
   MAX_CONSECUTIVE_LENGTH,
+  matcherKindOf,
+  matcherKindsOf,
   MULTI_PAYLOAD_KEY,
   numberedSourceBlock,
   parseEditResponse,
@@ -40,6 +42,9 @@ import {
   parseSelfCheckRequest,
   rejectionLead,
   rejectionPolicy,
+  RANGE_SELECTOR_NOTE,
+  repairContextShrinkEnabled,
+  shrinkRepairSource,
   renderAttemptDigest,
   renderFailureHistoryNote,
   renderSelfCheckCommand,
@@ -49,10 +54,13 @@ import {
   selectorOf,
   selectorsOf,
   selectSpecFiles,
+  SELF_CHECK_OFFER,
   SELF_CHECK_OUTPUT_LIMIT,
   SPEC_FILE_LIMIT,
   STALLED_ASK_INTERVAL,
   stalledAskNumber,
+  stageOf,
+  stagesOf,
   stripCodeFences,
   updateAttemptDigest,
   verificationFingerprint,
@@ -61,6 +69,8 @@ import type { EditPayload, LoopRecord, ProviderLike, RetryPromptInput, StalledAs
 import type { ChatMessage, ChatOptions, ChatResponse, ToolDefinition } from "./openai";
 import { ChatContextOverflowError, ChatPayloadTooLargeError } from "./openai";
 import { Parser } from "./parser";
+import { serializeSelections } from "./selection";
+import type { Selection as CompactSelection } from "./selection";
 import { buildIndexTolerant } from "./utility";
 import type { SourceFile } from "./utility";
 
@@ -1060,7 +1070,7 @@ describe("attempt digest (#57)", () => {
     const digest = renderAttemptDigest(state);
     const ruledOut = digest.split("\n").filter((line) => line.startsWith("Ruled out"));
     expect(ruledOut).toEqual([
-      'Ruled out after 4 repeats: matcher-not-found — This attempt MUST omit "matcher" and return the complete declaration in "replacement". When the target is a contiguous run you can pin exactly, you may instead send the optional "range" {"line","column","endLine","endColumn"} selector (all 1-based, end inclusive, inside the declaration): it takes precedence over "matcher" and needs no verbatim copy.',
+      'Ruled out after 4 repeats: matcher-not-found — This attempt MUST omit "matcher" and return the complete declaration in "replacement".',
       "Ruled out after 3 repeats: tsc — change the declaration structure instead of re-editing the same spot",
     ]);
     expect(DIGEST_RULED_OUT_REPEATS).toBe(3);
@@ -1625,6 +1635,45 @@ describe("edit selector classification (#101)", () => {
   });
 });
 
+describe("selection stage and matcher classification (#110)", () => {
+  const payload = (over: Partial<EditPayload> = {}): EditPayload => ({
+    locator: { path: "src/a.ts", name: "x", kind: "function" },
+    matcher: null,
+    range: null,
+    replacement: "y",
+    ...over,
+  });
+  const range = { line: 1, column: 1, endLine: 1, endColumn: 2 };
+
+  test("classifies a flat payload: range wins as pick; matcher is match; neither is whole-symbol", () => {
+    expect(stageOf(payload({ range }))).toBe("pick");
+    expect(stageOf(payload({ matcher: "return 1;" }))).toBe("match");
+    expect(stageOf(payload({ matcher: "return 1;", range }))).toBe("pick");
+    expect(stageOf(payload())).toBe("whole-symbol");
+  });
+
+  test("only a resolving snippet matcher names a matcher kind", () => {
+    expect(matcherKindOf(payload({ matcher: "return 1;" }))).toBe("snippet");
+    // A range (pick) wins over a matcher, so the matcher does not resolve it.
+    expect(matcherKindOf(payload({ matcher: "return 1;", range }))).toBeNull();
+    expect(matcherKindOf(payload({ range }))).toBeNull();
+    expect(matcherKindOf(payload())).toBeNull();
+  });
+
+  test("stagesOf/matcherKindsOf map a batch in order and a flat payload to one entry", () => {
+    const batch = [payload({ range }), payload(), payload({ matcher: "return 1;" })];
+    expect(stagesOf(null, batch)).toEqual(["pick", "whole-symbol", "match"]);
+    expect(matcherKindsOf(null, batch)).toEqual([null, null, "snippet"]);
+    expect(stagesOf(payload({ matcher: "return 1;" }), null)).toEqual(["match"]);
+    expect(matcherKindsOf(payload({ matcher: "return 1;" }), null)).toEqual(["snippet"]);
+  });
+
+  test("stagesOf/matcherKindsOf return undefined when the exchange carried no payload", () => {
+    expect(stagesOf(null, null)).toBeUndefined();
+    expect(matcherKindsOf(null, null)).toBeUndefined();
+  });
+});
+
 describe("exchangeStats (#69)", () => {
   const row = (
     over: Partial<LoopRecord> & { outcome: LoopRecord["outcome"]; kind: LoopRecord["kind"] },
@@ -1663,6 +1712,12 @@ describe("exchangeStats (#69)", () => {
       range: 0,
       matcher: 0,
       wholeSymbol: 0,
+      stageWholeSymbol: 0,
+      stageMatch: 0,
+      stagePick: 0,
+      snippet: 0,
+      regex: 0,
+      creates: 0,
     });
   });
 
@@ -1684,6 +1739,41 @@ describe("exchangeStats (#69)", () => {
     expect(stats.range).toBe(2);
     expect(stats.matcher).toBe(2);
     expect(stats.wholeSymbol).toBe(1);
+  });
+
+  test("sums resolved stages and matcher kinds per payload, including batch entries (#110)", () => {
+    const stats = exchangeStats([
+      row({ outcome: "applied", kind: "exchange", stages: ["pick"], matcherKinds: [null] }),
+      row({
+        outcome: "applied",
+        kind: "exchange",
+        stages: ["match", "whole-symbol"],
+        matcherKinds: ["snippet", null],
+      }),
+      row({
+        outcome: "gate",
+        kind: "exchange",
+        stages: ["match", "pick"],
+        matcherKinds: ["snippet", null],
+      }),
+      row({ outcome: "selected", kind: "exchange", toolCalls: 1 }),
+      row({ outcome: "ok", kind: "verification", exchange: null }),
+    ]);
+    expect(stats.stageWholeSymbol).toBe(1);
+    expect(stats.stageMatch).toBe(2);
+    expect(stats.stagePick).toBe(2);
+    expect(stats.snippet).toBe(2);
+    expect(stats.regex).toBe(0);
+  });
+
+  test("sums compact implicit-create clauses per reply (#111)", () => {
+    const stats = exchangeStats([
+      row({ outcome: "applied", kind: "exchange", creates: 2 }),
+      row({ outcome: "duplicate", kind: "exchange", creates: 1 }),
+      row({ outcome: "applied", kind: "exchange" }),
+      row({ outcome: "ok", kind: "verification", exchange: null }),
+    ]);
+    expect(stats.creates).toBe(3);
   });
 });
 
@@ -6417,7 +6507,7 @@ describe("runLoop", () => {
 
     test("matcher corrections and escalations offer the range selector (#102)", () => {
       const previous = process.env.TC_MATCHER_RANGE_HINT;
-      delete process.env.TC_MATCHER_RANGE_HINT;
+      process.env.TC_MATCHER_RANGE_HINT = "on";
       try {
         const cases = [
           "matcher-unparseable",
@@ -6500,11 +6590,27 @@ describe("runLoop", () => {
           }
         }
       }
+      // The new default: unset means no hint, matching the pre-#102 text.
+      delete process.env.TC_MATCHER_RANGE_HINT;
+      try {
+        const unset = rejectionPolicy("matcher-unparseable");
+        if (unset.action !== "retry") {
+          throw new Error("expected a retryable matcher-unparseable policy");
+        }
+        expect(unset.correction).toBe(preUnparseable);
+        expect(unset.escalation).toBe(preEscalation);
+      } finally {
+        if (previous === undefined) {
+          delete process.env.TC_MATCHER_RANGE_HINT;
+        } else {
+          process.env.TC_MATCHER_RANGE_HINT = previous;
+        }
+      }
     });
 
     test("non-matcher causes ignore the range toggle (#102)", () => {
       const previous = process.env.TC_MATCHER_RANGE_HINT;
-      delete process.env.TC_MATCHER_RANGE_HINT;
+      process.env.TC_MATCHER_RANGE_HINT = "on";
       try {
         for (const cause of ["range-invalid", "protocol", "gate"] as const) {
           const enabled = rejectionPolicy(cause);
@@ -8272,4 +8378,1049 @@ describe("explicit targets (#81)", () => {
     expect(result.records.some((record) => record.outcome === "applied")).toBe(false);
     expect(readFileSync(join(dir, "src", "a.ts"), "utf8")).toBe(before);
   }, 30000);
+});
+
+// The four §8 forms of `docs/edit-protocol.md`: a viewer, a bare declaration
+// replace, a `match` + `pick` disambiguation, and a `match` + `replace` rewrite.
+describe("compact protocol (#111/#119)", () => {
+  const TICK = "\u0060";
+
+  function compactReply(...selections: CompactSelection[]): string {
+    return serializeSelections(selections);
+  }
+
+  function answerEditor(
+    replacement: string | null,
+    matcher: CompactSelection["matcher"],
+    pick: CompactSelection["pick"] = null,
+  ): CompactSelection {
+    return {
+      locator: { path: "src/helper.ts", name: "answer", kind: "function" },
+      matcher,
+      pick,
+      replacement,
+    };
+  }
+
+  test("the fresh edit prompt defaults to the JSON form", () => {
+    const addressJson = '{"path":"src/a.ts","symbol":"make","kind":"function"}';
+    const symbolSource = "export function make(): number {\n  return 1;\n}\n";
+    const numbered = numberedSourceBlock(symbolSource);
+    const instruction = [
+      'Output ONE flat JSON object {"path": ..., "symbol": ..., "kind": ..., "matcher": ..., "replacement": ...} for the pinned symbol, with no markdown fences and no explanations.',
+      "",
+      `Echo the pinned address {path, symbol, kind}. "matcher" is optional: a complete snippet copied from the current source below; "replacement" replaces exactly the matched range. Omit "matcher" for a whole-symbol rewrite: "replacement" then replaces the whole declaration. ${RANGE_SELECTOR_NOTE} Keep leading keywords and modifiers consistent (do not re-add ${TICK}export${TICK} the declaration omitted). The replacement must keep the file parseable.`,
+    ].join("\n");
+    const expected = [
+      instruction,
+      "",
+      "Pinned selection:",
+      "",
+      `${TICK}${TICK}${TICK}json`,
+      addressJson,
+      `${TICK}${TICK}${TICK}`,
+      "",
+      "Current source:",
+      "",
+      `Each line below is prefixed with its 1-based line number (the optional "range" coordinates; columns count the source text after the ${TICK}N | ${TICK} prefix).`,
+      "",
+      `${TICK}${TICK}${TICK}ts`,
+      numbered,
+      `${TICK}${TICK}${TICK}`,
+      "",
+    ].join("\n");
+    expect(buildEditPrompt(addressJson, symbolSource)).toBe(expected);
+    // The compact instruction/examples never leak into the json path.
+    expect(buildEditPrompt(addressJson, symbolSource)).not.toContain(
+      "select function f in src/x.ts",
+    );
+  });
+
+  test("the modify retry prompt defaults to the JSON form", () => {
+    const locatorJson = '{"mode":"modify","path":"src/a.ts","symbol":"make","kind":"function"}';
+    const currentSource = 'export function make(): number {\n  return "nope";\n}';
+    const diagnostics = "src/a.ts(2,3): error TS2322: Type 'string' is not assignable";
+    const numbered = numberedSourceBlock(currentSource);
+    const modifierNote = "A leading `export` matching the declaration's existing modifier is accepted.";
+    const modifyLead = "Make minimal corrective changes to the current source below.";
+    const status =
+      "Edit exchange 2 of 3 failed verification. 1 exchange(s) remain in this iteration. ";
+    const instruction = `${modifyLead} ${status}Output ONLY one flat JSON object {"path": ..., "symbol": ..., "kind": ..., "matcher": ..., "replacement": ...}: echo the pinned selection in the address. "matcher" is optional: a snippet copied from the current source, or omit it for a whole-symbol rewrite; "replacement" replaces the matched range (empty removes it). ${RANGE_SELECTOR_NOTE} ${modifierNote} No markdown fences and no explanations.`;
+    const expected = [
+      instruction,
+      "",
+      SELF_CHECK_OFFER,
+      "",
+      "Pinned selection:",
+      "",
+      `${TICK}${TICK}${TICK}json`,
+      locatorJson,
+      `${TICK}${TICK}${TICK}`,
+      "",
+      "Current source:",
+      "",
+      `Each line below is prefixed with its 1-based line number (the optional "range" coordinates; columns count the source text after the ${TICK}N | ${TICK} prefix).`,
+      "",
+      `${TICK}${TICK}${TICK}ts`,
+      numbered,
+      `${TICK}${TICK}${TICK}`,
+      "",
+      "Diagnostics:",
+      "",
+      `${TICK}${TICK}${TICK}`,
+      diagnostics,
+      `${TICK}${TICK}${TICK}`,
+      "",
+    ].join("\n");
+    const input: RetryPromptInput = {
+      exchangeNumber: 2,
+      maxExchanges: 3,
+      mode: "modify",
+      locatorJson,
+      currentSource,
+      diagnostics,
+      failure: "verification",
+      repin: false,
+    };
+    expect(buildRetryPrompt(input)).toBe(expected);
+    expect(expected).not.toContain("select function");
+  });
+
+  test("with the compact format the fresh edit and retry prompts teach all four §8 forms", () => {
+    const edit = buildEditPrompt(
+      '{"path":"src/a.ts","symbol":"make","kind":"function"}',
+      "const x = 1;\n",
+      false,
+      "compact",
+    );
+    expect(edit).toContain("A reply is one or more `select … end` clauses");
+    expect(edit).toContain("a clause that stops before `replace` is a viewer that writes nothing");
+    // The four forms are rendered from the grammar's own serializer.
+    expect(edit).toContain("select function f in src/x.ts");
+    expect(edit).toContain("select const MAX_TOKENS in src/x.ts");
+    expect(edit).toContain("pick 12:3-12:12");
+    expect(edit).toContain("select function clamp in src/x.ts");
+    const retry = buildRetryPrompt({
+      exchangeNumber: 2,
+      maxExchanges: 3,
+      mode: "modify",
+      locatorJson: '{"mode":"modify","path":"src/a.ts","symbol":"make","kind":"function"}',
+      currentSource: "const x = 1;\n",
+      diagnostics: "boom",
+      failure: "verification",
+      repin: false,
+      protocolFormat: "compact",
+    });
+    expect(retry).toContain("A reply is one or more `select … end` clauses");
+    expect(retry).toContain("select function f in src/x.ts");
+    expect(retry).not.toContain(
+      'Output ONLY one flat JSON object {"path": ..., "symbol": ..., "kind": ..., "matcher": ..., "replacement": ...}',
+    );
+  });
+
+  test("under json a compact reply is rejected as a protocol failure", async () => {
+    const dir = fixtureDir();
+    const provider = new ScriptedProvider([
+      selectionResponse(),
+      compactReply(answerEditor("return 2;", { kind: "snippet", value: "return 1;" })),
+      editResponse("return 1;", "return 2;"),
+    ]);
+    const result = await runLoop({
+      cwd: dir,
+      issue: "make the answer test pass",
+      provider,
+      checkCommand: TSC,
+      testCommand: ["bun", "test"],
+    });
+    // The compact form is not a payload: it is rejected, then the JSON edit lands.
+    expect(result.ok).toBe(true);
+    const rejected = result.records.find((record) => record.outcome === "protocol");
+    expect(rejected?.diagnostics).toContain("stage: protocol");
+    expect(helperSource(dir)).toContain("return 2;");
+  }, 30000);
+
+  test("under compact a `match` + `replace` reply applies end-to-end", async () => {
+    const dir = fixtureDir();
+    const provider = new ScriptedProvider([
+      selectionResponse(),
+      compactReply(answerEditor("return 2;", { kind: "snippet", value: "return 1;" })),
+    ]);
+    const result = await runLoop({
+      cwd: dir,
+      issue: "make the answer test pass",
+      provider,
+      protocolFormat: "compact",
+      checkCommand: TSC,
+      testCommand: ["bun", "test"],
+    });
+    expect(result.ok).toBe(true);
+    expect(helperSource(dir)).toContain("return 2;");
+    const applied = result.records.find((record) => record.outcome === "applied");
+    expect(applied?.payloads).toBe(1);
+    expect(applied?.stages).toEqual(["match"]);
+    expect(applied?.matcherKinds).toEqual(["snippet"]);
+    expect(applied?.selectors).toEqual(["matcher"]);
+  }, 30000);
+
+  test("under compact a fenced reply applies end-to-end", async () => {
+    const dir = fixtureDir();
+    const provider = new ScriptedProvider([
+      selectionResponse(),
+      `${TICK}${TICK}${TICK}\n${compactReply(
+        answerEditor("return 2;", { kind: "snippet", value: "return 1;" }),
+      )}\n${TICK}${TICK}${TICK}`,
+    ]);
+    const result = await runLoop({
+      cwd: dir,
+      issue: "make the answer test pass",
+      provider,
+      protocolFormat: "compact",
+      checkCommand: TSC,
+      testCommand: ["bun", "test"],
+    });
+    expect(result.ok).toBe(true);
+    expect(helperSource(dir)).toContain("return 2;");
+    const applied = result.records.find((record) => record.outcome === "applied");
+    expect(applied?.payloads).toBe(1);
+    expect(applied?.stages).toEqual(["match"]);
+    expect(applied?.matcherKinds).toEqual(["snippet"]);
+    expect(applied?.selectors).toEqual(["matcher"]);
+  }, 30000);
+
+  test("under compact a bare declaration replace records the whole-symbol stage", async () => {
+    const dir = fixtureDir();
+    const provider = new ScriptedProvider([
+      selectionResponse(),
+      compactReply(
+        answerEditor("export function answer(): number {\n  return 2;\n}", null),
+      ),
+    ]);
+    const result = await runLoop({
+      cwd: dir,
+      issue: "make the answer test pass",
+      provider,
+      protocolFormat: "compact",
+      checkCommand: TSC,
+      testCommand: ["bun", "test"],
+    });
+    expect(result.ok).toBe(true);
+    expect(helperSource(dir)).toContain("return 2;");
+    const applied = result.records.find((record) => record.outcome === "applied");
+    expect(applied?.stages).toEqual(["whole-symbol"]);
+    expect(applied?.matcherKinds).toEqual([null]);
+    expect(applied?.selectors).toEqual(["whole-symbol"]);
+  }, 30000);
+
+  test("under compact a `match` + `pick` reply records the pick stage", async () => {
+    const dir = fixtureDir();
+    const provider = new ScriptedProvider([
+      selectionResponse(),
+      compactReply(
+        answerEditor("return 2;", { kind: "snippet", value: "return 1;" }, [
+          { line: 2, column: 3, endLine: 2, endColumn: 11 },
+        ]),
+      ),
+    ]);
+    const result = await runLoop({
+      cwd: dir,
+      issue: "make the answer test pass",
+      provider,
+      protocolFormat: "compact",
+      checkCommand: TSC,
+      testCommand: ["bun", "test"],
+    });
+    expect(result.ok).toBe(true);
+    expect(helperSource(dir)).toContain("return 2;");
+    const applied = result.records.find((record) => record.outcome === "applied");
+    expect(applied?.stages).toEqual(["pick"]);
+    expect(applied?.matcherKinds).toEqual(["snippet"]);
+    expect(applied?.selectors).toEqual(["range"]);
+  }, 30000);
+
+  test("under compact a viewer writes nothing and feeds its candidates into the next prompt", async () => {
+    const dir = fixtureDir();
+    const provider = new ScriptedProvider([
+      selectionResponse(),
+      // A viewer of a matched span: no `replace`, so it locates and writes nothing.
+      compactReply(answerEditor(null, { kind: "snippet", value: "return 1;" })),
+      compactReply(answerEditor("return 2;", { kind: "snippet", value: "return 1;" })),
+    ]);
+    const result = await runLoop({
+      cwd: dir,
+      issue: "make the answer test pass",
+      provider,
+      protocolFormat: "compact",
+      checkCommand: TSC,
+      testCommand: ["bun", "test"],
+    });
+    expect(result.ok).toBe(true);
+    const viewer = result.records.find((record) => record.outcome === "viewer");
+    expect(viewer).toBeDefined();
+    expect(viewer?.replacement).toBeNull();
+    // The viewer's occurrences ride into the following edit prompt.
+    const nextPrompt = provider.calls[2]?.at(-1)?.content ?? "";
+    expect(nextPrompt).toContain("Located occurrences (viewer clauses write nothing):");
+    expect(nextPrompt).toContain("src/helper.ts:2:3");
+    // The subsequent JSON edit still applies on the same run.
+    expect(helperSource(dir)).toContain("return 2;");
+  }, 30000);
+
+  test("under compact a malformed regex is classified as regex-invalid at the matcher stage", async () => {
+    const dir = fixtureDir();
+    const provider = new ScriptedProvider([
+      selectionResponse(),
+      compactReply(answerEditor("return 2;", { kind: "regex", value: "(" })),
+      compactReply(answerEditor("return 2;", { kind: "snippet", value: "return 1;" })),
+    ]);
+    const result = await runLoop({
+      cwd: dir,
+      issue: "make the answer test pass",
+      provider,
+      protocolFormat: "compact",
+      checkCommand: TSC,
+      testCommand: ["bun", "test"],
+    });
+    expect(result.ok).toBe(true);
+    const rejected = result.records.find((record) => record.outcome === "matcher");
+    expect(rejected?.cause).toBe("regex-invalid");
+    expect(rejected?.diagnostics).toContain("stage: compact");
+  }, 30000);
+
+  // A compact clause over a `pair.ts` declaration, for the multi-clause §6
+  // non-atomic application tests below.
+  function pairEditor(
+    symbol: string,
+    replacement: string,
+    matcher: CompactSelection["matcher"],
+  ): CompactSelection {
+    return {
+      locator: { path: "src/pair.ts", name: symbol, kind: "function" },
+      matcher,
+      pick: null,
+      replacement,
+    };
+  }
+
+  test("a multi-clause reply with one no-op clause applies the others and records the applied list", async () => {
+    const dir = sameFileFixtureDir();
+    const provider = new ScriptedProvider([
+      selectionResponse({ path: "src/pair.ts", symbol: "one", kind: "function" }),
+      compactReply(
+        // Clause 1 applies `one`'s fix.
+        pairEditor("one", "return 2;", { kind: "snippet", value: "return 1;" }),
+        // Clause 2 changes nothing: its replacement equals the matched source.
+        pairEditor("two", "return 1;", { kind: "snippet", value: "return 1;" }),
+      ),
+      // The rejection's §7 feedback lists the applied clause, so the model
+      // retries only the remaining work; the run completes without a storm.
+      compactReply(pairEditor("two", "return 3;", { kind: "snippet", value: "return 1;" })),
+    ]);
+    const result = await runLoop({
+      cwd: dir,
+      issue: "make both declarations satisfy the pair test",
+      provider,
+      protocolFormat: "compact",
+      checkCommand: TSC,
+      testCommand: ["bun", "test"],
+    });
+    expect(result.ok).toBe(true);
+    const source = pairSource(dir);
+    // Clause 1's write persisted even though clause 2 failed.
+    expect(source).toContain("return 2;");
+    expect(source).toContain("return 3;");
+    const rejected = result.records.find(
+      (record) => record.kind === "exchange" && record.outcome === "no-op",
+    );
+    expect(rejected).toBeDefined();
+    // Every failed clause is named...
+    expect(rejected?.diagnostics).toContain("clause 2 of 2");
+    expect(rejected?.diagnostics).toContain("stage: no-op");
+    // ...and the applied clause is listed so it is not resent.
+    expect(rejected?.diagnostics).toContain("already applied (do not resend):");
+    expect(rejected?.diagnostics).toContain("clause 1 of 2");
+    // Only the applied clause is recorded in the metrics.
+    expect(rejected?.stages).toEqual(["match"]);
+  }, 30000);
+
+  test("two overlapping compact clauses apply the earlier and report the later as an overlap", async () => {
+    const dir = sameFileFixtureDir();
+    const provider = new ScriptedProvider([
+      selectionResponse({ path: "src/pair.ts", symbol: "one", kind: "function" }),
+      compactReply(
+        // Both clauses resolve to the same `return 1;` span in `one`.
+        pairEditor("one", "return 2;", { kind: "snippet", value: "return 1;" }),
+        pairEditor("one", "return 9;", { kind: "snippet", value: "return 1;" }),
+      ),
+      compactReply(pairEditor("two", "return 3;", { kind: "snippet", value: "return 1;" })),
+    ]);
+    const result = await runLoop({
+      cwd: dir,
+      issue: "make both declarations satisfy the pair test",
+      provider,
+      protocolFormat: "compact",
+      checkCommand: TSC,
+      testCommand: ["bun", "test"],
+    });
+    expect(result.ok).toBe(true);
+    const source = pairSource(dir);
+    // The earlier clause won; the later's `return 9;` never reached the file.
+    expect(source).toContain("return 2;");
+    expect(source).not.toContain("return 9;");
+    expect(source).toContain("return 3;");
+    const rejected = result.records.find((record) => record.cause === "multi-duplicate");
+    expect(rejected).toBeDefined();
+    expect(rejected?.diagnostics).toContain("overlap");
+    expect(rejected?.diagnostics).toContain("clause 1");
+    expect(rejected?.diagnostics).toContain("clause 2");
+    expect(rejected?.diagnostics).toContain("earlier clause wins");
+  }, 30000);
+
+  test("with the compact format the create prompts teach the compact create form", () => {
+    const addressJson = '{"path":"src/new.ts","symbol":"make","kind":"function"}';
+    const create = buildCreatePrompt(addressJson, "src/new.ts", "compact");
+    expect(create).toContain("A reply is one or more `select … end` clauses");
+    expect(create).toContain("does not take `match` or `pick`");
+    expect(create).toContain("appends the COMPLETE declaration");
+    expect(create).toContain("select function f in src/x.ts");
+    expect(create).not.toContain('Output ONE flat JSON object');
+    const retry = buildRetryPrompt({
+      exchangeNumber: 2,
+      maxExchanges: 3,
+      mode: "create",
+      locatorJson: '{"mode":"create","path":"src/new.ts","symbol":"make","kind":"function"}',
+      currentSource: "",
+      diagnostics: "boom",
+      failure: "verification",
+      repin: false,
+      protocolFormat: "compact",
+    });
+    expect(retry).toContain("does not take `match` or `pick`");
+    expect(retry).toContain("select function f in src/x.ts");
+    expect(retry).not.toContain('Output ONLY one flat JSON object {"path": ..., "symbol": ..., "kind": ..., "replacement": ...}');
+  });
+
+  test("under json the create prompts stay the JSON form", () => {
+    const addressJson = '{"path":"src/new.ts","symbol":"make","kind":"function"}';
+    const create = buildCreatePrompt(addressJson, "src/new.ts");
+    expect(create).toContain('Output ONE flat JSON object');
+    expect(create).toContain('omit "matcher" and "range"');
+    expect(create).not.toContain("does not take `match` or `pick`");
+    const retry = buildRetryPrompt({
+      exchangeNumber: 2,
+      maxExchanges: 3,
+      mode: "create",
+      locatorJson: '{"mode":"create","path":"src/new.ts","symbol":"make","kind":"function"}',
+      currentSource: "",
+      diagnostics: "boom",
+      failure: "verification",
+      repin: false,
+    });
+    expect(retry).toContain('omit "matcher" and "range"');
+    expect(retry).not.toContain("does not take `match` or `pick`");
+  });
+
+  // A whole-declaration compact editor for `path`/`symbol`, used by the
+  // implicit-create tests below.
+  function createEditor(
+    path: string,
+    symbol: string,
+    kind: string,
+    body: string,
+  ): CompactSelection {
+    return { locator: { path, name: symbol, kind }, matcher: null, pick: null, replacement: body };
+  }
+
+  test("under compact an undeclared whole-declaration clause creates the file", async () => {
+    const dir = fixtureDir();
+    const provider = new ScriptedProvider([
+      selectionResponse(),
+      compactReply(
+        createEditor(
+          "src/extra.ts",
+          "extra",
+          "function",
+          "export function extra(): number {\n  return 1;\n}",
+        ),
+      ),
+      compactReply(answerEditor("return 2;", { kind: "snippet", value: "return 1;" })),
+    ]);
+    const result = await runLoop({
+      cwd: dir,
+      issue: "add an extra declaration",
+      provider,
+      protocolFormat: "compact",
+      checkCommand: TSC,
+      testCommand: ["bun", "test"],
+    });
+    expect(result.ok).toBe(true);
+    // The create appended to a file that did not exist, creating src/extra.ts.
+    const created = readFileSync(join(dir, "src", "extra.ts"), "utf8");
+    expect(created).toContain("export function extra");
+    expect(created).toContain("return 1;");
+    expect(helperSource(dir)).toContain("return 2;");
+    const applied = result.records.find((record) => record.outcome === "applied");
+    // The create resolves at the whole-symbol stage with no matcher, and the
+    // #110 instrumentation counts it as a create clause.
+    expect(applied?.stages).toEqual(["whole-symbol"]);
+    expect(applied?.matcherKinds).toEqual([null]);
+    expect(applied?.creates).toBe(1);
+  }, 30000);
+
+  test("under compact a no-kind undeclared clause still creates", async () => {
+    const dir = fixtureDir();
+    const provider = new ScriptedProvider([
+      selectionResponse(),
+      compactReply(
+        // No `kind`: `select extra in src/extra.ts` must still create.
+        createEditor(
+          "src/extra.ts",
+          "extra",
+          "",
+          "export function extra(): number {\n  return 1;\n}",
+        ),
+      ),
+      compactReply(answerEditor("return 2;", { kind: "snippet", value: "return 1;" })),
+    ]);
+    const result = await runLoop({
+      cwd: dir,
+      issue: "add an extra declaration",
+      provider,
+      protocolFormat: "compact",
+      checkCommand: TSC,
+      testCommand: ["bun", "test"],
+    });
+    expect(result.ok).toBe(true);
+    expect(readFileSync(join(dir, "src", "extra.ts"), "utf8")).toContain("export function extra");
+    expect(helperSource(dir)).toContain("return 2;");
+  }, 30000);
+
+  test("under compact a no-kind clause whose name exists is not a create", async () => {
+    const dir = fixtureDir();
+    const provider = new ScriptedProvider([
+      selectionResponse(),
+      compactReply(
+        // `answer` exists as a function; a no-kind locator does not match it,
+        // but the name is not undeclared, so this is an address failure, not a
+        // create.
+        createEditor(
+          "src/helper.ts",
+          "answer",
+          "",
+          "export function answer(): number {\n  return 2;\n}",
+        ),
+      ),
+      compactReply(answerEditor("return 2;", { kind: "snippet", value: "return 1;" })),
+    ]);
+    const result = await runLoop({
+      cwd: dir,
+      issue: "make the answer test pass",
+      provider,
+      protocolFormat: "compact",
+      checkCommand: TSC,
+      testCommand: ["bun", "test"],
+    });
+    expect(result.ok).toBe(true);
+    const rejected = result.records.find(
+      (record) => record.kind === "exchange" && record.outcome === "address",
+    );
+    expect(rejected).toBeDefined();
+    // The undeclared name is not reported: the name exists under a kind.
+    expect(rejected?.diagnostics).toContain("stage: address");
+  }, 30000);
+
+  test("under compact a create that duplicates an existing declaration is rejected", async () => {
+    const dir = fixtureDir();
+    const provider = new ScriptedProvider([
+      selectionResponse(),
+      compactReply(
+        createEditor(
+          "src/helper.ts",
+          "missing",
+          "function",
+          "export function answer(): number {\n  return 2;\n}",
+        ),
+      ),
+      compactReply(answerEditor("return 2;", { kind: "snippet", value: "return 1;" })),
+    ]);
+    const result = await runLoop({
+      cwd: dir,
+      issue: "make the answer test pass",
+      provider,
+      protocolFormat: "compact",
+      checkCommand: TSC,
+      testCommand: ["bun", "test"],
+    });
+    expect(result.ok).toBe(true);
+    const rejected = result.records.find(
+      (record) => record.kind === "exchange" && record.outcome === "duplicate",
+    );
+    expect(rejected).toBeDefined();
+    expect(rejected?.diagnostics).toContain("stage: duplicate");
+    expect(rejected?.diagnostics).toContain("answer");
+  }, 30000);
+
+  test("under compact a create lists the created clause under a distinct resend line", async () => {
+    const dir = fixtureDir();
+    const provider = new ScriptedProvider([
+      selectionResponse(),
+      compactReply(
+        // Clause 1 creates a new file and applies; clause 2 names an undeclared
+        // symbol with a `match`, so it keeps the address failure (not a create).
+        createEditor(
+          "src/extra.ts",
+          "extra",
+          "function",
+          "export function extra(): number {\n  return 1;\n}",
+        ),
+        {
+          locator: { path: "src/helper.ts", name: "nope", kind: "function" },
+          matcher: { kind: "snippet", value: "return 1;" },
+          pick: null,
+          replacement: "return 5;",
+        },
+      ),
+      compactReply(answerEditor("return 2;", { kind: "snippet", value: "return 1;" })),
+    ]);
+    const result = await runLoop({
+      cwd: dir,
+      issue: "make the answer test pass",
+      provider,
+      protocolFormat: "compact",
+      checkCommand: TSC,
+      testCommand: ["bun", "test"],
+    });
+    expect(result.ok).toBe(true);
+    expect(readFileSync(join(dir, "src", "extra.ts"), "utf8")).toContain("export function extra");
+    const rejected = result.records.find(
+      (record) => record.kind === "exchange" && record.diagnostics?.includes("created (do not resend):"),
+    );
+    expect(rejected).toBeDefined();
+    expect(rejected?.diagnostics).toContain("created (do not resend):");
+    expect(rejected?.diagnostics).toContain("clause 1 of 2");
+  }, 30000);
+
+  test("under json an undeclared whole-declaration clause is still a protocol failure", async () => {
+    const dir = fixtureDir();
+    const provider = new ScriptedProvider([
+      selectionResponse(),
+      compactReply(
+        createEditor(
+          "src/extra.ts",
+          "extra",
+          "function",
+          "export function extra(): number {\n  return 1;\n}",
+        ),
+      ),
+      editResponse("return 1;", "return 2;"),
+    ]);
+    const result = await runLoop({
+      cwd: dir,
+      issue: "make the answer test pass",
+      provider,
+      checkCommand: TSC,
+      testCommand: ["bun", "test"],
+    });
+    expect(result.ok).toBe(true);
+    // Under json, the compact reply is not understood: no file is created.
+    expect(existsSync(join(dir, "src", "extra.ts"))).toBe(false);
+    const rejected = result.records.find((record) => record.outcome === "protocol");
+    expect(rejected?.diagnostics).toContain("stage: protocol");
+    expect(helperSource(dir)).toContain("return 2;");
+  }, 30000);
+
+  test("under compact the system prompt teaches select … end and drops the JSON edit rule", () => {
+    const prompt = buildSystemPrompt(false, "compact");
+    // The compact edit rule and its create/delete semantics replace the JSON rule.
+    expect(prompt).toContain("select [kind] <symbol> in <path>");
+    expect(prompt).toContain("a clause that stops before `replace` is a viewer");
+    expect(prompt).toContain("A bare `select … replace with … end` with no `match` rewrites the whole declaration");
+    expect(prompt).toContain("an empty fence deletes it");
+    expect(prompt).toContain("no JSON edit payload");
+    expect(prompt).toContain("naming it in the clause's own `select`");
+    // The target-selection paragraph (the JSON pick turn) is unchanged.
+    expect(prompt).toContain(
+      '{"mode": "modify", "path": ..., "symbol": ..., "kind": ...}',
+    );
+    // The JSON edit rule and create/delete paragraphs are gone.
+    expect(prompt).not.toContain(
+      "Then you will be asked to edit the selected symbol. Reply with ONLY one flat JSON object",
+    );
+    expect(prompt).not.toContain('A "create" selection asks for the COMPLETE declaration in "replacement"');
+    expect(prompt).not.toContain('{"payloads": [{"path": ...');
+  });
+
+  test("buildSystemPrompt defaults to its json rendering", () => {
+    const json = buildSystemPrompt(false, "json");
+    expect(buildSystemPrompt(false)).toBe(json);
+    expect(buildSystemPrompt(true)).toBe(buildSystemPrompt(true, "json"));
+    expect(json).toContain(
+      "Then you will be asked to edit the selected symbol. Reply with ONLY one flat JSON object",
+    );
+    expect(json).not.toContain("select [kind] <symbol> in <path>");
+  });
+
+  test("under json the system prompt is byte-identical to the pre-#119 string", () => {
+    const expected = [
+      "You are a TypeScript coding agent.",
+      "",
+      'First you will be asked to select the target. Reply with ONLY a JSON object {"mode": "modify", "path": ..., "symbol": ..., "kind": ...}: "mode" is "modify" (default), "create", or "delete"; the composite address {path, symbol, kind} must all match the symbol index exactly and "kind" is required.',
+      "",
+      'Then you will be asked to edit the selected symbol. Reply with ONLY one flat JSON object {"path": ..., "symbol": ..., "kind": ..., "matcher": ..., "replacement": ...}: the address {path, symbol, kind} must echo the pinned selection (a verification-repair round may re-pin to another declaration in the same file), and the optional "matcher" is a complete snippet copied from the current source that is structurally matched inside the symbol (omit it for a whole-symbol rewrite). As an alternative to "matcher", an optional "range" {line, column, endLine, endColumn} addresses the span by 1-based inclusive positions relative to the numbered current-source block shown in the prompt (the range must sit inside the declaration; when both are sent "range" wins). The replacement is a drop-in for the addressed range: keep leading keywords and modifiers consistent (do not re-add `export` the declaration omitted). Keep the same declaration kind and name unless the task requires otherwise. At most one matcher or range per response; multiple changes happen across edit rounds. No markdown fences and no explanations.',
+      "",
+      'A "create" selection asks for the COMPLETE declaration in "replacement"; the harness appends it to the target file, creating the file and any parent directories when needed. A "delete" selection carries no edit payload: the harness removes the declaration. To remove only part of a declaration, use "modify" with an empty "replacement". The syntax gate discards any edit that leaves the file unparseable and writes nothing.',
+      "",
+      "A round allows at most 3 exchanges: picking the target, writing the edit, and re-asking after a rejected edit share that budget. When an edit verifies, the run is done; when verification fails, the next round shows the current source and the failing diagnostics, and it may either revise the pinned declaration or re-pin to a different declaration in the same file by returning that declaration's own {path, symbol, kind} (the new address must resolve uniquely in the current source). A round that exhausts its 3 exchanges without a valid edit continues through a continuation prompt: reply `STOP` to end the run, or return a corrected edit (or, when no target is pinned, a corrected selection) to open a fresh round with a new 3-exchange budget; the run is capped at 32 rounds, after which it ends with the failure summary.",
+      "",
+    ].join("\n");
+    expect(buildSystemPrompt(false)).toBe(expected);
+    expect(buildSystemPrompt(false, "json")).toBe(expected);
+    // The multi-payload variant keeps its own paragraph and the json body.
+    expect(buildSystemPrompt(true, "json")).toContain("multi-payload protocol");
+    expect(expected).not.toContain("multi-payload protocol");
+  });
+
+  test("under compact the edit prompt carries the expanded few-shot examples", () => {
+    const edit = buildEditPrompt(
+      '{"path":"src/a.ts","symbol":"make","kind":"function"}',
+      "const x = 1;\n",
+      false,
+      "compact",
+    );
+    expect(edit).toContain("A reply is one or more `select … end` clauses");
+    // The four pre-#117 forms remain.
+    expect(edit).toContain("select function f in src/x.ts");
+    expect(edit).toContain("select const MAX_TOKENS in src/x.ts");
+    expect(edit).toContain("pick 12:3-12:12");
+    expect(edit).toContain("select function clamp in src/x.ts");
+    // #117 adds the create and the viewer-then-editor forms, labelled apart.
+    expect(edit).toContain("5. Create:");
+    expect(edit).toContain("select function make in src/new.ts");
+    expect(edit).toContain("6. Viewer then editor:");
+    expect(edit).toContain("select function parse in src/x.ts");
+  });
+
+  test("under compact a JSON edit payload is a protocol rejection and a compact reply is accepted", async () => {
+    const dir = fixtureDir();
+    const provider = new ScriptedProvider([
+      selectionResponse(),
+      // A structurally valid JSON edit payload: compact rejects it outright.
+      editResponse("return 1;", "return 2;"),
+      // The required compact form lands on the next exchange.
+      compactReply(answerEditor("return 2;", { kind: "snippet", value: "return 1;" })),
+    ]);
+    const result = await runLoop({
+      cwd: dir,
+      issue: "make the answer test pass",
+      provider,
+      protocolFormat: "compact",
+      checkCommand: TSC,
+      testCommand: ["bun", "test"],
+    });
+    expect(result.ok).toBe(true);
+    expect(helperSource(dir)).toContain("return 2;");
+    // The system prompt the run sent teaches the compact form (call-site wiring).
+    const system = provider.calls[0]?.[0]?.content ?? "";
+    expect(system).toContain("select [kind] <symbol> in <path>");
+    expect(system).not.toContain(
+      "Then you will be asked to edit the selected symbol. Reply with ONLY one flat JSON object",
+    );
+    // The JSON payload is the rejected protocol exchange; the compact reply applies.
+    const rejected = result.records.find((record) => record.outcome === "protocol");
+    expect(rejected?.diagnostics).toContain("stage: protocol");
+    expect(rejected?.diagnostics).toContain("select … end");
+    expect(rejected?.diagnostics).toContain("JSON edit payload is not accepted");
+    const applied = result.records.find((record) => record.outcome === "applied");
+    expect(applied?.stages).toEqual(["match"]);
+  }, 30000);
+
+  test("under compact a malformed reply is a protocol rejection (no JSON fallback)", async () => {
+    const dir = fixtureDir();
+    const provider = new ScriptedProvider([
+      selectionResponse(),
+      "not a clause and not JSON",
+      compactReply(answerEditor("return 2;", { kind: "snippet", value: "return 1;" })),
+    ]);
+    const result = await runLoop({
+      cwd: dir,
+      issue: "make the answer test pass",
+      provider,
+      protocolFormat: "compact",
+      checkCommand: TSC,
+      testCommand: ["bun", "test"],
+    });
+    expect(result.ok).toBe(true);
+    const rejected = result.records.find((record) => record.outcome === "protocol");
+    expect(rejected?.diagnostics).toContain("select … end");
+    expect(helperSource(dir)).toContain("return 2;");
+  }, 30000);
+});
+
+// A parseable file large enough (> SPEC_FILE_LIMIT / 2) that mixes a type alias,
+// an interface, many filler functions, and the two value declarations a
+// diagnostic could name.
+function shrinkFixtureSource(): string {
+  const parts = [
+    "export type LispValue = number | string | LispValue[] | null;",
+    "export interface Env {\n  vars: string[];\n}",
+  ];
+  for (let i = 0; i < 120; i += 1) {
+    parts.push(`export function filler${i}(x: number): number {\n  return x + ${i};\n}`);
+  }
+  parts.push("export function isClosure(v: LispValue): boolean {\n  return Array.isArray(v);\n}");
+  parts.push("export function other(): number {\n  return 0;\n}");
+  parts.push("export const LAST = 1;");
+  return `${parts.join("\n\n")}\n`;
+}
+
+describe("repair-context shrink", () => {
+  const FLAG = "TC_REPAIR_CONTEXT_SHRINK";
+  const previous = process.env[FLAG];
+  afterEach(() => {
+    if (previous === undefined) {
+      delete process.env[FLAG];
+    } else {
+      process.env[FLAG] = previous;
+    }
+  });
+
+  function setFlag(value: string | undefined): void {
+    if (value === undefined) {
+      delete process.env[FLAG];
+    } else {
+      process.env[FLAG] = value;
+    }
+  }
+
+  const PATH = "src/lisp.ts";
+  const source = shrinkFixtureSource();
+  const diagnostics =
+    "src/lisp.ts(520,3): error TS2322: Type 'string' is not assignable to type 'number' " +
+    "— in declaration `isClosure` (function)\n" +
+    "src/lisp.ts(523,3): error TS2322: Type 'string' is not assignable to type 'number' " +
+    "— in declaration `other` (function)";
+
+  test("the toggle defaults off and only on/1/true enable it", () => {
+    for (const off of [undefined, "", "  ", "off", "0", "no", "false", "ONN"]) {
+      setFlag(off);
+      expect(repairContextShrinkEnabled()).toBe(false);
+    }
+    for (const on of ["on", "1", "true", "  ON ", "\tTrue\n"]) {
+      setFlag(on);
+      expect(repairContextShrinkEnabled()).toBe(true);
+    }
+  });
+
+  test("keeps the pinned, diagnostic-named, and type-level declarations and omits the rest", () => {
+    const shrunk = shrinkRepairSource(
+      PATH,
+      source,
+      { path: PATH, name: "isClosure", kind: "function" },
+      diagnostics,
+    );
+    expect(shrunk).not.toBeNull();
+    const view = shrunk ?? "";
+    // Pinned and diagnostic-named value declarations are kept.
+    expect(view).toContain("function isClosure");
+    expect(view).toContain("return Array.isArray(v);");
+    expect(view).toContain("function other");
+    // Every type-level declaration is kept even though the diagnostics never name it.
+    expect(view).toContain("type LispValue = number | string");
+    expect(view).toContain("interface Env");
+    // The omitted declarations are named in the marker and their bodies are gone.
+    expect(view).toContain("[omitted:");
+    expect(view).toContain("filler0");
+    expect(view).toContain("filler119");
+    expect(view).not.toContain("return x + 50;");
+    expect(view).not.toContain("export const LAST = 1;");
+    // Not every gap carries a name (e.g. the blank line between two type decls).
+    expect(view).toContain("[1 lines omitted]");
+  });
+
+  test("prefixes each kept declaration with its original 1-based file line number", () => {
+    const shrunk = shrinkRepairSource(
+      PATH,
+      source,
+      { path: PATH, name: "isClosure", kind: "function" },
+      diagnostics,
+    );
+    expect(shrunk).not.toBeNull();
+    const view = shrunk ?? "";
+    // The pinned declaration's rendered first line must carry its real file line.
+    const realLine = source.slice(0, source.indexOf("function isClosure")).split("\n").length;
+    const rendered = view.split("\n").find((line) => line.includes("function isClosure")) ?? "";
+    const extracted = Number(rendered.slice(0, rendered.indexOf(" | ")).trim());
+    expect(extracted).toBe(realLine);
+  });
+
+  test("falls back to the whole file when the source does not parse or is small", () => {
+    const locator = { path: PATH, name: "isClosure", kind: "function" };
+    expect(shrinkRepairSource(PATH, "const x = 1;\n", locator, diagnostics)).toBeNull();
+    // Over the size floor but unparseable.
+    const broken = `export function broken( { ${"x".repeat(SPEC_FILE_LIMIT)}`;
+    expect(shrinkRepairSource(PATH, broken, locator, diagnostics)).toBeNull();
+  });
+
+  test("still returns a view when the pin does not resolve but names and types exist", () => {
+    const shrunk = shrinkRepairSource(
+      PATH,
+      source,
+      { path: PATH, name: "doesNotExist", kind: "function" },
+      diagnostics,
+    );
+    expect(shrunk).not.toBeNull();
+    const view = shrunk ?? "";
+    expect(view).toContain("function isClosure");
+    expect(view).toContain("type LispValue");
+    // The unresolved pin is not invented.
+    expect(view).not.toContain("doesNotExist");
+    // With no pin, no named declaration, and no type-level declaration, the
+    // partial view would hide everything, so the whole file stands.
+    const bare = `export const only = 1;\n${"// pad\n".repeat(SPEC_FILE_LIMIT / 4)}`;
+    expect(
+      shrinkRepairSource(PATH, bare, { path: PATH, name: "nope", kind: "function" }, "boom"),
+    ).toBeNull();
+  });
+
+  test("with the toggle off the create→repair retry prompt is byte-identical to the pre-change string", () => {
+    const TICK = "\u0060";
+    const locatorJson = '{"mode":"modify","path":"src/generated.ts","symbol":"make","kind":"function"}';
+    const currentSource = 'export function make(): number {\n  return "no";\n}';
+    const promptDiagnostics =
+      "src/generated.ts(3,3): error TS2322: Type 'string' is not assignable to type 'number' " +
+      `— in declaration ${TICK}make${TICK} (function)`;
+    const numbered = numberedSourceBlock(currentSource);
+    const modifierNote = "A leading `export` matching the declaration's existing modifier is accepted.";
+    const modifyLead = "Make minimal corrective changes to the current source below.";
+    const status =
+      "Edit exchange 1 of 3 failed verification. 2 exchange(s) remain in this iteration. ";
+    const instruction = `${modifyLead} ${status}Output ONLY one flat JSON object {"path": ..., "symbol": ..., "kind": ..., "matcher": ..., "replacement": ...}: echo the pinned selection in the address. "matcher" is optional: a snippet copied from the current source, or omit it for a whole-symbol rewrite; "replacement" replaces the matched range (empty removes it). ${RANGE_SELECTOR_NOTE} ${modifierNote} No markdown fences and no explanations.`;
+    const expected = [
+      instruction,
+      "",
+      SELF_CHECK_OFFER,
+      "",
+      "Pinned selection:",
+      "",
+      `${TICK}${TICK}${TICK}json`,
+      locatorJson,
+      `${TICK}${TICK}${TICK}`,
+      "",
+      "Current source:",
+      "",
+      `Each line below is prefixed with its 1-based line number (the optional "range" coordinates; columns count the source text after the ${TICK}N | ${TICK} prefix).`,
+      "",
+      `${TICK}${TICK}${TICK}ts`,
+      numbered,
+      `${TICK}${TICK}${TICK}`,
+      "",
+      "Diagnostics:",
+      "",
+      `${TICK}${TICK}${TICK}`,
+      promptDiagnostics,
+      `${TICK}${TICK}${TICK}`,
+      "",
+    ].join("\n");
+    const input: RetryPromptInput = {
+      exchangeNumber: 1,
+      maxExchanges: 3,
+      mode: "modify",
+      locatorJson,
+      currentSource,
+      diagnostics: promptDiagnostics,
+      failure: "verification",
+      repin: false,
+    };
+    // The flag never reaches buildRetryPrompt directly; off keeps the exact
+    // whole-file prompt, and on without a pre-rendered block is unchanged too.
+    for (const off of [undefined, "", "off", "0", "false"]) {
+      setFlag(off);
+      expect(buildRetryPrompt(input)).toBe(expected);
+    }
+    setFlag("on");
+    expect(buildRetryPrompt(input)).toBe(expected);
+  });
+
+  test("with the toggle on a supplied pre-rendered block replaces the source and fixes the note", () => {
+    const preRendered = " 12 | function isClosure(v: LispValue): boolean {\n// … [omitted: filler0] …";
+    const prompt = buildRetryPrompt({
+      exchangeNumber: 1,
+      maxExchanges: 3,
+      mode: "modify",
+      locatorJson: '{"mode":"modify","path":"src/lisp.ts","symbol":"isClosure","kind":"function"}',
+      currentSource: source,
+      preRenderedSource: preRendered,
+      diagnostics,
+      failure: "verification",
+      repin: true,
+    });
+    expect(prompt).toContain(preRendered);
+    expect(prompt).toContain(
+      "Each line below carries its ORIGINAL 1-based file line number",
+    );
+    expect(prompt).not.toContain(
+      'Each line below is prefixed with its 1-based line number (the optional "range" coordinates',
+    );
+    // The whole-file bodies are not re-sent alongside the partial view.
+    expect(prompt).not.toContain("return x + 50;");
+  });
+
+  test("buildContinuationPrompt forwards the pre-rendered block", () => {
+    const preRendered = "  1 | type LispValue = number;";
+    const prompt = buildContinuationPrompt({
+      round: 1,
+      maxRounds: 32,
+      mode: "modify",
+      locatorJson: '{"mode":"modify","path":"src/lisp.ts","symbol":"isClosure","kind":"function"}',
+      currentSource: source,
+      preRenderedSource: preRendered,
+      diagnostics,
+      repin: true,
+    });
+    expect(prompt).toContain(preRendered);
+    expect(prompt).toContain("Each line below carries its ORIGINAL 1-based file line number");
+    expect(prompt).not.toContain("return x + 50;");
+  });
+
+  test("a create→repair run shrinks the repair prompt only when the toggle is on", async () => {
+    const makeAddress = { path: "src/generated.ts", symbol: "make", kind: "function" };
+    const badReplacement = 'export function make(): number {\n  return "no";\n}';
+    const runOnce = async (setting: string | undefined): Promise<string> => {
+      setFlag(setting);
+      const dir = passingFixtureDir();
+      const large: string[] = [
+        "export type LispValue = number | string | LispValue[] | null;",
+      ];
+      for (let i = 0; i < 120; i += 1) {
+        large.push(`export function filler${i}(x: number): number {\n  return x + ${i};\n}`);
+      }
+      writeFileSync(join(dir, "src", "generated.ts"), `${large.join("\n\n")}\n`);
+      const provider = new ScriptedProvider([
+        selectionResponse(makeAddress, "create"),
+        createResponse(makeAddress, badReplacement),
+        editResponse('return "no";', "return 7;", makeAddress),
+      ]);
+      const result = await runLoop({
+        cwd: dir,
+        issue: "create a generated module",
+        provider,
+        checkCommand: TSC,
+        testCommand: ["bun", "test"],
+      });
+      expect(result.ok).toBe(true);
+      return provider.calls[2]?.at(-1)?.content ?? "";
+    };
+
+    const off = await runOnce(undefined);
+    // Off: the whole kept file, so a filler body is present.
+    expect(off).toContain("return x + 119;");
+    expect(off).not.toContain("[omitted:");
+
+    const on = await runOnce("on");
+    // On: the partial view drops the fillers and marks the omission.
+    expect(on).toContain("[omitted:");
+    expect(on).toContain("type LispValue = number | string");
+    expect(on).toContain("function make");
+    expect(on).not.toContain("return x + 119;");
+    expect(on).toContain("Each line below carries its ORIGINAL 1-based file line number");
+  }, 60000);
 });

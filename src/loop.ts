@@ -10,6 +10,13 @@ import {
 import { basename, dirname, isAbsolute, join, relative, resolve, sep } from "node:path";
 import { applyMatcherSplice, extractJsonObject, findMatcher, stripCodeFences } from "./matcher";
 import type { MatcherResult } from "./matcher";
+import { parseSelection, serializeSelections, SelectionSyntaxError } from "./selection";
+import type { Selection as CompactSelection } from "./selection";
+import {
+  renderViewerFeedback,
+  resolveCompactReply,
+} from "./compact";
+import type { CompactFailure, CompactRegion, CompactResolution, CompactViewer } from "./compact";
 import { formatSource } from "./editor";
 import { LexError } from "./lexer";
 import { ParseError, Parser } from "./parser";
@@ -26,6 +33,7 @@ import type {
   ToolDefinition,
 } from "./openai";
 import type { Expression, Node, Program, Statement } from "./parser";
+import type { SelectionStage } from "./cascade";
 import type { CheckDiagnostic, CommandResult } from "./tools";
 import type {
   IndexEntry,
@@ -162,7 +170,28 @@ export function buildContextYaml(files: SourceFile[], build?: TolerantIndex): st
 const MULTI_PAYLOAD_SYSTEM_PARAGRAPH =
   'The multi-payload protocol is enabled: one edit reply may instead carry several edits as {"payloads": [{"path": ..., "symbol": ..., "kind": ..., "matcher": ..., "replacement": ...}, ...]} — different files and/or several non-overlapping regions of one file. The first entry echoes the pinned selection exactly, and every other entry names its own declaration (it must resolve uniquely in its file). Same-file entries must address non-overlapping regions; overlapping regions reject the exchange. The exchange applies atomically: if any entry fails its own guard or two same-file entries overlap, nothing is written and the exchange is rejected naming every failing entry\'s cause. A single edit may still be sent as one flat object, and "create"/"delete" selections never batch.';
 
-export function buildSystemPrompt(multiPayload = false): string {
+// #119 compact protocol (`--protocol-format=compact`, formerly the #117 forced
+// mode): the system prompt teaches `select … end` clauses in place of the JSON
+// edit rule, so the edit reply must be compact (a JSON edit payload is
+// rejected). The target-selection paragraph and the JSON pick turn stay
+// unchanged; the `json` format never uses these paragraphs.
+const COMPACT_EDIT_SYSTEM_PARAGRAPH =
+  "Then you will be asked to edit the selected symbol. Reply with ONLY one or more `select … end` clauses: `select [kind] <symbol> in <path> [ match (<snippet> | /regex/) [ pick <range> ] ] [ replace with <fence> ] end`. Clauses apply in document order and independently; a clause that stops before `replace` is a viewer that locates and writes nothing. `match` locates a span inside the named declaration (narrow a tie with `pick <range>`, whose coordinates are the 1-based file-absolute positions of the numbered current-source block), and `replace with <fence>` rewrites the target. A bare `select … replace with … end` with no `match` rewrites the whole declaration; an empty fence deletes it. Keep the same declaration kind and name unless the task requires otherwise. No markdown fences and no explanations, and no JSON edit payload — it is rejected.";
+const COMPACT_CREATE_DELETE_SYSTEM_PARAGRAPH =
+  'A "create" selection asks for the COMPLETE declaration in the fence; the harness appends it to the target file as a new top-level declaration, creating the file and any parent directories when needed. A "delete" selection carries no clause: the harness removes the declaration. To remove only part of a declaration, use `match` with an empty fence. The syntax gate discards any clause that leaves the file unparseable and writes nothing; the clauses that resolve apply independently.';
+const COMPACT_ROUNDS_SYSTEM_PARAGRAPH =
+  "A round allows at most 3 exchanges: picking the target, writing the edit, and re-asking after a rejected edit share that budget. When an edit verifies, the run is done; when verification fails, the next round shows the current source and the failing diagnostics, and it may either revise the pinned declaration or re-pin to a different declaration in the same file by naming it in the clause's own `select` (the new address must resolve uniquely in the current source). A round that exhausts its 3 exchanges without a valid edit continues through a continuation prompt: reply `STOP` to end the run, or return a corrected edit (or, when no target is pinned, a corrected selection) to open a fresh round with a new 3-exchange budget; the run is capped at 32 rounds, after which it ends with the failure summary.";
+
+// #119: the protocol failure a compact round returns when the reply is not
+// a `select … end` clause. A JSON edit payload never matches the compact grammar,
+// so it is rejected here too.
+export const COMPACT_FORCE_DIAGNOSTICS =
+  "stage: protocol\nthe reply must be one or more `select … end` clauses; a JSON edit payload is not accepted in this mode";
+
+export function buildSystemPrompt(
+  multiPayload = false,
+  format: ProtocolFormat = "json",
+): string {
   const lines = [
     "You are a TypeScript coding agent.",
     "",
@@ -175,6 +204,14 @@ export function buildSystemPrompt(multiPayload = false): string {
     "A round allows at most 3 exchanges: picking the target, writing the edit, and re-asking after a rejected edit share that budget. When an edit verifies, the run is done; when verification fails, the next round shows the current source and the failing diagnostics, and it may either revise the pinned declaration or re-pin to a different declaration in the same file by returning that declaration's own {path, symbol, kind} (the new address must resolve uniquely in the current source). A round that exhausts its 3 exchanges without a valid edit continues through a continuation prompt: reply `STOP` to end the run, or return a corrected edit (or, when no target is pinned, a corrected selection) to open a fresh round with a new 3-exchange budget; the run is capped at 32 rounds, after which it ends with the failure summary.",
     "",
   ];
+  // #119 the compact format teaches the compact edit rule in place of the JSON
+  // rule; the target-selection paragraph above is unchanged (the pick turn stays
+  // JSON).
+  if (format === "compact") {
+    lines[4] = COMPACT_EDIT_SYSTEM_PARAGRAPH;
+    lines[6] = COMPACT_CREATE_DELETE_SYSTEM_PARAGRAPH;
+    lines[8] = COMPACT_ROUNDS_SYSTEM_PARAGRAPH;
+  }
   if (multiPayload) {
     lines.splice(lines.length - 1, 0, MULTI_PAYLOAD_SYSTEM_PARAGRAPH, "");
   }
@@ -245,43 +282,166 @@ export function numberedSourceBlock(source: string): string {
 }
 
 // The optional `(line,column)` selector offered alongside `matcher` (#72).
-const RANGE_SELECTOR_NOTE =
+export const RANGE_SELECTOR_NOTE =
   'Optionally locate the span by its 1-based inclusive "range" ({line, column, endLine, endColumn}) copied from the numbered current-source lines; when both are sent "range" takes precedence over "matcher".';
 
 // The bounded self-verification offer, added only to repair prompts (#73); the
 // fresh post-pick edit prompt never carries it, so the no-repair path is
 // byte-identical.
-const SELF_CHECK_OFFER =
+export const SELF_CHECK_OFFER =
   'Before editing, you may make at most one bounded self-verification request this round: reply with exactly {"request":"read"} (the pinned file\'s current source), {"request":"check"} (run the task\'s check command), or {"request":"test"} (run the task\'s test command); the harness runs it and returns a bounded result, then asks again.';
+
+// #111: the few-shot examples the fresh edit and modify-retry prompts carry
+// under the compact protocol (`--protocol-format=compact`). They show the §8
+// forms of `docs/edit-protocol.md` — a viewer, a bare declaration replace, a
+// `match` + `pick` disambiguation, a `match` + `replace` rewrite, a create
+// (#117), and a viewer-then-editor multi-clause reply (#117) — built with
+// `serializeSelections` so the grammar stays the single source of truth. Each
+// form is labelled so the examples are unambiguously separate. The block never
+// appears under the `json` format.
+const COMPACT_EXAMPLE_FORMS: { label: string; selections: CompactSelection[] }[] = [
+  {
+    label: "1. Viewer: locates a matched span and writes nothing.",
+    selections: [
+      {
+        locator: { path: "src/x.ts", name: "f", kind: "function" },
+        matcher: { kind: "snippet", value: "Number.isNaN" },
+        pick: null,
+        replacement: null,
+      },
+    ],
+  },
+  {
+    label: "2. Bare declaration replace: no `match` rewrites the whole declaration.",
+    selections: [
+      {
+        locator: { path: "src/x.ts", name: "MAX_TOKENS", kind: "const" },
+        matcher: null,
+        pick: null,
+        replacement: "const MAX_TOKENS = 8192;",
+      },
+    ],
+  },
+  {
+    label: "3. `match` + `pick`: locate the candidates, then disambiguate and edit one.",
+    selections: [
+      {
+        locator: { path: "src/x.ts", name: "tokenize", kind: "function" },
+        matcher: { kind: "regex", value: "^  if \\(" },
+        pick: [{ line: 12, column: 3, endLine: 12, endColumn: 12 }],
+        replacement: "  if (input.length === 0) return [];",
+      },
+    ],
+  },
+  {
+    label: "4. `match` + `replace`: rewrite the matched span inside the declaration.",
+    selections: [
+      {
+        locator: { path: "src/x.ts", name: "clamp", kind: "function" },
+        matcher: { kind: "snippet", value: "Number.isNaN" },
+        pick: null,
+        replacement: "Number.isFinite",
+      },
+    ],
+  },
+  {
+    label:
+      "5. Create: a whole-declaration replace with no `match` appends the declaration when the symbol (or the file) is absent.",
+    selections: [
+      {
+        locator: { path: "src/new.ts", name: "make", kind: "function" },
+        matcher: null,
+        pick: null,
+        replacement: "export function make(): number {\n  return 1;\n}",
+      },
+    ],
+  },
+  {
+    label:
+      "6. Viewer then editor: locate a span in one clause, then edit it in a second clause of the same reply.",
+    selections: [
+      {
+        locator: { path: "src/x.ts", name: "parse", kind: "function" },
+        matcher: { kind: "snippet", value: "return null;" },
+        pick: null,
+        replacement: null,
+      },
+      {
+        locator: { path: "src/x.ts", name: "parse", kind: "function" },
+        matcher: { kind: "snippet", value: "return null;" },
+        pick: null,
+        replacement: "return undefined;",
+      },
+    ],
+  },
+];
+
+// Render the labelled forms with the grammar's own serializer, one blank line
+// apart so the examples read as separate replies.
+function renderCompactExamples(): string {
+  return COMPACT_EXAMPLE_FORMS.map(
+    (form) => `${form.label}\n\n${serializeSelections(form.selections)}`,
+  ).join("\n\n");
+}
+
+/**
+ * The compact edit instruction (#111): replaces the JSON instruction in the
+ * fresh edit prompt and the modify retry prompt under the compact format. It
+ * states the reply shape, the document-order/independent application, and the
+ * viewer semantics, then shows the §8 examples (#117 adds the create and the
+ * viewer-then-editor forms).
+ */
+function compactInstruction(): string {
+  return [
+    "A reply is one or more `select … end` clauses (see the examples below), with no markdown fences and no explanations. Clauses apply in document order and independently; a clause that stops before `replace` is a viewer that writes nothing.",
+    "",
+    "Each clause: `select [kind] <symbol> in <path>` names the declaration; `match <snippet | /regex/>` locates a span inside it (narrow a tie with `pick <range>`); `replace with <fence>` rewrites the target. Omit `match` for a whole-declaration rewrite; use an empty fence to delete. Coordinates are the 1-based file-absolute positions of the numbered source block.",
+    "",
+    "Examples:",
+    "",
+    "```",
+    renderCompactExamples(),
+    "```",
+  ].join("\n");
+}
+
+/**
+ * The compact create instruction (#111): the create-mode counterpart of
+ * `compactInstruction()`. It teaches that a whole-declaration
+ * `select … replace with <fence> end` clause becomes an *append* when the
+ * symbol — or the whole file — is absent, and that such a create clause takes
+ * neither `match` nor `pick`.
+ */
+function compactCreateInstruction(): string {
+  return [
+    'The pinned selection uses mode "create", so reply with a create clause. A whole-declaration `select [kind] <symbol> in <path> replace with <fence> end` clause with a non-empty fence creates the declaration: when the symbol — or the whole file — is absent the harness appends the COMPLETE declaration in the fence as a new top-level declaration, creating the file and its parent directories if needed.',
+    "",
+    "A create clause does not take `match` or `pick`. The replacement must keep the file parseable.",
+    "",
+    compactInstruction(),
+  ].join("\n");
+}
 
 export function buildEditPrompt(
   addressJson: string,
   symbolSource: string,
   multiPayload = false,
+  format: ProtocolFormat = "json",
 ): string {
   const numbered = numberedSourceBlock(symbolSource);
-  if (multiPayload) {
-    return `Output ONE flat JSON object {"path": ..., "symbol": ..., "kind": ..., "matcher": ..., "replacement": ...} for the pinned symbol, or a multi-payload object {"payloads": [ ... ]} that batches edits — different files and/or several non-overlapping regions of one file — with no markdown fences and no explanations.
+  // #111: under the compact format the JSON instruction is replaced with the
+  // clause instruction and its few-shot examples. Under `json` this is exactly
+  // the pre-#111 string.
+  const instruction = format === "compact"
+    ? compactInstruction()
+    : multiPayload
+      ? `Output ONE flat JSON object {"path": ..., "symbol": ..., "kind": ..., "matcher": ..., "replacement": ...} for the pinned symbol, or a multi-payload object {"payloads": [ ... ]} that batches edits — different files and/or several non-overlapping regions of one file — with no markdown fences and no explanations.
 
-The first payload echoes the pinned address {path, symbol, kind}; every further payload names its own declaration, which must resolve to exactly one declaration in its file's current source. Same-file payloads must address non-overlapping regions. "matcher" is optional per payload: a complete snippet copied from the current source below; "replacement" replaces exactly the matched range. Omit "matcher" for a whole-symbol rewrite: "replacement" then replaces the whole declaration. ${RANGE_SELECTOR_NOTE} Keep leading keywords and modifiers consistent (do not re-add \`export\` the declaration omitted). Every replacement must keep its file parseable. The exchange applies atomically: if any payload fails its own guard or two same-file regions overlap, nothing is written and the exchange is rejected naming every failing payload.
+The first payload echoes the pinned address {path, symbol, kind}; every further payload names its own declaration, which must resolve to exactly one declaration in its file's current source. Same-file payloads must address non-overlapping regions. "matcher" is optional per payload: a complete snippet copied from the current source below; "replacement" replaces exactly the matched range. Omit "matcher" for a whole-symbol rewrite: "replacement" then replaces the whole declaration. ${RANGE_SELECTOR_NOTE} Keep leading keywords and modifiers consistent (do not re-add \`export\` the declaration omitted). Every replacement must keep its file parseable. The exchange applies atomically: if any payload fails its own guard or two same-file regions overlap, nothing is written and the exchange is rejected naming every failing payload.`
+      : `Output ONE flat JSON object {"path": ..., "symbol": ..., "kind": ..., "matcher": ..., "replacement": ...} for the pinned symbol, with no markdown fences and no explanations.
 
-Pinned selection:
-
-\`\`\`json
-${addressJson}
-\`\`\`
-
-Current source:
-
-Each line below is prefixed with its 1-based line number (the optional "range" coordinates; columns count the source text after the \`N | \` prefix).
-
-\`\`\`ts
-${numbered}\n\`\`\`
-`;
-  }
-  return `Output ONE flat JSON object {"path": ..., "symbol": ..., "kind": ..., "matcher": ..., "replacement": ...} for the pinned symbol, with no markdown fences and no explanations.
-
-Echo the pinned address {path, symbol, kind}. "matcher" is optional: a complete snippet copied from the current source below; "replacement" replaces exactly the matched range. Omit "matcher" for a whole-symbol rewrite: "replacement" then replaces the whole declaration. ${RANGE_SELECTOR_NOTE} Keep leading keywords and modifiers consistent (do not re-add \`export\` the declaration omitted). The replacement must keep the file parseable.
+Echo the pinned address {path, symbol, kind}. "matcher" is optional: a complete snippet copied from the current source below; "replacement" replaces exactly the matched range. Omit "matcher" for a whole-symbol rewrite: "replacement" then replaces the whole declaration. ${RANGE_SELECTOR_NOTE} Keep leading keywords and modifiers consistent (do not re-add \`export\` the declaration omitted). The replacement must keep the file parseable.`;
+  return `${instruction}
 
 Pinned selection:
 
@@ -336,8 +496,15 @@ ${numbered}\n\`\`\`
 `;
 }
 
-export function buildCreatePrompt(addressJson: string, path: string): string {
-  return `The pinned selection uses mode "create". Output ONE flat JSON object {"path": ..., "symbol": ..., "kind": ..., "replacement": ...} with no markdown fences and no explanations: echo the pinned address {path, symbol, kind}, put the COMPLETE declaration in "replacement", and omit "matcher" and "range". The target file may not exist yet; the declaration is appended to it. The replacement must keep the file parseable.
+export function buildCreatePrompt(
+  addressJson: string,
+  path: string,
+  format: ProtocolFormat = "json",
+): string {
+  const instruction = format === "compact"
+    ? compactCreateInstruction()
+    : `The pinned selection uses mode "create". Output ONE flat JSON object {"path": ..., "symbol": ..., "kind": ..., "replacement": ...} with no markdown fences and no explanations: echo the pinned address {path, symbol, kind}, put the COMPLETE declaration in "replacement", and omit "matcher" and "range". The target file may not exist yet; the declaration is appended to it. The replacement must keep the file parseable.`;
+  return `${instruction}
 
 Target file:
 
@@ -382,6 +549,13 @@ export interface RetryPromptInput {
   locatorJson: string;
   /** Current on-disk source of the selected region (whole file in create mode). */
   currentSource: string;
+  /**
+   * Optional pre-rendered `Current source:` block that replaces
+   * `numberedSourceBlock(currentSource)`. The repair-context shrink supplies a
+   * partial, original-line-numbered view here. Undefined keeps the prompt
+   * byte-identical to the whole-file path.
+   */
+  preRenderedSource?: string;
   diagnostics: string;
   /** Verification retries say "failed verification"; edit retries say "failed". */
   failure: "edit" | "verification";
@@ -431,6 +605,11 @@ export interface RetryPromptInput {
    * default) keeps the exact single-payload instructions.
    */
   multiPayload?: boolean;
+  /**
+   * Edit protocol format (#119): `compact` renders the `select … end` clause
+   * instruction; `json` (default) keeps the JSON templates.
+   */
+  protocolFormat?: ProtocolFormat;
   /**
    * Bounded self-verification result (#73), appended after the Diagnostics
    * block as a `Self-check result:` section. Rendered only on the prompt that
@@ -493,16 +672,33 @@ export const APPROACH_LIMIT = 600;
  * guards; any other reply is the stated re-approach. Mirrors the exchange
  * parser's opt-in multi-payload shape.
  */
-function isEditPayloadReply(content: string, multiPayload: boolean): boolean {
+function isEditPayloadReply(
+  content: string,
+  multiPayload: boolean,
+  format: ProtocolFormat,
+): boolean {
   if (multiPayload) {
-    return parseEditResponseList(content).ok;
+    if (parseEditResponseList(content).ok) {
+      return true;
+    }
+  } else {
+    try {
+      parseEditResponse(content);
+      return true;
+    } catch {
+      // Fall through to the compact form under the compact format.
+    }
   }
-  try {
-    parseEditResponse(content);
-    return true;
-  } catch {
-    return false;
+  // #111: under the compact format a reply of `select … end` clauses is also a
+  // real attempt (an editor or a viewer locate turn).
+  if (format === "compact") {
+    try {
+      return parseSelection(content).length > 0;
+    } catch {
+      return false;
+    }
   }
+  return false;
 }
 
 export function buildRetryPrompt(input: RetryPromptInput): string {
@@ -518,7 +714,11 @@ export function buildRetryPrompt(input: RetryPromptInput): string {
   } = input;
   const remaining = Math.max(0, maxExchanges - exchangeNumber);
   const label = failure === "verification" ? "failed verification" : "failed";
-  const numbered = numberedSourceBlock(currentSource);
+  const numbered = input.preRenderedSource ?? numberedSourceBlock(currentSource);
+  const sourceNote =
+    input.preRenderedSource !== undefined
+      ? "Each line below carries its ORIGINAL 1-based file line number; `// … [omitted: …] …` marks declarations left out of this partial view (their names are listed above)."
+      : 'Each line below is prefixed with its 1-based line number (the optional "range" coordinates; columns count the source text after the `N | ` prefix).';
   // The splice tolerates a leading `export` that repeats the declaration's
   // existing modifier, so no re-add warning is needed (#48).
   const modifierNote =
@@ -546,16 +746,17 @@ export function buildRetryPrompt(input: RetryPromptInput): string {
     stalled !== undefined || input.continuation !== undefined
       ? ""
       : `Edit exchange ${exchangeNumber} of ${maxExchanges} ${label}. ${remaining} exchange(s) remain in this iteration. `;
-  const modifyInstruction =
-    input.multiPayload === true
+  const modifyInstruction = input.protocolFormat === "compact"
+    ? `${modifyLead} ${status}${compactInstruction()}`
+    : input.multiPayload === true
       ? multiModifyInstruction(modifyLead, status, repin, modifierNote)
       : repin
         ? `${modifyLead} ${status}Output ONLY one flat JSON object {"path": ..., "symbol": ..., "kind": ..., "matcher": ..., "replacement": ...}: return the full address of the declaration you are fixing — either the pinned selection or a different declaration in the same file to re-pin and edit it (it must resolve uniquely in the current source). "matcher" is optional: a snippet copied from the current source, or omit it for a whole-symbol rewrite; "replacement" replaces the matched range (empty removes it). ${RANGE_SELECTOR_NOTE} ${modifierNote} No markdown fences and no explanations.`
         : `${modifyLead} ${status}Output ONLY one flat JSON object {"path": ..., "symbol": ..., "kind": ..., "matcher": ..., "replacement": ...}: echo the pinned selection in the address. "matcher" is optional: a snippet copied from the current source, or omit it for a whole-symbol rewrite; "replacement" replaces the matched range (empty removes it). ${RANGE_SELECTOR_NOTE} ${modifierNote} No markdown fences and no explanations.`;
-  const instruction =
-    mode === "modify"
-      ? modifyInstruction
-      : `${createLead} ${status}Output ONLY one flat JSON object {"path": ..., "symbol": ..., "kind": ..., "replacement": ...}: echo the pinned selection in the address, put the COMPLETE corrected declaration in "replacement", and omit "matcher" and "range". No markdown fences and no explanations.`;
+  const createInstruction = input.protocolFormat === "compact"
+    ? `${createLead} ${status}${compactCreateInstruction()}`
+    : `${createLead} ${status}Output ONLY one flat JSON object {"path": ..., "symbol": ..., "kind": ..., "replacement": ...}: echo the pinned selection in the address, put the COMPLETE corrected declaration in "replacement", and omit "matcher" and "range". No markdown fences and no explanations.`;
+  const instruction = mode === "modify" ? modifyInstruction : createInstruction;
   const header =
     stalled !== undefined
       ? stalledAskHeader(stalled)
@@ -594,7 +795,7 @@ ${locatorJson}
 
 Current source:
 
-Each line below is prefixed with its 1-based line number (the optional "range" coordinates; columns count the source text after the \`N | \` prefix).
+${sourceNote}
 
 \`\`\`ts
 ${numbered}\n\`\`\`
@@ -617,6 +818,8 @@ export interface ContinuationPromptInput {
   locatorJson: string;
   /** Current on-disk source of the selected region (whole file in create mode). */
   currentSource: string;
+  /** Optional pre-rendered `Current source:` block (repair-context shrink). */
+  preRenderedSource?: string;
   /** The diagnostics that opened the round plus the latest rejection. */
   diagnostics: string;
   /** True when the continued round may still re-pin to another declaration. */
@@ -634,6 +837,8 @@ export interface ContinuationPromptInput {
   stalled?: StalledAsk;
   /** Opt-in multi-payload variant (#69); forwarded to the retry prompt. */
   multiPayload?: boolean;
+  /** Edit protocol format (#119); forwarded to the retry prompt. */
+  protocolFormat?: ProtocolFormat;
 }
 
 /**
@@ -649,6 +854,7 @@ export function buildContinuationPrompt(input: ContinuationPromptInput): string 
     mode: input.mode,
     locatorJson: input.locatorJson,
     currentSource: input.currentSource,
+    preRenderedSource: input.preRenderedSource,
     diagnostics: input.diagnostics,
     failure: "edit",
     repin: input.repin,
@@ -657,6 +863,7 @@ export function buildContinuationPrompt(input: ContinuationPromptInput): string 
     digest: input.digest,
     failureHistory: input.failureHistory,
     multiPayload: input.multiPayload,
+    protocolFormat: input.protocolFormat,
   });
 }
 
@@ -769,6 +976,13 @@ export interface EditPayload {
 export type EditSelector = "range" | "matcher" | "whole-symbol";
 
 /**
+ * The form of matcher a `match`-stage edit used (#110): a structural snippet
+ * copied from the source, or a `/regex/` locator. Regex only arises on the
+ * compact cascade path (#111); the JSON path sends snippets only.
+ */
+export type MatcherKind = "snippet" | "regex";
+
+/**
  * Classify one payload's selector (#101): `range` takes precedence over `matcher`
  * when both are sent, and a payload with neither is a whole-symbol rewrite.
  */
@@ -778,6 +992,43 @@ export function selectorOf(payload: EditPayload): EditSelector {
   }
   return payload.matcher !== null ? "matcher" : "whole-symbol";
 }
+
+/**
+ * The #101 selector vocabulary for a resolved cascade stage (#111), so a
+ * compact clause's selector metric reads the same as the JSON path's:
+ * `pick`→`range`, `match`→`matcher`, `whole-symbol`→`whole-symbol`.
+ */
+export function selectorFromStage(stage: SelectionStage): EditSelector {
+  if (stage === "pick") {
+    return "range";
+  }
+  return stage === "match" ? "matcher" : "whole-symbol";
+}
+
+/**
+ * Classify one payload's resolved cascade stage (#110): a `range` pins a
+ * contiguous run inside the declaration (`pick`, and wins over `matcher`), a
+ * `matcher` locates a candidate set (`match`), and neither falls back to the
+ * declaration itself (`whole-symbol`). This mirrors `resolveCascade`'s `stage`
+ * so the metric reads the same vocabulary on both paths.
+ */
+export function stageOf(payload: EditPayload): SelectionStage {
+  if (payload.range !== null) {
+    return "pick";
+  }
+  return payload.matcher !== null ? "match" : "whole-symbol";
+}
+
+/**
+ * The matcher form an edit used (#110), or `null` when no matcher resolved it:
+ * `"snippet"` when the payload's `matcher` is the resolving locator (stage
+ * `"match"`), else `null` (a range/whole-symbol edit names no matcher; `regex`
+ * arrives with the compact cascade, #111).
+ */
+export function matcherKindOf(payload: EditPayload): MatcherKind | null {
+  return stageOf(payload) === "match" ? "snippet" : null;
+}
+
 
 /**
  * Selectors of an exchange's parsed payloads (#101), in order: every entry of a
@@ -792,6 +1043,34 @@ export function selectorsOf(
     return batch.map(selectorOf);
   }
   return payload === null ? undefined : [selectorOf(payload)];
+}
+
+/**
+ * Resolved cascade stages of an exchange's parsed payloads (#110), in the same
+ * order and with the same batch-or-flat-or-undefined shape as `selectorsOf`.
+ */
+export function stagesOf(
+  payload: EditPayload | null,
+  batch: readonly EditPayload[] | null,
+): SelectionStage[] | undefined {
+  if (batch !== null) {
+    return batch.map(stageOf);
+  }
+  return payload === null ? undefined : [stageOf(payload)];
+}
+
+/**
+ * Matcher kinds of an exchange's parsed payloads (#110), parallel to `stagesOf`:
+ * one entry per payload (`null` when no matcher resolved it).
+ */
+export function matcherKindsOf(
+  payload: EditPayload | null,
+  batch: readonly EditPayload[] | null,
+): (MatcherKind | null)[] | undefined {
+  if (batch !== null) {
+    return batch.map(matcherKindOf);
+  }
+  return payload === null ? undefined : [matcherKindOf(payload)];
 }
 
 const SELECTION_EXPECTED =
@@ -1338,6 +1617,12 @@ export interface LoopOptions {
    */
   multiPayload?: boolean;
   /**
+   * Edit protocol format (#119): `compact` makes the `select … end` syntax the
+   * required reply form; `json` (default) keeps the flat JSON payload. Absent
+   * is `json`. Explicit-targets mode (#81) is JSON-only.
+   */
+  protocolFormat?: ProtocolFormat;
+  /**
    * Explicit-targets mode (#81): the addresses to edit, one entry per desired
    * declaration. When non-empty the run skips model selection, forces the
    * batch shape, names the pending addresses in each edit prompt, and sequences
@@ -1353,6 +1638,8 @@ export type ExchangeOutcome =
   | "stopped"
   // A repair exchange that carried one bounded self-verification request (#73).
   | "self-check"
+  // A compact viewer clause that located candidates and wrote nothing (#111).
+  | "viewer"
   | "protocol"
   | "address"
   | "echo"
@@ -1371,8 +1658,12 @@ export type VerificationOutcome = "ok" | "tsc" | "tests" | "gate" | "format" | "
 
 export type AttemptOutcome = ExchangeOutcome | VerificationOutcome;
 
-/** Matcher-check failures, produced by `spliceEntryEdit` (#56). */
-type MatcherCause = "matcher-unparseable" | "matcher-not-found" | "matcher-ambiguous";
+/** Matcher-check failures, produced by `spliceEntryEdit` (#56), plus the compact cascade's `regex-invalid` (#109/#111). */
+type MatcherCause =
+  | "matcher-unparseable"
+  | "matcher-not-found"
+  | "matcher-ambiguous"
+  | "regex-invalid";
 
 /**
  * Typed edit-rejection cause (#56): every exchange rejection maps to exactly
@@ -1469,17 +1760,144 @@ const MATCHER_ESCALATION =
   'This attempt MUST omit "matcher" and return the complete declaration in "replacement".';
 
 // #102: a matcher failure can also be escaped with the #72 `range` selector,
-// whose coordinates pin a contiguous run without a verbatim copy. Steered on by
-// default; a benchmark can run byte-identical arms by setting
-// TC_MATCHER_RANGE_HINT=off (trimmed, lowercased; only off/0/false disable).
-// Read once per rejectionPolicy call so tests can flip it in-process.
+// whose coordinates pin a contiguous run without a verbatim copy. Off by
+// default — opt in with TC_MATCHER_RANGE_HINT=on (trimmed, lowercased; only
+// on/1/true enable) so the harness keeps the pre-#102 text unless explicitly
+// steered. Read once per rejectionPolicy call so tests can flip it in-process.
 const MATCHER_RANGE_HINT =
   'When the target is a contiguous run you can pin exactly, you may instead send the optional "range" {"line","column","endLine","endColumn"} selector (all 1-based, end inclusive, inside the declaration): it takes precedence over "matcher" and needs no verbatim copy.';
 
 function matcherRangeHint(): string {
   const setting = (process.env.TC_MATCHER_RANGE_HINT ?? "").trim().toLowerCase();
-  const disabled = setting === "off" || setting === "0" || setting === "false";
-  return disabled ? "" : MATCHER_RANGE_HINT;
+  const enabled = setting === "on" || setting === "1" || setting === "true";
+  return enabled ? MATCHER_RANGE_HINT : "";
+}
+
+// The edit protocol format (#119), replacing the #111/#117 opt-in env var.
+// `json` (default) is the shipped flat
+// `{path, symbol, kind, matcher, replacement}` payload and keeps every prompt and
+// code path byte-identical to the pre-compact protocol. `compact` makes the
+// `select … end` syntax (`docs/edit-protocol.md`) the required reply form: the
+// system prompt teaches it, compact is parsed first, and a JSON edit payload is
+// rejected as a protocol violation. Explicit-targets mode (#81) stays JSON.
+export type ProtocolFormat = "json" | "compact";
+
+// Repair-context shrink is opt-in: after a create fails verification the loop
+// enters create→repair mode and re-sends the whole target file on every repair
+// exchange, which can exhaust the token budget on a large file. With
+// TC_REPAIR_CONTEXT_SHRINK=on the repair prompt instead renders only the
+// declarations that matter. Off by default keeps every prompt byte-identical.
+// Read once per call so tests can flip it in-process; only on/1/true enable.
+export function repairContextShrinkEnabled(): boolean {
+  const setting = (process.env.TC_REPAIR_CONTEXT_SHRINK ?? "").trim().toLowerCase();
+  return setting === "on" || setting === "1" || setting === "true";
+}
+
+// Declarations whose presence the shrink always keeps: type-level declarations
+// cross-reference one another, and a type error can name a value declaration
+// while the fix lives in a type alias the diagnostics never mention (e.g.
+// minilisp's `LispValue`).
+const SHRINK_TYPE_LEVEL_KINDS = new Set(["type", "interface", "enum", "namespace"]);
+// The diagnostics render each failure as `… — in declaration \`name\` (kind)`.
+const DIAGNOSTIC_DECLARATION = /in declaration `([^`]+)`/g;
+
+/**
+ * Build a partial, original-line-numbered view of a repaired file (#create→repair).
+ * Keeps the pinned declaration, every declaration named in the diagnostics, and
+ * every type-level declaration; drops the rest behind an omission marker. Returns
+ * `null` to mean "show the whole file" when the file does not parse, is small, or
+ * the shrunk view would not actually be shorter.
+ */
+export function shrinkRepairSource(
+  path: string,
+  source: string,
+  locator: Locator,
+  diagnostics: string,
+): string | null {
+  if (source.length <= SPEC_FILE_LIMIT / 2) {
+    return null;
+  }
+  const build = buildIndexTolerant([{ path, source }]);
+  if (build.skipped.length > 0) {
+    return null;
+  }
+  const kept: IndexEntry[] = [];
+  const keptStarts = new Set<number>();
+  const keep = (entry: IndexEntry): void => {
+    if (keptStarts.has(entry.node.start)) {
+      return;
+    }
+    keptStarts.add(entry.node.start);
+    kept.push(entry);
+  };
+  const pinned = build.index.lookup(locator);
+  if (pinned.length === 1 && pinned[0] !== undefined) {
+    keep(pinned[0]);
+  }
+  for (const match of diagnostics.matchAll(DIAGNOSTIC_DECLARATION)) {
+    const name = match[1];
+    if (name === undefined) {
+      continue;
+    }
+    for (const entry of build.index.byName(name)) {
+      keep(entry);
+    }
+  }
+  for (const entry of build.index.entries) {
+    if (SHRINK_TYPE_LEVEL_KINDS.has(entry.locator.kind)) {
+      keep(entry);
+    }
+  }
+  // Nothing to keep (no resolvable pin, no named declaration, no type) means the
+  // partial view would hide the whole file: fall back to the whole file.
+  if (kept.length === 0) {
+    return null;
+  }
+  kept.sort((left, right) => left.node.start - right.node.start);
+  const sourceLines = splitSourceLines(source);
+  const width = String(sourceLines.length).length;
+  const rendered: string[] = [];
+  // Line number just past the previously rendered declaration, so the next
+  // declaration's first line reveals how many lines were skipped.
+  let previousEndLine: number | null = null;
+  let previousNodeEnd = 0;
+  for (const entry of kept) {
+    const firstLine = source.slice(0, entry.node.start).split("\n").length;
+    if (previousEndLine !== null && firstLine > previousEndLine) {
+      rendered.push(omissionMarker(build.index.entries, previousNodeEnd, entry.node.start, firstLine - previousEndLine));
+    }
+    const raw = source.slice(entry.node.start, entry.node.end);
+    const body = raw.endsWith("\n") ? raw.slice(0, -1) : raw;
+    const lines = body.split("\n");
+    for (let index = 0; index < lines.length; index += 1) {
+      rendered.push(`${String(firstLine + index).padStart(width, " ")} | ${lines[index]}`);
+    }
+    previousEndLine = firstLine + lines.length;
+    previousNodeEnd = entry.node.end;
+  }
+  const text = rendered.join("\n");
+  return text.length < source.length ? text : null;
+}
+
+// One marker line for the declarations skipped between two kept declarations.
+function omissionMarker(
+  entries: readonly IndexEntry[],
+  gapStart: number,
+  gapEnd: number,
+  gapLines: number,
+): string {
+  const names: string[] = [];
+  for (const entry of entries) {
+    if (entry.node.start <= gapStart || entry.node.start >= gapEnd) {
+      continue;
+    }
+    if (!names.includes(entry.locator.name)) {
+      names.push(entry.locator.name);
+    }
+  }
+  return names.length > 0
+    ? `// … [omitted: ${names.join(", ")}] …`
+    : `// … [${gapLines} lines omitted] …`;
 }
 
 // #65 resend classes: `repeat` means the byte-identical payload was already
@@ -1636,6 +2054,13 @@ export function rejectionPolicy(cause: RejectionCause): RejectionPolicy {
         ),
         escalation: withRangeHint(MATCHER_ESCALATION),
       };
+    case "regex-invalid":
+      return {
+        action: "retry",
+        correction:
+          "Write a valid ECMA-262 `/regex/` matcher with no flags — escape any literal slash — or copy a verbatim backtick `snippet` from the current source.",
+        escalation: MATCHER_ESCALATION,
+      };
     case "range-invalid":
       return {
         action: "retry",
@@ -1726,6 +2151,23 @@ export interface LoopRecord {
    * exchange carried no payload.
    */
   selectors?: EditSelector[];
+  /**
+   * Resolved cascade stages used by the exchange's parsed payloads (#110): one
+   * entry per payload in order, mirroring `selectors`; omitted when the exchange
+   * carried no payload.
+   */
+  stages?: SelectionStage[];
+  /**
+   * Matcher kinds used by the exchange's parsed payloads (#110), parallel to
+   * `stages`: one entry per payload, `null` when no matcher resolved it.
+   */
+  matcherKinds?: (MatcherKind | null)[];
+  /**
+   * Compact implicit-create clauses the reply carried (#111): create clauses
+   * resolve at the `whole-symbol` stage, so this is a subset of `stages`.
+   * Omitted when the exchange was not a compact reply.
+   */
+  creates?: number;
   /** Verification rows: failure signature (tsc diagnostics + failing tests) observation (#36). */
   signature: number | null;
   /** Typed edit-rejection cause (#56); absent on success and verification rows. */
@@ -1759,6 +2201,18 @@ export interface ExchangeStats {
   matcher: number;
   /** Applied/parsed payloads that rewrote the whole symbol (#101). */
   wholeSymbol: number;
+  /** Applied/parsed payloads resolved by the cascade's `whole-symbol` stage (#110). */
+  stageWholeSymbol: number;
+  /** Applied/parsed payloads resolved by the cascade's `match` stage (#110). */
+  stageMatch: number;
+  /** Applied/parsed payloads resolved by the cascade's `pick` stage (#110). */
+  stagePick: number;
+  /** Applied/parsed payloads whose matcher was a structural snippet (#110). */
+  snippet: number;
+  /** Applied/parsed payloads whose matcher was a `/regex/` (#110). */
+  regex: number;
+  /** Compact implicit-create clauses carried per reply (#111). */
+  creates: number;
 }
 
 /**
@@ -1778,6 +2232,12 @@ export function exchangeStats(records: readonly LoopRecord[]): ExchangeStats {
     range: 0,
     matcher: 0,
     wholeSymbol: 0,
+    stageWholeSymbol: 0,
+    stageMatch: 0,
+    stagePick: 0,
+    snippet: 0,
+    regex: 0,
+    creates: 0,
   };
   for (const record of records) {
     if (record.kind !== "exchange") {
@@ -1786,6 +2246,7 @@ export function exchangeStats(records: readonly LoopRecord[]): ExchangeStats {
     stats.turns += 1;
     stats.payloads += record.payloads ?? 0;
     stats.toolCalls += record.toolCalls ?? 0;
+    stats.creates += record.creates ?? 0;
     for (const selector of record.selectors ?? []) {
       if (selector === "range") {
         stats.range += 1;
@@ -1793,6 +2254,22 @@ export function exchangeStats(records: readonly LoopRecord[]): ExchangeStats {
         stats.matcher += 1;
       } else {
         stats.wholeSymbol += 1;
+      }
+    }
+    for (const stage of record.stages ?? []) {
+      if (stage === "whole-symbol") {
+        stats.stageWholeSymbol += 1;
+      } else if (stage === "match") {
+        stats.stageMatch += 1;
+      } else {
+        stats.stagePick += 1;
+      }
+    }
+    for (const kind of record.matcherKinds ?? []) {
+      if (kind === "snippet") {
+        stats.snippet += 1;
+      } else if (kind === "regex") {
+        stats.regex += 1;
       }
     }
     if (record.outcome === "applied") {
@@ -1803,6 +2280,8 @@ export function exchangeStats(records: readonly LoopRecord[]): ExchangeStats {
       stats.stopped += 1;
     } else if (record.outcome === "self-check") {
       stats.selfChecks += 1;
+    } else if (record.outcome === "viewer") {
+      // A compact viewer locate turn (#111): neither applied nor a rejection.
     } else {
       stats.rejected += 1;
     }
@@ -2001,6 +2480,12 @@ function recordRow(input: {
   appliedLocators?: Locator[];
   /** Selectors used by the exchange's parsed payloads (#101); omitted when none. */
   selectors?: EditSelector[];
+  /** Resolved cascade stages (#110); parallel to `selectors`; omitted when none. */
+  stages?: SelectionStage[];
+  /** Matcher kinds (#110); parallel to `stages`; omitted when none. */
+  matcherKinds?: (MatcherKind | null)[];
+  /** Compact implicit-create clauses the reply carried (#111); omitted when none. */
+  creates?: number;
   /** Exact replacement size when it differs from `replacement.length` (batch sum, #69). */
   replacementChars?: number;
 }): LoopRecord {
@@ -2023,6 +2508,9 @@ function recordRow(input: {
     cause: input.cause,
     appliedLocators: input.appliedLocators,
     selectors: input.selectors,
+    stages: input.stages,
+    matcherKinds: input.matcherKinds,
+    creates: input.creates,
   };
 }
 
@@ -2070,6 +2558,7 @@ const REJECTION_CAUSES: ReadonlySet<string> = new Set<RejectionCause>([
   "matcher-unparseable",
   "matcher-not-found",
   "matcher-ambiguous",
+  "regex-invalid",
   "range-invalid",
   "no-op",
   "repeat",
@@ -2092,6 +2581,7 @@ const DIGEST_NON_FAILURES: ReadonlySet<AttemptOutcome> = new Set<AttemptOutcome>
   "ok",
   "stopped",
   "self-check",
+  "viewer",
 ]);
 
 /**
@@ -3043,16 +3533,102 @@ function multiPayloadDiagnostics(
   ].join("\n");
 }
 
-/** One batch payload resolved to the splice region it addresses (#78). */
+// One failing clause inside a compact reply (#111): names the clause position
+// and its own staged diagnostics. Application is non-atomic (§6), so the header
+// says the other resolved clauses may already be applied rather than claiming
+// nothing was written; the applied-list block that follows names them.
+function compactClauseDiagnostics(
+  index: number,
+  total: number,
+  path: string,
+  locator: Locator,
+  diagnostics: string,
+): string {
+  return [
+    "stage: compact",
+    `clause ${index} of ${total} (${addressJson(locator)} in ${JSON.stringify(path)}) failed; resolved clauses are applied non-atomically, so any other clause listed as applied below is already in the file`,
+    diagnostics,
+  ].join("\n");
+}
+
+// Overlap rejection on the compact path (#111): the earlier clause won, so the
+// later one fails while the winner (and every other applied clause) stands.
+function compactOverlapDiagnostics(
+  total: number,
+  path: string,
+  earlier: ResolvedRegion,
+  later: ResolvedRegion,
+): string {
+  return [
+    "stage: compact",
+    `clause ${earlier.index + 1} and clause ${later.index + 1} of ${total} both edit ${JSON.stringify(path)} but their regions overlap (offsets ${earlier.start}..${earlier.end} and ${later.start}..${later.end}); the earlier clause wins and the later is skipped`,
+    `clause ${earlier.index + 1} (${addressJson(earlier.locator)}) and clause ${later.index + 1} (${addressJson(later.locator)}) must address non-overlapping regions, or be split across replies`,
+  ].join("\n");
+}
+
+// The §7 "do not resend" list: the clauses of a compact reply that were applied
+// before the failure. Fed back with the failures so the model resends only the
+// failing clauses (a resend of an applied one now fails as `matcher-not-found`).
+function compactAppliedListDiagnostics(applied: readonly ResolvedRegion[], total: number): string {
+  const lines = ["stage: compact"];
+  const line = (region: ResolvedRegion): string =>
+    `- clause ${region.index + 1} of ${total} (${addressJson(region.locator)} in ${JSON.stringify(region.path)})`;
+  const modified = applied.filter((region) => !region.create);
+  const created = applied.filter((region) => region.create);
+  if (modified.length > 0) {
+    lines.push("already applied (do not resend):");
+    for (const region of modified) {
+      lines.push(line(region));
+    }
+  }
+  // An implicit create now exists in the file, so name it separately: a resend
+  // would be an address miss, not a `matcher-not-found`.
+  if (created.length > 0) {
+    lines.push("created (do not resend):");
+    for (const region of created) {
+      lines.push(line(region));
+    }
+  }
+  return lines.join("\n");
+}
+
+// Bridge a resolved compact editor clause into the shared `ResolvedRegion`
+// shape; the compact path already carries the cascade stage and matcher kind
+// (#110), so no reclassification is needed.
+function compactRegionToResolved(region: CompactRegion): ResolvedRegion {
+  return {
+    index: region.index,
+    path: region.path,
+    locator: region.locator,
+    start: region.start,
+    end: region.end,
+    text: region.text,
+    replacement: region.text,
+    stage: region.stage,
+    matcherKind: region.matcherKind,
+    create: region.create,
+  };
+}
+
 interface ResolvedRegion {
-  /** Payload position in the batch (0-based), for diagnostics. */
+  /** Clause/payload position in the reply (0-based), for diagnostics. */
   index: number;
-  payload: EditPayload;
+  /** The file the region edits (a same-file batch shares it). */
+  path: string;
+  locator: Locator;
   /** Half-open offsets into the file's current source. */
   start: number;
   end: number;
   /** Text spliced over `[start, end)`. */
   text: string;
+  /** The raw replacement, used by the gate diagnostic's code frame. */
+  replacement: string;
+  /** The cascade stage that resolved the region (#110). */
+  stage: SelectionStage;
+  /** The matcher form that resolved it (#110), or null. */
+  matcherKind: MatcherKind | null;
+  /** True for a compact implicit create (a new whole declaration). */
+  create: boolean;
 }
 
 // Overlap rejection (#78): two same-file regions share source text, so they
@@ -3067,8 +3643,270 @@ function multiOverlapDiagnostics(
   return [
     "stage: multi",
     `payload ${earlier.index + 1} and payload ${later.index + 1} of ${total} both edit ${JSON.stringify(path)} but their regions overlap (offsets ${earlier.start}..${earlier.end} and ${later.start}..${later.end}); the whole exchange is discarded and nothing is written`,
-    `payload ${earlier.index + 1} (${addressJson(earlier.payload.locator)}) and payload ${later.index + 1} (${addressJson(later.payload.locator)}) must address non-overlapping regions, or be split across exchanges`,
+    `payload ${earlier.index + 1} (${addressJson(earlier.locator)}) and payload ${later.index + 1} (${addressJson(later.locator)}) must address non-overlapping regions, or be split across exchanges`,
   ].join("\n");
+}
+
+/** One region failed the shared per-file apply pipeline. */
+interface RegionFailureNote {
+  region: ResolvedRegion;
+  path: string;
+  stage: EditFailureStage;
+  diagnostics: string;
+  matcherCause?: MatcherCause;
+  formatMessage?: string;
+}
+
+/** The shared apply pipeline detected an overlap between two same-file regions. */
+type RegionOverlapNote = (path: string, earlier: ResolvedRegion, later: ResolvedRegion) => void;
+
+/**
+ * Apply already-resolved regions, one pass per file: overlap rejection, the
+ * prev-broken/gate/duplicate/format/no-op guards, and the final formatted write.
+ * Used by the JSON batch path (#69/#78), whose policy is atomic per file: a
+ * per-file failure is reported through `noteFailure` for every region in that
+ * file (the whole file is discarded) and the file is skipped; other files still
+ * apply. The compact reply path (#111) uses the non-atomic variant below.
+ */
+async function applyResolvedRegions(input: {
+  regions: readonly ResolvedRegion[];
+  fileSourceOf: (path: string) => string;
+  target: string;
+  prevCheck: ParseCheck;
+  noteFailure: (note: RegionFailureNote) => void;
+  noteOverlap: RegionOverlapNote;
+}): Promise<{ path: string; source: string }[]> {
+  // Group the resolved regions by file and apply each file in one pass.
+  const groups = new Map<string, ResolvedRegion[]>();
+  for (const region of input.regions) {
+    const group = groups.get(region.path);
+    if (group === undefined) {
+      groups.set(region.path, [region]);
+    } else {
+      group.push(region);
+    }
+  }
+  const writes: { path: string; source: string }[] = [];
+  for (const [path, group] of groups) {
+    const payloadSource = input.fileSourceOf(path);
+    const ordered = [...group].sort((left, right) => left.start - right.start);
+    // Overlap policy (#78): two regions share source text, so the whole
+    // exchange is discarded and both regions are named.
+    let overlapping: [ResolvedRegion, ResolvedRegion] | null = null;
+    for (let i = 1; i < ordered.length; i += 1) {
+      const previous = ordered[i - 1];
+      const current = ordered[i];
+      if (previous !== undefined && current !== undefined && current.start < previous.end) {
+        overlapping = [previous, current];
+        break;
+      }
+    }
+    if (overlapping !== null) {
+      input.noteOverlap(path, overlapping[0], overlapping[1]);
+      continue;
+    }
+    // Apply the file's splices together, from the end as `applyEdits` does, so
+    // earlier offsets stay valid.
+    let spliced = payloadSource;
+    for (let i = ordered.length - 1; i >= 0; i -= 1) {
+      const region = ordered[i];
+      if (region === undefined) {
+        continue;
+      }
+      spliced = applyMatcherSplice(spliced, region.start, region.end, region.text);
+    }
+    const payloadCheck = path === input.target ? input.prevCheck : parseCheck(payloadSource);
+    if (!payloadCheck.ok) {
+      // Unreachable for extra files: a strict resolution succeeded, so the file
+      // parses.
+      for (const region of ordered) {
+        input.noteFailure({
+          region,
+          path,
+          stage: "address",
+          diagnostics: prevBrokenDiagnostics(path, payloadCheck.failure),
+        });
+      }
+      continue;
+    }
+    const gate = parseCheck(spliced);
+    if (!gate.ok) {
+      for (const region of ordered) {
+        input.noteFailure({
+          region,
+          path,
+          stage: "gate",
+          diagnostics: gateDiagnostics(region.start, region.replacement, gate.failure),
+        });
+      }
+      continue;
+    }
+    const duplicate = duplicateDeclarationDiagnostics(
+      payloadSource,
+      path,
+      payloadCheck.program,
+      gate.program,
+    );
+    if (duplicate !== null) {
+      for (const region of ordered) {
+        input.noteFailure({ region, path, stage: "duplicate", diagnostics: duplicate });
+      }
+      continue;
+    }
+    let formatted: string | null = null;
+    try {
+      formatted = await formatSource(path, spliced);
+    } catch (error) {
+      for (const region of ordered) {
+        input.noteFailure({
+          region,
+          path,
+          stage: "format",
+          diagnostics: `stage: format\n${errorMessage(error)}`,
+          formatMessage: errorMessage(error),
+        });
+      }
+      continue;
+    }
+    if (await sameAfterFormatting(path, payloadSource, formatted)) {
+      for (const region of ordered) {
+        input.noteFailure({ region, path, stage: "no-op", diagnostics: NOOP_DIAGNOSTICS });
+      }
+      continue;
+    }
+    writes.push({ path, source: formatted });
+  }
+  return writes;
+}
+
+/**
+ * Apply already-resolved regions **non-atomically**, one pass per file (#111
+ * §6): each region is spliced into its file's evolving source, in document
+ * order, and guarded on its own. A region that overlaps an already-applied
+ * region in the same file, leaves the file unparseable, duplicates a top-level
+ * declaration, or formats back to the current source fails and is skipped; an
+ * applied region stands even when a later region fails. Every region keeps its
+ * original offsets, which are mapped onto the evolving source with a running
+ * offset delta, and the file is formatted once at the end (as the atomic path
+ * does). Returns the files that changed (with their final formatted source) and
+ * the regions that applied, in document order; failures are reported through
+ * `noteFailure`/`noteOverlap`.
+ *
+ * The JSON batch path keeps its atomic policy (`applyResolvedRegions` above) and
+ * does not use this.
+ */
+async function applyResolvedRegionsNonAtomic(input: {
+  regions: readonly ResolvedRegion[];
+  fileSourceOf: (path: string) => string;
+  target: string;
+  prevCheck: ParseCheck;
+  noteFailure: (note: RegionFailureNote) => void;
+  noteOverlap: RegionOverlapNote;
+}): Promise<{ writes: { path: string; source: string }[]; applied: ResolvedRegion[] }> {
+  // Group the resolved regions by file and apply each file independently.
+  const groups = new Map<string, ResolvedRegion[]>();
+  for (const region of input.regions) {
+    const group = groups.get(region.path);
+    if (group === undefined) {
+      groups.set(region.path, [region]);
+    } else {
+      group.push(region);
+    }
+  }
+  const writes: { path: string; source: string }[] = [];
+  const applied: ResolvedRegion[] = [];
+  for (const [path, group] of groups) {
+    const payloadSource = input.fileSourceOf(path);
+    const payloadCheck = path === input.target ? input.prevCheck : parseCheck(payloadSource);
+    if (!payloadCheck.ok) {
+      // Unreachable for extra files: a strict resolution succeeded, so the file
+      // parses. The pinned file's failure is external modification or a harness
+      // bug; the run keeps its existing prev-broken handling.
+      for (const region of group) {
+        input.noteFailure({
+          region,
+          path,
+          stage: "address",
+          diagnostics: prevBrokenDiagnostics(path, payloadCheck.failure),
+        });
+      }
+      continue;
+    }
+    // Document order: ascending original start. JS sort is stable, so equal
+    // starts keep reply order and the earlier clause is the overlap winner.
+    const ordered = [...group].sort((left, right) => left.start - right.start);
+    // The evolving source and the running delta between original and evolving
+    // coordinates. Each applied splice changes the length by
+    // `text.length - (end - start)`, which the next region's offsets absorb.
+    let evolving = payloadSource;
+    let evolvingProgram = payloadCheck.program;
+    let delta = 0;
+    let lastApplied: ResolvedRegion | null = null;
+    let lastAppliedEnd = -1;
+    // The last applied region's formatted source is the file's final formatted
+    // form (later failures change nothing), so it is the source to write.
+    let finalFormatted: string | null = null;
+    for (const region of ordered) {
+      const start = region.start + delta;
+      const end = region.end + delta;
+      if (lastApplied !== null && start < lastAppliedEnd) {
+        // The earlier clause in document order wins; the later fails naming it.
+        input.noteOverlap(path, lastApplied, region);
+        continue;
+      }
+      const spliced = applyMatcherSplice(evolving, start, end, region.text);
+      const gate = parseCheck(spliced);
+      if (!gate.ok) {
+        input.noteFailure({
+          region,
+          path,
+          stage: "gate",
+          diagnostics: gateDiagnostics(start, region.replacement, gate.failure),
+        });
+        continue;
+      }
+      const duplicate = duplicateDeclarationDiagnostics(
+        evolving,
+        path,
+        evolvingProgram,
+        gate.program,
+      );
+      if (duplicate !== null) {
+        input.noteFailure({ region, path, stage: "duplicate", diagnostics: duplicate });
+        continue;
+      }
+      let formatted: string | null = null;
+      try {
+        formatted = await formatSource(path, spliced);
+      } catch (error) {
+        input.noteFailure({
+          region,
+          path,
+          stage: "format",
+          diagnostics: `stage: format\n${errorMessage(error)}`,
+          formatMessage: errorMessage(error),
+        });
+        continue;
+      }
+      if (await sameAfterFormatting(path, evolving, formatted)) {
+        input.noteFailure({ region, path, stage: "no-op", diagnostics: NOOP_DIAGNOSTICS });
+        continue;
+      }
+      // Commit the region: the evolving source keeps the raw splice (formatting
+      // runs once at the end), the delta and the guard baseline advance.
+      evolving = spliced;
+      evolvingProgram = gate.program;
+      delta += region.text.length - (region.end - region.start);
+      lastApplied = region;
+      lastAppliedEnd = start + region.text.length;
+      finalFormatted = formatted;
+      applied.push(region);
+    }
+    if (lastApplied !== null && finalFormatted !== null && finalFormatted !== payloadSource) {
+      writes.push({ path, source: finalFormatted });
+    }
+  }
+  return { writes, applied };
 }
 
 function createExistsDiagnostics(
@@ -3517,6 +4355,31 @@ function currentSourceForPrompt(
     }
   }
   return currentSource;
+}
+
+// The source a retry/continuation prompt shows. A repair iteration in modify
+// mode shrinks the whole file to the declarations that matter when the toggle
+// is on (returning the partial block as `preRendered`); otherwise this is the
+// historic whole-file / re-resolved-declaration behavior, byte-identically.
+function repairContextSource(opts: {
+  mode: "modify" | "create";
+  repair: boolean;
+  target: string;
+  locator: Locator;
+  diskSource: string;
+  diagnostics: string;
+}): { source: string; preRendered?: string } {
+  const wholeFile = opts.repair || opts.mode === "create";
+  if (!wholeFile) {
+    return { source: currentSourceForPrompt("modify", opts.target, opts.locator, opts.diskSource) };
+  }
+  if (opts.repair && opts.mode !== "create" && repairContextShrinkEnabled()) {
+    const shrunk = shrinkRepairSource(opts.target, opts.diskSource, opts.locator, opts.diagnostics);
+    if (shrunk !== null) {
+      return { source: opts.diskSource, preRendered: shrunk };
+    }
+  }
+  return { source: opts.diskSource };
 }
 
 // Run the sibling test file first for fast feedback; a targeted failure is the
@@ -4017,13 +4880,20 @@ export async function runLoop(options: LoopOptions): Promise<LoopResult> {
   const targets = options.targets ?? [];
   const targetsMode = targets.length > 0;
   const multiPayload = options.multiPayload === true || targetsMode;
+  // #119: the selected edit protocol. Explicit-targets mode (#81) is JSON-only,
+  // so it overrides the flag to keep the batch/pick path byte-identical.
+  const protocolFormat: ProtocolFormat = targetsMode
+    ? "json"
+    : (options.protocolFormat ?? "json");
+  // #119: compact is only required outside explicit-targets mode.
+  const compactRequired = protocolFormat === "compact" && !targetsMode;
   // Pending targets (not yet applied), applied targets, and targets that never
   // resolved to a unique modify-able declaration.
   const targetQueue: Locator[] = [...targets];
   const targetFailures: { locator: Locator; diagnostics: string }[] = [];
   const systemMessage: ChatMessage = {
     role: "system",
-    content: buildSystemPrompt(multiPayload),
+    content: buildSystemPrompt(multiPayload, protocolFormat),
   };
   const issueMessage: ChatMessage = {
     role: "user",
@@ -4067,6 +4937,9 @@ export async function runLoop(options: LoopOptions): Promise<LoopResult> {
   let repair = false;
   // Verification diagnostics that opened the current Run iteration.
   let pendingDiagnostics: string | null = null;
+  // #111: a mixed compact reply's viewer occurrences, carried into the next
+  // prompt's diagnostics when the editors applied but verification later fails.
+  let carriedViewerFeedback: string | null = null;
   // Stage of the verification failure that opened the current Run iteration
   // (#49): `tsc` makes the round's content prompts lean.
   let pendingVerificationStage: "tsc" | "tests" | null = null;
@@ -4396,10 +5269,18 @@ export async function runLoop(options: LoopOptions): Promise<LoopResult> {
         }
         const target = continuedTarget.locator.path;
         const diskSource = readFileIfExists(join(cwd, target)) ?? "";
-        const wholeFile = repair || continuedTarget.mode === "create";
-        const currentSource = wholeFile
-          ? diskSource
-          : currentSourceForPrompt("modify", target, continuedTarget.locator, diskSource);
+        const repairSource = repairContextSource({
+          mode: continuedTarget.mode === "create" ? "create" : "modify",
+          repair,
+          target,
+          locator: continuedTarget.locator,
+          diskSource,
+          diagnostics: pendingContinuation.diagnostics,
+        });
+        const currentSource =
+          repairSource.preRendered !== undefined
+            ? repairSource.source
+            : truncateSource(repairSource.source);
         const stalledInfo: StalledAsk | undefined = stalledAsk
           ? {
               failedRounds: stalledRounds,
@@ -4415,7 +5296,8 @@ export async function runLoop(options: LoopOptions): Promise<LoopResult> {
           maxRounds: MAX_RUN_ITERATIONS,
           mode: continuedTarget.mode === "create" ? "create" : "modify",
           locatorJson: pinnedAddressJson,
-          currentSource: truncateSource(currentSource),
+          currentSource,
+          preRenderedSource: repairSource.preRendered,
           diagnostics: pendingContinuation.diagnostics,
           // The ask names re-pinning as a concrete alternative, so its round
           // may move the pin exactly like a verification-opened ask round.
@@ -4424,6 +5306,7 @@ export async function runLoop(options: LoopOptions): Promise<LoopResult> {
           failureHistory,
           stalled: stalledInfo,
           multiPayload: multiPayload,
+          protocolFormat,
         });
       }
     }
@@ -4603,9 +5486,14 @@ export async function runLoop(options: LoopOptions): Promise<LoopResult> {
             addressJson(selection.locator),
             symbolSource,
             multiPayload,
+            protocolFormat,
           );
         } else {
-          initialContentPrompt = buildCreatePrompt(addressJson(selection.locator), selection.path);
+          initialContentPrompt = buildCreatePrompt(
+            addressJson(selection.locator),
+            selection.path,
+            protocolFormat,
+          );
         }
         continue;
       }
@@ -4654,10 +5542,19 @@ export async function runLoop(options: LoopOptions): Promise<LoopResult> {
         contentPrompt = initialContentPrompt;
         repairExchange = false;
       } else {
-        const wholeFile = repair || pinnedTarget.mode === "create";
-        const currentSource = wholeFile
-          ? diskSource
-          : currentSourceForPrompt("modify", target, pinnedTarget.locator, diskSource);
+        const promptDiagnostics = combinedDiagnostics(iterationOpenedBy, lastDiagnostics);
+        const repairSource = repairContextSource({
+          mode: pinnedTarget.mode === "create" ? "create" : "modify",
+          repair,
+          target,
+          locator: pinnedTarget.locator,
+          diskSource,
+          diagnostics: promptDiagnostics,
+        });
+        const currentSource =
+          repairSource.preRendered !== undefined
+            ? repairSource.source
+            : truncateSource(repairSource.source);
         // No-progress ask (#54): only the first content prompt of a stalled
         // round carries the decision framing and the digest (#57); every other
         // retry is unchanged.
@@ -4690,10 +5587,11 @@ export async function runLoop(options: LoopOptions): Promise<LoopResult> {
           maxExchanges: MAX_EDIT_EXCHANGES,
           mode: pinnedTarget.mode === "create" ? "create" : "modify",
           locatorJson: pinnedAddressJson,
-          currentSource: truncateSource(currentSource),
+          currentSource,
+          preRenderedSource: repairSource.preRendered,
           // A soft edit failure overwrites `lastDiagnostics`; in a repair
           // iteration keep the verification failure visible too (#48).
-          diagnostics: combinedDiagnostics(iterationOpenedBy, lastDiagnostics),
+          diagnostics: promptDiagnostics,
           failure: lastFailure,
           repin: iterationOpenedBy !== null && pinnedTarget.mode === "modify",
           stalled,
@@ -4706,6 +5604,7 @@ export async function runLoop(options: LoopOptions): Promise<LoopResult> {
           // class-specific lead; verification-repair prompts keep the default.
           correction: lastFailure === "edit" ? (lastCorrection ?? undefined) : undefined,
           multiPayload: multiPayload,
+          protocolFormat,
           selfCheck: selfCheck ?? undefined,
         });
         repairExchange = true;
@@ -4777,7 +5676,7 @@ export async function runLoop(options: LoopOptions): Promise<LoopResult> {
       if (
         exchange === 1 &&
         decisionTurn &&
-        !isEditPayloadReply(response.content ?? "", multiPayload)
+        !isEditPayloadReply(response.content ?? "", multiPayload, protocolFormat)
       ) {
         pendingApproach = clampText(response.content ?? "", APPROACH_LIMIT);
         continue;
@@ -4933,8 +5832,67 @@ export async function runLoop(options: LoopOptions): Promise<LoopResult> {
       // current source does not declare, so the retry lead keeps the add path
       // open instead of demanding a re-pin that cannot resolve.
       let addressUndeclaredName: string | null = null;
+      // #119: the compact reply state. Under the compact protocol it is parsed
+      // first and is the required form.
+      let compactReply = false;
+      let compactSelections: CompactSelection[] = [];
+      let compactResolution: CompactResolution | null = null;
+      // Parse `select … end` clauses and resolve them against each file's current
+      // source. Returns null when the reply carries no clause; a
+      // `SelectionSyntaxError` propagates to the caller.
+      const parseCompact = (): {
+        selections: CompactSelection[];
+        resolution: CompactResolution;
+      } | null => {
+        const selections = parseSelection(stripCodeFences(content));
+        if (selections.length === 0) {
+          return null;
+        }
+        const compactSources = new Map<string, string>();
+        const resolution = resolveCompactReply(selections, {
+          sourceFor: (path) => {
+            if (path === target) {
+              return sourceBefore;
+            }
+            const cached = compactSources.get(path);
+            if (cached !== undefined) {
+              return cached;
+            }
+            const source = readFileIfExists(join(cwd, path)) ?? "";
+            compactSources.set(path, source);
+            return source;
+          },
+          resolveEntry: (source, path, locator) => resolveCurrentEntry(source, path, locator),
+        });
+        return { selections, resolution };
+      };
+      // #119: under the compact protocol the compact syntax is the required
+      // reply form, so it is parsed first and a JSON edit payload (which never
+      // matches the compact grammar) is rejected as a protocol failure.
+      // Explicit-targets mode (#81) stays JSON, and this path is not combined
+      // with it.
+      const compactRequiredReply = protocolFormat === "compact" && !targetsMode;
       if (failure !== null) {
         // Refused self-check request: no payload to parse.
+      } else if (compactRequiredReply) {
+        try {
+          const parsed = parseCompact();
+          if (parsed === null) {
+            failure = COMPACT_FORCE_DIAGNOSTICS;
+          } else {
+            compactReply = true;
+            compactSelections = parsed.selections;
+            compactResolution = parsed.resolution;
+            failure = null;
+            failureCause = null;
+            failureStage = "protocol";
+          }
+        } catch (error) {
+          if (!(error instanceof SelectionSyntaxError)) {
+            throw error;
+          }
+          failure = COMPACT_FORCE_DIAGNOSTICS;
+        }
       } else if (multiPayload) {
         const parsed = parseEditResponseList(content);
         if (parsed.ok) {
@@ -5264,124 +6222,39 @@ export async function runLoop(options: LoopOptions): Promise<LoopResult> {
             }
             regions.push({
               index,
-              payload: entryPayload,
+              path,
+              locator: entryPayload.locator,
               start: span.start,
               end: span.end,
               text: span.text,
+              replacement: entryPayload.replacement,
+              stage: stageOf(entryPayload),
+              matcherKind: matcherKindOf(entryPayload),
+              create: false,
             });
           }
-          // Group the resolved regions by file and apply each file in one pass.
-          const groups = new Map<string, ResolvedRegion[]>();
-          for (const region of regions) {
-            const path = region.payload.locator.path;
-            const group = groups.get(path);
-            if (group === undefined) {
-              groups.set(path, [region]);
-            } else {
-              group.push(region);
-            }
-          }
-          for (const [path, group] of groups) {
-            const payloadSource = fileSourceOf(path);
-            const ordered = [...group].sort((left, right) => left.start - right.start);
-            // Overlap policy (#78): two regions share source text, so the whole
-            // exchange is discarded and both regions are named.
-            let overlapping: [ResolvedRegion, ResolvedRegion] | null = null;
-            for (let i = 1; i < ordered.length; i += 1) {
-              const previous = ordered[i - 1];
-              const current = ordered[i];
-              if (previous !== undefined && current !== undefined && current.start < previous.end) {
-                overlapping = [previous, current];
-                break;
-              }
-            }
-            if (overlapping !== null) {
-              failureCause = "multi-duplicate";
-              blocks.push(
-                multiOverlapDiagnostics(batch.length, path, overlapping[0], overlapping[1]),
-              );
-              continue;
-            }
-            // Apply the file's splices together, from the end as `applyEdits`
-            // does, so earlier offsets stay valid.
-            let spliced = payloadSource;
-            for (let i = ordered.length - 1; i >= 0; i -= 1) {
-              const region = ordered[i];
-              if (region === undefined) {
-                continue;
-              }
-              spliced = applyMatcherSplice(spliced, region.start, region.end, region.text);
-            }
-            const payloadCheck = path === target ? prevCheck : parseCheck(payloadSource);
-            if (!payloadCheck.ok) {
-              // Unreachable for extra files: a strict resolution succeeded, so
-              // the file parses.
-              for (const region of ordered) {
+          batchWrites.push(
+            ...(await applyResolvedRegions({
+              regions,
+              fileSourceOf,
+              target,
+              prevCheck,
+              noteFailure: (note) => {
                 noteFailure(
-                  region.index,
-                  path,
-                  region.payload.locator,
-                  "address",
-                  prevBrokenDiagnostics(path, payloadCheck.failure),
+                  note.region.index,
+                  note.path,
+                  note.region.locator,
+                  note.stage,
+                  note.diagnostics,
+                  { matcherCause: note.matcherCause, formatMessage: note.formatMessage },
                 );
-              }
-              continue;
-            }
-            const gate = parseCheck(spliced);
-            if (!gate.ok) {
-              for (const region of ordered) {
-                noteFailure(
-                  region.index,
-                  path,
-                  region.payload.locator,
-                  "gate",
-                  gateDiagnostics(region.start, region.payload.replacement, gate.failure),
-                );
-              }
-              continue;
-            }
-            const duplicate = duplicateDeclarationDiagnostics(
-              payloadSource,
-              path,
-              payloadCheck.program,
-              gate.program,
-            );
-            if (duplicate !== null) {
-              for (const region of ordered) {
-                noteFailure(region.index, path, region.payload.locator, "duplicate", duplicate);
-              }
-              continue;
-            }
-            let formatted: string | null = null;
-            try {
-              formatted = await formatSource(path, spliced);
-            } catch (error) {
-              for (const region of ordered) {
-                noteFailure(
-                  region.index,
-                  path,
-                  region.payload.locator,
-                  "format",
-                  `stage: format\n${errorMessage(error)}`,
-                  { formatMessage: errorMessage(error) },
-                );
-              }
-              continue;
-            }
-            if (await sameAfterFormatting(path, payloadSource, formatted)) {
-              for (const region of ordered) {
-                noteFailure(
-                  region.index,
-                  path,
-                  region.payload.locator,
-                  "no-op",
-                  NOOP_DIAGNOSTICS,
-                );
-              }
-              continue;
-            }
-            batchWrites.push({ path, source: formatted });
-          }
+              },
+              noteOverlap: (path, earlier, later) => {
+                failureCause = "multi-duplicate";
+                blocks.push(multiOverlapDiagnostics(batch.length, path, earlier, later));
+              },
+            })),
+          );
           if (blocks.length > 0) {
             failure = blocks.join("\n\n");
             if (firstStage !== null) {
@@ -5393,6 +6266,156 @@ export async function runLoop(options: LoopOptions): Promise<LoopResult> {
           } else {
             newSource = batchWrites[0]?.source ?? null;
           }
+        }
+      }
+      // #111 compact application: resolve the parsed clauses into regions,
+      // viewers, and typed failures, then apply the resolved editor clauses
+      // non-atomically (§6): per file, in document order, successes stand and
+      // failures are skipped. Viewers surface their occurrences as the next
+      // prompt's feedback and write nothing. When any clause failed the exchange
+      // is still a retry-driving rejection, but the successful writes persist and
+      // the diagnostics list the applied clauses (the §7 "do not resend" list).
+      let compactApplied = false;
+      let compactAppliedRegions: ResolvedRegion[] = [];
+      let compactCreates = 0;
+      let compactViewerFeedback: string | null = null;
+      if (failure === null && compactReply && compactResolution !== null) {
+        const totalClauses = compactSelections.length;
+        const blocks: string[] = [];
+        let firstCompactStage: EditFailureStage | null = null;
+        let firstCompactCause: MatcherCause | undefined;
+        let firstCompactUndeclared: string | null = null;
+        const noteCompactFailure = (
+          failureIndex: number,
+          failurePath: string,
+          locator: Locator,
+          stage: EditFailureStage,
+          diagnostics: string,
+          origin: { matcherCause?: MatcherCause; undeclaredName?: string | null } = {},
+        ): void => {
+          if (firstCompactStage === null) {
+            firstCompactStage = stage;
+            firstCompactCause = origin.matcherCause;
+            firstCompactUndeclared = origin.undeclaredName ?? null;
+          }
+          blocks.push(
+            compactClauseDiagnostics(failureIndex + 1, totalClauses, failurePath, locator, diagnostics),
+          );
+        };
+        for (const clauseFailure of compactResolution.failures) {
+          noteCompactFailure(
+            clauseFailure.index,
+            clauseFailure.path,
+            clauseFailure.locator,
+            clauseFailure.stage,
+            clauseFailure.diagnostics,
+            {
+              // `regex-invalid` is a matcher cause (#109/#111); the other
+              // matcher failures carry theirs unchanged.
+              matcherCause:
+                clauseFailure.stage === "matcher"
+                  ? (clauseFailure.cause as MatcherCause)
+                  : undefined,
+              undeclaredName: clauseFailure.undeclaredName,
+            },
+          );
+        }
+        const regions = compactResolution.regions.map(compactRegionToResolved);
+        // #111: count the create clauses the reply resolved, applied or not, so
+        // the stage/metrics instrumentation records create-form adoption.
+        compactCreates = compactResolution.regions.filter((region) => region.create).length;
+        // Resolve failures never abort the resolved clauses (§6): apply them
+        // non-atomically even when other clauses failed resolution.
+        const outcome = await applyResolvedRegionsNonAtomic({
+          regions,
+          fileSourceOf: (path) =>
+            path === target ? sourceBefore : (readFileIfExists(join(cwd, path)) ?? ""),
+          target,
+          prevCheck,
+          noteFailure: (note) => {
+            noteCompactFailure(
+              note.region.index,
+              note.path,
+              note.region.locator,
+              note.stage,
+              note.diagnostics,
+              { matcherCause: note.matcherCause },
+            );
+          },
+          noteOverlap: (path, earlier, later) => {
+            failureCause = "multi-duplicate";
+            if (firstCompactStage === null) {
+              firstCompactStage = "protocol";
+            }
+            blocks.push(compactOverlapDiagnostics(totalClauses, path, earlier, later));
+          },
+        });
+        compactAppliedRegions = outcome.applied;
+        if (blocks.length > 0) {
+          // Partial updates persist (§6): write the files that changed before
+          // the retry-driving rejection.
+          for (const write of outcome.writes) {
+            writeTarget(cwd, write.path, write.source);
+          }
+          const appliedList =
+            outcome.applied.length > 0
+              ? compactAppliedListDiagnostics(outcome.applied, totalClauses)
+              : null;
+          const diagnostics = blocks.join("\n\n");
+          failure = appliedList === null ? diagnostics : `${diagnostics}\n\n${appliedList}`;
+          if (firstCompactStage !== null) {
+            failureStage = firstCompactStage;
+          }
+          matcherCause = firstCompactCause;
+          addressUndeclaredName = firstCompactUndeclared;
+        } else if (regions.length > 0) {
+          compactApplied = true;
+          batchWrites.push(...outcome.writes);
+          newSource = outcome.writes[0]?.source ?? null;
+        }
+        if (compactResolution.viewers.length > 0) {
+          compactViewerFeedback = renderViewerFeedback(compactResolution.viewers);
+        }
+      }
+      // A viewer locate turn (#111): a reply that carried only viewers writes
+      // nothing and is not an edit failure; its occurrences ride the next
+      // prompt. A mixed reply applied its editors above and carries the viewer
+      // results alongside the next diagnostics.
+      if (compactViewerFeedback !== null) {
+        if (failure !== null) {
+          failure = `${failure}\n\n${compactViewerFeedback}`;
+        } else if (!compactApplied) {
+          records.push(
+            recordRow({
+              row: records.length + 1,
+              iteration,
+              kind: "exchange",
+              exchange,
+              locator: pinnedTarget.locator,
+              replacement: null,
+              diagnostics: compactViewerFeedback,
+              outcome: "viewer",
+              finishReason: response.finishReason,
+              payloads: compactSelections.length,
+              toolCalls: response.toolCalls.length,
+            }),
+          );
+          lastDiagnostics = compactViewerFeedback;
+          lastFailure = "edit";
+          if (exchange === MAX_EDIT_EXCHANGES) {
+            if (iteration >= MAX_RUN_ITERATIONS) {
+              return await terminate("edit-exhausted", capDiagnostics(iterationOpenedBy));
+            }
+            continuation = {
+              round: iteration,
+              pick: false,
+              diagnostics: combinedDiagnostics(iterationOpenedBy, lastDiagnostics),
+            };
+            break;
+          }
+          continue;
+        } else {
+          carriedViewerFeedback = compactViewerFeedback;
         }
       }
       // Syntax gate (highest-priority invariant): prev parses ⇒ after must parse.
@@ -5430,7 +6453,7 @@ export async function runLoop(options: LoopOptions): Promise<LoopResult> {
       // span's copied leading indentation) formats back to the current source.
       // Rejected with the byte-exact no-op's stage and diagnostics: no write,
       // no verification, same cause and retry policy.
-      if (batch === null && failure === null && newSource !== null) {
+      if (batch === null && !compactApplied && failure === null && newSource !== null) {
         if (await sameAfterFormatting(target, sourceBefore, newSource)) {
           failure = NOOP_DIAGNOSTICS;
           failureStage = "no-op";
@@ -5452,15 +6475,33 @@ export async function runLoop(options: LoopOptions): Promise<LoopResult> {
             outcome: failureStage,
             finishReason: response.finishReason,
             cause,
-            payloads: batch !== null ? batch.length : payload !== null ? 1 : batchPayloadCount,
+            payloads: compactReply
+              ? compactSelections.length
+              : batch !== null
+                ? batch.length
+                : payload !== null
+                  ? 1
+                  : batchPayloadCount,
             toolCalls: response.toolCalls.length,
             replacementChars: batchReplacementChars ?? undefined,
             // #101: a batch rejected at parse time keeps `batch` null but still
             // carries the entries that parsed; classify those so every entry is
             // counted (the `payloads` field already counts `batchCarried`).
-            selectors:
-              selectorsOf(payload, batch) ??
-              (batchCarried.length > 0 ? batchCarried.map(selectorOf) : undefined),
+            // #111: a compact reply records the cascade's own stages/kinds for
+            // the clauses that actually applied (#110), not the resolved set.
+            selectors: compactReply
+              ? compactAppliedRegions.map((region) => selectorFromStage(region.stage))
+              : (selectorsOf(payload, batch) ??
+                (batchCarried.length > 0 ? batchCarried.map(selectorOf) : undefined)),
+            stages: compactReply
+              ? compactAppliedRegions.map((region) => region.stage)
+              : (stagesOf(payload, batch) ??
+                (batchCarried.length > 0 ? batchCarried.map(stageOf) : undefined)),
+            matcherKinds: compactReply
+              ? compactAppliedRegions.map((region) => region.matcherKind)
+              : (matcherKindsOf(payload, batch) ??
+                (batchCarried.length > 0 ? batchCarried.map(matcherKindOf) : undefined)),
+            creates: compactReply ? compactCreates : undefined,
           }),
         );
         // Resubmission guard (#48): remember every modify-mode payload with its
@@ -5502,9 +6543,10 @@ export async function runLoop(options: LoopOptions): Promise<LoopResult> {
         }
         continue;
       }
-      if (batch !== null) {
-        // Atomic apply (#69): every payload passed its own guard above, so the
-        // prepared sources are written together; a single failure wrote nothing.
+      if (batch !== null || compactApplied) {
+        // Atomic apply (#69/#111): every payload/clause passed its own guard
+        // above, so the prepared sources are written together; a single failure
+        // wrote nothing.
         for (const write of batchWrites) {
           writeTarget(cwd, write.path, write.source);
         }
@@ -5545,11 +6587,20 @@ export async function runLoop(options: LoopOptions): Promise<LoopResult> {
           diagnostics: null,
           outcome: "applied",
           finishReason: response.finishReason,
-          payloads: batch !== null ? batch.length : payload !== null ? 1 : 0,
+          payloads: compactReply ? compactSelections.length : batch !== null ? batch.length : payload !== null ? 1 : 0,
           toolCalls: response.toolCalls.length,
           replacementChars: batchReplacementChars ?? undefined,
           appliedLocators: targetsMode ? coveredTargets : undefined,
-          selectors: selectorsOf(payload, batch),
+          selectors: compactReply
+            ? compactAppliedRegions.map((region) => selectorFromStage(region.stage))
+            : selectorsOf(payload, batch),
+          stages: compactReply
+            ? compactAppliedRegions.map((region) => region.stage)
+            : stagesOf(payload, batch),
+          matcherKinds: compactReply
+            ? compactAppliedRegions.map((region) => region.matcherKind)
+            : matcherKindsOf(payload, batch),
+          creates: compactReply ? compactCreates : undefined,
         }),
       );
       // Same-file sequencing (#81): a path-independent batch covers at most one
@@ -5615,7 +6666,13 @@ export async function runLoop(options: LoopOptions): Promise<LoopResult> {
           signature,
         }),
       );
-      pendingDiagnostics = diagnostics;
+      // #111: a mixed compact reply's viewer occurrences ride into the next
+      // round's prompt alongside the verification failure.
+      pendingDiagnostics =
+        carriedViewerFeedback !== null
+          ? `${carriedViewerFeedback}\n\n${diagnostics}`
+          : diagnostics;
+      carriedViewerFeedback = null;
       pendingVerificationStage = check.ok ? "tests" : "tsc";
       // One more consecutive verification-failed round (#54): the count spans
       // rounds and #52 continuations; only a pass (which ends the run) resets it.

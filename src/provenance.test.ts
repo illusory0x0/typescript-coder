@@ -100,6 +100,12 @@ describe("currentInputHashes", () => {
       expect(multipayload.inputs.systemPrompt).not.toBe(first.inputs.systemPrompt);
       expect(multipayload.inputs.loopConfig).not.toBe(first.inputs.loopConfig);
 
+      // #119: the selected protocol reaches the system-prompt digest even though
+      // the loop config hash is unchanged.
+      const compact = currentInputHashes(root, { ...base, protocolFormat: "compact" });
+      expect(compact.inputs.systemPrompt).not.toBe(first.inputs.systemPrompt);
+      expect(compact.inputs.loopConfig).toBe(first.inputs.loopConfig);
+
       const effort = currentInputHashes(root, { ...base, effort: "high" });
       expect(effort.inputs.loopConfig).not.toBe(first.inputs.loopConfig);
 

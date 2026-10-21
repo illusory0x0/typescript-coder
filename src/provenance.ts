@@ -11,7 +11,7 @@
 // provenance"):
 // - Per-input sha256 hex digests: `model`, `taskIssue` (the frozen task text,
 //   keyed by task), `fixture` (the fixture's on-disk content, keyed by task and
-//   relative path), `systemPrompt` (`buildSystemPrompt(multiPayload)`),
+//   relative path), `systemPrompt` (`buildSystemPrompt(multiPayload, format)`),
 //   `loopConfig` (budgets/caps/effort/reps/multiPayload), and `pricing` (the
 //   rate table plus `PRICING_FETCHED_ON`).
 // - Text pieces are newline-normalized to `\n`; object pieces are serialized
@@ -40,6 +40,7 @@ import {
   MAX_STALLED_ROUNDS,
   buildSystemPrompt,
 } from "./loop";
+import type { ProtocolFormat } from "./loop";
 
 /** Frozen task names the benchmark measures. */
 export const TASK_NAMES = ["json-parser", "sexp-parser", "minilisp"] as const;
@@ -93,6 +94,8 @@ export interface CurrentInputOptions {
   readonly taskIssues: Readonly<Record<string, string>>;
   readonly model: string;
   readonly multiPayload: boolean;
+  /** Edit protocol format (#119); absent is `json`. */
+  readonly protocolFormat?: ProtocolFormat;
   /** Forced reasoning effort, or null for the default policy. */
   readonly effort: string | null;
   readonly reps: number;
@@ -211,7 +214,7 @@ export function currentInputHashes(root: string, options: CurrentInputOptions): 
     model: options.model,
     taskIssue: stableStringify(issues),
     fixture: stableStringify(fixtures),
-    systemPrompt: buildSystemPrompt(options.multiPayload),
+    systemPrompt: buildSystemPrompt(options.multiPayload, options.protocolFormat ?? "json"),
     loopConfig: loopConfigHashInput({
       tokenBudget: options.tokenBudget ?? null,
       effort: options.effort,
