@@ -4,11 +4,9 @@ import { writeFailureArtifact } from "./failure-artifact";
 import { runLoop } from "./loop";
 import { RESULT_FORMAT, buildSubagentResult, serializeSubagentResult } from "./result";
 import { OpenAIProvider, readConfigFromEnv } from "./openai";
-import { runServe } from "./serve";
 import type { CliOptions } from "./cli";
 import type { LoopResult, ProviderLike, ProtocolFormat } from "./loop";
 import type { SubagentResult } from "./result";
-import type { ServeDefaults } from "./serve";
 import type { Locator } from "./utility";
 
 export interface MainIo {
@@ -181,27 +179,6 @@ function parseCliOptions(argv: string[], io: MainIo): CliOptions {
   }
 }
 
-// Read process stdin lazily as complete lines (#104), so `--serve` can answer
-// each request before EOF arrives. The trailing partial line (no newline) is
-// yielded at EOF.
-async function* stdinLines(): AsyncGenerator<string> {
-  const decoder = new TextDecoder();
-  let buffer = "";
-  for await (const chunk of Bun.stdin.stream()) {
-    buffer += decoder.decode(chunk, { stream: true });
-    let index = buffer.indexOf("\n");
-    while (index !== -1) {
-      yield buffer.slice(0, index);
-      buffer = buffer.slice(index + 1);
-      index = buffer.indexOf("\n");
-    }
-  }
-  buffer += decoder.decode();
-  if (buffer !== "") {
-    yield buffer;
-  }
-}
-
 if (import.meta.main) {
   const io: MainIo = { out: console.log, err: console.error };
   const cli = parseCliOptions(process.argv.slice(2), io);
@@ -209,39 +186,11 @@ if (import.meta.main) {
     console.log(helpText());
     process.exit(0);
   }
-  // No explicit mode: a TTY means "show help", a pipe/file means one-shot
-  // (#104), preserving the documented `tc < task.txt` contract.
-  if (cli.mode === null && process.stdin.isTTY) {
+  // A TTY stdin means "show help"; a pipe/file reads the issue to EOF and runs
+  // one loop, preserving the documented `tc < task.txt` contract.
+  if (process.stdin.isTTY) {
     console.log(helpText());
     process.exit(0);
-  }
-  const mode = cli.mode ?? "one-shot";
-  if (mode === "serve") {
-    let provider: OpenAIProvider;
-    try {
-      provider = new OpenAIProvider(readConfigFromEnv(cli.model));
-    } catch (error) {
-      console.error(`error: ${error instanceof Error ? error.message : String(error)}`);
-      process.exit(1);
-    }
-    const defaults: ServeDefaults = {
-      cwd: cli.cwd ?? process.cwd(),
-      multiPayload: cli.multiPayload,
-      protocolFormat: cli.protocolFormat,
-    };
-    if (cli.tokenBudget !== null) defaults.tokenBudget = cli.tokenBudget;
-    if (cli.checkCommand !== null) defaults.checkCommand = cli.checkCommand;
-    if (cli.testCommand !== null) defaults.testCommand = cli.testCommand;
-    if (cli.commandTimeoutMs !== null) defaults.commandTimeoutMs = cli.commandTimeoutMs;
-    if (cli.targets !== null) defaults.targets = cli.targets;
-    const code = await runServe({
-      lines: stdinLines(),
-      out: console.log,
-      err: console.error,
-      provider,
-      defaults,
-    });
-    process.exit(code);
   }
   const issue = await Bun.stdin.text();
   let provider: OpenAIProvider;

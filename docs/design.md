@@ -151,14 +151,9 @@ These are the load-bearing choices; most smaller decisions follow from them.
 ### 3.3 CLI & provider
 
 - `src/cli.ts` / `src/main.ts` — stdin issue reader, `--model`, `--help`;
-  runs the loop and prints the summary. Two explicit modes (#104): `--one-shot`
-  (read stdin to EOF, one run, one result) and `--serve` (persistent
-  line-delimited JSON over stdin/stdout, one result per request, diagnostics on
-  stderr); a TTY stdin with no mode prints help, piped stdin defaults to
-  one-shot. The repo itself is the self-host acceptance target.
-- `src/serve.ts` — the `--serve` loop (#104): parses one request object per
-  line, validates it, and **reuses `runMain` per request** with
-  `format:"json"`, so interactive and one-shot share the one result contract.
+  runs the loop and prints the summary. One shot per process: a TTY stdin
+  prints help and exits 0, a pipe/file reads stdin to EOF and runs one loop,
+  one result. The repo itself is the self-host acceptance target.
 - `src/openai.ts` — OpenAI-compatible chat client (tool calls, 120 s
   per-attempt timeout, `retries` for network/429/5xx and a separate
   `timeoutRetries` budget; #74).

@@ -234,7 +234,6 @@ or unparseable kept file is removed and the create re-runs.
 | `replay-runner.ts`     | offline replay provider + run comparison                        |
 | `benchmark-pricing.ts` | official rate card + per-run USD cost                           |
 | `cli.ts`               | argument parser + `--help`                                      |
-| `serve.ts`             | persistent line-delimited JSON mode (`--serve`, #104)           |
 | `main.ts`              | wires stdin → loop                                              |
 | `index.ts`             | scaffold placeholder (`greet`), self-host acceptance target     |
 
@@ -242,10 +241,8 @@ or unparseable kept file is removed and the create re-runs.
 
 **Input:** the planning main agent's issue, delivered on **stdin** (free text).
 
-The loop is the same in both modes: `--one-shot` runs it once per process, and
-the persistent `--serve` mode (#104) reuses `runMain` per line-delimited
-request, so every request runs exactly this loop and shares the one result
-contract; see `docs/subagent.md` for the protocol.
+The loop runs once per process: `tc` reads stdin to EOF and drives exactly this
+loop, returning one result; see `docs/subagent.md` for the delegation contract.
 
 The loop nests two levels (#43): **Run** repeats **Edit → Verification** until the
 task succeeds or the run terminates; each Run iteration grants Edit a fresh budget

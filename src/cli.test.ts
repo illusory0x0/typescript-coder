@@ -40,7 +40,6 @@ describe("parseArgs", () => {
   // The full default option set (#80): text format and no sub-agent overrides.
   const DEFAULTS = {
     help: false,
-    mode: null,
     model: "deepseek-v4.1-flash",
     multiPayload: false,
     protocolFormat: "json" as const,
@@ -60,20 +59,6 @@ describe("parseArgs", () => {
   test("recognizes --help and -h", () => {
     expect(parseArgs(["--help"])).toEqual({ ...DEFAULTS, help: true });
     expect(parseArgs(["-h"])).toEqual({ ...DEFAULTS, help: true });
-  });
-
-  test("reads --serve and --one-shot into mode (#104)", () => {
-    expect(parseArgs(["--serve"]).mode).toBe("serve");
-    expect(parseArgs(["--one-shot"]).mode).toBe("one-shot");
-    expect(parseArgs([]).mode).toBeNull();
-    // Order does not matter, and other flags still parse.
-    expect(parseArgs(["--serve", "--format", "json"]).mode).toBe("serve");
-    expect(parseArgs(["--format=json", "--one-shot"]).mode).toBe("one-shot");
-  });
-
-  test("throws when --serve and --one-shot are both given (#104)", () => {
-    expect(() => parseArgs(["--serve", "--one-shot"])).toThrow("mutually exclusive");
-    expect(() => parseArgs(["--one-shot", "--serve"])).toThrow("mutually exclusive");
   });
 
   test("reads --model with a separate value", () => {
@@ -285,14 +270,6 @@ describe("helpText", () => {
     expect(text).toContain("--protocol-format <json|compact>");
     expect(text).toContain("--targets <file>");
     expect(text).toContain("typescript-coder-result@1");
-  });
-
-  test("documents the two modes and the --serve protocol (#104)", () => {
-    const text = helpText();
-    expect(text).toContain("--one-shot");
-    expect(text).toContain("--serve");
-    expect(text).toContain("line-delimited JSON");
-    expect(text).toContain("shutdown");
   });
 });
 

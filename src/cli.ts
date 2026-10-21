@@ -4,12 +4,6 @@ import type { Locator } from "./utility";
 
 export interface CliOptions {
   help: boolean;
-  /**
-   * Execution mode (#104): `one-shot` reads stdin to EOF and runs one loop,
-   * `serve` keeps one process alive for line-delimited JSON requests, and
-   * `null` leaves the choice to the entry point (TTY ⇒ help, piped ⇒ one-shot).
-   */
-  mode: "one-shot" | "serve" | null;
   model: string;
   /** Opt-in multi-payload exchanges (#69); default off. */
   multiPayload: boolean;
@@ -156,7 +150,6 @@ export function readTargetsFile(file: string): Locator[] {
 
 export function parseArgs(argv: string[]): CliOptions {
   let help = false;
-  let mode: "one-shot" | "serve" | null = null;
   let model = DEFAULT_MODEL;
   let multiPayload = false;
   let protocolFormat: ProtocolFormat = "json";
@@ -174,20 +167,6 @@ export function parseArgs(argv: string[]): CliOptions {
     }
     if (arg === "-h" || arg === "--help") {
       help = true;
-      continue;
-    }
-    if (arg === "--serve") {
-      if (mode === "one-shot") {
-        throw new Error("--serve and --one-shot are mutually exclusive");
-      }
-      mode = "serve";
-      continue;
-    }
-    if (arg === "--one-shot") {
-      if (mode === "serve") {
-        throw new Error("--serve and --one-shot are mutually exclusive");
-      }
-      mode = "one-shot";
       continue;
     }
     if (arg === "--multi-payload" || arg === "--multiPayload") {
@@ -260,7 +239,6 @@ export function parseArgs(argv: string[]): CliOptions {
   }
   return {
     help,
-    mode,
     model,
     multiPayload,
     protocolFormat,
@@ -281,17 +259,6 @@ export function helpText(): string {
     "Usage:",
     "  tc [--model <id>] [--format <text|json>] [--protocol-format <json|compact>] [--token-budget <n>] [--multi-payload] [--targets <file>] < issue.txt",
     "  bun run src/main.ts [--model <id>] [--format <text|json>] [--protocol-format <json|compact>] [--token-budget <n>] [--multi-payload] [--targets <file>] < issue.txt",
-    "",
-    "Modes:",
-    "  --one-shot         read stdin to EOF, run one loop, print one result, exit",
-    "                     (the default when stdin is piped or redirected)",
-    "  --serve            keep one process alive for line-delimited JSON: one",
-    "                     request object per stdin line, exactly one",
-    "                     typescript-coder-result@1 result line per run on stdout",
-    '                     (diagnostics/progress on stderr); {"op":"shutdown"}',
-    "                     writes an ack and ends the loop; EOF ends the loop",
-    "  (no flag)          with a TTY stdin, print this help and exit 0; with",
-    "                     piped stdin, behave as --one-shot",
     "",
     "Options:",
     "  --model <id>       model id for the OpenAI-compatible provider (default: deepseek-v4.1-flash)",
