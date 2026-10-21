@@ -189,11 +189,13 @@ Both formats reduce to the same narrowing, one stage at a time.
    inclusiveness, declaration containment), and the candidate set is filtered to
    spans contained in the union of the picked ranges. `pick` only ever removes
    candidates.
-4. **Rewrite.** With no `match` the target is the whole declaration; otherwise
-   it is the resolved span. A rewrite that starts at the declaration's start
-   gets the **`export` tolerance**: an indexed node range excludes a wrapping
-   `export`, so a replacement that still carries it keeps exactly one copy. A
-   body-level target is never stripped.
+4. **Rewrite.** With no `match` the target is the whole declaration — the
+   `human/edit.md` "behavior like `str_search` in the top-level definition": the
+   symbol index locates the definition, and no literal text search runs.
+   Otherwise it is the resolved span. A rewrite that starts at the
+   declaration's start gets the **`export` tolerance**: an indexed node range
+   excludes a wrapping `export`, so a replacement that still carries it keeps
+   exactly one copy. A body-level target is never stripped.
 
 The policy is total, and nothing is guessed: exactly one candidate at the finest
 supplied stage is the target, zero is `matcher-not-found`, and more than one is
@@ -222,7 +224,8 @@ A compact clause with no `replace` writes nothing and reports one numbered
 declaration block per clause as the next prompt's feedback: each candidate's
 exact file-absolute `path:line:col` position precedes the block, and every line
 intersected by a matched span carries `⁉️` in the gutter. A bare viewer (no
-`match`) renders the whole declaration once and marks nothing. Where an editor
+`match`) renders the whole declaration once and marks nothing — the same
+`str_search`-like top-level default as the editor path. Where an editor
 treats ambiguity as failure, a viewer treats it as **information**: a `match`
 viewer returns all occurrences (optionally filtered by `pick`) so the model can
 see the candidates, then add a `pick` or lengthen the snippet. A malformed

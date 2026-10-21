@@ -11,7 +11,7 @@ multiEditor = { editor } ;
 editor      = 'select', symbol,                 (* select toplevel typescript *)
               'in', path,                       (* in path relative project root *)
               [ resolve kind ]                  (* resolve typescript overloading (type,namespace,function...)* )
-              [ (* if missing then become use str_search in toplevel definition *)
+              [ (* if missing then behavior like str_search in toplevel definition *)
                 'match', ( snippet | regex ) 
               ],                                (* structure match or regex search *)
               [ (* if missing then view the code with line number, matched AST would use ⁉️ to strong *)
