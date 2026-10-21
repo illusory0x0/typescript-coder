@@ -1,0 +1,44 @@
+# Open issues in picking order. This order is authoritative: `reorder`
+# rewrites it; `add` appends; other writes keep it. `check` enforces it.
+# A dep, and every child of an umbrella, must be listed before its dependent.
+
+- id: 2
+  title: "Parse and serialize the resolve header and six-tick fences"
+  status: todo
+  priority: medium
+  milestone: null
+  parent: 1
+  deps: []
+  file: 0002-parse-and-serialize-the-resolve-header-and-six-tick-fences.md
+- id: 3
+  title: "Resolve the compact address by TS symbol space and apply creation defaults"
+  status: todo
+  priority: medium
+  milestone: null
+  parent: 1
+  deps: [2]
+  file: 0003-resolve-the-compact-address-by-ts-symbol-space-and-apply-creation-defaults.md
+- id: 4
+  title: "Render viewer details as a numbered declaration block with match markers"
+  status: todo
+  priority: medium
+  milestone: null
+  parent: 1
+  deps: [2]
+  file: 0004-render-viewer-details-as-a-numbered-declaration-block-with-match-markers.md
+- id: 5
+  title: "Teach and document the resolve protocol end to end"
+  status: todo
+  priority: medium
+  milestone: null
+  parent: 1
+  deps: [2, 3, 4]
+  file: 0005-teach-and-document-the-resolve-protocol-end-to-end.md
+- id: 1
+  title: "Implement the editing-protocol deltas from human/edit.md"
+  status: todo
+  priority: medium
+  milestone: null
+  parent: null
+  deps: []
+  file: 0001-implement-the-editing-protocol-deltas-from-human-edit-md.md
