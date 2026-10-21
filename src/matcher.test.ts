@@ -1,13 +1,29 @@
 import { describe, expect, test } from "bun:test";
+import { existsSync, readFileSync } from "node:fs";
+import { dirname, join } from "node:path";
+import { fileURLToPath } from "node:url";
 import {
   applyMatcherSplice,
   extractJsonObject,
   findMatcher,
+  findRegexMatches,
+  MAX_REGEX_MATCHES,
+  MAX_REGEX_PATTERN_LENGTH,
   parseMatcherFragment,
   structurallyEqual,
 } from "./matcher";
 import type { MatcherFragmentResult, SymbolRange } from "./matcher";
 import { buildIndexTolerant, findDefinition } from "./utility";
+
+// The benchmark fixtures live outside `src/`; the self-host smoke test copies
+// only `src/` and runs the copied suite, so guard the fixture scan on their
+// presence (see `src/cli.test.ts`).
+const BENCHMARK_FIXTURES = join(
+  dirname(fileURLToPath(import.meta.url)),
+  "..",
+  "benchmark",
+  "fixtures",
+);
 
 describe("extractJsonObject", () => {
   test("parses plain JSON", () => {
@@ -293,6 +309,90 @@ describe("findMatcher", () => {
     const matcher = ["const a = 1;", "  return a;"].join("\n");
     expect(findMatcher(source, range, matcher)).toEqual({ kind: "not-found" });
   });
+});
+
+describe("findRegexMatches", () => {
+  test("enumerates every pattern match inside the symbol and only there", () => {
+    // `answer` holds one `return 1;`; the structurally equal one in `other` is
+    // outside the symbol range and must not be reported.
+    const range = symbolRange(HELPER, "answer", "function");
+    const result = findRegexMatches(HELPER, range, "return 1;");
+    expect(result.kind).toBe("matches");
+    if (result.kind !== "matches") {
+      return;
+    }
+    const start = HELPER.indexOf("return 1;", range.start);
+    expect(result.spans).toEqual([{ start, end: start + "return 1;".length }]);
+  });
+
+  test("returns no spans for a miss", () => {
+    const range = symbolRange(HELPER, "answer", "function");
+    expect(findRegexMatches(HELPER, range, "return 2;")).toEqual({ kind: "matches", spans: [] });
+  });
+
+  test("reports a malformed pattern as invalid with the engine message", () => {
+    const range = symbolRange(HELPER, "answer", "function");
+    const result = findRegexMatches(HELPER, range, "(");
+    expect(result.kind).toBe("invalid");
+    if (result.kind === "invalid") {
+      expect(result.message).not.toBe("");
+    }
+  });
+
+  test("rejects a pattern longer than the cap as invalid", () => {
+    const range = symbolRange(HELPER, "answer", "function");
+    const pattern = "a".repeat(MAX_REGEX_PATTERN_LENGTH + 1);
+    const result = findRegexMatches(HELPER, range, pattern);
+    expect(result.kind).toBe("invalid");
+  });
+
+  test("counts a zero-width match once per position without hanging", () => {
+    const source = ["function f() {", "  return a + a;", "}", ""].join("\n");
+    const range = symbolRange(source, "f", "function");
+    const result = findRegexMatches(source, range, "(?=a)");
+    expect(result.kind).toBe("matches");
+    if (result.kind !== "matches") {
+      return;
+    }
+    // The two `a` identifiers: an insertion point (start === end) at each.
+    expect(result.spans).toHaveLength(2);
+    for (const span of result.spans) {
+      expect(span.start).toBe(span.end);
+      expect(source[span.start]).toBe("a");
+    }
+  });
+
+  test("stops an unbounded zero-width scan at the match cap", () => {
+    const source = "a".repeat(MAX_REGEX_MATCHES + 500);
+    const range: SymbolRange = { start: 0, end: source.length };
+    // The empty pattern matches zero-width at every position; the enumerator
+    // must stop at MAX_REGEX_MATCHES rather than collect them all.
+    const result = findRegexMatches(source, range, "");
+    expect(result.kind).toBe("invalid");
+  });
+
+  test.skipIf(!existsSync(BENCHMARK_FIXTURES))(
+    "scans the benchmark fixture sources quickly",
+    () => {
+      const fixtures = [
+        "csv-parser/src/csv.test.ts",
+        "json-parser/src/json.test.ts",
+        "minilisp/src/lisp.test.ts",
+        "sexp-parser/src/sexp.test.ts",
+      ];
+      const patterns = ["return", "function", "\\bconst\\b", "=>", "[A-Za-z_]+\\("];
+      const started = performance.now();
+      for (const fixture of fixtures) {
+        const source = readFileSync(join(BENCHMARK_FIXTURES, fixture), "utf8");
+        const range: SymbolRange = { start: 0, end: source.length };
+        for (const pattern of patterns) {
+          const result = findRegexMatches(source, range, pattern);
+          expect(result.kind).toBe("matches");
+        }
+      }
+      expect(performance.now() - started).toBeLessThan(1000);
+    },
+  );
 });
 
 describe("applyMatcherSplice", () => {

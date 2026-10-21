@@ -304,7 +304,25 @@ function collectCandidateNodes(value: unknown, symbol: SymbolRange, out: Candida
   collectChildNodes(record, symbol, out);
 }
 
-export function findMatcher(source: string, symbol: SymbolRange, matcher: string): MatcherResult {
+/**
+ * Every structural span a matcher resolves to inside `symbol` (#108): the
+ * enumeration behind `findMatcher`, so the cascade can filter the candidate set
+ * with `pick` instead of returning on the first hit.
+ *
+ * For the **first** fragment node (in `parseMatcherFragment`'s priority order)
+ * with at least one structural match, all of its spans are returned; else the
+ * runs are tried the same way; else `{ kind: "matches", spans: [] }`. An
+ * unparseable fragment is reported as `unparseable`.
+ */
+export type MatcherSpans =
+  | { kind: "matches"; spans: { start: number; end: number }[] }
+  | { kind: "unparseable"; message: string };
+
+export function findMatcherMatches(
+  source: string,
+  symbol: SymbolRange,
+  matcher: string,
+): MatcherSpans {
   const fragment = parseMatcherFragment(matcher);
   if (fragment.kind === "unparseable") {
     return fragment;
@@ -313,19 +331,21 @@ export function findMatcher(source: string, symbol: SymbolRange, matcher: string
   collectCandidateNodes(new Parser(source).parseProgram(), symbol, candidates);
   for (const node of fragment.nodes) {
     const matches = candidates.filter((candidate) => structurallyEqual(candidate.node, node));
-    const only = matches.length === 1 ? matches[0] : undefined;
-    if (only !== undefined) {
-      return { kind: "match", start: only.node.start, end: only.node.end };
-    }
-    if (matches.length > 1) {
-      return { kind: "ambiguous", matches: matches.length };
+    if (matches.length > 0) {
+      return {
+        kind: "matches",
+        spans: matches.map((candidate) => ({
+          start: candidate.node.start,
+          end: candidate.node.end,
+        })),
+      };
     }
   }
   for (const run of fragment.runs ?? []) {
     // A run matches only at consecutive sibling slots of one container; the
     // reported span is the matched source range, not the fragment's own
     // parsing offsets.
-    const matches: { first: CandidateNode; last: CandidateNode }[] = [];
+    const spans: { start: number; end: number }[] = [];
     for (let position = 0; position < candidates.length; position += 1) {
       const base = candidates[position];
       if (base === undefined || base.container === null) {
@@ -349,18 +369,105 @@ export function findMatcher(source: string, symbol: SymbolRange, matcher: string
       }
       const last = candidates[position + run.length - 1];
       if (last !== undefined) {
-        matches.push({ first: base, last });
+        spans.push({ start: base.node.start, end: last.node.end });
       }
     }
-    if (matches.length === 1) {
-      const only = matches[0];
-      if (only !== undefined) {
-        return { kind: "match", start: only.first.node.start, end: only.last.node.end };
+    if (spans.length > 0) {
+      return { kind: "matches", spans };
+    }
+  }
+  return { kind: "matches", spans: [] };
+}
+
+/**
+ * Regex matchers compile with the `g` and `m` flags and no user-supplied flags:
+ * `docs/edit-protocol.md` §2 admits no flags, and the internal `m` makes the
+ * defined anchoring useful — `^` and `$` anchor at line boundaries inside the
+ * scanned source (the declaration span), not just the file's start/end. `.`
+ * does not span newlines (no `s` flag). The scan stays within `symbol`.
+ *
+ * Two bounds keep a hostile or accidental pattern from wedging the loop:
+ * `MAX_REGEX_PATTERN_LENGTH` rejects an over-long pattern before compilation,
+ * and `MAX_REGEX_MATCHES` stops the enumeration after a pathological number of
+ * hits. Both surface as `invalid`, which the cascade maps to `regex-invalid`. A
+ * single catastrophic-backtracking `exec` cannot be interrupted in-process; the
+ * pattern-length cap plus the caller's bounded target are the practical limit.
+ */
+export const MAX_REGEX_PATTERN_LENGTH = 1024;
+export const MAX_REGEX_MATCHES = 1000;
+
+export type RegexMatches =
+  | { kind: "matches"; spans: { start: number; end: number }[] }
+  | { kind: "invalid"; message: string };
+
+/**
+ * Enumerate every regex match whose span lies inside `symbol` (#109): the
+ * text-matching sibling of `findMatcherMatches`. A malformed pattern, an
+ * over-long pattern, or a pattern that matches absurdly many times is
+ * `invalid`; otherwise every fully-contained match is returned in document
+ * order. A **zero-width** match (`start === end`) is a valid span — an
+ * insertion point — and counts once at each position, per the engine's `g`-flag
+ * rule; the scan steps `lastIndex` forward itself so an engine that leaves it
+ * put (Bun does) cannot loop forever.
+ */
+export function findRegexMatches(
+  source: string,
+  symbol: SymbolRange,
+  pattern: string,
+): RegexMatches {
+  if (pattern.length > MAX_REGEX_PATTERN_LENGTH) {
+    return {
+      kind: "invalid",
+      message: `the pattern is longer than ${MAX_REGEX_PATTERN_LENGTH} characters`,
+    };
+  }
+  let regex: RegExp;
+  try {
+    regex = new RegExp(pattern, "gm");
+  } catch (error) {
+    return { kind: "invalid", message: error instanceof Error ? error.message : String(error) };
+  }
+  const spans: { start: number; end: number }[] = [];
+  regex.lastIndex = symbol.start;
+  for (;;) {
+    const match = regex.exec(source);
+    if (match === null) {
+      break;
+    }
+    const start = match.index;
+    if (start > symbol.end) {
+      break;
+    }
+    const end = start + match[0].length;
+    if (start >= symbol.start && end <= symbol.end) {
+      spans.push({ start, end });
+      if (spans.length > MAX_REGEX_MATCHES) {
+        return {
+          kind: "invalid",
+          message: `the pattern matched more than ${MAX_REGEX_MATCHES} times inside the symbol`,
+        };
       }
     }
-    if (matches.length > 1) {
-      return { kind: "ambiguous", matches: matches.length };
+    if (match[0].length === 0 && regex.lastIndex === start) {
+      regex.lastIndex = start + 1;
     }
+  }
+  return { kind: "matches", spans };
+}
+
+export function findMatcher(source: string, symbol: SymbolRange, matcher: string): MatcherResult {
+  const found = findMatcherMatches(source, symbol, matcher);
+  if (found.kind === "unparseable") {
+    return found;
+  }
+  if (found.spans.length === 1) {
+    const only = found.spans[0];
+    if (only !== undefined) {
+      return { kind: "match", start: only.start, end: only.end };
+    }
+  }
+  if (found.spans.length > 1) {
+    return { kind: "ambiguous", matches: found.spans.length };
   }
   return { kind: "not-found" };
 }
