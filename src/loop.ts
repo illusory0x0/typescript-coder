@@ -3209,7 +3209,7 @@ function addressAmbiguousDiagnostics(
 
 type CurrentEntryResolution =
   | { ok: true; entry: IndexEntry }
-  | { ok: false; diagnostics: string; undeclared: boolean };
+  | { ok: false; diagnostics: string; undeclared: boolean; spaceMiss: boolean };
 
 // Strict-AND resolution of one locator against the current source that would be
 // spliced: no silent first-match pick, no kind coercion, no auto-append. An
@@ -3228,12 +3228,19 @@ function resolveCurrentEntry(
     // `undeclared` (#65): the name is absent under every kind, so the
     // diagnostics suggest mode "create" — the retry lead keeps that add path
     // open instead of demanding an impossible re-pin. A name declared only in
-    // another symbol space is not undeclared: a `resolve` miss must not create.
+    // another symbol space is a `spaceMiss`: it is a creation candidate for the
+    // requested space, but is not "undeclared" everywhere. A kind miss is
+    // neither: the name occupies the requested space and must be re-addressed.
     const byName = currentBuild.index.byName(locator.name);
+    const spaceMiss =
+      space !== null &&
+      byName.length > 0 &&
+      byName.every((entry) => !declarationSpaces(entry).includes(space));
     return {
       ok: false,
       diagnostics: addressMissDiagnostics(locator, byName, sources, space),
       undeclared: byName.length === 0,
+      spaceMiss,
     };
   }
   if (matches.length > 1) {
@@ -3241,6 +3248,7 @@ function resolveCurrentEntry(
       ok: false,
       diagnostics: addressAmbiguousDiagnostics(locator, matches, sources, space),
       undeclared: false,
+      spaceMiss: false,
     };
   }
   const entry = matches[0];
@@ -3250,6 +3258,7 @@ function resolveCurrentEntry(
       ok: false,
       diagnostics: addressMissDiagnostics(locator, [], sources, space),
       undeclared: true,
+      spaceMiss: false,
     };
   }
   return { ok: true, entry };

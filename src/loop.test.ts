@@ -9005,6 +9005,58 @@ describe("compact protocol (#111/#119)", () => {
     expect(applied?.creates).toBe(1);
   }, 30000);
 
+  test("under compact a missing symbol with a match still creates (match is ignored)", async () => {
+    const dir = fixtureDir();
+    const provider = new ScriptedProvider([
+      selectionResponse(),
+      compactReply({
+        ...createEditor(
+          "src/extra.ts",
+          "extra",
+          "function",
+          "export function extra(): number {\n  return 1;\n}",
+        ),
+        matcher: { kind: "snippet", value: "return 1;" },
+      }),
+      compactReply(answerEditor("return 2;", { kind: "snippet", value: "return 1;" })),
+    ]);
+    const result = await runLoop({
+      cwd: dir,
+      issue: "add an extra declaration",
+      provider,
+      protocolFormat: "compact",
+      checkCommand: TSC,
+      testCommand: ["bun", "test"],
+    });
+    expect(result.ok).toBe(true);
+    expect(readFileSync(join(dir, "src", "extra.ts"), "utf8")).toContain("export function extra");
+    expect(helperSource(dir)).toContain("return 2;");
+    const applied = result.records.find((record) => record.outcome === "applied");
+    expect(applied?.creates).toBe(1);
+  }, 30000);
+
+  test("under compact a resolve type create appends a type alias", async () => {
+    const dir = fixtureDir();
+    const provider = new ScriptedProvider([
+      selectionResponse(),
+      compactReply(createEditor("src/types.ts", "Extra", "type", "{ n: number }", "type")),
+      compactReply(answerEditor("return 2;", { kind: "snippet", value: "return 1;" })),
+    ]);
+    const result = await runLoop({
+      cwd: dir,
+      issue: "add an extra type",
+      provider,
+      protocolFormat: "compact",
+      checkCommand: TSC,
+      testCommand: ["bun", "test"],
+    });
+    expect(result.ok).toBe(true);
+    expect(readFileSync(join(dir, "src", "types.ts"), "utf8")).toBe(
+      "type Extra = { n: number };\n",
+    );
+    expect(helperSource(dir)).toContain("return 2;");
+  }, 30000);
+
   test("under compact a no-kind undeclared clause still creates", async () => {
     const dir = fixtureDir();
     const provider = new ScriptedProvider([
@@ -9033,13 +9085,13 @@ describe("compact protocol (#111/#119)", () => {
     expect(helperSource(dir)).toContain("return 2;");
   }, 30000);
 
-  test("under compact a resolve space miss names the spaces and does not create", async () => {
+  test("under compact a resolve space miss creates in the requested space", async () => {
     const dir = fixtureDir();
     const provider = new ScriptedProvider([
       selectionResponse(),
       compactReply(
-        // `answer` is a value-space function; `resolve type` must not fall back
-        // to the value space, and the name is not undeclared, so no create.
+        // `answer` is a value-space function; `resolve type` is a space miss,
+        // so the body is wrapped as a type alias in the requested space.
         createEditor("src/helper.ts", "answer", "function", "42", "type"),
       ),
       compactReply(answerEditor("return 2;", { kind: "snippet", value: "return 1;" })),
@@ -9053,16 +9105,8 @@ describe("compact protocol (#111/#119)", () => {
       testCommand: ["bun", "test"],
     });
     expect(result.ok).toBe(true);
-    const rejected = result.records.find(
-      (record) => record.kind === "exchange" && record.outcome === "address",
-    );
-    expect(rejected).toBeDefined();
-    expect(rejected?.diagnostics).toContain("stage: address");
-    expect(rejected?.diagnostics).toContain(
-      'the name is declared in the "value" space; change "resolve" to match',
-    );
+    expect(helperSource(dir)).toContain("type answer = 42;");
     expect(helperSource(dir)).toContain("return 2;");
-    expect(helperSource(dir)).not.toContain("type answer");
   }, 30000);
 
   test("under compact a no-resolve body creates a let binding in a new parent directory", async () => {
@@ -9094,7 +9138,7 @@ describe("compact protocol (#111/#119)", () => {
           "src/helper.ts",
           "missing",
           "function",
-          "export function answer(): number {\n  return 2;\n}",
+          "export function missing(): number {\n  return 1;\n}\nexport function answer(): number {\n  return 2;\n}",
         ),
       ),
       compactReply(answerEditor("return 2;", { kind: "snippet", value: "return 1;" })),
@@ -9121,8 +9165,8 @@ describe("compact protocol (#111/#119)", () => {
     const provider = new ScriptedProvider([
       selectionResponse(),
       compactReply(
-        // Clause 1 creates a new file and applies; clause 2 names an undeclared
-        // symbol with a `match`, so it keeps the address failure (not a create).
+        // Clause 1 creates a new file and applies; clause 2 is a kind miss on
+        // an existing value-space name, so it keeps the address failure.
         createEditor(
           "src/extra.ts",
           "extra",
@@ -9130,7 +9174,7 @@ describe("compact protocol (#111/#119)", () => {
           "export function extra(): number {\n  return 1;\n}",
         ),
         {
-          locator: { path: "src/helper.ts", name: "nope", kind: "function" },
+          locator: { path: "src/helper.ts", name: "answer", kind: "const" },
           space: null,
           matcher: { kind: "snippet", value: "return 1;" },
           pick: null,

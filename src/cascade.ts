@@ -2,8 +2,9 @@
  * The selection cascade resolver (#108) for the compact edit protocol
  * (`docs/edit-protocol.md` §3). `select` names the declaration (already
  * resolved into `entry`); `match` locates a candidate set inside it; `pick`
- * filters that set to the occurrences inside its ranges; `replace` rewrites the
- * target. Each stage narrows the one before it, an omitted stage falls back to
+ * narrows that set (a point keeps containing candidates, a line/range keeps
+ * contained ones) or, with no `match`, names the target text span; `replace`
+ * rewrites the target. Each stage narrows the one before it, an omitted stage falls back to
  * the coarser result, and nothing is ever guessed: zero or several candidates
  * at the finest supplied stage fail with a typed cause.
  *
@@ -195,13 +196,57 @@ function spanContained(span: Span, picks: readonly Span[]): boolean {
   return picks.some((pick) => span.start >= pick.start && span.end <= pick.end);
 }
 
+/** A point selecter is `line:column` with no end position (`human/edit.md` §2). */
+function isPointRange(range: EditRange): boolean {
+  return range.line === range.endLine && range.column === range.endColumn;
+}
+
+/**
+ * With a `match`, a point selecter selects the candidate spans that contain the
+ * point; every other selecter keeps the "candidate contained in the picked
+ * range" rule. `ranges` and `pickSpans` are parallel: the original range decides
+ * whether the selecter was a point, the resolved span supplies its offset.
+ */
+function pickMatchesSpan(
+  span: Span,
+  ranges: readonly EditRange[],
+  pickSpans: readonly Span[],
+): boolean {
+  for (let index = 0; index < ranges.length; index += 1) {
+    const range = ranges[index];
+    const pickSpan = pickSpans[index];
+    if (range === undefined || pickSpan === undefined) {
+      continue;
+    }
+    if (isPointRange(range)) {
+      if (span.start <= pickSpan.start && pickSpan.start <= span.end) {
+        return true;
+      }
+      continue;
+    }
+    if (spanContained(span, [pickSpan])) {
+      return true;
+    }
+  }
+  return false;
+}
+
+function pickOnlyMultipleDiagnostics(entry: IndexEntry, count: number): string {
+  return [
+    "stage: range",
+    `the \`pick\` has ${count} selecters, but ${declarationLabel(entry)} has no \`match\`, so a single clause can target only one text span`,
+    "write exactly one selecter (a line, a point, or a range), or add a `match` to filter candidates inside several picked ranges",
+  ].join("\n");
+}
+
 /**
  * The one ambiguity/not-found policy both matcher kinds share: with no `pick`,
  * exactly one candidate span is the target; zero is `matcher-not-found` and
  * more than one is `matcher-ambiguous`. With `pick`, the candidate set is first
- * filtered to spans contained in a picked range, and the same rule applies with
- * stage `pick`. The caller supplies the diagnostic wording (a `snippet` and a
- * `/regex/` phrase differently).
+ * filtered (point selecters keep spans containing the point; line/range
+ * selecters keep spans contained in a picked range), and the same rule applies
+ * with stage `pick`. The caller supplies the diagnostic wording (a `snippet`
+ * and a `/regex/` phrase differently).
  */
 type NarrowResult =
   | { ok: true; start: number; end: number; stage: SelectionStage }
@@ -233,7 +278,7 @@ function narrowByMatches(
   if (!picks.ok) {
     return { ok: false, cause: "range-invalid", diagnostics: picks.diagnostics };
   }
-  const kept = spans.filter((span) => spanContained(span, picks.spans));
+  const kept = spans.filter((span) => pickMatchesSpan(span, pick, picks.spans));
   if (kept.length === 0) {
     return { ok: false, cause: "matcher-not-found", diagnostics: notFound() };
   }
@@ -300,7 +345,7 @@ export function resolveCascadeViewer(
     return {
       ok: true,
       stage: "pick",
-      spans: spans.filter((span) => spanContained(span, picks.spans)),
+      spans: spans.filter((span) => pickMatchesSpan(span, selection.pick ?? [], picks.spans)),
     };
   }
   return { ok: true, stage: "match", spans };
@@ -324,11 +369,38 @@ export function resolveCascade(
   let stage: SelectionStage;
 
   if (selection.matcher === null) {
-    // `select` alone: the whole declaration. There is no `pick` stage here —
-    // `pick` is only legal beneath `match` (rejected at parse time).
-    start = declaration.start;
-    end = declaration.end;
-    stage = "whole-symbol";
+    if (selection.pick === null) {
+      // `select` alone: the whole declaration.
+      start = declaration.start;
+      end = declaration.end;
+      stage = "whole-symbol";
+    } else {
+      // Pick-only editor: the selecter *is* the target text span (no fuzzy
+      // match runs). One clause targets one span, so a braced set fails.
+      if (selection.pick.length !== 1) {
+        return {
+          ok: false,
+          cause: "range-invalid",
+          diagnostics: pickOnlyMultipleDiagnostics(entry, selection.pick.length),
+        };
+      }
+      const picks = resolvePickSpans(source, entry, selection.pick);
+      if (!picks.ok) {
+        return { ok: false, cause: "range-invalid", diagnostics: picks.diagnostics };
+      }
+      const only = picks.spans[0];
+      if (only === undefined) {
+        // Unreachable: `resolvePickSpans` returns one span per selecter.
+        return {
+          ok: false,
+          cause: "range-invalid",
+          diagnostics: pickOnlyMultipleDiagnostics(entry, selection.pick.length),
+        };
+      }
+      start = only.start;
+      end = only.end;
+      stage = "pick";
+    }
   } else if (selection.matcher.kind === "regex") {
     const found = findRegexMatches(source, entry.node, selection.matcher.value);
     if (found.kind === "invalid") {

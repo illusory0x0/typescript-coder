@@ -32,6 +32,10 @@ function deps(source: string): CompactDeps {
         // Mirror `resolveCurrentEntry`: the name is undeclared only when it is
         // absent under every kind, not merely under the requested one.
         undeclared: byName.length === 0,
+        spaceMiss:
+          space !== null &&
+          byName.length > 0 &&
+          byName.every((candidate) => !declarationSpaces(candidate).includes(space)),
       };
     },
   };
@@ -104,14 +108,15 @@ describe("resolveCompactReply (#111)", () => {
     expect(result.failures[0]?.cause).toBe("regex-invalid");
   });
 
-  test("a matched unresolvable address fails at the address stage with the undeclared name", () => {
+  test("a matched editor on an undeclared name still creates (match is ignored)", () => {
     const selections = parseSelection(
-      "select function missing in a.ts\nmatch `return 1;`\nreplace with\n``````\nreturn 2;\n``````\nend",
+      "select function missing in a.ts\nmatch `return 1;`\nreplace with\n``````\nfunction missing(): number {\n  return 0;\n}\n``````\nend",
     );
     const result = resolveCompactReply(selections, deps(ONCE));
-    expect(result.regions).toEqual([]);
-    expect(result.failures[0]?.stage).toBe("address");
-    expect(result.failures[0]?.undeclaredName).toBe("missing");
+    expect(result.failures).toEqual([]);
+    expect(result.regions).toHaveLength(1);
+    expect(result.regions[0]?.create).toBe(true);
+    expect(result.regions[0]?.text).toBe("\nfunction missing(): number {\n  return 0;\n}\n");
   });
 
   test("a whole-declaration editor on an undeclared name resolves to a create region", () => {
@@ -225,7 +230,7 @@ describe("resolveCompactReply (#111)", () => {
     expect(result.failures[0]?.undeclaredName).toBeNull();
   });
 
-  test("a resolve space with no matching declaration fails and never creates", () => {
+  test("a resolve space miss creates in the requested space instead of failing", () => {
     const source = "interface Thing {}\nconst Thing = 1;\n";
     const result = resolveCompactReply(
       parseSelection(
@@ -233,13 +238,12 @@ describe("resolveCompactReply (#111)", () => {
       ),
       deps(source),
     );
-    expect(result.regions).toEqual([]);
-    expect(result.failures).toHaveLength(1);
-    expect(result.failures[0]?.stage).toBe("address");
-    // The name exists in other spaces, so implicit create must not run.
-    expect(result.failures[0]?.undeclaredName).toBeNull();
-    expect(result.failures[0]?.diagnostics).toContain('"value"');
-    expect(result.failures[0]?.diagnostics).toContain('"type"');
+    expect(result.failures).toEqual([]);
+    expect(result.regions).toHaveLength(1);
+    // The name exists in other spaces, so this is the create path: the body is
+    // wrapped as a namespace named Thing.
+    expect(result.regions[0]?.create).toBe(true);
+    expect(result.regions[0]?.text).toBe("\nnamespace Thing {\n42\n}\n");
   });
 
   test("a no-resolve non-declaration body creates a let binding", () => {
@@ -283,29 +287,106 @@ describe("resolveCompactReply (#111)", () => {
   });
 
   const COMPLETE = "function missing(): number {\n  return 0;\n}";
+  const COMPLETE_TYPE = "type missing = number;";
+  const COMPLETE_NAMESPACE = "namespace missing {\n  export const inner = 1;\n}";
 
-  for (const space of [null, "value", "type", "namespace"] as const) {
+  const COMPLETE_CASES: Array<[null | "value" | "type" | "namespace", string]> = [
+    [null, COMPLETE],
+    ["value", COMPLETE],
+    ["type", COMPLETE_TYPE],
+    ["namespace", COMPLETE_NAMESPACE],
+  ];
+
+  for (const [space, complete] of COMPLETE_CASES) {
     test(`a complete declaration body is appended verbatim${
       space === null ? "" : ` under resolve ${space}`
     }`, () => {
       const resolve = space === null ? "" : ` resolve ${space}`;
       const selections = parseSelection(
-        `select missing in a.ts${resolve}\nreplace with\n\`\`\`\`\`\`\n${COMPLETE}\n\`\`\`\`\`\`\nend`,
+        `select missing in a.ts${resolve}\nreplace with\n\`\`\`\`\`\`\n${complete}\n\`\`\`\`\`\`\nend`,
       );
       const result = resolveCompactReply(selections, deps(ONCE));
       expect(result.failures).toEqual([]);
       expect(result.regions[0]?.create).toBe(true);
-      expect(result.regions[0]?.text).toBe(`\n${COMPLETE}\n`);
+      expect(result.regions[0]?.text).toBe(`\n${complete}\n`);
     });
   }
 
-  test("a match on an undeclared name is not a create", () => {
+  test("a pick on an undeclared name still creates (pick is ignored)", () => {
     const selections = parseSelection(
-      "select function missing in a.ts\nmatch `return 1;`\nreplace with\n``````\nreturn 2;\n``````\nend",
+      "select function missing in a.ts\npick 2\nreplace with\n``````\nfunction missing(): number {\n  return 0;\n}\n``````\nend",
+    );
+    const result = resolveCompactReply(selections, deps(ONCE));
+    expect(result.failures).toEqual([]);
+    expect(result.regions[0]?.create).toBe(true);
+    expect(result.regions[0]?.text).toBe("\nfunction missing(): number {\n  return 0;\n}\n");
+  });
+
+  test("a resolve type create with a function body fails at the address stage", () => {
+    const selections = parseSelection(
+      `select missing in a.ts resolve type\nreplace with\n\`\`\`\`\`\`\n${COMPLETE}\n\`\`\`\`\`\`\nend`,
+    );
+    const result = resolveCompactReply(selections, deps(ONCE));
+    expect(result.regions).toEqual([]);
+    expect(result.failures).toHaveLength(1);
+    expect(result.failures[0]?.stage).toBe("address");
+    expect(result.failures[0]?.cause).toBeNull();
+    expect(result.failures[0]?.diagnostics).toContain("stage: address");
+    expect(result.failures[0]?.diagnostics).toContain('"value"');
+    expect(result.failures[0]?.diagnostics).toContain('"type"');
+  });
+
+  test("a resolve namespace create with a type alias body fails at the address stage", () => {
+    const selections = parseSelection(
+      `select missing in a.ts resolve namespace\nreplace with\n\`\`\`\`\`\`\n${COMPLETE_TYPE}\n\`\`\`\`\`\`\nend`,
     );
     const result = resolveCompactReply(selections, deps(ONCE));
     expect(result.regions).toEqual([]);
     expect(result.failures[0]?.stage).toBe("address");
+    expect(result.failures[0]?.diagnostics).toContain('"type"');
+    expect(result.failures[0]?.diagnostics).toContain('"namespace"');
+  });
+
+  test("a declaration body with a different name fails instead of wrapping", () => {
+    const selections = parseSelection(
+      "select missing in a.ts\nreplace with\n``````\nfunction other(): number {\n  return 0;\n}\n``````\nend",
+    );
+    const result = resolveCompactReply(selections, deps(ONCE));
+    expect(result.regions).toEqual([]);
+    expect(result.failures[0]?.stage).toBe("address");
+    expect(result.failures[0]?.diagnostics).toContain('declares no top-level "missing"');
+  });
+
+  test("a declaration list with exactly one declaration named the symbol is appended verbatim", () => {
+    const body = "const before = 1;\nfunction missing(): number {\n  return 0;\n}";
+    const selections = parseSelection(
+      `select missing in a.ts\nreplace with\n\`\`\`\`\`\`\n${body}\n\`\`\`\`\`\`\nend`,
+    );
+    const result = resolveCompactReply(selections, deps(ONCE));
+    expect(result.failures).toEqual([]);
+    expect(result.regions[0]?.create).toBe(true);
+    expect(result.regions[0]?.text).toBe(`\n${body}\n`);
+  });
+
+  test("a declaration list with two declarations named the symbol fails", () => {
+    const body = "function missing(): number {\n  return 0;\n}\nconst missing = 1;";
+    const selections = parseSelection(
+      `select missing in a.ts\nreplace with\n\`\`\`\`\`\`\n${body}\n\`\`\`\`\`\`\nend`,
+    );
+    const result = resolveCompactReply(selections, deps(ONCE));
+    expect(result.regions).toEqual([]);
+    expect(result.failures[0]?.stage).toBe("address");
+    expect(result.failures[0]?.diagnostics).toContain("exactly one");
+  });
+
+  test("a kind miss is not a create", () => {
+    const selections = parseSelection(
+      "select const once in a.ts\nreplace with\n``````\n42\n``````\nend",
+    );
+    const result = resolveCompactReply(selections, deps(ONCE));
+    expect(result.regions).toEqual([]);
+    expect(result.failures[0]?.stage).toBe("address");
+    expect(result.failures[0]?.undeclaredName).toBeNull();
   });
 
   test("an empty fence on an undeclared name is not a create", () => {
@@ -409,12 +490,13 @@ describe("resolveCompactReply (#111)", () => {
     expect(result.failures[0]?.diagnostics).toContain("stage: matcher");
   });
 
-  test("a viewer with an invalid pick range reports stage range and renders no block", () => {
+  test("an editor with an invalid pick range reports stage range and renders no block", () => {
     const selections = parseSelection(
-      "select function twice in a.ts\nmatch `return 1;`\npick 99\nend",
+      "select function twice in a.ts\nmatch `return 1;`\npick 99\nreplace with\n``````\n  return 2;\n``````\nend",
     );
     const result = resolveCompactReply(selections, deps(TWICE));
     expect(result.viewers).toEqual([]);
+    expect(result.regions).toEqual([]);
     expect(result.failures).toHaveLength(1);
     expect(result.failures[0]?.stage).toBe("range");
     expect(result.failures[0]?.diagnostics).toContain("stage: range");

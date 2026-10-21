@@ -2,7 +2,7 @@ import { describe, expect, test } from "bun:test";
 import type { CascadeResolution, SelectionStage } from "./cascade";
 import { resolveCascade } from "./cascade";
 import { findMatcherMatches } from "./matcher";
-import { parseSelection } from "./selection";
+import { END_OF_LINE_COLUMN, parseSelection } from "./selection";
 import type { Selection } from "./selection";
 import type { IndexEntry } from "./utility";
 import { buildIndexTolerant, findDefinition } from "./utility";
@@ -266,7 +266,9 @@ describe("resolveCascade: regex matcher", () => {
       resolveCascade(
         TWICE,
         entry,
-        firstSelection("select function twice in a.ts\nmatch /return 1;/\npick 3\nend"),
+        firstSelection(
+          "select function twice in a.ts\nmatch /return 1;/\npick 3\nreplace with\n``````\n  return 2;\n``````\nend",
+        ),
       ),
     );
     expect(result.stage).toBe<SelectionStage>("pick");
@@ -281,7 +283,9 @@ describe("resolveCascade: regex matcher", () => {
       resolveCascade(
         TWICE,
         entry,
-        firstSelection("select function twice in a.ts\nmatch /return 1;/\npick {2, 3}\nend"),
+        firstSelection(
+          "select function twice in a.ts\nmatch /return 1;/\npick {2, 3}\nreplace with\n``````\n  return 2;\n``````\nend",
+        ),
       ),
     );
     expect(result.cause).toBe("matcher-ambiguous");
@@ -377,6 +381,37 @@ describe("resolveCascade: regex matcher", () => {
 });
 
 describe("resolveCascade: pick narrows match", () => {
+  test("a point pick selects the match candidate whose span contains the point", () => {
+    const entry = entryFor(TWICE, "twice", "function");
+    const result = ok(
+      resolveCascade(
+        TWICE,
+        entry,
+        firstSelection(
+          "select function twice in a.ts\nmatch `return 1;`\npick 3:5\nreplace with\n``````\n  return 2;\n``````\nend",
+        ),
+      ),
+    );
+    expect(result.stage).toBe<SelectionStage>("pick");
+    const start = nthIndexOf(TWICE, "return 1;", 1);
+    expect(result.start).toBe(start);
+    expect(result.end).toBe(start + "return 1;".length);
+  });
+
+  test("a point outside every candidate selects none", () => {
+    const entry = entryFor(TWICE, "twice", "function");
+    const result = failure(
+      resolveCascade(
+        TWICE,
+        entry,
+        firstSelection(
+          "select function twice in a.ts\nmatch `return 1;`\npick 4:1\nreplace with\n``````\n  return 2;\n``````\nend",
+        ),
+      ),
+    );
+    expect(result.cause).toBe("matcher-not-found");
+  });
+
   test("a pick range disambiguates two matches to the second occurrence", () => {
     const entry = entryFor(TWICE, "twice", "function");
     const selection = firstSelection(
@@ -392,13 +427,13 @@ describe("resolveCascade: pick narrows match", () => {
 
   test("a pick viewer reports the narrowed span", () => {
     const entry = entryFor(TWICE, "twice", "function");
-    const result = ok(
-      resolveCascade(
-        TWICE,
-        entry,
-        firstSelection("select function twice in a.ts\nmatch `return 1;`\npick 2\nend"),
-      ),
-    );
+    // `pick` without `replace` is a syntax error now; this programmatic viewer
+    // still exercises the viewer-side pick filter.
+    const selection: Selection = {
+      ...firstSelection("select function twice in a.ts\nmatch `return 1;`\nend"),
+      pick: [{ line: 2, column: 1, endLine: 2, endColumn: END_OF_LINE_COLUMN }],
+    };
+    const result = ok(resolveCascade(TWICE, entry, selection));
     expect(result.stage).toBe<SelectionStage>("pick");
     expect(result.viewer).toBe(true);
     expect(result.text).toBe("");
@@ -412,7 +447,9 @@ describe("resolveCascade: pick narrows match", () => {
       resolveCascade(
         TWO_DECLARATIONS,
         entry,
-        firstSelection("select function twice in a.ts\nmatch `return 1;`\npick 3\nend"),
+        firstSelection(
+          "select function twice in a.ts\nmatch `return 1;`\npick 3\nreplace with\n``````\n  return 2;\n``````\nend",
+        ),
       ),
     );
     // Line 3 is the first `return 1;` inside `twice` (lines 2-5).
@@ -427,7 +464,9 @@ describe("resolveCascade: pick narrows match", () => {
       resolveCascade(
         TWICE,
         entry,
-        firstSelection("select function twice in a.ts\nmatch `return 1;`\npick {2, 3}\nend"),
+        firstSelection(
+          "select function twice in a.ts\nmatch `return 1;`\npick {2, 3}\nreplace with\n``````\n  return 2;\n``````\nend",
+        ),
       ),
     );
     expect(result.cause).toBe("matcher-ambiguous");
@@ -440,7 +479,9 @@ describe("resolveCascade: pick narrows match", () => {
       resolveCascade(
         TWICE,
         entry,
-        firstSelection("select function twice in a.ts\nmatch `return 1;`\npick 4\nend"),
+        firstSelection(
+          "select function twice in a.ts\nmatch `return 1;`\npick 4\nreplace with\n``````\n  return 2;\n``````\nend",
+        ),
       ),
     );
     expect(result.cause).toBe("matcher-not-found");
@@ -452,7 +493,9 @@ describe("resolveCascade: pick narrows match", () => {
       resolveCascade(
         TWICE,
         entry,
-        firstSelection("select function twice in a.ts\nmatch `return 1;`\npick 99\nend"),
+        firstSelection(
+          "select function twice in a.ts\nmatch `return 1;`\npick 99\nreplace with\n``````\n  return 2;\n``````\nend",
+        ),
       ),
     );
     expect(result.cause).toBe("range-invalid");
@@ -466,7 +509,9 @@ describe("resolveCascade: pick narrows match", () => {
       resolveCascade(
         TWICE,
         entry,
-        firstSelection("select function twice in a.ts\nmatch `return 1;`\npick 3:5-3:3\nend"),
+        firstSelection(
+          "select function twice in a.ts\nmatch `return 1;`\npick 3:5-3:3\nreplace with\n``````\n  return 2;\n``````\nend",
+        ),
       ),
     );
     expect(result.cause).toBe("range-invalid");
@@ -479,7 +524,9 @@ describe("resolveCascade: pick narrows match", () => {
       resolveCascade(
         TWO_DECLARATIONS,
         entry,
-        firstSelection("select function twice in a.ts\nmatch `return 1;`\npick 1\nend"),
+        firstSelection(
+          "select function twice in a.ts\nmatch `return 1;`\npick 1\nreplace with\n``````\n  return 2;\n``````\nend",
+        ),
       ),
     );
     expect(result.cause).toBe("range-invalid");
@@ -487,8 +534,78 @@ describe("resolveCascade: pick narrows match", () => {
   });
 });
 
+describe("resolveCascade: pick-only editor", () => {
+  test("a bare line pick targets the whole line", () => {
+    const entry = entryFor(TWICE, "twice", "function");
+    const result = ok(
+      resolveCascade(
+        TWICE,
+        entry,
+        firstSelection(
+          "select function twice in a.ts\npick 2\nreplace with\n``````\n  return 2;\n``````\nend",
+        ),
+      ),
+    );
+    expect(result.stage).toBe<SelectionStage>("pick");
+    expect(result.viewer).toBe(false);
+    const start = TWICE.indexOf("  return 1;");
+    expect(result.start).toBe(start);
+    expect(result.end).toBe(start + "  return 1;".length);
+  });
+
+  test("a bare point pick targets the single character", () => {
+    const entry = entryFor(TWICE, "twice", "function");
+    const result = ok(
+      resolveCascade(
+        TWICE,
+        entry,
+        firstSelection(
+          "select function twice in a.ts\npick 2:3\nreplace with\n``````\nR\n``````\nend",
+        ),
+      ),
+    );
+    expect(result.stage).toBe<SelectionStage>("pick");
+    const start = TWICE.indexOf("  return 1;") + 2;
+    expect(result.start).toBe(start);
+    expect(result.end).toBe(start + 1);
+  });
+
+  test("a bare range pick targets that text range", () => {
+    const entry = entryFor(TWICE, "twice", "function");
+    const result = ok(
+      resolveCascade(
+        TWICE,
+        entry,
+        firstSelection(
+          "select function twice in a.ts\npick 2:3-2:8\nreplace with\n``````\nyield\n``````\nend",
+        ),
+      ),
+    );
+    expect(result.stage).toBe<SelectionStage>("pick");
+    const start = TWICE.indexOf("  return 1;") + 2;
+    expect(result.start).toBe(start);
+    expect(result.end).toBe(start + "return".length);
+  });
+
+  test("a pick-only multi-range fails with a clear range diagnostic", () => {
+    const entry = entryFor(TWICE, "twice", "function");
+    const result = failure(
+      resolveCascade(
+        TWICE,
+        entry,
+        firstSelection(
+          "select function twice in a.ts\npick {2, 3}\nreplace with\n``````\n  return 2;\n``````\nend",
+        ),
+      ),
+    );
+    expect(result.cause).toBe("range-invalid");
+    expect(result.diagnostics).toContain("stage: range");
+    expect(result.diagnostics).toContain("only one text span");
+  });
+});
+
 describe("resolveCascade: precedence", () => {
-  test("pick without match is a parse error (no bare-range replace)", () => {
+  test("pick without replace is a parse error", () => {
     expect(() => parseSelection("select function twice in a.ts\npick 2\nend")).toThrow(/pick/);
   });
 });

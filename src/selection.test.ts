@@ -114,7 +114,7 @@ describe("parseSelection", () => {
 
   test("parses a single-range pick (sugar) as one range", () => {
     const selection = first(
-      "select function tokenize in src/lexer.ts\nmatch /^if \\(/\npick 12\nend",
+      "select function tokenize in src/lexer.ts\nmatch /^if \\(/\npick 12\nreplace with\n``````\ny\n``````\nend",
     );
     expect(selection.pick).toEqual([
       { line: 12, column: 1, endLine: 12, endColumn: END_OF_LINE_COLUMN },
@@ -123,7 +123,7 @@ describe("parseSelection", () => {
 
   test("parses a multi-range pick", () => {
     const selection = first(
-      "select function tokenize in src/lexer.ts\nmatch /^if \\(/\npick {10, 12:3-14:5}\nend",
+      "select function tokenize in src/lexer.ts\nmatch /^if \\(/\npick {10, 12:3-14:5}\nreplace with\n``````\ny\n``````\nend",
     );
     expect(selection.pick).toEqual([
       { line: 10, column: 1, endLine: 10, endColumn: END_OF_LINE_COLUMN },
@@ -132,7 +132,9 @@ describe("parseSelection", () => {
   });
 
   test("parses a single character range", () => {
-    const selection = first("select foo in a.ts\nmatch `x`\npick 7:2\nend");
+    const selection = first(
+      "select foo in a.ts\nmatch `x`\npick 7:2\nreplace with\n``````\ny\n``````\nend",
+    );
     expect(selection.pick).toEqual([{ line: 7, column: 2, endLine: 7, endColumn: 2 }]);
   });
 
@@ -259,8 +261,46 @@ describe("parseSelection failures", () => {
     expectSyntax("select foo in a.ts resolve end", "value");
   });
 
-  test("rejects a pick without a match", () => {
+  test("rejects a pick without a replace", () => {
     expectSyntax("select foo in a.ts\npick 10\nend", "pick");
+    // The diagnostic names both fields the grammar couples.
+    expectSyntax("select foo in a.ts\npick 10\nend", "replace");
+    expectSyntax("select foo in a.ts\nmatch `x`\npick 10\nend", "replace");
+  });
+
+  test("parses a pick without a match when a replace follows", () => {
+    const text = [
+      "select function tokenize in src/lexer.ts",
+      "pick 12:3-14:5",
+      "replace with",
+      FENCE,
+      "y",
+      FENCE,
+      "end",
+    ].join("\n");
+    const selection = first(text);
+    expect(selection.matcher).toBeNull();
+    expect(selection.pick).toEqual([{ line: 12, column: 3, endLine: 14, endColumn: 5 }]);
+    expect(selection.replacement).toBe("y");
+  });
+
+  test("parses a pick after a match with a replace", () => {
+    const text = [
+      "select function tokenize in src/lexer.ts",
+      "match `x`",
+      "pick 12",
+      "replace with",
+      FENCE,
+      "y",
+      FENCE,
+      "end",
+    ].join("\n");
+    const selection = first(text);
+    expect(selection.matcher).toEqual({ kind: "snippet", value: "x" });
+    expect(selection.pick).toEqual([
+      { line: 12, column: 1, endLine: 12, endColumn: END_OF_LINE_COLUMN },
+    ]);
+    expect(selection.replacement).toBe("y");
   });
 
   test("names an unterminated clause", () => {
@@ -343,7 +383,7 @@ describe("serializeSelection", () => {
         space: null,
         matcher: { kind: "regex", value: "^if \\(" },
         pick: [{ line: 12, column: 1, endLine: 12, endColumn: END_OF_LINE_COLUMN }],
-        replacement: null,
+        replacement: "y",
       },
       {
         locator: { path: "src/lexer.ts", name: "tokenize", kind: "function" },
@@ -353,7 +393,7 @@ describe("serializeSelection", () => {
           { line: 10, column: 1, endLine: 10, endColumn: END_OF_LINE_COLUMN },
           { line: 12, column: 3, endLine: 14, endColumn: 5 },
         ],
-        replacement: null,
+        replacement: "y",
       },
       {
         locator: { path: "src/math.ts", name: "clamp", kind: "function" },

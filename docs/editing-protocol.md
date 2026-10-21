@@ -70,7 +70,7 @@ wrapper; it batches by sending more clauses.
 ## 2. The compact clause
 
 ```text
-select [kind] <symbol> in <path> [ resolve (value|type|namespace) ] [ match (<snippet> | /regex/) [ pick <range-or-set> ] ] [ replace with <fence> ] end
+select [kind] <symbol> in <path> [ resolve (value|type|namespace) ] [ match (<snippet> | /regex/) ] [ [ pick <range-or-set> ] replace with <fence> ] end
 ```
 
 A reply is one or more clauses, with no markdown fences around the reply (a
@@ -94,8 +94,15 @@ selection is never returned.
     every other backslash is literal;
   - a `/regex/` in slashes, where only `\/` decodes to `/` and every other
     backslash passes through to the engine.
-- **`pick`**: one range or a `{a, b, …}` set, legal only after `match` (a
-  `pick` without one is a syntax error; a braced set needs at least one range).
+- **`pick`**: one range or a `{a, b, …}` set. `pick` requires a following
+  `replace`; a clause that stops at `pick` is a syntax error, not a viewer
+  (a braced set needs at least one range). With a `match`, a point selecter
+  (`line:column`) picks the match candidates whose span **contains the point**,
+  while a line or range selecter keeps the "candidate contained in the picked
+  range" rule. Without a `match`, the pick is the target itself: a line selects
+  the whole line, a point selects one character, and a range selects that text
+  range. A pick-only clause admits exactly one selecter; a braced set is a
+  `stage: range` failure because one fence cannot target disjoint spans.
 - **`replace with <fence>`**: 6 or more backticks on their own line, a raw body,
   and a closing line of the same backtick run. The body may not contain a run of
   3 or more backticks; the serializer always opens exactly 6. An empty fence
@@ -114,8 +121,8 @@ multiEditor = { editor } ;
 
 editor      = 'select', [ kind ], symbol, 'in', path,
               [ 'resolve', space ],
-              [ 'match', ( snippet | regex ), [ 'pick', multiRange ] ],
-              [ 'replace', 'with', fence ],
+              [ 'match', ( snippet | regex ) ],
+              [ [ 'pick', multiRange ], 'replace', 'with', fence ],
               'end' ;
 
 multiRange  = '{', range, { ',', range }, '}'
@@ -186,13 +193,17 @@ Both formats reduce to the same narrowing, one stage at a time.
      contained matches count, and a zero-width match is a valid insertion-point
      span.
 3. **Pick.** Each range resolves through the shared range resolver (bounds,
-   inclusiveness, declaration containment), and the candidate set is filtered to
-   spans contained in the union of the picked ranges. `pick` only ever removes
-   candidates.
-4. **Rewrite.** With no `match` the target is the whole declaration — the
-   `human/edit.md` "behavior like `str_search` in the top-level definition": the
-   symbol index locates the definition, and no literal text search runs.
-   Otherwise it is the resolved span. A rewrite that starts at the
+   inclusiveness, declaration containment). With a `match`, the candidate set is
+   filtered by the selecter kind: a **point** keeps candidates whose span
+   contains the point, while a line or range keeps candidates contained in the
+   picked range. Without a `match`, the pick is not a filter: its resolved text
+   span (whole line, one character, or the written range) is the target, and a
+   pick-only clause admits exactly one selecter.
+4. **Rewrite.** With no `match` and no `pick` the target is the whole
+   declaration — the `human/edit.md` "behavior like `str_search` in the top-level
+   definition": the symbol index locates the definition, and no literal text
+   search runs. With a pick-only clause the target is the picked text span;
+   otherwise it is the resolved match span. A rewrite that starts at the
    declaration's start gets the **`export` tolerance**: an indexed node range
    excludes a wrapping `export`, so a replacement that still carries it keeps
    exactly one copy. A body-level target is never stripped.
@@ -287,18 +298,33 @@ to verification. A failed verification does **not** roll back: the attempted
 state stays on disk and its diagnostics open the next round (see
 `agent-loop.md`).
 
-**Implicit create (compact only).** A whole-declaration editor (no `match`, no
-`pick`, a non-empty fence) whose symbol is absent appends the fence body as a
-new top-level declaration, creating the file and its parent directories as
-needed, spliced at the file's current end behind a separating newline. A
-complete top-level declaration in the fence is appended verbatim; any other body
-is wrapped by the clause's symbol space: no `resolve` or `resolve value` wraps
-it as `let <symbol> = <body>;`, `resolve type` as `type <symbol> = <body>;`, and
-`resolve namespace` as a `namespace <symbol> { … }` block. A name that is
-declared, a space miss, and every other miss (a matcher, an empty fence, a
-viewer), keep the address failure and create nothing. The json path creates
-only through a `create` selection and deletes only through a `delete` selection;
-the compact path creates implicitly and deletes with an empty fence.
+**Implicit create (compact only).** Any editor clause (a non-empty `replace`)
+whose symbol is absent, or is declared only in another symbol space, appends the
+fence body as a new top-level declaration, creating the file and its parent
+directories as needed, spliced at the file's current end behind a separating
+newline. `match` and `pick` do not change creation; they are ignored when the
+symbol is missing. Viewers never create.
+
+The fence body is validated before it is appended:
+
+- If it is a list of top-level declarations, exactly one of them must be named
+  after the clause's symbol (dotted member names do not count). None or more
+  than one is a `stage: address` failure; a declaration list is never wrapped.
+  A list with exactly one such declaration is appended verbatim, even when it
+  also declares other names.
+- If `resolve` is present, that declaration must occupy the requested space.
+  A type alias with `resolve value`, or a function with `resolve type`, is a
+  `stage: address` failure naming the spaces the declaration actually occupies.
+- A body that is not a declaration list is wrapped by the clause's symbol space:
+  no `resolve` or `resolve value` wraps it as `let <symbol> = <body>;`,
+  `resolve type` as `type <symbol> = <body>;`, and `resolve namespace` as a
+  `namespace <symbol> { … }` block.
+
+A name declared in the requested space (including a kind miss), an ambiguous
+name, an empty fence, and a viewer keep the address failure and create nothing.
+The json path creates only through a `create` selection and deletes only through
+a `delete` selection; the compact path creates implicitly and deletes with an
+empty fence.
 
 ## 7. Repair feedback
 
@@ -326,7 +352,7 @@ interface Selection {
   locator: Locator; // {path, name, kind}; empty kind = wildcard
   space: SymbolSpace | null; // `resolve value|type|namespace`; null = any
   matcher: { kind: "snippet" | "regex"; value: string } | null;
-  pick: EditRange[] | null; // legal only below `match`
+  pick: EditRange[] | null; // requires `replace`; with match filters, without match targets
   replacement: string | null; // null = viewer
 }
 
@@ -344,8 +370,16 @@ function resolveCascade(source: string, entry: IndexEntry, s: Selection) {
   let stage: "whole-symbol" | "match" | "pick";
 
   if (s.matcher === null) {
-    span = declaration; // whole declaration
-    stage = "whole-symbol";
+    if (s.pick !== null) {
+      // Pick-only: the selecter is the target text span (exactly one).
+      const ranges = resolvePickSpans(source, entry, s.pick);
+      if (!ranges.ok || ranges.spans.length !== 1) return fail("range-invalid");
+      span = ranges.spans[0]!;
+      stage = "pick";
+    } else {
+      span = declaration; // whole declaration
+      stage = "whole-symbol";
+    }
   } else {
     // Candidates lie inside the declaration only.
     const found =
@@ -358,7 +392,9 @@ function resolveCascade(source: string, entry: IndexEntry, s: Selection) {
     if (s.pick !== null) {
       const ranges = resolvePickSpans(source, entry, s.pick); // typed range failures
       if (!ranges.ok) return fail("range-invalid");
-      spans = spans.filter((candidate) => ranges.spans.some((r) => contains(r, candidate)));
+      // Point selecters keep candidates that contain the point; line/range
+      // selecters keep candidates contained in the picked range.
+      spans = spans.filter((candidate) => pickMatchesSpan(candidate, s.pick!, ranges.spans));
     }
     if (spans.length === 0) return fail("matcher-not-found");
     if (spans.length > 1) return fail("matcher-ambiguous");

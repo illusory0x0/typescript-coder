@@ -16,6 +16,7 @@ import type { CascadeCause, SelectionStage } from "./cascade";
 import { Parser } from "./parser";
 import type { Program, Statement } from "./parser";
 import type { Selection } from "./selection";
+import { buildIndex, declarationSpaces } from "./utility";
 import type { IndexEntry, Locator, SymbolSpace } from "./utility";
 
 /** #110 `MatcherKind`, mirrored to avoid a value-level import cycle with loop. */
@@ -34,7 +35,9 @@ export interface CompactDeps {
     path: string,
     locator: Locator,
     space: SymbolSpace | null,
-  ) => { ok: true; entry: IndexEntry } | { ok: false; diagnostics: string; undeclared: boolean };
+  ) =>
+    | { ok: true; entry: IndexEntry }
+    | { ok: false; diagnostics: string; undeclared: boolean; spaceMiss?: boolean };
 }
 
 /** One compact **editor** clause resolved to its half-open splice. */
@@ -180,14 +183,104 @@ function isDeclarationStatement(statement: Statement): boolean {
   }
 }
 
-function isCompleteDeclaration(body: string): boolean {
+type CreateBody = { ok: true; text: string } | { ok: false; diagnostics: string };
+
+function createAddressDiagnostics(selection: Selection, detail: string): string {
+  const { locator } = selection;
+  const label =
+    locator.kind === ""
+      ? JSON.stringify(locator.name)
+      : `${locator.kind} ${JSON.stringify(locator.name)}`;
+  const spaceNote =
+    selection.space === null
+      ? ""
+      : `; the clause asks for the ${JSON.stringify(selection.space)} space, so the created declaration must occupy that space`;
+  return [
+    "stage: address",
+    `cannot create ${label} in ${locator.path}: ${detail}${spaceNote}`,
+    `a create fence must contain either one complete top-level declaration named ${JSON.stringify(locator.name)}, or a body that is not a declaration list (it is then wrapped by the requested space)`,
+  ].join("\n");
+}
+
+function declaredNames(entries: readonly IndexEntry[]): string {
+  const names = [
+    ...new Set(
+      entries
+        .filter((entry) => !entry.locator.name.includes("."))
+        .map((entry) => entry.locator.name),
+    ),
+  ];
+  return names.length === 0 ? "no top-level declaration" : names.join(", ");
+}
+
+// The create fence is either a declaration list or a body to wrap. A
+// declaration list must carry exactly one top-level declaration named after the
+// clause's symbol (a declaration list is never wrapped), and a `resolve` space
+// must match that declaration's spaces; anything else fails at the address
+// stage. A parse failure is not a declaration list and is wrapped.
+function createBodyText(selection: Selection, body: string): CreateBody {
+  const name = selection.locator.name;
   let program: Program;
   try {
     program = new Parser(body).parseProgram();
   } catch {
-    return false;
+    return { ok: true, text: wrapCreateBody(name, selection.space, body) };
   }
-  return program.body.length > 0 && program.body.every(isDeclarationStatement);
+  if (!program.body.some(isDeclarationStatement)) {
+    return { ok: true, text: wrapCreateBody(name, selection.space, body) };
+  }
+  const index = buildIndex([{ path: selection.locator.path, source: body }]);
+  const entries = index.entries.filter((entry) => !entry.locator.name.includes("."));
+  const named = entries.filter((entry) => entry.locator.name === name);
+  // The binder merges same-space redeclarations into one symbol, so count the
+  // declaration nodes rather than the index entries.
+  const declarations = named.flatMap((entry) => entry.symbol.declarations);
+  if (declarations.length === 0) {
+    return {
+      ok: false,
+      diagnostics: createAddressDiagnostics(
+        selection,
+        `the fence body is a declaration list (${declaredNames(entries)}) but declares no top-level ${JSON.stringify(name)}; a declaration list is never wrapped`,
+      ),
+    };
+  }
+  if (declarations.length > 1) {
+    return {
+      ok: false,
+      diagnostics: createAddressDiagnostics(
+        selection,
+        `the fence body declares ${declarations.length} top-level declarations named ${JSON.stringify(name)}; a create fence must contain exactly one`,
+      ),
+    };
+  }
+  const declaration = named[0];
+  if (declaration === undefined) {
+    // Unreachable: `named` has exactly one entry here.
+    return {
+      ok: false,
+      diagnostics: createAddressDiagnostics(
+        selection,
+        `the fence body declares no top-level ${JSON.stringify(name)}`,
+      ),
+    };
+  }
+  if (selection.space !== null) {
+    const spaces = declarationSpaces(declaration);
+    if (!spaces.includes(selection.space)) {
+      return {
+        ok: false,
+        diagnostics: createAddressDiagnostics(
+          selection,
+          `the fence body's declaration named ${JSON.stringify(name)} occupies the ${spaces
+            .map((space) => JSON.stringify(space))
+            .join(
+              ", ",
+            )} space${spaces.length === 1 ? "" : "s"}, not ${JSON.stringify(selection.space)}`,
+        ),
+      };
+    }
+  }
+  return { ok: true, text: body };
 }
 
 function wrapCreateBody(name: string, space: SymbolSpace | null, body: string): string {
@@ -226,24 +319,29 @@ export function resolveCompactReply(
     const source = deps.sourceFor(path);
     const address = deps.resolveEntry(source, path, selection.locator, selection.space);
     if (!address.ok) {
-      // Implicit create (compact §9): an absent name edited by a
-      // whole-declaration editor — `select … replace with <fence> end` with a
-      // non-empty body and no `match`/`pick` — appends the fence body as a new
-      // declaration, creating the file and its parent dirs if absent. Every
-      // other miss (a matcher/pick, an empty body, a space miss, or a viewer)
-      // keeps the address failure.
+      // Implicit create (compact §6): any editor clause (non-empty `replace`)
+      // whose symbol is absent, or exists only in another symbol space, appends
+      // its fence as a new declaration, creating the file and its parent dirs
+      // if absent. `match`/`pick` do not change creation; viewers never create.
       const replacement = selection.replacement;
       const createsDeclaration =
-        address.undeclared &&
+        (address.undeclared || address.spaceMiss === true) &&
         replacement !== null &&
-        selection.matcher === null &&
-        selection.pick === null &&
         replacement.trim() !== "";
       if (createsDeclaration) {
-        const trimmed = replacement.trim();
-        const body = isCompleteDeclaration(trimmed)
-          ? trimmed
-          : wrapCreateBody(selection.locator.name, selection.space, trimmed);
+        const created = createBodyText(selection, replacement.trim());
+        if (!created.ok) {
+          failures.push({
+            index,
+            path,
+            locator: selection.locator,
+            stage: "address",
+            cause: null,
+            diagnostics: created.diagnostics,
+            undeclaredName: null,
+          });
+          continue;
+        }
         regions.push({
           index,
           path,
@@ -253,7 +351,7 @@ export function resolveCompactReply(
           // a leading newline (none for an empty file) and a trailing one.
           start: source.length,
           end: source.length,
-          text: (source.trim() === "" ? "" : "\n") + body + "\n",
+          text: (source.trim() === "" ? "" : "\n") + created.text + "\n",
           stage: "whole-symbol",
           matcherKind: null,
           create: true,
@@ -267,7 +365,8 @@ export function resolveCompactReply(
         stage: "address",
         cause: null,
         diagnostics: address.diagnostics,
-        undeclaredName: address.undeclared ? selection.locator.name : null,
+        undeclaredName:
+          address.undeclared || address.spaceMiss === true ? selection.locator.name : null,
       });
       continue;
     }

@@ -16,7 +16,8 @@ export interface SelectionMatcher {
  * model (`docs/editing-protocol.md`) only while `space` is null; a clause that
  * names a symbol space has no JSON form (see `toEditPayload`).
  * `replacement === null` is a **viewer** (no `replace`); `matcher === null`
- * means no `match`; `pick === null` means no `pick`.
+ * means no `match`; `pick === null` means no `pick`. A parsed `pick` always has
+ * a `replace`: `pick` without a `replace` is a syntax error.
  */
 export interface Selection {
   locator: Locator;
@@ -220,14 +221,13 @@ class SelectionReader {
     }
 
     let matcher: SelectionMatcher | null = null;
-    let pick: EditRange[] | null = null;
     if (this.matchKeyword("match")) {
       matcher = this.parseMatcher();
-      if (this.matchKeyword("pick")) {
-        pick = this.parseMultiRange();
-      }
-    } else if (this.keywordAt("pick")) {
-      throw new SelectionSyntaxError("`pick` requires a preceding `match`");
+    }
+
+    let pick: EditRange[] | null = null;
+    if (this.matchKeyword("pick")) {
+      pick = this.parseMultiRange();
     }
 
     let replacement: string | null = null;
@@ -237,6 +237,12 @@ class SelectionReader {
     }
 
     this.expectKeyword("end", "expected `end` to terminate the clause");
+
+    if (pick !== null && replacement === null) {
+      throw new SelectionSyntaxError(
+        "`pick` requires a `replace`: a `pick` without `replace` is not a viewer; add `replace with <fence>`, or omit `pick` and keep the viewer",
+      );
+    }
 
     return { locator: { path, name, kind }, space, matcher, pick, replacement };
   }
@@ -541,9 +547,9 @@ export function serializeSelection(selection: Selection): string {
   const parts = [head];
   if (selection.matcher !== null) {
     parts.push(`match ${renderMatcher(selection.matcher)}`);
-    if (selection.pick !== null) {
-      parts.push(`pick ${renderMultiRange(selection.pick)}`);
-    }
+  }
+  if (selection.pick !== null) {
+    parts.push(`pick ${renderMultiRange(selection.pick)}`);
   }
   if (selection.replacement !== null) {
     parts.push("replace with", renderFence(selection.replacement));
