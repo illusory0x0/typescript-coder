@@ -3,17 +3,26 @@
 `tc` — a TypeScript coding agent: an Edit → Verify loop driven by an OpenAI-compatible
 gateway, packaged as a sub-agent for opencode. Bun runtime, no build step.
 
+## Boundaries
+
+- `human/` is human-authored and **read-only for agents**: read it for context,
+  but never write to it — no edits, moves, deletions, or generated files, and no
+  formatter rewrites. Format only files outside `human/`; do not run a
+  repo-wide formatter that rewrites it.
+
 ## Commands (there is no CI; `just` is the source of truth)
 
 ```sh
 just typecheck   # bunx tsc --noEmit
 just test        # bun test  (scoped to src/ via bunfig.toml)
-just format      # bunx oxfmt  — formatter is oxfmt, NOT prettier/biome
+just format      # bunx oxfmt  — formatter is oxfmt, NOT prettier/biome; repo-wide, rewrites human/
 just accept      # offline acceptance scenarios; flags pass through (--all, --live, --only <id>)
 ```
 
-Run before finishing: `just format && just typecheck && just test`. Tests are colocated
-`src/*.test.ts`; single test: `bun test src/loop.test.ts -t "pattern"`.
+Run before finishing: format only the files you changed (`bunx oxfmt <files>`), then
+`just typecheck && just test`. Do not run `just format` repo-wide — it rewrites
+`human/`; see Boundaries. Tests are colocated `src/*.test.ts`; single test:
+`bun test src/loop.test.ts -t "pattern"`.
 
 ## Layout / entrypoints
 
@@ -23,6 +32,7 @@ Run before finishing: `just format && just typecheck && just test`. Tests are co
 - `src/editor.ts` — splice + oxfmt + parse gate. `src/utility.ts` — symbol index (path×symbol×kind).
 - `src/openai.ts` — provider config from env, retries/timeouts. `src/result.ts` — the JSON sub-agent result contract.
 - `src/index.ts` — leftover scaffold (`greet`) kept as the self-host fixture target; don't "clean it up".
+- `human/` — human-authored specs; read-only (see Boundaries).
 - `acceptance/`, `benchmark/` — harnesses, read their READMEs before changing.
 
 ## Gotchas
