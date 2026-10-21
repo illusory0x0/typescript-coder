@@ -587,7 +587,9 @@ describe("resolveCascade: pick-only editor", () => {
     expect(result.end).toBe(start + "return".length);
   });
 
-  test("a pick-only multi-range fails with a clear range diagnostic", () => {
+  test("the single-span primitive rejects a pick-only multi-range", () => {
+    // The compact layer expands `{a, b}` into one single-range clause per
+    // selecter; the primitive itself still resolves exactly one span.
     const entry = entryFor(TWICE, "twice", "function");
     const result = failure(
       resolveCascade(

@@ -67,6 +67,52 @@ describe("resolveCompactReply (#111)", () => {
     expect(region?.matcherKind).toBeNull();
   });
 
+  test("a pick-only multi-range applies the same fence to every picked span", () => {
+    const selections = parseSelection(
+      "select function twice in a.ts\npick {2, 3}\nreplace with\n``````\n  return 2;\n``````\nend",
+    );
+    const result = resolveCompactReply(selections, deps(TWICE));
+    expect(result.failures).toEqual([]);
+    expect(result.regions).toHaveLength(2);
+    const first = TWICE.indexOf("  return 1;");
+    const second = TWICE.indexOf("  return 1;", first + 1);
+    expect(result.regions.map((region) => region.start)).toEqual([first, second]);
+    expect(result.regions.map((region) => region.end)).toEqual([
+      first + "  return 1;".length,
+      second + "  return 1;".length,
+    ]);
+    for (const region of result.regions) {
+      expect(region.text).toBe("  return 2;");
+      expect(region.stage).toBe("pick");
+      expect(region.matcherKind).toBeNull();
+      expect(region.create).toBe(false);
+      expect(region.index).toBe(0);
+    }
+  });
+
+  test("a pick-only multi-range with overlapping ranges fails at the range stage", () => {
+    const selections = parseSelection(
+      "select function twice in a.ts\npick {2, 2:5}\nreplace with\n``````\n  return 2;\n``````\nend",
+    );
+    const result = resolveCompactReply(selections, deps(TWICE));
+    expect(result.regions).toEqual([]);
+    expect(result.failures).toHaveLength(1);
+    expect(result.failures[0]?.stage).toBe("range");
+    expect(result.failures[0]?.cause).toBe("range-invalid");
+    expect(result.failures[0]?.diagnostics).toContain("overlapping");
+  });
+
+  test("a pick-only multi-range fails the whole clause when one range is a no-op", () => {
+    const selections = parseSelection(
+      "select function twice in a.ts\npick {2, 4}\nreplace with\n``````\n}\n``````\nend",
+    );
+    const result = resolveCompactReply(selections, deps(TWICE));
+    expect(result.regions).toEqual([]);
+    expect(result.failures).toHaveLength(1);
+    expect(result.failures[0]?.stage).toBe("no-op");
+    expect(result.failures[0]?.cause).toBe("no-op");
+  });
+
   test("a viewer enumerates every candidate occurrence and resolves no region", () => {
     const selections = parseSelection("select function twice in a.ts\nmatch `return 1;`\nend");
     const result = resolveCompactReply(selections, deps(TWICE));
@@ -322,6 +368,64 @@ describe("resolveCompactReply (#111)", () => {
     expect(result.regions[0]?.text).toBe("\nfunction missing(): number {\n  return 0;\n}\n");
   });
 
+  test("a class+interface merge is rejected as multiple same-name declarations", () => {
+    const body = "class missing {}\ninterface missing {}";
+    const selections = parseSelection(
+      `select missing in a.ts\nreplace with\n\`\`\`\`\`\`\n${body}\n\`\`\`\`\`\`\nend`,
+    );
+    const result = resolveCompactReply(selections, deps(ONCE));
+    expect(result.regions).toEqual([]);
+    expect(result.failures[0]?.stage).toBe("address");
+    expect(result.failures[0]?.diagnostics).toContain("exactly one");
+    expect(result.failures[0]?.diagnostics).toContain("TypeScript would merge");
+  });
+
+  test("function overloads are rejected as multiple same-name declarations", () => {
+    const body =
+      "function missing(x: string): string;\nfunction missing(x: any): any {\n  return x;\n}";
+    const selections = parseSelection(
+      `select missing in a.ts\nreplace with\n\`\`\`\`\`\`\n${body}\n\`\`\`\`\`\`\nend`,
+    );
+    const result = resolveCompactReply(selections, deps(ONCE));
+    expect(result.regions).toEqual([]);
+    expect(result.failures[0]?.stage).toBe("address");
+    expect(result.failures[0]?.diagnostics).toContain("exactly one");
+  });
+
+  test("a function+type merge is rejected as multiple same-name declarations", () => {
+    const body = "function missing() {}\ntype missing = number;";
+    const selections = parseSelection(
+      `select missing in a.ts\nreplace with\n\`\`\`\`\`\`\n${body}\n\`\`\`\`\`\`\nend`,
+    );
+    const result = resolveCompactReply(selections, deps(ONCE));
+    expect(result.regions).toEqual([]);
+    expect(result.failures[0]?.stage).toBe("address");
+    expect(result.failures[0]?.diagnostics).toContain("exactly one");
+  });
+
+  const ACCEPTED_COMPLETE: Array<[null | "value" | "type" | "namespace", string]> = [
+    ["value", "class missing {}"],
+    ["type", "class missing {}"],
+    ["value", "function missing(): number {\n  return 0;\n}"],
+    ["type", "type missing = number;"],
+    ["namespace", "namespace missing {}"],
+  ];
+
+  for (const [space, body] of ACCEPTED_COMPLETE) {
+    test(`a single ${space === null ? "" : `${space}-space `}declaration is accepted${
+      space === null ? "" : ` under resolve ${space}`
+    }`, () => {
+      const resolve = space === null ? "" : ` resolve ${space}`;
+      const selections = parseSelection(
+        `select missing in a.ts${resolve}\nreplace with\n\`\`\`\`\`\`\n${body}\n\`\`\`\`\`\`\nend`,
+      );
+      const result = resolveCompactReply(selections, deps(ONCE));
+      expect(result.failures).toEqual([]);
+      expect(result.regions[0]?.create).toBe(true);
+      expect(result.regions[0]?.text).toBe(`\n${body}\n`);
+    });
+  }
+
   test("a resolve type create with a function body fails at the address stage", () => {
     const selections = parseSelection(
       `select missing in a.ts resolve type\nreplace with\n\`\`\`\`\`\`\n${COMPLETE}\n\`\`\`\`\`\`\nend`,
@@ -419,7 +523,7 @@ describe("resolveCompactReply (#111)", () => {
         "    2 |   return 1;",
         "    3 | }",
         "",
-        "Reply with an edit clause (add `replace`) or narrow a viewer with `pick`.",
+        "Reply with an edit clause: add `replace` (use `pick` only with `replace`).",
       ].join("\n"),
     );
   });
@@ -439,7 +543,7 @@ describe("resolveCompactReply (#111)", () => {
         "⁉️  2 |   return 1;",
         "    3 | }",
         "",
-        "Reply with an edit clause (add `replace`) or narrow a viewer with `pick`.",
+        "Reply with an edit clause: add `replace` (use `pick` only with `replace`).",
       ].join("\n"),
     );
   });
@@ -459,7 +563,7 @@ describe("resolveCompactReply (#111)", () => {
         "⁉️  3 |   return 1;",
         "    4 | }",
         "",
-        "Reply with an edit clause (add `replace`) or narrow a viewer with `pick`.",
+        "Reply with an edit clause: add `replace` (use `pick` only with `replace`).",
       ].join("\n"),
     );
   });
@@ -476,7 +580,7 @@ describe("resolveCompactReply (#111)", () => {
         "select function twice in a.ts",
         "  (no occurrences)",
         "",
-        "Reply with an edit clause (add `replace`) or narrow a viewer with `pick`.",
+        "Reply with an edit clause: add `replace` (use `pick` only with `replace`).",
       ].join("\n"),
     );
   });

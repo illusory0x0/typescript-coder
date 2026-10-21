@@ -101,8 +101,9 @@ selection is never returned.
   while a line or range selecter keeps the "candidate contained in the picked
   range" rule. Without a `match`, the pick is the target itself: a line selects
   the whole line, a point selects one character, and a range selects that text
-  range. A pick-only clause admits exactly one selecter; a braced set is a
-  `stage: range` failure because one fence cannot target disjoint spans.
+  range. A pick-only `{a, b, …}` set is supported as separate regions: the same
+  fence replacement is applied to every resolved range (all-or-none at
+  resolution; overlapping ranges are a `stage: range` failure).
 - **`replace with <fence>`**: 6 or more backticks on their own line, a raw body,
   and a closing line of the same backtick run. The body may not contain a run of
   3 or more backticks; the serializer always opens exactly 6. An empty fence
@@ -110,7 +111,8 @@ selection is never returned.
 - **`end`** terminates the clause.
 
 A clause that stops before `replace` is a **viewer**: it locates and writes
-nothing (§4).
+nothing (§4). A clause that stops after `pick` is not a viewer; `pick` requires
+`replace`.
 
 ### Grammar
 
@@ -196,9 +198,12 @@ Both formats reduce to the same narrowing, one stage at a time.
    inclusiveness, declaration containment). With a `match`, the candidate set is
    filtered by the selecter kind: a **point** keeps candidates whose span
    contains the point, while a line or range keeps candidates contained in the
-   picked range. Without a `match`, the pick is not a filter: its resolved text
-   span (whole line, one character, or the written range) is the target, and a
-   pick-only clause admits exactly one selecter.
+   picked range. Without a `match`, the pick is not a filter: each resolved text
+   span (whole line, one character, or the written range) is a target. The
+   compact resolver expands a pick-only `{a, b, …}` into one single-range region
+   per selecter, all carrying the same fence replacement; resolution is
+   all-or-none for the clause, and overlapping resolved spans fail at the range
+   stage.
 4. **Rewrite.** With no `match` and no `pick` the target is the whole
    declaration — the `human/edit.md` "behavior like `str_search` in the top-level
    definition": the symbol index locates the definition, and no literal text
@@ -238,14 +243,15 @@ intersected by a matched span carries `⁉️` in the gutter. A bare viewer (no
 `match`) renders the whole declaration once and marks nothing — the same
 `str_search`-like top-level default as the editor path. Where an editor
 treats ambiguity as failure, a viewer treats it as **information**: a `match`
-viewer returns all occurrences (optionally filtered by `pick`) so the model can
-see the candidates, then add a `pick` or lengthen the snippet. A malformed
-matcher or an unresolvable `pick` still fails with its typed cause.
+viewer returns all occurrences so the model can see the candidates, then add
+`replace` (optionally with a `pick` to narrow it) or lengthen the snippet. A
+`pick` requires `replace` and is not a viewer form. A malformed matcher still
+fails with its typed cause.
 
 A locate turn is recorded as a `viewer` row, not an edit failure. A mixed reply
 applies its editors and carries the viewer results alongside the next
-diagnostics. The feedback ends by asking for an edit clause: add `replace`, or
-narrow a viewer with `pick`.
+diagnostics. The feedback ends by asking for an edit clause: add `replace`,
+optionally with a `pick` to narrow it.
 
 ## 5. Failure stages
 
@@ -307,11 +313,13 @@ symbol is missing. Viewers never create.
 
 The fence body is validated before it is appended:
 
-- If it is a list of top-level declarations, exactly one of them must be named
-  after the clause's symbol (dotted member names do not count). None or more
-  than one is a `stage: address` failure; a declaration list is never wrapped.
-  A list with exactly one such declaration is appended verbatim, even when it
-  also declares other names.
+- If it is a list of top-level declarations, exactly one declaration must be
+  named after the clause's symbol (dotted member names do not count). None or
+  more than one is a `stage: address` failure; a declaration list is never
+  wrapped. Multiple same-name declarations are rejected even when TypeScript
+  would merge them (function overloads, class+interface merges, and value+type
+  merges all count as more than one declaration). A list with exactly one such
+  declaration is appended verbatim, even when it also declares other names.
 - If `resolve` is present, that declaration must occupy the requested space.
   A type alias with `resolve value`, or a function with `resolve type`, is a
   `stage: address` failure naming the spaces the declaration actually occupies.
@@ -371,7 +379,9 @@ function resolveCascade(source: string, entry: IndexEntry, s: Selection) {
 
   if (s.matcher === null) {
     if (s.pick !== null) {
-      // Pick-only: the selecter is the target text span (exactly one).
+      // Pick-only primitive: one selecter resolves to one text span. The
+      // compact resolver expands a multi-range pick into one such clause per
+      // selecter (all-or-none, overlap-checked).
       const ranges = resolvePickSpans(source, entry, s.pick);
       if (!ranges.ok || ranges.spans.length !== 1) return fail("range-invalid");
       span = ranges.spans[0]!;
@@ -435,6 +445,9 @@ function gate(source: string, spliced: string): Stage | null {
   wins and later ones are not tried (§3).
 - **Implicit create.** The absent-symbol append, parent-directory creation, and
   its separating newline (§6).
+- **Pick-only multi-range expansion.** The compact resolver maps a `{a, b, …}`
+  set to one single-range region per selecter, rejecting the clause on any
+  range failure or overlap (§3).
 - **Metric rows.** The per-clause `stage`, `matcherKind`, and `selector` fields
   the benchmark harnesses read (§3).
 - **Repair prompt assembly.** Format-specific corrections, escalations, and the

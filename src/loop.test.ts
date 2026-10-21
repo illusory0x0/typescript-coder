@@ -69,7 +69,7 @@ import type { EditPayload, LoopRecord, ProviderLike, RetryPromptInput, StalledAs
 import type { ChatMessage, ChatOptions, ChatResponse, ToolDefinition } from "./openai";
 import { ChatContextOverflowError, ChatPayloadTooLargeError } from "./openai";
 import { Parser } from "./parser";
-import { serializeSelections } from "./selection";
+import { END_OF_LINE_COLUMN, serializeSelections } from "./selection";
 import type { Selection as CompactSelection } from "./selection";
 import { buildIndexTolerant } from "./utility";
 import type { SourceFile } from "./utility";
@@ -8537,7 +8537,9 @@ describe("compact protocol (#111/#119)", () => {
       "compact",
     );
     expect(edit).toContain("A reply is one or more `select … end` clauses");
-    expect(edit).toContain("a clause that stops before `replace` is a viewer that writes nothing");
+    expect(edit).toContain(
+      "a clause that stops before `replace` is a viewer that writes nothing unless it contains `pick`; `pick` requires `replace`",
+    );
     // The four forms are rendered from the grammar's own serializer.
     expect(edit).toContain("select function f in src/x.ts resolve value");
     expect(edit).toContain("select const MAX_TOKENS in src/x.ts");
@@ -9005,6 +9007,38 @@ describe("compact protocol (#111/#119)", () => {
     expect(applied?.creates).toBe(1);
   }, 30000);
 
+  test("under compact a pick-only multi-range applies every picked range", async () => {
+    const dir = fixtureDir();
+    writeFileSync(
+      join(dir, "src", "helper.ts"),
+      "export function answer(): number {\n  if (Date.now() > 0) return 1;\n  return 1;\n}\n",
+    );
+    const provider = new ScriptedProvider([
+      selectionResponse(),
+      compactReply(
+        answerEditor("  return 2;", null, [
+          { line: 2, column: 1, endLine: 2, endColumn: END_OF_LINE_COLUMN },
+          { line: 3, column: 1, endLine: 3, endColumn: END_OF_LINE_COLUMN },
+        ]),
+      ),
+    ]);
+    const result = await runLoop({
+      cwd: dir,
+      issue: "make the answer test pass",
+      provider,
+      protocolFormat: "compact",
+      checkCommand: TSC,
+      testCommand: ["bun", "test"],
+    });
+    expect(result.ok).toBe(true);
+    const source = helperSource(dir);
+    expect(source).not.toContain("return 1;");
+    expect(source.match(/return 2;/g)).toHaveLength(2);
+    const applied = result.records.find((record) => record.outcome === "applied");
+    expect(applied?.stages).toEqual(["pick", "pick"]);
+    expect(applied?.creates).toBe(0);
+  }, 30000);
+
   test("under compact a missing symbol with a match still creates (match is ignored)", async () => {
     const dir = fixtureDir();
     const provider = new ScriptedProvider([
@@ -9236,7 +9270,10 @@ describe("compact protocol (#111/#119)", () => {
     // The compact edit rule and its create/delete semantics replace the JSON rule.
     expect(prompt).toContain("`select <symbol> in <path> [ resolve <value|type|namespace> ]");
     expect(prompt).toContain("fence opens with 6 or more backticks");
-    expect(prompt).toContain("a clause that stops before `replace` is a viewer");
+    expect(prompt).toContain(
+      "a clause that stops before `replace` is a viewer that locates and writes nothing unless it contains `pick`; `pick` requires `replace`",
+    );
+    expect(prompt).toContain("[ [ pick <range> ] replace with <fence> ]");
     expect(prompt).toContain("renders the numbered declaration with `⁉️` on the matched lines");
     expect(prompt).not.toContain("select [kind]");
     expect(prompt).toContain(

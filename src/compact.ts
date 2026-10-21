@@ -16,7 +16,7 @@ import type { CascadeCause, SelectionStage } from "./cascade";
 import { Parser } from "./parser";
 import type { Program, Statement } from "./parser";
 import type { Selection } from "./selection";
-import { buildIndex, declarationSpaces } from "./utility";
+import { Binder } from "./utility";
 import type { IndexEntry, Locator, SymbolSpace } from "./utility";
 
 /** #110 `MatcherKind`, mirrored to avoid a value-level import cycle with loop. */
@@ -202,14 +202,8 @@ function createAddressDiagnostics(selection: Selection, detail: string): string 
   ].join("\n");
 }
 
-function declaredNames(entries: readonly IndexEntry[]): string {
-  const names = [
-    ...new Set(
-      entries
-        .filter((entry) => !entry.locator.name.includes("."))
-        .map((entry) => entry.locator.name),
-    ),
-  ];
+function declaredNames(root: Binder["rootScope"]): string {
+  const names = [...root.bindings.keys()];
   return names.length === 0 ? "no top-level declaration" : names.join(", ");
 }
 
@@ -217,7 +211,10 @@ function declaredNames(entries: readonly IndexEntry[]): string {
 // declaration list must carry exactly one top-level declaration named after the
 // clause's symbol (a declaration list is never wrapped), and a `resolve` space
 // must match that declaration's spaces; anything else fails at the address
-// stage. A parse failure is not a declaration list and is wrapped.
+// stage. Count declaration nodes, not index entries or merged symbols: a
+// TypeScript merge (overloads, class+interface, value+type) is still more than
+// one declaration and is rejected. A parse failure is not a declaration list
+// and is wrapped.
 function createBodyText(selection: Selection, body: string): CreateBody {
   const name = selection.locator.name;
   let program: Program;
@@ -229,33 +226,30 @@ function createBodyText(selection: Selection, body: string): CreateBody {
   if (!program.body.some(isDeclarationStatement)) {
     return { ok: true, text: wrapCreateBody(name, selection.space, body) };
   }
-  const index = buildIndex([{ path: selection.locator.path, source: body }]);
-  const entries = index.entries.filter((entry) => !entry.locator.name.includes("."));
-  const named = entries.filter((entry) => entry.locator.name === name);
-  // The binder merges same-space redeclarations into one symbol, so count the
-  // declaration nodes rather than the index entries.
-  const declarations = named.flatMap((entry) => entry.symbol.declarations);
-  if (declarations.length === 0) {
+  const binder = new Binder(program);
+  const symbols = binder.rootScope.resolveLocal(name);
+  const declarations = new Set(symbols.flatMap((symbol) => symbol.declarations));
+  if (declarations.size === 0) {
     return {
       ok: false,
       diagnostics: createAddressDiagnostics(
         selection,
-        `the fence body is a declaration list (${declaredNames(entries)}) but declares no top-level ${JSON.stringify(name)}; a declaration list is never wrapped`,
+        `the fence body is a declaration list (${declaredNames(binder.rootScope)}) but declares no top-level ${JSON.stringify(name)}; a declaration list is never wrapped`,
       ),
     };
   }
-  if (declarations.length > 1) {
+  if (declarations.size > 1) {
     return {
       ok: false,
       diagnostics: createAddressDiagnostics(
         selection,
-        `the fence body declares ${declarations.length} top-level declarations named ${JSON.stringify(name)}; a create fence must contain exactly one`,
+        `the fence body declares ${declarations.size} top-level declarations named ${JSON.stringify(name)}; a create fence must contain exactly one, even when TypeScript would merge them`,
       ),
     };
   }
-  const declaration = named[0];
+  const declaration = declarations.values().next().value;
   if (declaration === undefined) {
-    // Unreachable: `named` has exactly one entry here.
+    // Unreachable: the set has exactly one node here.
     return {
       ok: false,
       diagnostics: createAddressDiagnostics(
@@ -265,7 +259,13 @@ function createBodyText(selection: Selection, body: string): CreateBody {
     };
   }
   if (selection.space !== null) {
-    const spaces = declarationSpaces(declaration);
+    const spaces = [
+      ...new Set(
+        symbols
+          .filter((symbol) => symbol.declarations.includes(declaration))
+          .map((symbol) => symbol.space),
+      ),
+    ];
     if (!spaces.includes(selection.space)) {
       return {
         ok: false,
@@ -293,6 +293,23 @@ function wrapCreateBody(name: string, space: SymbolSpace | null, body: string): 
       // No `resolve` defaults to a `let` binding; `value` uses the same form.
       return `let ${name} = ${body};`;
   }
+}
+
+interface PickExpansion {
+  start: number;
+  end: number;
+  text: string;
+  stage: SelectionStage;
+}
+
+function pickOverlapDiagnostics(selection: Selection): string {
+  const { kind, name, path } = selection.locator;
+  const label = kind === "" ? JSON.stringify(name) : `${kind} ${JSON.stringify(name)}`;
+  return [
+    "stage: range",
+    `the \`pick\` ranges for ${label} in ${path} resolve to overlapping text spans; one clause cannot apply the same fence to overlapping ranges`,
+    "write disjoint selecters, or split the overlapping ranges across clauses",
+  ].join("\n");
 }
 
 /**
@@ -404,6 +421,74 @@ export function resolveCompactReply(
       });
       continue;
     }
+    // A pick-only clause with several selecters applies the same fence to each
+    // resolved text span (one region per range). Resolution is all-or-none:
+    // any invalid/no-op range fails the clause before a region is queued.
+    if (selection.matcher === null && selection.pick !== null && selection.pick.length > 1) {
+      const expanded: PickExpansion[] = [];
+      let firstFailure: { cause: CascadeCause; diagnostics: string } | null = null;
+      for (const range of selection.pick) {
+        const part = resolveCascade(source, address.entry, { ...selection, pick: [range] });
+        if (!part.ok) {
+          firstFailure = { cause: part.cause, diagnostics: part.diagnostics };
+          break;
+        }
+        expanded.push({
+          start: part.start,
+          end: part.end,
+          text: part.text,
+          stage: part.stage,
+        });
+      }
+      if (firstFailure !== null) {
+        failures.push({
+          index,
+          path,
+          locator: selection.locator,
+          stage: stageForCause(firstFailure.cause),
+          cause: firstFailure.cause,
+          diagnostics: firstFailure.diagnostics,
+          undeclaredName: null,
+        });
+        continue;
+      }
+      const ordered = [...expanded].sort((left, right) => left.start - right.start);
+      let overlaps = false;
+      for (let position = 1; position < ordered.length; position += 1) {
+        const previous = ordered[position - 1];
+        const current = ordered[position];
+        if (previous !== undefined && current !== undefined && current.start < previous.end) {
+          overlaps = true;
+          break;
+        }
+      }
+      if (overlaps) {
+        failures.push({
+          index,
+          path,
+          locator: selection.locator,
+          stage: "range",
+          cause: "range-invalid",
+          diagnostics: pickOverlapDiagnostics(selection),
+          undeclaredName: null,
+        });
+        continue;
+      }
+      for (const part of ordered) {
+        regions.push({
+          index,
+          path,
+          locator: selection.locator,
+          start: part.start,
+          end: part.end,
+          text: part.text,
+          stage: part.stage,
+          matcherKind: null,
+          create: false,
+        });
+      }
+      continue;
+    }
     const resolved = resolveCascade(source, address.entry, selection);
     if (!resolved.ok) {
       failures.push({
@@ -475,6 +560,6 @@ export function renderViewerFeedback(viewers: readonly CompactViewer[]): string 
       lines.push(`${gutter}${String(line.line).padStart(width)} | ${line.text}`);
     }
   }
-  lines.push("", "Reply with an edit clause (add `replace`) or narrow a viewer with `pick`.");
+  lines.push("", "Reply with an edit clause: add `replace` (use `pick` only with `replace`).");
   return lines.join("\n");
 }
