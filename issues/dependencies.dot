@@ -16,6 +16,9 @@ digraph issues {
   "9"  [label="#9 Make compact retry and decision prompts consistently select-first"];
   "10" [label="#10 Mark matches in the first select viewer's details"];
   "11" [label="#11 Re-baseline the compact benchmark with replay evidence"];
+  "12" [label="#12 Fix duplicate-declaration handling in the compact edit protocol"];
+  "13" [label="#13 Reject duplicate creates and same-offset zero-width regions in one compact reply"];
+  "14" [label="#14 Make duplicate top-level declarations repairable from the model-facing diagnostics"];
 
   // parent edges (parent -> child), solid
   "1" -> "2";
@@ -27,6 +30,8 @@ digraph issues {
   "6" -> "9";
   "6" -> "10";
   "6" -> "11";
+  "12" -> "13";
+  "12" -> "14";
 
   // dependency edges (blocker -> blocked), dashed
   "2" -> "3" [style=dashed, label="blocks"];
