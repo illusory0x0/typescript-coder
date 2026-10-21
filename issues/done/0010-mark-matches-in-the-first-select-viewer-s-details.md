@@ -1,7 +1,7 @@
 ---
 id: 10
 title: "Mark matches in the first select viewer's details"
-status: todo
+status: done
 priority: medium
 milestone: null
 parent: 6

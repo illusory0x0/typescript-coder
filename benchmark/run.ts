@@ -976,6 +976,7 @@ async function runTypescriptCoderSide(options: {
       model: options.model,
       issue: options.issue,
       fixture: options.fixture,
+      protocolFormat: options.protocolFormat,
     });
     writeFile(options.replayPath, `${JSON.stringify(bundle, null, 2)}\n`);
   }

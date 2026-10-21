@@ -17,7 +17,12 @@ import {
   SelectionSyntaxError,
 } from "./selection";
 import type { Selection as CompactSelection } from "./selection";
-import { renderViewerFeedback, resolveCompactReply } from "./compact";
+import {
+  markedViewerLines,
+  markerGutter,
+  renderViewerFeedback,
+  resolveCompactReply,
+} from "./compact";
 import type { CompactFailure, CompactRegion, CompactResolution, CompactViewer } from "./compact";
 import { formatSource } from "./editor";
 import { LexError } from "./lexer";
@@ -324,14 +329,26 @@ export function numberedSourceBlock(source: string): string {
     .join("\n");
 }
 
-function numberLinesFrom(source: string, startLine: number): string {
+// Render `source` with its file-absolute line numbers. `marked` is the set of
+// file-absolute lines intersected by a matched span; when it is null the output
+// carries no gutter at all (the bare viewer path), otherwise every line gets the
+// shared `⁉️  `/blank gutter.
+function numberLinesFrom(
+  source: string,
+  startLine: number,
+  marked: ReadonlySet<number> | null = null,
+): string {
   const lines = splitSourceLines(source);
   if (lines.length === 0) {
     return "";
   }
   const width = String(startLine + lines.length - 1).length;
   return lines
-    .map((line, index) => `${String(startLine + index).padStart(width, " ")} | ${line}`)
+    .map((line, index) => {
+      const lineNumber = startLine + index;
+      const gutter = marked === null ? "" : markerGutter(marked.has(lineNumber));
+      return `${gutter}${String(lineNumber).padStart(width, " ")} | ${line}`;
+    })
     .join("\n");
 }
 
@@ -345,6 +362,31 @@ export function numberedSourceRange(source: string, start: number, end: number):
 
 function compactGoal(issue: string, indexText: string): string {
   return `# Goal\n\n${issue}\n\n# Symbol index\n\n${indexText}\n`;
+}
+
+// The Goal/index/details block shared by the compact retry and decision turns
+// (#B4/#9). `preRenderedSource` keeps the repair-context shrink's partial,
+// original-line-numbered view; otherwise `startLine` anchors the numbering.
+function compactContextBlock(
+  context: { issue: string; indexText: string; startLine?: number },
+  currentSource: string,
+  preRenderedSource: string | undefined,
+): string {
+  const compactNumbered =
+    preRenderedSource ?? numberLinesFrom(currentSource, context.startLine ?? 1);
+  return `# Goal
+
+${context.issue}
+
+# Symbol index
+
+${context.indexText}
+
+# details
+
+\`\`\`text
+${compactNumbered}
+\`\`\``;
 }
 
 function appendCompactSpecFiles(prompt: string, specFiles: readonly SourceFile[]): string {
@@ -362,14 +404,19 @@ export function buildCompactUserPrompt(
   return appendCompactSpecFiles(compactGoal(issue, indexText), specFiles);
 }
 
+// The first-turn content prompt pins the selected declaration. A match viewer
+// additionally passes the file-absolute lines its spans intersect, so the
+// `# details` block marks them exactly like the edit-phase viewer feedback; a
+// bare select viewer passes null and keeps the unmarked rendering.
 export function buildCompactDetailsPrompt(
   issue: string,
   indexText: string,
   symbolSource: string,
   specFiles: readonly SourceFile[] = [],
   startLine = 1,
+  markedLines: ReadonlySet<number> | null = null,
 ): string {
-  const numbered = numberLinesFrom(symbolSource, startLine);
+  const numbered = numberLinesFrom(symbolSource, startLine, markedLines);
   const prompt = `${compactGoal(issue, indexText)}\n# details\n\n\`\`\`text\n${numbered}\n\`\`\`\n\n${compactInstruction()}\n`;
   return appendCompactSpecFiles(prompt, specFiles);
 }
@@ -800,6 +847,15 @@ function stalledAskHeader(stalled: StalledAsk): string {
 const DECISION_INSTRUCTION =
   "This is a decision turn: reply with a short re-approach statement — name what you will change (the cause) and where — instead of another edit payload. Reply exactly `STOP` to end the run now, but only if the failing set cannot be resolved. Do not send a JSON edit payload on this turn.";
 
+/**
+ * Compact decision-only instruction (#75/#9): the select-first counterpart of
+ * `DECISION_INSTRUCTION`. It keeps the decision framing and STOP semantics but
+ * names the clause reply shape instead of a JSON payload, so no bare JSON edit
+ * teaching leaks into a compact turn.
+ */
+const DECISION_INSTRUCTION_COMPACT =
+  "This is a decision turn: reply with a short re-approach statement — name what you will change (the cause) and where — instead of another edit clause. Reply exactly `STOP` to end the run now, but only if the failing set cannot be resolved. Do not send an edit clause on this turn.";
+
 /** Bound on the carried re-approach statement (#75); clamped like the digest states. */
 export const APPROACH_LIMIT = 600;
 
@@ -920,36 +976,37 @@ export function buildRetryPrompt(input: RetryPromptInput): string {
   // template (instruction, self-check offer, pinned selection, current source)
   // and keeps the sharpened header plus the failing diagnostics and history.
   if (stalled !== undefined && isDecisionAsk(stalled)) {
-    return `${header}\n\n${DECISION_INSTRUCTION}\n\nDiagnostics:\n\n\`\`\`\n${diagnostics}\n\`\`\`\n${failureHistorySection}${digestSection}`;
-  }
-  // Compact retry/continuation (#B4): Goal + select-line symbol index + the
-  // declaration details, with no JSON pinned-selection block. The compact
-  // instruction already carries the clause rules, including create mode.
-  if (input.protocolFormat === "compact" && input.compactContext !== undefined) {
-    const context = input.compactContext;
-    const compactNumbered =
-      input.preRenderedSource ?? numberLinesFrom(currentSource, context.startLine ?? 1);
-    return `${header === "" ? "" : `${header}\n\n`}# Goal
+    // Compact decision-only turn (#9): keep the decision framing and STOP
+    // semantics but render the Goal/index/details context and the clause shape.
+    // The JSON decision turn below stays byte-identical.
+    if (input.protocolFormat === "compact" && input.compactContext !== undefined) {
+      return `${header}
 
-${context.issue}
+${compactContextBlock(input.compactContext, currentSource, input.preRenderedSource)}
 
-# Symbol index
-
-${context.indexText}
-
-# details
-
-\`\`\`text
-${compactNumbered}
-\`\`\`
+${DECISION_INSTRUCTION_COMPACT}
 
 Diagnostics:
 
 \`\`\`
 ${diagnostics}
 \`\`\`
+${failureHistorySection}${digestSection}`;
+    }
+    return `${header}\n\n${DECISION_INSTRUCTION}\n\nDiagnostics:\n\n\`\`\`\n${diagnostics}\n\`\`\`\n${failureHistorySection}${digestSection}`;
+  }
+  // Compact retry/continuation (#B4): Goal + select-line symbol index + the
+  // declaration details, with no JSON pinned-selection block. The compact
+  // instruction already carries the clause rules, including create mode.
+  // The self-check offer is JSON-only and is deliberately absent here (#9).
+  if (input.protocolFormat === "compact" && input.compactContext !== undefined) {
+    return `${header === "" ? "" : `${header}\n\n`}${compactContextBlock(input.compactContext, currentSource, input.preRenderedSource)}
 
-${SELF_CHECK_OFFER}
+Diagnostics:
+
+\`\`\`
+${diagnostics}
+\`\`\`
 ${selfCheckSection}${approachSection}${failureHistorySection}${digestSection}
 ${instruction}`;
   }
@@ -5092,6 +5149,11 @@ export async function runLoop(options: LoopOptions): Promise<LoopResult> {
   // A first-turn compact editor already carries its `replace`; its reply is
   // applied in the content branch without a second provider call.
   let prefetchedReply: ChatResponse | null = null;
+  // #8: a compact confirmation editor that arrives on the round's last normal
+  // exchange has no in-round slot. Its already-counted reply is carried into a
+  // fresh round and applied as that round's first exchange (no second provider
+  // call), paired with the `# modified text` prompt it answered.
+  let pendingConfirmation: { reply: ChatResponse; prompt: string } | null = null;
   // Run-start source of the target file ("" when the file did not exist).
   let baseSource = "";
   // First content prompt after a pick; null once a retry prompt takes over.
@@ -5331,6 +5393,14 @@ export async function runLoop(options: LoopOptions): Promise<LoopResult> {
     }
     initialContentPrompt = null;
     prefetchedReply = null;
+    // #8: reopen a carried confirmation editor as this round's first content
+    // exchange. The reply's tokens were counted when the confirmation call ran
+    // on the previous round, so it is reused verbatim, once.
+    if (pendingConfirmation !== null) {
+      prefetchedReply = pendingConfirmation.reply;
+      initialContentPrompt = pendingConfirmation.prompt;
+      pendingConfirmation = null;
+    }
     continueTargets = false;
     let verificationFailed = false;
     // True once this round writes an edit; a round that ends without one is a
@@ -5710,12 +5780,31 @@ export async function runLoop(options: LoopOptions): Promise<LoopResult> {
             const declarationStart =
               modifier === null ? entry.node.start : entry.node.start - modifier.length;
             const startLine = pickSource.slice(0, declarationStart).split("\n").length;
+            // A match viewer's spans are already resolved by the same compact
+            // cascade the edit-phase feedback uses; mark their file-absolute
+            // lines in `# details` (a bare viewer marks nothing).
+            let markedLines: ReadonlySet<number> | null = null;
+            if (selection.matcher !== null) {
+              const viewerResolution = resolveCompactReply([selection], {
+                sourceFor: () => pickSource,
+                resolveEntry: (source, path, locator, space) =>
+                  resolveCurrentEntry(source, path, locator, space),
+              });
+              const viewer = viewerResolution.viewers[0];
+              if (viewer !== undefined) {
+                const marked = markedViewerLines(viewer);
+                if (marked.size > 0) {
+                  markedLines = marked;
+                }
+              }
+            }
             initialContentPrompt = buildCompactDetailsPrompt(
               options.issue,
               compactIndexText,
               pickSource.slice(declarationStart, entry.node.end),
               specFiles,
               startLine,
+              markedLines,
             );
           } else {
             initialContentPrompt = buildCompactCreatePrompt(
@@ -7058,12 +7147,28 @@ export async function runLoop(options: LoopOptions): Promise<LoopResult> {
           const continues = confirmationSelections.some(
             (selection) => selection.replacement !== null,
           );
-          if (continues && exchange < MAX_EDIT_EXCHANGES) {
-            prefetchedReply = confirmation;
-            initialContentPrompt = modifiedPrompt;
-            continue;
+          if (continues) {
+            if (exchange < MAX_EDIT_EXCHANGES) {
+              prefetchedReply = confirmation;
+              initialContentPrompt = modifiedPrompt;
+              continue;
+            }
+            // #8: the verified edit consumed the round's last normal exchange,
+            // so the confirmation editor has no in-round slot. Carry the
+            // already-counted reply into a fresh round (a defined continuation
+            // like #52): the modified prompt and its reply stay paired, the
+            // edit is applied as that round's first exchange without another
+            // provider call, and the fresh round is charged against
+            // MAX_RUN_ITERATIONS and the token budget like any other round.
+            if (iteration >= MAX_RUN_ITERATIONS) {
+              // No round left to carry the confirmation editor: keep the
+              // verified state and end, exactly as the old guard did, rather
+              // than report a misleading cap failure.
+              return success(newSource);
+            }
+            pendingConfirmation = { reply: confirmation, prompt: modifiedPrompt };
+            break;
           }
-          // No room for another exchange: keep the verified state and end.
           return success(newSource);
         }
         return success(newSource);
@@ -7121,6 +7226,11 @@ export async function runLoop(options: LoopOptions): Promise<LoopResult> {
       continue;
     }
     if (verificationFailed) {
+      continue;
+    }
+    // #8: a carried confirmation editor opens a fresh round (accounted like a
+    // #52 continuation) instead of the ordinary round continuation prompt.
+    if (pendingConfirmation !== null) {
       continue;
     }
     // Round-level continuation (#52): a successful pick may have consumed the

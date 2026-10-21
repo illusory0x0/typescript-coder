@@ -2849,6 +2849,54 @@ describe("decision-only turn (#75)", () => {
     expect(prompt).toContain("Failure history: the failing set is unchanged");
   });
 
+  test("compact decision turn carries Goal, index, and details without the JSON block", () => {
+    const prompt = buildRetryPrompt({
+      ...stalledInput(),
+      protocolFormat: "compact",
+      compactContext: {
+        issue: "make the answer test pass",
+        indexText: "select answer in src/helper.ts resolve value",
+        startLine: 4,
+      },
+      failureHistory: renderFailureHistoryNote({ kind: "unchanged", rounds: 6 }),
+    });
+    // The decision framing and STOP semantics are unchanged.
+    expect(prompt).toContain("No progress: 8 consecutive failed rounds. This is round 9 of 32.");
+    expect(prompt).toContain("repeated ask 2");
+    expect(prompt).toContain("This is a decision turn");
+    expect(prompt).toContain("Reply exactly `STOP` to end the run now");
+    expect(prompt).toContain("Do not send an edit clause on this turn");
+    // The select-first context is present, with numbered declaration details.
+    expect(prompt).toContain("# Goal");
+    expect(prompt).toContain("make the answer test pass");
+    expect(prompt).toContain("# Symbol index");
+    expect(prompt).toContain("select answer in src/helper.ts resolve value");
+    expect(prompt).toContain("# details");
+    expect(prompt).toContain("4 | export function answer(): number {");
+    expect(prompt).toContain("Diagnostics:");
+    expect(prompt).toContain("Failure history: the failing set is unchanged");
+    // No JSON pinned selection, edit template, or self-check offer leaks in.
+    expect(prompt).not.toContain("Pinned selection:");
+    expect(prompt).not.toContain("```json");
+    expect(prompt).not.toContain("Output ONLY one flat JSON object");
+    expect(prompt).not.toContain(SELF_CHECK_OFFER);
+    expect(prompt).not.toContain("Do not send a JSON edit payload on this turn");
+  });
+
+  test("the JSON decision turn keeps its old text without compact context", () => {
+    const prompt = buildRetryPrompt({
+      ...stalledInput(),
+      failureHistory: renderFailureHistoryNote({ kind: "unchanged", rounds: 6 }),
+    });
+    expect(prompt).toContain(
+      "This is a decision turn: reply with a short re-approach statement — name what you will change (the cause) and where — instead of another edit payload. Reply exactly `STOP` to end the run now, but only if the failing set cannot be resolved. Do not send a JSON edit payload on this turn.",
+    );
+    expect(prompt).not.toContain("# Goal");
+    expect(prompt).not.toContain("# Symbol index");
+    expect(prompt).not.toContain("# details");
+    expect(prompt).not.toContain("Do not send an edit clause on this turn");
+  });
+
   test("fires for an alternating set too", () => {
     const prompt = buildRetryPrompt(
       stalledInput({
@@ -8593,6 +8641,29 @@ describe("compact protocol (#111/#119)", () => {
     expect(details).toContain("A reply is one or more `select … end` clauses");
   });
 
+  test("the compact details prompt marks matched lines only when given marks", () => {
+    const indexText = "select answer in src/helper.ts resolve value";
+    const source = ["export function answer(): number {", "  return 1;", "}"].join("\n");
+    const bare = buildCompactDetailsPrompt("make the answer test pass", indexText, source, [], 1);
+    expect(bare).not.toMatch(/^⁉️/m);
+    expect(bare).toContain("1 | export function answer(): number {");
+    expect(bare).toContain("2 |   return 1;");
+    const marked = buildCompactDetailsPrompt(
+      "make the answer test pass",
+      indexText,
+      source,
+      [],
+      1,
+      new Set([2]),
+    );
+    expect(marked).toContain("⁉️  2 |   return 1;");
+    expect(marked).toContain("    1 | export function answer(): number {");
+    expect(marked).not.toContain("⁉️  1 |");
+    // The declaration is rendered once and the select head/index is unchanged.
+    expect(marked.match(/export function answer/g)).toHaveLength(1);
+    expect(marked).toContain(indexText);
+  });
+
   test("the compact create prompt names the target file and the create instruction", () => {
     const prompt = buildCompactCreatePrompt(
       "add an extra declaration",
@@ -8648,6 +8719,38 @@ describe("compact protocol (#111/#119)", () => {
     expect(prompt).not.toContain("```json");
     expect(prompt).not.toContain("Each line below is prefixed");
     expect(prompt).not.toContain("Optionally locate the span");
+    // The JSON self-check reply is not taught on a compact turn (#9).
+    expect(prompt).not.toContain(SELF_CHECK_OFFER);
+    expect(prompt).not.toContain('{"request":"read"}');
+  });
+
+  test("a compact retry keeps the JSON self-check offer out while JSON keeps it byte-identical", () => {
+    const input: RetryPromptInput = {
+      exchangeNumber: 2,
+      maxExchanges: 3,
+      mode: "modify",
+      locatorJson: '{"mode":"modify","path":"src/helper.ts","symbol":"answer","kind":"function"}',
+      currentSource: "function answer(): number {\n  return 1;\n}",
+      diagnostics: "stage: matcher\nthe matcher was not found",
+      failure: "edit",
+      repin: false,
+    };
+    const compact = buildRetryPrompt({
+      ...input,
+      protocolFormat: "compact",
+      compactContext: {
+        issue: "make the answer test pass",
+        indexText: "select answer in src/helper.ts resolve value",
+      },
+    });
+    expect(compact).toContain("A reply is one or more `select … end` clauses");
+    expect(compact).not.toContain(SELF_CHECK_OFFER);
+    expect(compact).not.toContain('{"request":"read"}');
+    // The JSON retry keeps the offer and the pinned-selection block verbatim.
+    const json = buildRetryPrompt(input);
+    expect(json).toContain(SELF_CHECK_OFFER);
+    expect(json).toContain('{"request":"read"}');
+    expect(json).toContain("Pinned selection:");
   });
 
   test("compact selection retry and continuation prompts use the select-first shape", () => {
@@ -8661,6 +8764,8 @@ describe("compact protocol (#111/#119)", () => {
     expect(retry).toContain("The previous selection was rejected.");
     expect(retry).toContain("Reply with ONLY one `select … end` clause");
     expect(retry).not.toContain("Output ONLY a corrected selection JSON object");
+    expect(retry).not.toContain(SELF_CHECK_OFFER);
+    expect(retry).not.toContain('{"request":"read"}');
 
     const continuation = buildCompactSelectionContinuationPrompt({
       round: 2,
@@ -8850,6 +8955,40 @@ describe("compact protocol (#111/#119)", () => {
     const details = provider.calls[1]?.at(-1)?.content ?? "";
     expect(details).toContain("# details");
     expect(details).toContain("1 | export function answer(): number {");
+    // A bare select viewer marks nothing in the details block.
+    expect(details).not.toMatch(/^⁉️/m);
+    expect(helperSource(dir)).toContain("return 2;");
+  }, 30000);
+
+  test("under compact a first-turn match viewer marks the matched line in # details", async () => {
+    const dir = fixtureDir();
+    const provider = new ScriptedProvider([
+      compactReply({
+        locator: { path: "src/helper.ts", name: "answer", kind: "function" },
+        space: "value",
+        matcher: { kind: "snippet", value: "return 1;" },
+        pick: null,
+        replacement: null,
+      }),
+      compactReply(answerEditor("return 2;", { kind: "snippet", value: "return 1;" })),
+      "Great! I resolve this problem!",
+    ]);
+    const result = await runLoop({
+      cwd: dir,
+      issue: "make the answer test pass",
+      provider,
+      protocolFormat: "compact",
+      checkCommand: TSC,
+      testCommand: ["bun", "test"],
+    });
+    expect(result.ok).toBe(true);
+    const details = provider.calls[1]?.at(-1)?.content ?? "";
+    expect(details).toContain("# details");
+    expect(details).toContain("⁉️  2 |   return 1;");
+    expect(details).not.toContain("⁉️  1 |");
+    expect(details).not.toContain("⁉️  3 |");
+    // The declaration renders once with file-absolute numbering.
+    expect(details.match(/export function answer/g)).toHaveLength(1);
     expect(helperSource(dir)).toContain("return 2;");
   }, 30000);
 
@@ -8983,6 +9122,57 @@ describe("compact protocol (#111/#119)", () => {
     ]);
     expect(provider.calls[2]?.at(-1)?.content).toContain("# modified text");
     expect(provider.calls[3]?.at(-1)?.content).toContain("# modified text");
+    expect(helperSource(dir)).toContain("const value = 2;");
+  }, 30000);
+
+  test("under compact a confirmation editor after the last exchange opens a fresh round", async () => {
+    const dir = fixtureDir();
+    const provider = new ScriptedProvider([
+      compactSelect("answer", "src/helper.ts", "value"),
+      // Exchange 2: a matcher miss, rejected without ending the round.
+      compactReply(answerEditor("return 2;", { kind: "snippet", value: "return 9;" })),
+      // Exchange 3: the verified edit, consuming the round's last exchange.
+      compactReply(answerEditor("return 2;", { kind: "snippet", value: "return 1;" })),
+      // The confirmation editor is prefetched on that last exchange (#8).
+      compactReply(
+        answerEditor(
+          "export function answer(): number {\n  const value = 2;\n  return value;\n}",
+          null,
+        ),
+      ),
+      // The second edit's own confirmation turn.
+      "Great! I resolve this problem!",
+    ]);
+    const result = await runLoop({
+      cwd: dir,
+      issue: "make the answer test pass",
+      provider,
+      protocolFormat: "compact",
+      checkCommand: TSC,
+      testCommand: ["bun", "test"],
+    });
+    expect(result.ok).toBe(true);
+    // select, rejected edit, verified edit, confirmation editor, final
+    // confirmation: the prefetched editor is never a provider call of its own.
+    expect(provider.calls).toHaveLength(5);
+    expect(
+      provider.calls.filter((call) => call.at(-1)?.content?.includes("# modified text")),
+    ).toHaveLength(2);
+    expect(result.records.map((record) => record.outcome)).toEqual([
+      "selected",
+      "matcher",
+      "applied",
+      "ok",
+      "confirmed",
+      "applied",
+      "ok",
+      "confirmed",
+    ]);
+    // The carried edit is the first exchange of the next round; the record
+    // order keeps the confirmed row before it.
+    const carried = result.records[5];
+    expect(carried?.iteration).toBe(2);
+    expect(carried?.exchange).toBe(1);
     expect(helperSource(dir)).toContain("const value = 2;");
   }, 30000);
 

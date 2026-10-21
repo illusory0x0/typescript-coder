@@ -519,6 +519,32 @@ export function resolveCompactReply(
 }
 
 /**
+ * The gutter every marker-rendered source line carries: `⁉️  ` when a matched
+ * span intersected the line, four spaces otherwise. Shared by the viewer
+ * feedback and the first-turn `# details` block so both align identically.
+ */
+export function markerGutter(marked: boolean): string {
+  return marked ? "⁉️  " : "    ";
+}
+
+/**
+ * The file-absolute lines a viewer's matched spans intersect. A bare viewer's
+ * only occurrence is the declaration itself, so it marks nothing.
+ */
+export function markedViewerLines(viewer: CompactViewer): Set<number> {
+  const marked = new Set<number>();
+  if (viewer.stage === "whole-symbol") {
+    return marked;
+  }
+  for (const occurrence of viewer.occurrences) {
+    for (const line of occurrence.lines) {
+      marked.add(line.line);
+    }
+  }
+  return marked;
+}
+
+/**
  * Render the viewer results as the next prompt's feedback: one numbered block
  * of the whole resolved declaration per clause, with every line intersected by
  * a matched AST span marked `⁉️` in the gutter (a bare viewer marks nothing).
@@ -546,17 +572,10 @@ export function renderViewerFeedback(viewers: readonly CompactViewer[]): string 
     // A bare viewer's only occurrence is the declaration itself; it is not a
     // match, so it marks nothing. Every matched span marks each display line it
     // intersects, and the declaration is rendered once regardless of candidates.
-    const marked = new Set<number>();
-    if (viewer.stage !== "whole-symbol") {
-      for (const occurrence of viewer.occurrences) {
-        for (const line of occurrence.lines) {
-          marked.add(line.line);
-        }
-      }
-    }
+    const marked = markedViewerLines(viewer);
     const width = String(viewer.declaration.at(-1)?.line ?? 0).length;
     for (const line of viewer.declaration) {
-      const gutter = marked.has(line.line) ? "⁉️  " : "    ";
+      const gutter = markerGutter(marked.has(line.line));
       lines.push(`${gutter}${String(line.line).padStart(width)} | ${line.text}`);
     }
   }

@@ -1,7 +1,7 @@
 ---
 id: 9
 title: "Make compact retry and decision prompts consistently select-first"
-status: todo
+status: done
 priority: medium
 milestone: null
 parent: 6

@@ -107,9 +107,10 @@ baseline row.
   round are rotated into `tmp/failures-archive/<ISO-stamp>/`; CLI single runs
   never rotate.
 - Replay bundles (`--replay-dir`): versioned JSON (`format` =
-  `typescript-coder-replay@1`) with the task issue, fixture path, and the
-  ordered chat calls (request messages, response content, finishReason,
-  usage); consumed offline by the replay runner.
+  `typescript-coder-replay@1`) with the task issue, fixture path, the recorded
+  edit protocol (`protocolFormat`: `"json"` or `"compact"`), and the ordered
+  chat calls (request messages, response content, finishReason, usage);
+  consumed offline by the replay runner.
 - `durationMs`: model work only (the judge runs afterwards and is not counted).
 - `startedAt` / `finishedAt`: ISO wall clock of that same model work; the window
   that prices the run.
@@ -240,11 +241,15 @@ and `infraErrors` is untouched. The oc side is unaffected.
 
 Replays a recorded bundle (`--replay-dir`, above) through the current loop in a
 fresh copy of the bundle's fixture under `tmp/replay/<stamp>/`, with no network
-calls. The summary reports the calls consumed against the recorded count,
-per-record outcomes and diagnostics, prompt mismatches against the recorded
-requests, the termination reason when the run stopped through the matrix, and
-where the loop stopped; exit codes: 0 = loop ok, 1 = loop failed, 2 = usage or
-IO error. `--keep` leaves the workspace for inspection (removed otherwise).
+calls. Each bundle replays under the protocol it was recorded with
+(`protocolFormat`). Backward compatibility: this is still `@1`, so an `@1`
+bundle written before the field existed — or one carrying an unknown value —
+replays as `json`, the protocol all older bundles used. The summary reports the
+calls consumed against the recorded count, per-record outcomes and diagnostics,
+prompt mismatches against the recorded requests, the termination reason when the
+run stopped through the matrix, and where the loop stopped; exit codes: 0 = loop
+ok, 1 = loop failed, 2 = usage or IO error. `--keep` leaves the workspace for
+inspection (removed otherwise).
 
 Limitation: the recorded responses were produced for the prompts current at
 recording time, so the runner validates mechanics (parsing, matching, state

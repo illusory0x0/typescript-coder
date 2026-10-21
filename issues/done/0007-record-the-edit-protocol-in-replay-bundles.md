@@ -1,7 +1,7 @@
 ---
 id: 7
 title: "Record the edit protocol in replay bundles"
-status: todo
+status: done
 priority: medium
 milestone: null
 parent: 6

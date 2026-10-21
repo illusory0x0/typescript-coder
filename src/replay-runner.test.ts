@@ -3,6 +3,10 @@ import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import {
+  buildCompactDetailsPrompt,
+  buildCompactModifiedPrompt,
+  buildCompactSymbolIndex,
+  buildCompactUserPrompt,
   buildContextYaml,
   buildEditPrompt,
   buildSystemPrompt,
@@ -10,11 +14,13 @@ import {
   discoverSourceFiles,
   selectSpecFiles,
 } from "./loop";
-import { REPLAY_BUNDLE_FORMAT } from "./replay-format";
+import { REPLAY_BUNDLE_FORMAT, ReplayRecorder } from "./replay-format";
 import { parseReplayBundle, ReplayProvider, runReplay, summarizeReplay } from "./replay-runner";
+import { serializeSelections } from "./selection";
+import { buildIndexTolerant } from "./utility";
 import type { LoopRecord, LoopResult } from "./loop";
 import type { ChatMessage } from "./openai";
-import type { ReplayBundle, ReplayCall } from "./replay-format";
+import type { ReplayBundle, ReplayCall, ReplayProtocolFormat } from "./replay-format";
 import type { ReplayRun } from "./replay-runner";
 
 const TSC_BIN = new URL("../node_modules/typescript/bin/tsc", import.meta.url).pathname;
@@ -122,7 +128,81 @@ function recordedCalls(fixtureDir: string): ReplayCall[] {
   ];
 }
 
-function syntheticBundle(fixture: string, calls: ReplayCall[]): ReplayBundle {
+// Compact is the default protocol, so the recorded prompts are the Goal/index
+// user prompt, then the `# details` prompt after the viewer pick. The compact
+// edit reply is serialized by the grammar itself, mirroring what the loop
+// teaches and parses.
+function compactRecordedCalls(fixtureDir: string): ReplayCall[] {
+  const files = discoverSourceFiles(fixtureDir);
+  const indexText = buildCompactSymbolIndex(buildIndexTolerant(files).index);
+  const specFiles = selectSpecFiles(ISSUE, files);
+  const systemMessage: ChatMessage = {
+    role: "system",
+    content: buildSystemPrompt(false, "compact"),
+  };
+  const userMessage: ChatMessage = {
+    role: "user",
+    content: buildCompactUserPrompt(ISSUE, indexText, specFiles),
+  };
+  const initial: ChatMessage[] = [systemMessage, userMessage];
+  const pick = "select answer in src/helper.ts resolve value end";
+  const declaration = "export function answer(): number {\n  return 1;\n}";
+  const edit = serializeSelections([
+    {
+      locator: LOCATOR,
+      space: null,
+      matcher: { kind: "snippet", value: "return 1;" },
+      pick: null,
+      replacement: "return 2;",
+    },
+  ]);
+  const initialMessages: ChatMessage[] = [
+    ...initial,
+    { role: "assistant", content: pick },
+    {
+      role: "user",
+      content: buildCompactDetailsPrompt(ISSUE, indexText, declaration, specFiles, 1),
+    },
+  ];
+  // A verified compact edit gets one `# modified text` confirmation turn; prose
+  // there ends the run. The loop's confirmation prompt carries no spec-files
+  // section.
+  const modified = "export function answer(): number {\n  return 2;\n}";
+  return [
+    {
+      messages: initial,
+      content: pick,
+      toolCalls: [],
+      finishReason: "stop",
+      usage: null,
+    },
+    {
+      messages: initialMessages,
+      content: edit,
+      toolCalls: [],
+      finishReason: "stop",
+      usage: null,
+    },
+    {
+      messages: [
+        systemMessage,
+        userMessage,
+        { role: "assistant", content: edit },
+        { role: "user", content: buildCompactModifiedPrompt(ISSUE, indexText, modified, 1) },
+      ],
+      content: "Great! I resolve this problem!",
+      toolCalls: [],
+      finishReason: "stop",
+      usage: null,
+    },
+  ];
+}
+
+function syntheticBundle(
+  fixture: string,
+  calls: ReplayCall[],
+  protocolFormat: ReplayProtocolFormat = "json",
+): ReplayBundle {
   return {
     format: REPLAY_BUNDLE_FORMAT,
     side: "tc",
@@ -131,6 +211,7 @@ function syntheticBundle(fixture: string, calls: ReplayCall[]): ReplayBundle {
     model: "fake",
     issue: ISSUE,
     fixture,
+    protocolFormat,
     calls,
   };
 }
@@ -156,6 +237,23 @@ describe("parseReplayBundle", () => {
     const legacy = JSON.stringify({ ...syntheticBundle("project", []), side: "ts" });
     const bundle = parseReplayBundle(legacy);
     expect(bundle.side).toBe("tc");
+  });
+
+  test("defaults a missing or unknown protocol to json and preserves compact", () => {
+    // JSON.stringify drops the undefined field, so this is a legacy @1 bundle
+    // recorded before the protocol field existed.
+    const legacy = JSON.stringify({
+      ...syntheticBundle("project", [], "compact"),
+      protocolFormat: undefined,
+    });
+    expect(parseReplayBundle(legacy).protocolFormat).toBe("json");
+    const unknown = JSON.stringify({
+      ...syntheticBundle("project", []),
+      protocolFormat: "yaml",
+    });
+    expect(parseReplayBundle(unknown).protocolFormat).toBe("json");
+    const compact = JSON.stringify(syntheticBundle("project", [], "compact"));
+    expect(parseReplayBundle(compact).protocolFormat).toBe("compact");
   });
 });
 
@@ -218,6 +316,48 @@ describe("runReplay", () => {
       "record 1: kind=exchange outcome=selected exchange=1 diagnostics=none",
     );
     expect(summary).toContain("record 3: kind=verification outcome=ok exchange=- diagnostics=none");
+  }, 60000);
+
+  test("replays a compact bundle under its recorded protocol and consumes every call", async () => {
+    const { repoRoot, fixtureDir } = fixtureRepo();
+    const recorder = new ReplayRecorder();
+    for (const call of compactRecordedCalls(fixtureDir)) {
+      recorder.record(call.messages, {
+        content: call.content,
+        toolCalls: call.toolCalls,
+        finishReason: call.finishReason,
+        raw: { usage: call.usage },
+      });
+    }
+    const bundlePath = join(repoRoot, "compact-replay.json");
+    writeFileSync(
+      bundlePath,
+      JSON.stringify(
+        recorder.bundle({
+          task: "compact",
+          rep: 1,
+          model: "fake",
+          issue: ISSUE,
+          fixture: "project",
+          protocolFormat: "compact",
+        }),
+      ),
+    );
+    const bundle = parseReplayBundle(readFileSync(bundlePath, "utf8"));
+    expect(bundle.protocolFormat).toBe("compact");
+    const run = await runReplay({
+      bundle,
+      bundlePath,
+      repoRoot,
+      tscBin: TSC_BIN,
+      keep: true,
+    });
+    expect(run.result.ok).toBe(true);
+    expect(run.callsConsumed).toBe(run.callsTotal);
+    expect(run.callsConsumed).toBe(3);
+    expect(run.exhaustion).toBeNull();
+    expect(run.promptMismatches).toEqual([]);
+    expect(readFileSync(join(run.workspace, "src", "helper.ts"), "utf8")).toContain("return 2;");
   }, 60000);
 
   test("reports exhaustion and removes the workspace by default", async () => {

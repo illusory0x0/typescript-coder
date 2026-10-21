@@ -72,6 +72,10 @@ export function parseReplayBundle(json: string): ReplayBundle {
   if (!Array.isArray(calls) || !calls.every(isReplayCall)) {
     throw new Error("replay bundle calls must be an array of recorded calls");
   }
+  // Backward compatibility: @1 bundles recorded before the protocol field are
+  // JSON; unknown values also replay as JSON rather than failing.
+  const protocolFormat: ReplayBundle["protocolFormat"] =
+    parsed["protocolFormat"] === "compact" ? "compact" : "json";
   return {
     format: REPLAY_BUNDLE_FORMAT,
     side: "tc",
@@ -80,6 +84,7 @@ export function parseReplayBundle(json: string): ReplayBundle {
     model,
     issue,
     fixture,
+    protocolFormat,
     calls,
   };
 }
@@ -206,9 +211,9 @@ export async function runReplay(options: ReplayRunOptions): Promise<ReplayRun> {
       issue: options.bundle.issue,
       provider,
       temperature: 0,
-      // Replay bundles carry recorded JSON-format calls and no protocol field;
-      // keep their prompt/response contract on the explicit JSON path.
-      protocolFormat: "json",
+      // Replay under the protocol recorded in the bundle; legacy/unknown
+      // bundles normalized to JSON in `parseReplayBundle`.
+      protocolFormat: options.bundle.protocolFormat,
       checkCommand: ["bun", options.tscBin, "--noEmit"],
       testCommand: ["bun", "test"],
     });

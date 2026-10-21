@@ -1,7 +1,7 @@
 ---
 id: 8
 title: "Keep a confirmation edit after the last normal exchange"
-status: todo
+status: done
 priority: medium
 milestone: null
 parent: 6
