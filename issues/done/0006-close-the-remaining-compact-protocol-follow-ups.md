@@ -1,7 +1,7 @@
 ---
 id: 6
 title: "Close the remaining compact protocol follow-ups"
-status: todo
+status: done
 priority: medium
 milestone: null
 parent: null
@@ -40,3 +40,4 @@ The open list contains no issue parented to this umbrella.
 - Children: replay protocol metadata, confirmation-edit budget, compact retry/decision prompt shape, first-select match markers, compact benchmark re-baseline.
 - Out of scope: `human/edit.md` wording decisions (`resolve function`, snippet verbatim, `1:` vs `N |`) — `human/` is human-authored and read-only; live compact acceptance scenarios are deferred because they cost tokens.
 - Priorities default to medium and milestones to null because the request did not name them.
+- All children are done: #7 replay protocol metadata, #8 confirmation-edit budget, #9 select-first retry/decision prompts, #10 first-select match markers, #11 compact benchmark baseline. #11's live baseline (4 tasks × tc × 1 rep) is recorded in `benchmark/results/2026-10-21-compact-baseline.json` with `protocol-format: compact` and a fresh `benchmark/results/consumption.md`; its residual (json-parser/minilisp token-budget storms, n=1) is noted on #11. This umbrella changed no code or docs itself; `issue check` passes with no open child.

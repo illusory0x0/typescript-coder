@@ -1,0 +1,3257 @@
+{
+  "generatedAt": "2026-10-21T19:43:18.246Z",
+  "date": "2026-10-21",
+  "mode": "full",
+  "tasks": [
+    "json-parser",
+    "sexp-parser",
+    "minilisp",
+    "csv-parser"
+  ],
+  "sides": [
+    "tc"
+  ],
+  "reps": 1,
+  "concurrency": 4,
+  "model": "deepseek-v4.1-flash",
+  "ocModel": null,
+  "effort": null,
+  "multiPayload": false,
+  "protocolFormat": "compact",
+  "tokenBudget": null,
+  "bunVersion": "1.3.13",
+  "opencodeVersion": null,
+  "pilotReference": null,
+  "infraErrors": [],
+  "runs": [
+    {
+      "task": "json-parser",
+      "side": "tc",
+      "rep": 1,
+      "ok": false,
+      "sideOk": false,
+      "tokens": {
+        "input": 96252,
+        "output": 29653,
+        "cacheRead": 39040,
+        "cacheWrite": null,
+        "reasoning": 18,
+        "total": 125905,
+        "billable": {
+          "in": 57212,
+          "out": 29671,
+          "total": 86883
+        }
+      },
+      "usageAvailable": true,
+      "usageSource": "chat-completions",
+      "rawUsage": [
+        {
+          "prompt_tokens": 1678,
+          "completion_tokens": 9,
+          "total_tokens": 1687,
+          "prompt_tokens_details": {
+            "cached_tokens": 0
+          },
+          "completion_tokens_details": {
+            "reasoning_tokens": 0
+          }
+        },
+        {
+          "prompt_tokens": 1879,
+          "completion_tokens": 10,
+          "total_tokens": 1889,
+          "prompt_tokens_details": {
+            "cached_tokens": 1664
+          },
+          "completion_tokens_details": {
+            "reasoning_tokens": 0
+          }
+        },
+        {
+          "prompt_tokens": 2590,
+          "completion_tokens": 2559,
+          "total_tokens": 5149,
+          "prompt_tokens_details": {
+            "cached_tokens": 1664
+          },
+          "completion_tokens_details": {
+            "reasoning_tokens": 0
+          }
+        },
+        {
+          "prompt_tokens": 1908,
+          "completion_tokens": 36,
+          "total_tokens": 1944,
+          "prompt_tokens_details": {
+            "cached_tokens": 768
+          },
+          "completion_tokens_details": {
+            "reasoning_tokens": 0
+          }
+        },
+        {
+          "prompt_tokens": 2020,
+          "completion_tokens": 1285,
+          "total_tokens": 3305,
+          "prompt_tokens_details": {
+            "cached_tokens": 1280
+          },
+          "completion_tokens_details": {
+            "reasoning_tokens": 0
+          }
+        },
+        {
+          "prompt_tokens": 2064,
+          "completion_tokens": 1132,
+          "total_tokens": 3196,
+          "prompt_tokens_details": {
+            "cached_tokens": 1280
+          },
+          "completion_tokens_details": {
+            "reasoning_tokens": 0
+          }
+        },
+        {
+          "prompt_tokens": 1908,
+          "completion_tokens": 146,
+          "total_tokens": 2054,
+          "prompt_tokens_details": {
+            "cached_tokens": 1152
+          },
+          "completion_tokens_details": {
+            "reasoning_tokens": 0
+          }
+        },
+        {
+          "prompt_tokens": 2212,
+          "completion_tokens": 1175,
+          "total_tokens": 3387,
+          "prompt_tokens_details": {
+            "cached_tokens": 1280
+          },
+          "completion_tokens_details": {
+            "reasoning_tokens": 0
+          }
+        },
+        {
+          "prompt_tokens": 2047,
+          "completion_tokens": 1287,
+          "total_tokens": 3334,
+          "prompt_tokens_details": {
+            "cached_tokens": 1280
+          },
+          "completion_tokens_details": {
+            "reasoning_tokens": 0
+          }
+        },
+        {
+          "prompt_tokens": 1924,
+          "completion_tokens": 90,
+          "total_tokens": 2014,
+          "prompt_tokens_details": {
+            "cached_tokens": 1152
+          },
+          "completion_tokens_details": {
+            "reasoning_tokens": 0
+          }
+        },
+        {
+          "prompt_tokens": 2280,
+          "completion_tokens": 1476,
+          "total_tokens": 3756,
+          "prompt_tokens_details": {
+            "cached_tokens": 1280
+          },
+          "completion_tokens_details": {
+            "reasoning_tokens": 0
+          }
+        },
+        {
+          "prompt_tokens": 2080,
+          "completion_tokens": 1123,
+          "total_tokens": 3203,
+          "prompt_tokens_details": {
+            "cached_tokens": 1280
+          },
+          "completion_tokens_details": {
+            "reasoning_tokens": 0
+          }
+        },
+        {
+          "prompt_tokens": 2093,
+          "completion_tokens": 1146,
+          "total_tokens": 3239,
+          "prompt_tokens_details": {
+            "cached_tokens": 1152
+          },
+          "completion_tokens_details": {
+            "reasoning_tokens": 0
+          }
+        },
+        {
+          "prompt_tokens": 2249,
+          "completion_tokens": 114,
+          "total_tokens": 2363,
+          "prompt_tokens_details": {
+            "cached_tokens": 0
+          },
+          "completion_tokens_details": {
+            "reasoning_tokens": 0
+          }
+        },
+        {
+          "prompt_tokens": 2205,
+          "completion_tokens": 38,
+          "total_tokens": 2243,
+          "prompt_tokens_details": {
+            "cached_tokens": 1408
+          },
+          "completion_tokens_details": {
+            "reasoning_tokens": 0
+          }
+        },
+        {
+          "prompt_tokens": 2632,
+          "completion_tokens": 1124,
+          "total_tokens": 3756,
+          "prompt_tokens_details": {
+            "cached_tokens": 896
+          },
+          "completion_tokens_details": {
+            "reasoning_tokens": 0
+          }
+        },
+        {
+          "prompt_tokens": 2205,
+          "completion_tokens": 1143,
+          "total_tokens": 3348,
+          "prompt_tokens_details": {
+            "cached_tokens": 1536
+          },
+          "completion_tokens_details": {
+            "reasoning_tokens": 0
+          }
+        },
+        {
+          "prompt_tokens": 1908,
+          "completion_tokens": 1293,
+          "total_tokens": 3201,
+          "prompt_tokens_details": {
+            "cached_tokens": 1152
+          },
+          "completion_tokens_details": {
+            "reasoning_tokens": 0
+          }
+        },
+        {
+          "prompt_tokens": 2064,
+          "completion_tokens": 40,
+          "total_tokens": 2104,
+          "prompt_tokens_details": {
+            "cached_tokens": 768
+          },
+          "completion_tokens_details": {
+            "reasoning_tokens": 0
+          }
+        },
+        {
+          "prompt_tokens": 2154,
+          "completion_tokens": 1290,
+          "total_tokens": 3444,
+          "prompt_tokens_details": {
+            "cached_tokens": 1280
+          },
+          "completion_tokens_details": {
+            "reasoning_tokens": 0
+          }
+        },
+        {
+          "prompt_tokens": 2354,
+          "completion_tokens": 103,
+          "total_tokens": 2457,
+          "prompt_tokens_details": {
+            "cached_tokens": 0
+          },
+          "completion_tokens_details": {
+            "reasoning_tokens": 0
+          }
+        },
+        {
+          "prompt_tokens": 2064,
+          "completion_tokens": 11,
+          "total_tokens": 2075,
+          "prompt_tokens_details": {
+            "cached_tokens": 896
+          },
+          "completion_tokens_details": {
+            "reasoning_tokens": 0
+          }
+        },
+        {
+          "prompt_tokens": 2091,
+          "completion_tokens": 1345,
+          "total_tokens": 3436,
+          "prompt_tokens_details": {
+            "cached_tokens": 1280
+          },
+          "completion_tokens_details": {
+            "reasoning_tokens": 0
+          }
+        },
+        {
+          "prompt_tokens": 2345,
+          "completion_tokens": 1131,
+          "total_tokens": 3476,
+          "prompt_tokens_details": {
+            "cached_tokens": 896
+          },
+          "completion_tokens_details": {
+            "reasoning_tokens": 0
+          }
+        },
+        {
+          "prompt_tokens": 2047,
+          "completion_tokens": 25,
+          "total_tokens": 2072,
+          "prompt_tokens_details": {
+            "cached_tokens": 1280
+          },
+          "completion_tokens_details": {
+            "reasoning_tokens": 0
+          }
+        },
+        {
+          "prompt_tokens": 3682,
+          "completion_tokens": 1246,
+          "total_tokens": 4928,
+          "prompt_tokens_details": {
+            "cached_tokens": 1280
+          },
+          "completion_tokens_details": {
+            "reasoning_tokens": 0
+          }
+        },
+        {
+          "prompt_tokens": 2429,
+          "completion_tokens": 1104,
+          "total_tokens": 3533,
+          "prompt_tokens_details": {
+            "cached_tokens": 896
+          },
+          "completion_tokens_details": {
+            "reasoning_tokens": 0
+          }
+        },
+        {
+          "prompt_tokens": 1908,
+          "completion_tokens": 38,
+          "total_tokens": 1946,
+          "prompt_tokens_details": {
+            "cached_tokens": 0
+          },
+          "completion_tokens_details": {
+            "reasoning_tokens": 0
+          }
+        },
+        {
+          "prompt_tokens": 2023,
+          "completion_tokens": 1354,
+          "total_tokens": 3377,
+          "prompt_tokens_details": {
+            "cached_tokens": 0
+          },
+          "completion_tokens_details": {
+            "reasoning_tokens": 0
+          }
+        },
+        {
+          "prompt_tokens": 2064,
+          "completion_tokens": 68,
+          "total_tokens": 2132,
+          "prompt_tokens_details": {
+            "cached_tokens": 0
+          },
+          "completion_tokens_details": {
+            "reasoning_tokens": 0
+          }
+        },
+        {
+          "prompt_tokens": 2321,
+          "completion_tokens": 1146,
+          "total_tokens": 3467,
+          "prompt_tokens_details": {
+            "cached_tokens": 896
+          },
+          "completion_tokens_details": {
+            "reasoning_tokens": 0
+          }
+        },
+        {
+          "prompt_tokens": 2064,
+          "completion_tokens": 1182,
+          "total_tokens": 3246,
+          "prompt_tokens_details": {
+            "cached_tokens": 0
+          },
+          "completion_tokens_details": {
+            "reasoning_tokens": 0
+          }
+        },
+        {
+          "prompt_tokens": 1772,
+          "completion_tokens": 88,
+          "total_tokens": 1860,
+          "prompt_tokens_details": {
+            "cached_tokens": 0
+          },
+          "completion_tokens_details": {
+            "reasoning_tokens": 0
+          }
+        },
+        {
+          "prompt_tokens": 2016,
+          "completion_tokens": 38,
+          "total_tokens": 2054,
+          "prompt_tokens_details": {
+            "cached_tokens": 896
+          },
+          "completion_tokens_details": {
+            "reasoning_tokens": 0
+          }
+        },
+        {
+          "prompt_tokens": 2073,
+          "completion_tokens": 1380,
+          "total_tokens": 3453,
+          "prompt_tokens_details": {
+            "cached_tokens": 1280
+          },
+          "completion_tokens_details": {
+            "reasoning_tokens": 0
+          }
+        },
+        {
+          "prompt_tokens": 2093,
+          "completion_tokens": 22,
+          "total_tokens": 2115,
+          "prompt_tokens_details": {
+            "cached_tokens": 1152
+          },
+          "completion_tokens_details": {
+            "reasoning_tokens": 0
+          }
+        },
+        {
+          "prompt_tokens": 4055,
+          "completion_tokens": 156,
+          "total_tokens": 4211,
+          "prompt_tokens_details": {
+            "cached_tokens": 1408
+          },
+          "completion_tokens_details": {
+            "reasoning_tokens": 0
+          }
+        },
+        {
+          "prompt_tokens": 2329,
+          "completion_tokens": 40,
+          "total_tokens": 2369,
+          "prompt_tokens_details": {
+            "cached_tokens": 0
+          },
+          "completion_tokens_details": {
+            "reasoning_tokens": 0
+          }
+        },
+        {
+          "prompt_tokens": 2632,
+          "completion_tokens": 11,
+          "total_tokens": 2643,
+          "prompt_tokens_details": {
+            "cached_tokens": 896
+          },
+          "completion_tokens_details": {
+            "reasoning_tokens": 0
+          }
+        },
+        {
+          "prompt_tokens": 2194,
+          "completion_tokens": 1187,
+          "total_tokens": 3381,
+          "prompt_tokens_details": {
+            "cached_tokens": 1408
+          },
+          "completion_tokens_details": {
+            "reasoning_tokens": 0
+          }
+        },
+        {
+          "prompt_tokens": 2249,
+          "completion_tokens": 82,
+          "total_tokens": 2331,
+          "prompt_tokens_details": {
+            "cached_tokens": 1408
+          },
+          "completion_tokens_details": {
+            "reasoning_tokens": 0
+          }
+        },
+        {
+          "prompt_tokens": 2611,
+          "completion_tokens": 1051,
+          "total_tokens": 3662,
+          "prompt_tokens_details": {
+            "cached_tokens": 896
+          },
+          "completion_tokens_details": {
+            "reasoning_tokens": 0
+          }
+        },
+        {
+          "prompt_tokens": 2736,
+          "completion_tokens": 329,
+          "total_tokens": 3065,
+          "prompt_tokens_details": {
+            "cached_tokens": 0
+          },
+          "completion_tokens_details": {
+            "reasoning_tokens": 18
+          }
+        }
+      ],
+      "durationMs": 156542,
+      "startedAt": "2026-10-21T19:43:18.264Z",
+      "finishedAt": "2026-10-21T19:45:54.806Z",
+      "cost": 0.026501519999999997,
+      "rateClass": "off-peak",
+      "steps": 48,
+      "records": [
+        {
+          "row": 1,
+          "iteration": 1,
+          "kind": "exchange",
+          "exchange": 1,
+          "outcome": "protocol",
+          "diagnosticsHead": "stage: protocol the reply must be one or more `select … end` clauses; a JSON edit payload is not accepted in this mode",
+          "replacementChars": null,
+          "finishReason": "stop",
+          "cause": "protocol",
+          "payloads": 0,
+          "toolCalls": 0,
+          "selectors": null,
+          "stages": null,
+          "matcherKinds": null
+        },
+        {
+          "row": 2,
+          "iteration": 1,
+          "kind": "exchange",
+          "exchange": 2,
+          "outcome": "selected",
+          "diagnosticsHead": null,
+          "replacementChars": null,
+          "finishReason": "stop",
+          "cause": null,
+          "payloads": 0,
+          "toolCalls": 0,
+          "selectors": null,
+          "stages": null,
+          "matcherKinds": null
+        },
+        {
+          "row": 3,
+          "iteration": 1,
+          "kind": "exchange",
+          "exchange": 3,
+          "outcome": "applied",
+          "diagnosticsHead": null,
+          "replacementChars": null,
+          "finishReason": "stop",
+          "cause": null,
+          "payloads": 4,
+          "toolCalls": 0,
+          "selectors": [
+            "whole-symbol",
+            "whole-symbol",
+            "whole-symbol",
+            "whole-symbol"
+          ],
+          "stages": [
+            "whole-symbol",
+            "whole-symbol",
+            "whole-symbol",
+            "whole-symbol"
+          ],
+          "matcherKinds": [
+            null,
+            null,
+            null,
+            null
+          ]
+        },
+        {
+          "row": 4,
+          "iteration": 1,
+          "kind": "verification",
+          "exchange": null,
+          "outcome": "tsc",
+          "diagnosticsHead": "stage: tsc elsewhere in file: src/json.ts(1,13): error TS2300: Duplicate identifier 'JsonValue'. — in declaration `JsonValue` (type) src/json.ts(8,17): error TS2323: Cannot redeclare exported variable",
+          "replacementChars": null,
+          "finishReason": "stop",
+          "cause": null,
+          "payloads": 0,
+          "toolCalls": 0,
+          "selectors": null,
+          "stages": null,
+          "matcherKinds": null
+        },
+        {
+          "row": 5,
+          "iteration": 2,
+          "kind": "exchange",
+          "exchange": 1,
+          "outcome": "protocol",
+          "diagnosticsHead": "stage: protocol the reply must be one or more `select … end` clauses; a JSON edit payload is not accepted in this mode",
+          "replacementChars": null,
+          "finishReason": "stop",
+          "cause": "protocol",
+          "payloads": 0,
+          "toolCalls": 0,
+          "selectors": null,
+          "stages": null,
+          "matcherKinds": null
+        },
+        {
+          "row": 6,
+          "iteration": 2,
+          "kind": "exchange",
+          "exchange": 2,
+          "outcome": "no-op",
+          "diagnosticsHead": "stage: compact clause 1 of 2 ({\"path\":\"src/json.ts\",\"symbol\":\"JsonValue\",\"kind\":\"\"} in \"src/json.ts\") failed; the whole compact reply is discarded and nothing is written stage: no-op the edit does not",
+          "replacementChars": null,
+          "finishReason": "stop",
+          "cause": "no-op",
+          "payloads": 2,
+          "toolCalls": 0,
+          "selectors": [],
+          "stages": [],
+          "matcherKinds": []
+        },
+        {
+          "row": 7,
+          "iteration": 2,
+          "kind": "exchange",
+          "exchange": 3,
+          "outcome": "applied",
+          "diagnosticsHead": null,
+          "replacementChars": null,
+          "finishReason": "stop",
+          "cause": null,
+          "payloads": 2,
+          "toolCalls": 0,
+          "selectors": [
+            "whole-symbol",
+            "whole-symbol"
+          ],
+          "stages": [
+            "whole-symbol",
+            "whole-symbol"
+          ],
+          "matcherKinds": [
+            null,
+            null
+          ]
+        },
+        {
+          "row": 8,
+          "iteration": 2,
+          "kind": "verification",
+          "exchange": null,
+          "outcome": "tsc",
+          "diagnosticsHead": "stage: tsc elsewhere in file: src/json.ts(1,13): error TS2300: Duplicate identifier 'JsonValue'. — in declaration `JsonValue` (type) src/json.ts(8,17): error TS2323: Cannot redeclare exported variable",
+          "replacementChars": null,
+          "finishReason": "stop",
+          "cause": null,
+          "payloads": 0,
+          "toolCalls": 0,
+          "selectors": null,
+          "stages": null,
+          "matcherKinds": null
+        },
+        {
+          "row": 9,
+          "iteration": 3,
+          "kind": "exchange",
+          "exchange": 1,
+          "outcome": "no-op",
+          "diagnosticsHead": "stage: compact clause 1 of 3 ({\"path\":\"src/json.ts\",\"symbol\":\"JsonValue\",\"kind\":\"type\"} in \"src/json.ts\") failed; the whole compact reply is discarded and nothing is written stage: no-op the edit does",
+          "replacementChars": null,
+          "finishReason": "stop",
+          "cause": "no-op",
+          "payloads": 3,
+          "toolCalls": 0,
+          "selectors": [],
+          "stages": [],
+          "matcherKinds": []
+        },
+        {
+          "row": 10,
+          "iteration": 3,
+          "kind": "exchange",
+          "exchange": 2,
+          "outcome": "no-op",
+          "diagnosticsHead": "stage: compact clause 1 of 2 ({\"path\":\"src/json.ts\",\"symbol\":\"JsonValue\",\"kind\":\"type\"} in \"src/json.ts\") failed; the whole compact reply is discarded and nothing is written stage: no-op the edit does",
+          "replacementChars": null,
+          "finishReason": "stop",
+          "cause": "no-op",
+          "payloads": 2,
+          "toolCalls": 0,
+          "selectors": [],
+          "stages": [],
+          "matcherKinds": []
+        },
+        {
+          "row": 11,
+          "iteration": 3,
+          "kind": "exchange",
+          "exchange": 3,
+          "outcome": "applied",
+          "diagnosticsHead": null,
+          "replacementChars": null,
+          "finishReason": "stop",
+          "cause": null,
+          "payloads": 2,
+          "toolCalls": 0,
+          "selectors": [
+            "whole-symbol",
+            "whole-symbol"
+          ],
+          "stages": [
+            "whole-symbol",
+            "whole-symbol"
+          ],
+          "matcherKinds": [
+            null,
+            null
+          ]
+        },
+        {
+          "row": 12,
+          "iteration": 3,
+          "kind": "verification",
+          "exchange": null,
+          "outcome": "tsc",
+          "diagnosticsHead": "stage: tsc elsewhere in file: src/json.ts(1,13): error TS2300: Duplicate identifier 'JsonValue'. — in declaration `JsonValue` (type) src/json.ts(8,17): error TS2323: Cannot redeclare exported variable",
+          "replacementChars": null,
+          "finishReason": "stop",
+          "cause": null,
+          "payloads": 0,
+          "toolCalls": 0,
+          "selectors": null,
+          "stages": null,
+          "matcherKinds": null
+        },
+        {
+          "row": 13,
+          "iteration": 4,
+          "kind": "exchange",
+          "exchange": 1,
+          "outcome": "matcher",
+          "diagnosticsHead": "stage: compact clause 1 of 3 ({\"path\":\"src/json.ts\",\"symbol\":\"JsonValue\",\"kind\":\"type\"} in \"src/json.ts\") failed; the whole compact reply is discarded and nothing is written stage: matcher the matcher",
+          "replacementChars": null,
+          "finishReason": "stop",
+          "cause": "matcher-unparseable",
+          "payloads": 3,
+          "toolCalls": 0,
+          "selectors": [],
+          "stages": [],
+          "matcherKinds": []
+        },
+        {
+          "row": 14,
+          "iteration": 4,
+          "kind": "exchange",
+          "exchange": 2,
+          "outcome": "no-op",
+          "diagnosticsHead": "stage: compact clause 1 of 2 ({\"path\":\"src/json.ts\",\"symbol\":\"JsonValue\",\"kind\":\"type\"} in \"src/json.ts\") failed; the whole compact reply is discarded and nothing is written stage: no-op the edit does",
+          "replacementChars": null,
+          "finishReason": "stop",
+          "cause": "no-op",
+          "payloads": 2,
+          "toolCalls": 0,
+          "selectors": [],
+          "stages": [],
+          "matcherKinds": []
+        },
+        {
+          "row": 15,
+          "iteration": 4,
+          "kind": "exchange",
+          "exchange": 3,
+          "outcome": "applied",
+          "diagnosticsHead": null,
+          "replacementChars": null,
+          "finishReason": "stop",
+          "cause": null,
+          "payloads": 2,
+          "toolCalls": 0,
+          "selectors": [
+            "whole-symbol",
+            "whole-symbol"
+          ],
+          "stages": [
+            "whole-symbol",
+            "whole-symbol"
+          ],
+          "matcherKinds": [
+            null,
+            null
+          ]
+        },
+        {
+          "row": 16,
+          "iteration": 4,
+          "kind": "verification",
+          "exchange": null,
+          "outcome": "tsc",
+          "diagnosticsHead": "stage: tsc elsewhere in file: src/json.ts(1,13): error TS2300: Duplicate identifier 'JsonValue'. — in declaration `JsonValue` (type) src/json.ts(8,17): error TS2323: Cannot redeclare exported variable",
+          "replacementChars": null,
+          "finishReason": "stop",
+          "cause": null,
+          "payloads": 0,
+          "toolCalls": 0,
+          "selectors": null,
+          "stages": null,
+          "matcherKinds": null
+        },
+        {
+          "row": 17,
+          "iteration": 5,
+          "kind": "exchange",
+          "exchange": 1,
+          "outcome": "no-op",
+          "diagnosticsHead": "stage: compact clause 1 of 2 ({\"path\":\"src/json.ts\",\"symbol\":\"JsonValue\",\"kind\":\"\"} in \"src/json.ts\") failed; the whole compact reply is discarded and nothing is written stage: no-op the edit does not",
+          "replacementChars": null,
+          "finishReason": "stop",
+          "cause": "no-op",
+          "payloads": 2,
+          "toolCalls": 0,
+          "selectors": [],
+          "stages": [],
+          "matcherKinds": []
+        },
+        {
+          "row": 18,
+          "iteration": 5,
+          "kind": "exchange",
+          "exchange": 2,
+          "outcome": "protocol",
+          "diagnosticsHead": "stage: protocol the reply must be one or more `select … end` clauses; a JSON edit payload is not accepted in this mode",
+          "replacementChars": null,
+          "finishReason": "stop",
+          "cause": "protocol",
+          "payloads": 0,
+          "toolCalls": 0,
+          "selectors": null,
+          "stages": null,
+          "matcherKinds": null
+        },
+        {
+          "row": 19,
+          "iteration": 5,
+          "kind": "exchange",
+          "exchange": 3,
+          "outcome": "matcher",
+          "diagnosticsHead": "stage: compact clause 1 of 2 ({\"path\":\"src/json.ts\",\"symbol\":\"parseJson\",\"kind\":\"\"} in \"src/json.ts\") failed; the whole compact reply is discarded and nothing is written stage: matcher the matcher cou",
+          "replacementChars": null,
+          "finishReason": "stop",
+          "cause": "matcher-unparseable",
+          "payloads": 2,
+          "toolCalls": 0,
+          "selectors": [],
+          "stages": [],
+          "matcherKinds": []
+        },
+        {
+          "row": 20,
+          "iteration": 6,
+          "kind": "exchange",
+          "exchange": 1,
+          "outcome": "protocol",
+          "diagnosticsHead": "stage: protocol the reply must be one or more `select … end` clauses; a JSON edit payload is not accepted in this mode",
+          "replacementChars": null,
+          "finishReason": "stop",
+          "cause": "protocol",
+          "payloads": 0,
+          "toolCalls": 0,
+          "selectors": null,
+          "stages": null,
+          "matcherKinds": null
+        },
+        {
+          "row": 21,
+          "iteration": 6,
+          "kind": "exchange",
+          "exchange": 2,
+          "outcome": "applied",
+          "diagnosticsHead": null,
+          "replacementChars": null,
+          "finishReason": "stop",
+          "cause": null,
+          "payloads": 1,
+          "toolCalls": 0,
+          "selectors": [
+            "whole-symbol"
+          ],
+          "stages": [
+            "whole-symbol"
+          ],
+          "matcherKinds": [
+            null
+          ]
+        },
+        {
+          "row": 22,
+          "iteration": 6,
+          "kind": "verification",
+          "exchange": null,
+          "outcome": "tsc",
+          "diagnosticsHead": "stage: tsc elsewhere in file: src/json.ts(1,13): error TS2300: Duplicate identifier 'JsonValue'. — in declaration `JsonValue` (type) src/json.ts(8,17): error TS2323: Cannot redeclare exported variable",
+          "replacementChars": null,
+          "finishReason": "stop",
+          "cause": null,
+          "payloads": 0,
+          "toolCalls": 0,
+          "selectors": null,
+          "stages": null,
+          "matcherKinds": null
+        },
+        {
+          "row": 23,
+          "iteration": 7,
+          "kind": "exchange",
+          "exchange": 1,
+          "outcome": "no-op",
+          "diagnosticsHead": "stage: compact clause 1 of 2 ({\"path\":\"src/json.ts\",\"symbol\":\"JsonValue\",\"kind\":\"type\"} in \"src/json.ts\") failed; the whole compact reply is discarded and nothing is written stage: no-op the edit does",
+          "replacementChars": null,
+          "finishReason": "stop",
+          "cause": "no-op",
+          "payloads": 2,
+          "toolCalls": 0,
+          "selectors": [],
+          "stages": [],
+          "matcherKinds": []
+        },
+        {
+          "row": 24,
+          "iteration": 7,
+          "kind": "exchange",
+          "exchange": 2,
+          "outcome": "matcher",
+          "diagnosticsHead": "stage: compact clause 1 of 2 ({\"path\":\"src/json.ts\",\"symbol\":\"JsonValue\",\"kind\":\"type\"} in \"src/json.ts\") failed; the whole compact reply is discarded and nothing is written stage: matcher the matcher",
+          "replacementChars": null,
+          "finishReason": "stop",
+          "cause": "matcher-unparseable",
+          "payloads": 2,
+          "toolCalls": 0,
+          "selectors": [],
+          "stages": [],
+          "matcherKinds": []
+        },
+        {
+          "row": 25,
+          "iteration": 7,
+          "kind": "exchange",
+          "exchange": 3,
+          "outcome": "format",
+          "diagnosticsHead": "stage: compact clause 1 of 2 ({\"path\":\"src/json.ts\",\"symbol\":\"JsonValue\",\"kind\":\"type\"} in \"src/json.ts\") failed; the whole compact reply is discarded and nothing is written stage: format oxfmt failed",
+          "replacementChars": null,
+          "finishReason": "stop",
+          "cause": "format",
+          "payloads": 2,
+          "toolCalls": 0,
+          "selectors": [],
+          "stages": [],
+          "matcherKinds": []
+        },
+        {
+          "row": 26,
+          "iteration": 8,
+          "kind": "exchange",
+          "exchange": 1,
+          "outcome": "no-op",
+          "diagnosticsHead": "stage: compact clause 1 of 2 ({\"path\":\"src/json.ts\",\"symbol\":\"JsonValue\",\"kind\":\"type\"} in \"src/json.ts\") failed; the whole compact reply is discarded and nothing is written stage: no-op the edit does",
+          "replacementChars": null,
+          "finishReason": "stop",
+          "cause": "no-op",
+          "payloads": 2,
+          "toolCalls": 0,
+          "selectors": [],
+          "stages": [],
+          "matcherKinds": []
+        },
+        {
+          "row": 27,
+          "iteration": 8,
+          "kind": "exchange",
+          "exchange": 2,
+          "outcome": "viewer",
+          "diagnosticsHead": "Located occurrences (viewer clauses write nothing): select JsonValue in src/json.ts resolve type src/json.ts:1:8 1 | export type JsonValue = 2 | | null 3 | | boolean 4 | | number 5 | | string 6 | | Js",
+          "replacementChars": null,
+          "finishReason": "stop",
+          "cause": null,
+          "payloads": 1,
+          "toolCalls": 0,
+          "selectors": null,
+          "stages": null,
+          "matcherKinds": null
+        },
+        {
+          "row": 28,
+          "iteration": 8,
+          "kind": "exchange",
+          "exchange": 3,
+          "outcome": "no-op",
+          "diagnosticsHead": "stage: compact clause 1 of 2 ({\"path\":\"src/json.ts\",\"symbol\":\"JsonValue\",\"kind\":\"\"} in \"src/json.ts\") failed; the whole compact reply is discarded and nothing is written stage: no-op the edit does not",
+          "replacementChars": null,
+          "finishReason": "stop",
+          "cause": "no-op",
+          "payloads": 2,
+          "toolCalls": 0,
+          "selectors": [],
+          "stages": [],
+          "matcherKinds": []
+        },
+        {
+          "row": 29,
+          "iteration": 9,
+          "kind": "exchange",
+          "exchange": 1,
+          "outcome": "no-op",
+          "diagnosticsHead": "stage: compact clause 1 of 2 ({\"path\":\"src/json.ts\",\"symbol\":\"JsonValue\",\"kind\":\"type\"} in \"src/json.ts\") failed; the whole compact reply is discarded and nothing is written stage: no-op the edit does",
+          "replacementChars": null,
+          "finishReason": "stop",
+          "cause": "no-op",
+          "payloads": 2,
+          "toolCalls": 0,
+          "selectors": [],
+          "stages": [],
+          "matcherKinds": []
+        },
+        {
+          "row": 30,
+          "iteration": 9,
+          "kind": "exchange",
+          "exchange": 2,
+          "outcome": "viewer",
+          "diagnosticsHead": "Located occurrences (viewer clauses write nothing): select type JsonValue in src/json.ts resolve type src/json.ts:1:8 1 | export type JsonValue = 2 | | null 3 | | boolean 4 | | number 5 | | string 6 |",
+          "replacementChars": null,
+          "finishReason": "stop",
+          "cause": null,
+          "payloads": 2,
+          "toolCalls": 0,
+          "selectors": null,
+          "stages": null,
+          "matcherKinds": null
+        },
+        {
+          "row": 31,
+          "iteration": 9,
+          "kind": "exchange",
+          "exchange": 3,
+          "outcome": "matcher",
+          "diagnosticsHead": "stage: compact clause 1 of 2 ({\"path\":\"src/json.ts\",\"symbol\":\"JsonValue\",\"kind\":\"type\"} in \"src/json.ts\") failed; the whole compact reply is discarded and nothing is written stage: matcher the `/regex",
+          "replacementChars": null,
+          "finishReason": "stop",
+          "cause": "matcher-not-found",
+          "payloads": 2,
+          "toolCalls": 0,
+          "selectors": [],
+          "stages": [],
+          "matcherKinds": []
+        },
+        {
+          "row": 32,
+          "iteration": 10,
+          "kind": "exchange",
+          "exchange": 1,
+          "outcome": "applied",
+          "diagnosticsHead": null,
+          "replacementChars": null,
+          "finishReason": "stop",
+          "cause": null,
+          "payloads": 1,
+          "toolCalls": 0,
+          "selectors": [
+            "whole-symbol"
+          ],
+          "stages": [
+            "whole-symbol"
+          ],
+          "matcherKinds": [
+            null
+          ]
+        },
+        {
+          "row": 33,
+          "iteration": 10,
+          "kind": "verification",
+          "exchange": null,
+          "outcome": "tsc",
+          "diagnosticsHead": "stage: tsc elsewhere in file: src/json.ts(1,13): error TS2300: Duplicate identifier 'JsonValue'. — in declaration `JsonValue` (type) src/json.ts(8,17): error TS2323: Cannot redeclare exported variable",
+          "replacementChars": null,
+          "finishReason": "stop",
+          "cause": null,
+          "payloads": 0,
+          "toolCalls": 0,
+          "selectors": null,
+          "stages": null,
+          "matcherKinds": null
+        },
+        {
+          "row": 34,
+          "iteration": 11,
+          "kind": "exchange",
+          "exchange": 1,
+          "outcome": "gate",
+          "diagnosticsHead": "stage: compact clause 1 of 1 ({\"path\":\"src/json.ts\",\"symbol\":\"JsonValue\",\"kind\":\"type\"} in \"src/json.ts\") failed; the whole compact reply is discarded and nothing is written stage: gate the edit was d",
+          "replacementChars": null,
+          "finishReason": "stop",
+          "cause": "gate",
+          "payloads": 1,
+          "toolCalls": 0,
+          "selectors": [],
+          "stages": [],
+          "matcherKinds": []
+        },
+        {
+          "row": 35,
+          "iteration": 11,
+          "kind": "exchange",
+          "exchange": 2,
+          "outcome": "no-op",
+          "diagnosticsHead": "stage: compact clause 1 of 2 ({\"path\":\"src/json.ts\",\"symbol\":\"JsonValue\",\"kind\":\"type\"} in \"src/json.ts\") failed; the whole compact reply is discarded and nothing is written stage: no-op the edit does",
+          "replacementChars": null,
+          "finishReason": "stop",
+          "cause": "no-op",
+          "payloads": 2,
+          "toolCalls": 0,
+          "selectors": [],
+          "stages": [],
+          "matcherKinds": []
+        },
+        {
+          "row": 36,
+          "iteration": 11,
+          "kind": "exchange",
+          "exchange": 3,
+          "outcome": "matcher",
+          "diagnosticsHead": "stage: compact clause 1 of 1 ({\"path\":\"src/json.ts\",\"symbol\":\"JsonValue\",\"kind\":\"\"} in \"src/json.ts\") failed; the whole compact reply is discarded and nothing is written stage: matcher the matcher was",
+          "replacementChars": null,
+          "finishReason": "stop",
+          "cause": "matcher-not-found",
+          "payloads": 1,
+          "toolCalls": 0,
+          "selectors": [],
+          "stages": [],
+          "matcherKinds": []
+        },
+        {
+          "row": 37,
+          "iteration": 12,
+          "kind": "exchange",
+          "exchange": 1,
+          "outcome": "no-op",
+          "diagnosticsHead": "stage: compact clause 1 of 2 ({\"path\":\"src/json.ts\",\"symbol\":\"JsonValue\",\"kind\":\"type\"} in \"src/json.ts\") failed; the whole compact reply is discarded and nothing is written stage: no-op the edit does",
+          "replacementChars": null,
+          "finishReason": "stop",
+          "cause": "no-op",
+          "payloads": 2,
+          "toolCalls": 0,
+          "selectors": [],
+          "stages": [],
+          "matcherKinds": []
+        },
+        {
+          "row": 38,
+          "iteration": 12,
+          "kind": "exchange",
+          "exchange": 2,
+          "outcome": "applied",
+          "diagnosticsHead": null,
+          "replacementChars": null,
+          "finishReason": "stop",
+          "cause": null,
+          "payloads": 2,
+          "toolCalls": 0,
+          "selectors": [
+            "whole-symbol",
+            "whole-symbol"
+          ],
+          "stages": [
+            "whole-symbol",
+            "whole-symbol"
+          ],
+          "matcherKinds": [
+            null,
+            null
+          ]
+        },
+        {
+          "row": 39,
+          "iteration": 12,
+          "kind": "verification",
+          "exchange": null,
+          "outcome": "tsc",
+          "diagnosticsHead": "stage: tsc elsewhere in file: src/json.ts(1,13): error TS2300: Duplicate identifier 'JsonValue'. — in declaration `JsonValue` (type) src/json.ts(8,17): error TS2323: Cannot redeclare exported variable",
+          "replacementChars": null,
+          "finishReason": "stop",
+          "cause": null,
+          "payloads": 0,
+          "toolCalls": 0,
+          "selectors": null,
+          "stages": null,
+          "matcherKinds": null
+        },
+        {
+          "row": 40,
+          "iteration": 13,
+          "kind": "exchange",
+          "exchange": 2,
+          "outcome": "viewer",
+          "diagnosticsHead": "Located occurrences (viewer clauses write nothing): select type JsonValue in src/json.ts (no occurrences) select function parseJson in src/json.ts (no occurrences) Reply with an edit clause: add `repl",
+          "replacementChars": null,
+          "finishReason": "stop",
+          "cause": null,
+          "payloads": 2,
+          "toolCalls": 0,
+          "selectors": null,
+          "stages": null,
+          "matcherKinds": null
+        },
+        {
+          "row": 41,
+          "iteration": 13,
+          "kind": "exchange",
+          "exchange": 3,
+          "outcome": "applied",
+          "diagnosticsHead": null,
+          "replacementChars": null,
+          "finishReason": "stop",
+          "cause": null,
+          "payloads": 2,
+          "toolCalls": 0,
+          "selectors": [
+            "whole-symbol",
+            "whole-symbol"
+          ],
+          "stages": [
+            "whole-symbol",
+            "whole-symbol"
+          ],
+          "matcherKinds": [
+            null,
+            null
+          ]
+        },
+        {
+          "row": 42,
+          "iteration": 13,
+          "kind": "verification",
+          "exchange": null,
+          "outcome": "tsc",
+          "diagnosticsHead": "stage: tsc elsewhere in file: src/json.ts(1,13): error TS2300: Duplicate identifier 'JsonValue'. — in declaration `JsonValue` (type) src/json.ts(8,17): error TS2323: Cannot redeclare exported variable",
+          "replacementChars": null,
+          "finishReason": "stop",
+          "cause": null,
+          "payloads": 0,
+          "toolCalls": 0,
+          "selectors": null,
+          "stages": null,
+          "matcherKinds": null
+        },
+        {
+          "row": 43,
+          "iteration": 14,
+          "kind": "exchange",
+          "exchange": 1,
+          "outcome": "viewer",
+          "diagnosticsHead": "Located occurrences (viewer clauses write nothing): select type JsonValue in src/json.ts src/json.ts:1:8 1 | export type JsonValue = 2 | | null 3 | | boolean 4 | | number 5 | | string 6 | | JsonValue[",
+          "replacementChars": null,
+          "finishReason": "stop",
+          "cause": null,
+          "payloads": 2,
+          "toolCalls": 0,
+          "selectors": null,
+          "stages": null,
+          "matcherKinds": null
+        },
+        {
+          "row": 44,
+          "iteration": 14,
+          "kind": "exchange",
+          "exchange": 2,
+          "outcome": "no-op",
+          "diagnosticsHead": "stage: compact clause 1 of 3 ({\"path\":\"src/json.ts\",\"symbol\":\"JsonValue\",\"kind\":\"type\"} in \"src/json.ts\") failed; the whole compact reply is discarded and nothing is written stage: no-op the edit does",
+          "replacementChars": null,
+          "finishReason": "stop",
+          "cause": "no-op",
+          "payloads": 3,
+          "toolCalls": 0,
+          "selectors": [],
+          "stages": [],
+          "matcherKinds": []
+        },
+        {
+          "row": 45,
+          "iteration": 14,
+          "kind": "exchange",
+          "exchange": 3,
+          "outcome": "matcher",
+          "diagnosticsHead": "stage: compact clause 1 of 2 ({\"path\":\"src/json.ts\",\"symbol\":\"JsonValue\",\"kind\":\"type\"} in \"src/json.ts\") failed; the whole compact reply is discarded and nothing is written stage: matcher the matcher",
+          "replacementChars": null,
+          "finishReason": "stop",
+          "cause": "matcher-unparseable",
+          "payloads": 2,
+          "toolCalls": 0,
+          "selectors": [],
+          "stages": [],
+          "matcherKinds": []
+        },
+        {
+          "row": 46,
+          "iteration": 15,
+          "kind": "exchange",
+          "exchange": 1,
+          "outcome": "viewer",
+          "diagnosticsHead": "Located occurrences (viewer clauses write nothing): select parse in src/json.test.ts resolve value src/json.test.ts:5:1 5 | function parse(text: string): JsonValue { 6 | return parseJson(text); 7 | } ",
+          "replacementChars": null,
+          "finishReason": "stop",
+          "cause": null,
+          "payloads": 1,
+          "toolCalls": 0,
+          "selectors": null,
+          "stages": null,
+          "matcherKinds": null
+        },
+        {
+          "row": 47,
+          "iteration": 15,
+          "kind": "exchange",
+          "exchange": 2,
+          "outcome": "no-op",
+          "diagnosticsHead": "stage: compact clause 1 of 2 ({\"path\":\"src/json.ts\",\"symbol\":\"JsonValue\",\"kind\":\"type\"} in \"src/json.ts\") failed; the whole compact reply is discarded and nothing is written stage: no-op the edit does",
+          "replacementChars": null,
+          "finishReason": "stop",
+          "cause": "no-op",
+          "payloads": 2,
+          "toolCalls": 0,
+          "selectors": [],
+          "stages": [],
+          "matcherKinds": []
+        },
+        {
+          "row": 48,
+          "iteration": 15,
+          "kind": "exchange",
+          "exchange": 3,
+          "outcome": "no-op",
+          "diagnosticsHead": "stage: compact clause 1 of 2 ({\"path\":\"src/json.ts\",\"symbol\":\"JsonValue\",\"kind\":\"type\"} in \"src/json.ts\") failed; the whole compact reply is discarded and nothing is written stage: no-op the edit does",
+          "replacementChars": null,
+          "finishReason": "stop",
+          "cause": "no-op",
+          "payloads": 2,
+          "toolCalls": 0,
+          "selectors": [],
+          "stages": [],
+          "matcherKinds": []
+        }
+      ],
+      "exchangeStats": {
+        "turns": 40,
+        "payloads": 69,
+        "toolCalls": 0,
+        "applied": 8,
+        "rejected": 26,
+        "selected": 1,
+        "stopped": 0,
+        "selfChecks": 0,
+        "range": 0,
+        "matcher": 0,
+        "wholeSymbol": 16,
+        "stageWholeSymbol": 16,
+        "stageMatch": 0,
+        "stagePick": 0,
+        "snippet": 0,
+        "regex": 0,
+        "creates": 4
+      },
+      "loopDiagnostics": "token-budget: accumulated 122840 tokens exceeded the 120000 token budget",
+      "terminationReason": "token-budget",
+      "model": "deepseek-v4.1-flash",
+      "workspace": "tmp/benchmark/2026-10-21T19-43-18-249Z-f9b5cea3/json-parser-tc-rep1",
+      "logs": {
+        "side": "tmp/benchmark/2026-10-21T19-43-18-249Z-f9b5cea3/logs/json-parser-tc-rep1/side.log",
+        "judge": "tmp/benchmark/2026-10-21T19-43-18-249Z-f9b5cea3/logs/json-parser-tc-rep1/judge.log",
+        "session": null,
+        "stats": null
+      },
+      "versions": {
+        "bun": "1.3.13",
+        "opencode": null
+      },
+      "judge": {
+        "testsOk": true,
+        "tscOk": false,
+        "fixtureOk": true,
+        "detail": "tsc failed: src/json.ts(1,13): error TS2300: Duplicate identifier 'JsonValue'.\nsrc/json.ts(8,17): error TS2323: Cannot redeclare exported variable 'parseJson'.\nsrc/json.ts(8,17): error TS2393: Duplicate function implementation.\nsrc/json.ts(65,11): error TS2538: Type 'JsonValue[]' cannot be used as an index type.\nsrc/json.ts(65,11): error TS2538: Type 'false' cannot be used as an index type.\nsrc/json.ts(65,11)..."
+      },
+      "error": null,
+      "infraError": null
+    },
+    {
+      "task": "sexp-parser",
+      "side": "tc",
+      "rep": 1,
+      "ok": true,
+      "sideOk": true,
+      "tokens": {
+        "input": 7525,
+        "output": 484,
+        "cacheRead": 4224,
+        "cacheWrite": null,
+        "reasoning": 0,
+        "total": 8009,
+        "billable": {
+          "in": 3301,
+          "out": 484,
+          "total": 3785
+        }
+      },
+      "usageAvailable": true,
+      "usageSource": "chat-completions",
+      "rawUsage": [
+        {
+          "prompt_tokens": 1408,
+          "completion_tokens": 11,
+          "total_tokens": 1419,
+          "prompt_tokens_details": {
+            "cached_tokens": 0
+          },
+          "completion_tokens_details": {
+            "reasoning_tokens": 0
+          }
+        },
+        {
+          "prompt_tokens": 1622,
+          "completion_tokens": 12,
+          "total_tokens": 1634,
+          "prompt_tokens_details": {
+            "cached_tokens": 1408
+          },
+          "completion_tokens_details": {
+            "reasoning_tokens": 0
+          }
+        },
+        {
+          "prompt_tokens": 2334,
+          "completion_tokens": 454,
+          "total_tokens": 2788,
+          "prompt_tokens_details": {
+            "cached_tokens": 1408
+          },
+          "completion_tokens_details": {
+            "reasoning_tokens": 0
+          }
+        },
+        {
+          "prompt_tokens": 2161,
+          "completion_tokens": 7,
+          "total_tokens": 2168,
+          "prompt_tokens_details": {
+            "cached_tokens": 1408
+          },
+          "completion_tokens_details": {
+            "reasoning_tokens": 0
+          }
+        }
+      ],
+      "durationMs": 8932,
+      "startedAt": "2026-10-21T19:43:18.333Z",
+      "finishedAt": "2026-10-21T19:43:27.265Z",
+      "cost": 0.000798222,
+      "rateClass": "off-peak",
+      "steps": 5,
+      "records": [
+        {
+          "row": 1,
+          "iteration": 1,
+          "kind": "exchange",
+          "exchange": 1,
+          "outcome": "protocol",
+          "diagnosticsHead": "stage: protocol the reply must be one or more `select … end` clauses; a JSON edit payload is not accepted in this mode",
+          "replacementChars": null,
+          "finishReason": "stop",
+          "cause": "protocol",
+          "payloads": 0,
+          "toolCalls": 0,
+          "selectors": null,
+          "stages": null,
+          "matcherKinds": null
+        },
+        {
+          "row": 2,
+          "iteration": 1,
+          "kind": "exchange",
+          "exchange": 2,
+          "outcome": "selected",
+          "diagnosticsHead": null,
+          "replacementChars": null,
+          "finishReason": "stop",
+          "cause": null,
+          "payloads": 0,
+          "toolCalls": 0,
+          "selectors": null,
+          "stages": null,
+          "matcherKinds": null
+        },
+        {
+          "row": 3,
+          "iteration": 1,
+          "kind": "exchange",
+          "exchange": 3,
+          "outcome": "applied",
+          "diagnosticsHead": null,
+          "replacementChars": null,
+          "finishReason": "stop",
+          "cause": null,
+          "payloads": 1,
+          "toolCalls": 0,
+          "selectors": [
+            "whole-symbol"
+          ],
+          "stages": [
+            "whole-symbol"
+          ],
+          "matcherKinds": [
+            null
+          ]
+        },
+        {
+          "row": 4,
+          "iteration": 1,
+          "kind": "verification",
+          "exchange": null,
+          "outcome": "ok",
+          "diagnosticsHead": null,
+          "replacementChars": null,
+          "finishReason": "stop",
+          "cause": null,
+          "payloads": 0,
+          "toolCalls": 0,
+          "selectors": null,
+          "stages": null,
+          "matcherKinds": null
+        },
+        {
+          "row": 5,
+          "iteration": 1,
+          "kind": "exchange",
+          "exchange": 3,
+          "outcome": "confirmed",
+          "diagnosticsHead": null,
+          "replacementChars": null,
+          "finishReason": "stop",
+          "cause": null,
+          "payloads": 0,
+          "toolCalls": 0,
+          "selectors": null,
+          "stages": null,
+          "matcherKinds": null
+        }
+      ],
+      "exchangeStats": {
+        "turns": 4,
+        "payloads": 1,
+        "toolCalls": 0,
+        "applied": 1,
+        "rejected": 1,
+        "selected": 1,
+        "stopped": 0,
+        "selfChecks": 0,
+        "range": 0,
+        "matcher": 0,
+        "wholeSymbol": 1,
+        "stageWholeSymbol": 1,
+        "stageMatch": 0,
+        "stagePick": 0,
+        "snippet": 0,
+        "regex": 0,
+        "creates": 1
+      },
+      "loopDiagnostics": null,
+      "terminationReason": null,
+      "model": "deepseek-v4.1-flash",
+      "workspace": "tmp/benchmark/2026-10-21T19-43-18-249Z-f9b5cea3/sexp-parser-tc-rep1",
+      "logs": {
+        "side": "tmp/benchmark/2026-10-21T19-43-18-249Z-f9b5cea3/logs/sexp-parser-tc-rep1/side.log",
+        "judge": "tmp/benchmark/2026-10-21T19-43-18-249Z-f9b5cea3/logs/sexp-parser-tc-rep1/judge.log",
+        "session": null,
+        "stats": null
+      },
+      "versions": {
+        "bun": "1.3.13",
+        "opencode": null
+      },
+      "judge": {
+        "testsOk": true,
+        "tscOk": true,
+        "fixtureOk": true,
+        "detail": null
+      },
+      "error": null,
+      "infraError": null
+    },
+    {
+      "task": "minilisp",
+      "side": "tc",
+      "rep": 1,
+      "ok": false,
+      "sideOk": false,
+      "tokens": {
+        "input": 100434,
+        "output": 24437,
+        "cacheRead": 39552,
+        "cacheWrite": null,
+        "reasoning": 277,
+        "total": 124871,
+        "billable": {
+          "in": 60882,
+          "out": 24714,
+          "total": 85596
+        }
+      },
+      "usageAvailable": true,
+      "usageSource": "chat-completions",
+      "rawUsage": [
+        {
+          "prompt_tokens": 1901,
+          "completion_tokens": 10,
+          "total_tokens": 1911,
+          "prompt_tokens_details": {
+            "cached_tokens": 768
+          },
+          "completion_tokens_details": {
+            "reasoning_tokens": 0
+          }
+        },
+        {
+          "prompt_tokens": 2110,
+          "completion_tokens": 11,
+          "total_tokens": 2121,
+          "prompt_tokens_details": {
+            "cached_tokens": 1792
+          },
+          "completion_tokens_details": {
+            "reasoning_tokens": 0
+          }
+        },
+        {
+          "prompt_tokens": 2823,
+          "completion_tokens": 1638,
+          "total_tokens": 4461,
+          "prompt_tokens_details": {
+            "cached_tokens": 1792
+          },
+          "completion_tokens_details": {
+            "reasoning_tokens": 0
+          }
+        },
+        {
+          "prompt_tokens": 2930,
+          "completion_tokens": 1919,
+          "total_tokens": 4849,
+          "prompt_tokens_details": {
+            "cached_tokens": 1792
+          },
+          "completion_tokens_details": {
+            "reasoning_tokens": 0
+          }
+        },
+        {
+          "prompt_tokens": 2837,
+          "completion_tokens": 1334,
+          "total_tokens": 4171,
+          "prompt_tokens_details": {
+            "cached_tokens": 2048
+          },
+          "completion_tokens_details": {
+            "reasoning_tokens": 0
+          }
+        },
+        {
+          "prompt_tokens": 2622,
+          "completion_tokens": 738,
+          "total_tokens": 3360,
+          "prompt_tokens_details": {
+            "cached_tokens": 0
+          },
+          "completion_tokens_details": {
+            "reasoning_tokens": 0
+          }
+        },
+        {
+          "prompt_tokens": 2742,
+          "completion_tokens": 584,
+          "total_tokens": 3326,
+          "prompt_tokens_details": {
+            "cached_tokens": 0
+          },
+          "completion_tokens_details": {
+            "reasoning_tokens": 0
+          }
+        },
+        {
+          "prompt_tokens": 2850,
+          "completion_tokens": 1755,
+          "total_tokens": 4605,
+          "prompt_tokens_details": {
+            "cached_tokens": 0
+          },
+          "completion_tokens_details": {
+            "reasoning_tokens": 0
+          }
+        },
+        {
+          "prompt_tokens": 2971,
+          "completion_tokens": 139,
+          "total_tokens": 3110,
+          "prompt_tokens_details": {
+            "cached_tokens": 2176
+          },
+          "completion_tokens_details": {
+            "reasoning_tokens": 0
+          }
+        },
+        {
+          "prompt_tokens": 2964,
+          "completion_tokens": 1937,
+          "total_tokens": 4901,
+          "prompt_tokens_details": {
+            "cached_tokens": 2176
+          },
+          "completion_tokens_details": {
+            "reasoning_tokens": 0
+          }
+        },
+        {
+          "prompt_tokens": 3327,
+          "completion_tokens": 476,
+          "total_tokens": 3803,
+          "prompt_tokens_details": {
+            "cached_tokens": 0
+          },
+          "completion_tokens_details": {
+            "reasoning_tokens": 0
+          }
+        },
+        {
+          "prompt_tokens": 3080,
+          "completion_tokens": 11,
+          "total_tokens": 3091,
+          "prompt_tokens_details": {
+            "cached_tokens": 0
+          },
+          "completion_tokens_details": {
+            "reasoning_tokens": 0
+          }
+        },
+        {
+          "prompt_tokens": 3158,
+          "completion_tokens": 11,
+          "total_tokens": 3169,
+          "prompt_tokens_details": {
+            "cached_tokens": 2048
+          },
+          "completion_tokens_details": {
+            "reasoning_tokens": 0
+          }
+        },
+        {
+          "prompt_tokens": 3158,
+          "completion_tokens": 1875,
+          "total_tokens": 5033,
+          "prompt_tokens_details": {
+            "cached_tokens": 2432
+          },
+          "completion_tokens_details": {
+            "reasoning_tokens": 0
+          }
+        },
+        {
+          "prompt_tokens": 3545,
+          "completion_tokens": 228,
+          "total_tokens": 3773,
+          "prompt_tokens_details": {
+            "cached_tokens": 0
+          },
+          "completion_tokens_details": {
+            "reasoning_tokens": 0
+          }
+        },
+        {
+          "prompt_tokens": 3204,
+          "completion_tokens": 496,
+          "total_tokens": 3700,
+          "prompt_tokens_details": {
+            "cached_tokens": 768
+          },
+          "completion_tokens_details": {
+            "reasoning_tokens": 0
+          }
+        },
+        {
+          "prompt_tokens": 3062,
+          "completion_tokens": 11,
+          "total_tokens": 3073,
+          "prompt_tokens_details": {
+            "cached_tokens": 1024
+          },
+          "completion_tokens_details": {
+            "reasoning_tokens": 0
+          }
+        },
+        {
+          "prompt_tokens": 3218,
+          "completion_tokens": 75,
+          "total_tokens": 3293,
+          "prompt_tokens_details": {
+            "cached_tokens": 2432
+          },
+          "completion_tokens_details": {
+            "reasoning_tokens": 0
+          }
+        },
+        {
+          "prompt_tokens": 3174,
+          "completion_tokens": 1500,
+          "total_tokens": 4674,
+          "prompt_tokens_details": {
+            "cached_tokens": 2432
+          },
+          "completion_tokens_details": {
+            "reasoning_tokens": 0
+          }
+        },
+        {
+          "prompt_tokens": 3539,
+          "completion_tokens": 837,
+          "total_tokens": 4376,
+          "prompt_tokens_details": {
+            "cached_tokens": 0
+          },
+          "completion_tokens_details": {
+            "reasoning_tokens": 0
+          }
+        },
+        {
+          "prompt_tokens": 3016,
+          "completion_tokens": 1385,
+          "total_tokens": 4401,
+          "prompt_tokens_details": {
+            "cached_tokens": 896
+          },
+          "completion_tokens_details": {
+            "reasoning_tokens": 0
+          }
+        },
+        {
+          "prompt_tokens": 3166,
+          "completion_tokens": 303,
+          "total_tokens": 3469,
+          "prompt_tokens_details": {
+            "cached_tokens": 768
+          },
+          "completion_tokens_details": {
+            "reasoning_tokens": 0
+          }
+        },
+        {
+          "prompt_tokens": 3124,
+          "completion_tokens": 47,
+          "total_tokens": 3171,
+          "prompt_tokens_details": {
+            "cached_tokens": 2304
+          },
+          "completion_tokens_details": {
+            "reasoning_tokens": 0
+          }
+        },
+        {
+          "prompt_tokens": 3018,
+          "completion_tokens": 53,
+          "total_tokens": 3071,
+          "prompt_tokens_details": {
+            "cached_tokens": 1152
+          },
+          "completion_tokens_details": {
+            "reasoning_tokens": 0
+          }
+        },
+        {
+          "prompt_tokens": 3130,
+          "completion_tokens": 417,
+          "total_tokens": 3547,
+          "prompt_tokens_details": {
+            "cached_tokens": 2304
+          },
+          "completion_tokens_details": {
+            "reasoning_tokens": 0
+          }
+        },
+        {
+          "prompt_tokens": 3286,
+          "completion_tokens": 147,
+          "total_tokens": 3433,
+          "prompt_tokens_details": {
+            "cached_tokens": 2304
+          },
+          "completion_tokens_details": {
+            "reasoning_tokens": 0
+          }
+        },
+        {
+          "prompt_tokens": 2990,
+          "completion_tokens": 136,
+          "total_tokens": 3126,
+          "prompt_tokens_details": {
+            "cached_tokens": 1152
+          },
+          "completion_tokens_details": {
+            "reasoning_tokens": 0
+          }
+        },
+        {
+          "prompt_tokens": 3102,
+          "completion_tokens": 34,
+          "total_tokens": 3136,
+          "prompt_tokens_details": {
+            "cached_tokens": 2304
+          },
+          "completion_tokens_details": {
+            "reasoning_tokens": 0
+          }
+        },
+        {
+          "prompt_tokens": 4026,
+          "completion_tokens": 687,
+          "total_tokens": 4713,
+          "prompt_tokens_details": {
+            "cached_tokens": 1024
+          },
+          "completion_tokens_details": {
+            "reasoning_tokens": 0
+          }
+        },
+        {
+          "prompt_tokens": 2741,
+          "completion_tokens": 1920,
+          "total_tokens": 4661,
+          "prompt_tokens_details": {
+            "cached_tokens": 896
+          },
+          "completion_tokens_details": {
+            "reasoning_tokens": 0
+          }
+        },
+        {
+          "prompt_tokens": 3073,
+          "completion_tokens": 2241,
+          "total_tokens": 5314,
+          "prompt_tokens_details": {
+            "cached_tokens": 0
+          },
+          "completion_tokens_details": {
+            "reasoning_tokens": 0
+          }
+        },
+        {
+          "prompt_tokens": 3211,
+          "completion_tokens": 809,
+          "total_tokens": 4020,
+          "prompt_tokens_details": {
+            "cached_tokens": 768
+          },
+          "completion_tokens_details": {
+            "reasoning_tokens": 0
+          }
+        },
+        {
+          "prompt_tokens": 3336,
+          "completion_tokens": 673,
+          "total_tokens": 4009,
+          "prompt_tokens_details": {
+            "cached_tokens": 0
+          },
+          "completion_tokens_details": {
+            "reasoning_tokens": 277
+          }
+        }
+      ],
+      "durationMs": 127898,
+      "startedAt": "2026-10-21T19:43:18.347Z",
+      "finishedAt": "2026-10-21T19:45:26.245Z",
+      "cost": 0.024079356,
+      "rateClass": "off-peak",
+      "steps": 38,
+      "records": [
+        {
+          "row": 1,
+          "iteration": 1,
+          "kind": "exchange",
+          "exchange": 1,
+          "outcome": "protocol",
+          "diagnosticsHead": "stage: protocol the reply must be one or more `select … end` clauses; a JSON edit payload is not accepted in this mode",
+          "replacementChars": null,
+          "finishReason": "stop",
+          "cause": "protocol",
+          "payloads": 0,
+          "toolCalls": 0,
+          "selectors": null,
+          "stages": null,
+          "matcherKinds": null
+        },
+        {
+          "row": 2,
+          "iteration": 1,
+          "kind": "exchange",
+          "exchange": 2,
+          "outcome": "selected",
+          "diagnosticsHead": null,
+          "replacementChars": null,
+          "finishReason": "stop",
+          "cause": null,
+          "payloads": 0,
+          "toolCalls": 0,
+          "selectors": null,
+          "stages": null,
+          "matcherKinds": null
+        },
+        {
+          "row": 3,
+          "iteration": 1,
+          "kind": "exchange",
+          "exchange": 3,
+          "outcome": "gate",
+          "diagnosticsHead": "stage: compact clause 1 of 1 ({\"path\":\"src/lisp.ts\",\"symbol\":\"run\",\"kind\":\"function\"} in \"src/lisp.ts\") failed; the whole compact reply is discarded and nothing is written stage: gate the edit was dis",
+          "replacementChars": null,
+          "finishReason": "stop",
+          "cause": "gate",
+          "payloads": 1,
+          "toolCalls": 0,
+          "selectors": [],
+          "stages": [],
+          "matcherKinds": []
+        },
+        {
+          "row": 4,
+          "iteration": 2,
+          "kind": "exchange",
+          "exchange": 1,
+          "outcome": "gate",
+          "diagnosticsHead": "stage: compact clause 1 of 1 ({\"path\":\"src/lisp.ts\",\"symbol\":\"run\",\"kind\":\"\"} in \"src/lisp.ts\") failed; the whole compact reply is discarded and nothing is written stage: gate the edit was discarded b",
+          "replacementChars": null,
+          "finishReason": "stop",
+          "cause": "gate",
+          "payloads": 1,
+          "toolCalls": 0,
+          "selectors": [],
+          "stages": [],
+          "matcherKinds": []
+        },
+        {
+          "row": 5,
+          "iteration": 2,
+          "kind": "exchange",
+          "exchange": 2,
+          "outcome": "applied",
+          "diagnosticsHead": null,
+          "replacementChars": null,
+          "finishReason": "stop",
+          "cause": null,
+          "payloads": 1,
+          "toolCalls": 0,
+          "selectors": [
+            "whole-symbol"
+          ],
+          "stages": [
+            "whole-symbol"
+          ],
+          "matcherKinds": [
+            null
+          ]
+        },
+        {
+          "row": 6,
+          "iteration": 2,
+          "kind": "verification",
+          "exchange": null,
+          "outcome": "tsc",
+          "diagnosticsHead": "stage: tsc elsewhere in file: src/lisp.ts(106,14): error TS2304: Cannot find name 'evalExpr'. — in declaration `run` (function) stage: tests tests failed: failing tests: - minilisp literals and top-le",
+          "replacementChars": null,
+          "finishReason": "stop",
+          "cause": null,
+          "payloads": 0,
+          "toolCalls": 0,
+          "selectors": null,
+          "stages": null,
+          "matcherKinds": null
+        },
+        {
+          "row": 7,
+          "iteration": 3,
+          "kind": "exchange",
+          "exchange": 1,
+          "outcome": "duplicate",
+          "diagnosticsHead": "stage: compact clause 1 of 1 ({\"path\":\"src/lisp.ts\",\"symbol\":\"run\",\"kind\":\"function\"} in \"src/lisp.ts\") failed; the whole compact reply is discarded and nothing is written stage: duplicate the edit wa",
+          "replacementChars": null,
+          "finishReason": "stop",
+          "cause": "duplicate",
+          "payloads": 1,
+          "toolCalls": 0,
+          "selectors": [],
+          "stages": [],
+          "matcherKinds": []
+        },
+        {
+          "row": 8,
+          "iteration": 3,
+          "kind": "exchange",
+          "exchange": 2,
+          "outcome": "applied",
+          "diagnosticsHead": null,
+          "replacementChars": null,
+          "finishReason": "stop",
+          "cause": null,
+          "payloads": 1,
+          "toolCalls": 0,
+          "selectors": [
+            "whole-symbol"
+          ],
+          "stages": [
+            "whole-symbol"
+          ],
+          "matcherKinds": [
+            null
+          ]
+        },
+        {
+          "row": 9,
+          "iteration": 3,
+          "kind": "verification",
+          "exchange": null,
+          "outcome": "tsc",
+          "diagnosticsHead": "stage: tsc elsewhere in file: src/lisp.ts(111,25): error TS2304: Cannot find name 'LispExpr'. — in declaration `evaluate` (function) src/lisp.ts(143,28): error TS7006: Parameter 'a' implicitly has an ",
+          "replacementChars": null,
+          "finishReason": "stop",
+          "cause": null,
+          "payloads": 0,
+          "toolCalls": 0,
+          "selectors": null,
+          "stages": null,
+          "matcherKinds": null
+        },
+        {
+          "row": 10,
+          "iteration": 4,
+          "kind": "exchange",
+          "exchange": 1,
+          "outcome": "duplicate",
+          "diagnosticsHead": "stage: compact clause 1 of 1 ({\"path\":\"src/lisp.ts\",\"symbol\":\"evaluate\",\"kind\":\"\"} in \"src/lisp.ts\") failed; the whole compact reply is discarded and nothing is written stage: duplicate the edit was d",
+          "replacementChars": null,
+          "finishReason": "stop",
+          "cause": "duplicate",
+          "payloads": 1,
+          "toolCalls": 0,
+          "selectors": [],
+          "stages": [],
+          "matcherKinds": []
+        },
+        {
+          "row": 11,
+          "iteration": 4,
+          "kind": "exchange",
+          "exchange": 2,
+          "outcome": "matcher",
+          "diagnosticsHead": "stage: compact clause 2 of 2 ({\"path\":\"src/lisp.ts\",\"symbol\":\"evaluate\",\"kind\":\"\"} in \"src/lisp.ts\") failed; the whole compact reply is discarded and nothing is written stage: matcher the `/regex/` ma",
+          "replacementChars": null,
+          "finishReason": "stop",
+          "cause": "matcher-not-found",
+          "payloads": 2,
+          "toolCalls": 0,
+          "selectors": [],
+          "stages": [],
+          "matcherKinds": []
+        },
+        {
+          "row": 12,
+          "iteration": 4,
+          "kind": "exchange",
+          "exchange": 3,
+          "outcome": "duplicate",
+          "diagnosticsHead": "stage: compact clause 1 of 1 ({\"path\":\"src/lisp.ts\",\"symbol\":\"evaluate\",\"kind\":\"\"} in \"src/lisp.ts\") failed; the whole compact reply is discarded and nothing is written stage: duplicate the edit was d",
+          "replacementChars": null,
+          "finishReason": "stop",
+          "cause": "duplicate",
+          "payloads": 1,
+          "toolCalls": 0,
+          "selectors": [],
+          "stages": [],
+          "matcherKinds": []
+        },
+        {
+          "row": 13,
+          "iteration": 5,
+          "kind": "exchange",
+          "exchange": 1,
+          "outcome": "applied",
+          "diagnosticsHead": null,
+          "replacementChars": null,
+          "finishReason": "stop",
+          "cause": null,
+          "payloads": 3,
+          "toolCalls": 0,
+          "selectors": [
+            "whole-symbol",
+            "whole-symbol",
+            "whole-symbol"
+          ],
+          "stages": [
+            "whole-symbol",
+            "whole-symbol",
+            "whole-symbol"
+          ],
+          "matcherKinds": [
+            null,
+            null,
+            null
+          ]
+        },
+        {
+          "row": 14,
+          "iteration": 5,
+          "kind": "verification",
+          "exchange": null,
+          "outcome": "tsc",
+          "diagnosticsHead": "stage: tsc elsewhere in file: src/lisp.ts(111,25): error TS2304: Cannot find name 'LispExpr'. — in declaration `evaluate` (function) src/lisp.ts(113,5): error TS2322: Type 'null' is not assignable to ",
+          "replacementChars": null,
+          "finishReason": "stop",
+          "cause": null,
+          "payloads": 0,
+          "toolCalls": 0,
+          "selectors": null,
+          "stages": null,
+          "matcherKinds": null
+        },
+        {
+          "row": 15,
+          "iteration": 6,
+          "kind": "exchange",
+          "exchange": 1,
+          "outcome": "viewer",
+          "diagnosticsHead": "Located occurrences (viewer clauses write nothing): select evaluate in src/lisp.test.ts resolve value src/lisp.test.ts:5:1 5 | function evaluate(program: string): LispValue { 6 | return run(program); ",
+          "replacementChars": null,
+          "finishReason": "stop",
+          "cause": null,
+          "payloads": 1,
+          "toolCalls": 0,
+          "selectors": null,
+          "stages": null,
+          "matcherKinds": null
+        },
+        {
+          "row": 16,
+          "iteration": 6,
+          "kind": "exchange",
+          "exchange": 2,
+          "outcome": "viewer",
+          "diagnosticsHead": "Located occurrences (viewer clauses write nothing): select evaluate in src/lisp.test.ts resolve value src/lisp.test.ts:5:1 5 | function evaluate(program: string): LispValue { 6 | return run(program); ",
+          "replacementChars": null,
+          "finishReason": "stop",
+          "cause": null,
+          "payloads": 1,
+          "toolCalls": 0,
+          "selectors": null,
+          "stages": null,
+          "matcherKinds": null
+        },
+        {
+          "row": 17,
+          "iteration": 6,
+          "kind": "exchange",
+          "exchange": 3,
+          "outcome": "duplicate",
+          "diagnosticsHead": "stage: compact clause 1 of 1 ({\"path\":\"src/lisp.ts\",\"symbol\":\"run\",\"kind\":\"\"} in \"src/lisp.ts\") failed; the whole compact reply is discarded and nothing is written stage: duplicate the edit was discar",
+          "replacementChars": null,
+          "finishReason": "stop",
+          "cause": "duplicate",
+          "payloads": 1,
+          "toolCalls": 0,
+          "selectors": [],
+          "stages": [],
+          "matcherKinds": []
+        },
+        {
+          "row": 18,
+          "iteration": 7,
+          "kind": "exchange",
+          "exchange": 1,
+          "outcome": "duplicate",
+          "diagnosticsHead": "stage: compact clause 1 of 1 ({\"path\":\"src/lisp.ts\",\"symbol\":\"evaluate\",\"kind\":\"\"} in \"src/lisp.ts\") failed; the whole compact reply is discarded and nothing is written stage: duplicate the edit was d",
+          "replacementChars": null,
+          "finishReason": "stop",
+          "cause": "duplicate",
+          "payloads": 1,
+          "toolCalls": 0,
+          "selectors": [],
+          "stages": [],
+          "matcherKinds": []
+        },
+        {
+          "row": 19,
+          "iteration": 7,
+          "kind": "exchange",
+          "exchange": 2,
+          "outcome": "applied",
+          "diagnosticsHead": null,
+          "replacementChars": null,
+          "finishReason": "stop",
+          "cause": null,
+          "payloads": 2,
+          "toolCalls": 0,
+          "selectors": [
+            "whole-symbol",
+            "whole-symbol"
+          ],
+          "stages": [
+            "whole-symbol",
+            "whole-symbol"
+          ],
+          "matcherKinds": [
+            null,
+            null
+          ]
+        },
+        {
+          "row": 20,
+          "iteration": 7,
+          "kind": "verification",
+          "exchange": null,
+          "outcome": "tsc",
+          "diagnosticsHead": "stage: tsc elsewhere in file: src/lisp.ts(106,23): error TS2345: Argument of type 'Expr' is not assignable to parameter of type 'LispValue'. Type '{ kind: \"number\"; value: number; }' is not assignable",
+          "replacementChars": null,
+          "finishReason": "stop",
+          "cause": null,
+          "payloads": 0,
+          "toolCalls": 0,
+          "selectors": null,
+          "stages": null,
+          "matcherKinds": null
+        },
+        {
+          "row": 21,
+          "iteration": 8,
+          "kind": "exchange",
+          "exchange": 1,
+          "outcome": "viewer",
+          "diagnosticsHead": "Located occurrences (viewer clauses write nothing): select function run in src/lisp.ts src/lisp.ts:100:8 100 | export function run(program: string): LispValue { 101 | const ast = parseTokens(tokenize(",
+          "replacementChars": null,
+          "finishReason": "stop",
+          "cause": null,
+          "payloads": 1,
+          "toolCalls": 0,
+          "selectors": null,
+          "stages": null,
+          "matcherKinds": null
+        },
+        {
+          "row": 22,
+          "iteration": 8,
+          "kind": "exchange",
+          "exchange": 2,
+          "outcome": "protocol",
+          "diagnosticsHead": "stage: protocol the reply must be one or more `select … end` clauses; a JSON edit payload is not accepted in this mode",
+          "replacementChars": null,
+          "finishReason": "stop",
+          "cause": "protocol",
+          "payloads": 0,
+          "toolCalls": 0,
+          "selectors": null,
+          "stages": null,
+          "matcherKinds": null
+        },
+        {
+          "row": 23,
+          "iteration": 8,
+          "kind": "exchange",
+          "exchange": 3,
+          "outcome": "duplicate",
+          "diagnosticsHead": "stage: compact clause 1 of 1 ({\"path\":\"src/lisp.ts\",\"symbol\":\"run\",\"kind\":\"function\"} in \"src/lisp.ts\") failed; the whole compact reply is discarded and nothing is written stage: duplicate the edit wa",
+          "replacementChars": null,
+          "finishReason": "stop",
+          "cause": "duplicate",
+          "payloads": 1,
+          "toolCalls": 0,
+          "selectors": [],
+          "stages": [],
+          "matcherKinds": []
+        },
+        {
+          "row": 24,
+          "iteration": 9,
+          "kind": "exchange",
+          "exchange": 1,
+          "outcome": "applied",
+          "diagnosticsHead": null,
+          "replacementChars": null,
+          "finishReason": "stop",
+          "cause": null,
+          "payloads": 4,
+          "toolCalls": 0,
+          "selectors": [
+            "whole-symbol",
+            "whole-symbol",
+            "whole-symbol",
+            "whole-symbol"
+          ],
+          "stages": [
+            "whole-symbol",
+            "whole-symbol",
+            "whole-symbol",
+            "whole-symbol"
+          ],
+          "matcherKinds": [
+            null,
+            null,
+            null,
+            null
+          ]
+        },
+        {
+          "row": 25,
+          "iteration": 9,
+          "kind": "verification",
+          "exchange": null,
+          "outcome": "tsc",
+          "diagnosticsHead": "stage: tsc elsewhere in file: src/lisp.ts(34,37): error TS2677: A type predicate's type must be assignable to its parameter's type. Type 'LispPair' is not assignable to type 'LispValue'. — in declarat",
+          "replacementChars": null,
+          "finishReason": "stop",
+          "cause": null,
+          "payloads": 0,
+          "toolCalls": 0,
+          "selectors": null,
+          "stages": null,
+          "matcherKinds": null
+        },
+        {
+          "row": 26,
+          "iteration": 10,
+          "kind": "exchange",
+          "exchange": 1,
+          "outcome": "protocol",
+          "diagnosticsHead": "stage: compact clause 2 and clause 5 of 5 both edit \"src/lisp.ts\" but their regions overlap (offsets 2823..4715 and 2823..4715); the whole compact reply is discarded and nothing is written clause 2 ({",
+          "replacementChars": null,
+          "finishReason": "stop",
+          "cause": "multi-duplicate",
+          "payloads": 5,
+          "toolCalls": 0,
+          "selectors": [],
+          "stages": [],
+          "matcherKinds": []
+        },
+        {
+          "row": 27,
+          "iteration": 10,
+          "kind": "exchange",
+          "exchange": 2,
+          "outcome": "matcher",
+          "diagnosticsHead": "stage: compact clause 1 of 3 ({\"path\":\"src/lisp.ts\",\"symbol\":\"isPair\",\"kind\":\"function\"} in \"src/lisp.ts\") failed; the whole compact reply is discarded and nothing is written stage: matcher the matche",
+          "replacementChars": null,
+          "finishReason": "stop",
+          "cause": "matcher-not-found",
+          "payloads": 3,
+          "toolCalls": 0,
+          "selectors": [],
+          "stages": [],
+          "matcherKinds": []
+        },
+        {
+          "row": 28,
+          "iteration": 10,
+          "kind": "exchange",
+          "exchange": 3,
+          "outcome": "applied",
+          "diagnosticsHead": null,
+          "replacementChars": null,
+          "finishReason": "stop",
+          "cause": null,
+          "payloads": 1,
+          "toolCalls": 0,
+          "selectors": [
+            "whole-symbol"
+          ],
+          "stages": [
+            "whole-symbol"
+          ],
+          "matcherKinds": [
+            null
+          ]
+        },
+        {
+          "row": 29,
+          "iteration": 10,
+          "kind": "verification",
+          "exchange": null,
+          "outcome": "tsc",
+          "diagnosticsHead": "stage: tsc elsewhere in file: src/lisp.ts(34,37): error TS2677: A type predicate's type must be assignable to its parameter's type. Type 'LispPair' is not assignable to type 'LispValue'. — in declarat",
+          "replacementChars": null,
+          "finishReason": "stop",
+          "cause": null,
+          "payloads": 0,
+          "toolCalls": 0,
+          "selectors": null,
+          "stages": null,
+          "matcherKinds": null
+        },
+        {
+          "row": 30,
+          "iteration": 11,
+          "kind": "exchange",
+          "exchange": 1,
+          "outcome": "protocol",
+          "diagnosticsHead": "stage: protocol the reply must be one or more `select … end` clauses; a JSON edit payload is not accepted in this mode",
+          "replacementChars": null,
+          "finishReason": "stop",
+          "cause": "protocol",
+          "payloads": 0,
+          "toolCalls": 0,
+          "selectors": null,
+          "stages": null,
+          "matcherKinds": null
+        },
+        {
+          "row": 31,
+          "iteration": 11,
+          "kind": "exchange",
+          "exchange": 2,
+          "outcome": "address",
+          "diagnosticsHead": "stage: compact clause 1 of 4 ({\"path\":\"src/lisp.ts\",\"symbol\":\"isPair\",\"kind\":\"const\"} in \"src/lisp.ts\") failed; the whole compact reply is discarded and nothing is written stage: address no symbol wit",
+          "replacementChars": null,
+          "finishReason": "stop",
+          "cause": "address",
+          "payloads": 4,
+          "toolCalls": 0,
+          "selectors": [],
+          "stages": [],
+          "matcherKinds": []
+        },
+        {
+          "row": 32,
+          "iteration": 11,
+          "kind": "exchange",
+          "exchange": 3,
+          "outcome": "applied",
+          "diagnosticsHead": null,
+          "replacementChars": null,
+          "finishReason": "stop",
+          "cause": null,
+          "payloads": 2,
+          "toolCalls": 0,
+          "selectors": [
+            "whole-symbol",
+            "whole-symbol"
+          ],
+          "stages": [
+            "whole-symbol",
+            "whole-symbol"
+          ],
+          "matcherKinds": [
+            null,
+            null
+          ]
+        },
+        {
+          "row": 33,
+          "iteration": 11,
+          "kind": "verification",
+          "exchange": null,
+          "outcome": "tsc",
+          "diagnosticsHead": "stage: tsc elsewhere in file: src/lisp.ts(34,37): error TS2677: A type predicate's type must be assignable to its parameter's type. Type 'LispPair' is not assignable to type 'LispValue'. — in declarat",
+          "replacementChars": null,
+          "finishReason": "stop",
+          "cause": null,
+          "payloads": 0,
+          "toolCalls": 0,
+          "selectors": null,
+          "stages": null,
+          "matcherKinds": null
+        },
+        {
+          "row": 34,
+          "iteration": 12,
+          "kind": "exchange",
+          "exchange": 1,
+          "outcome": "protocol",
+          "diagnosticsHead": "stage: protocol the reply must be one or more `select … end` clauses; a JSON edit payload is not accepted in this mode",
+          "replacementChars": null,
+          "finishReason": "stop",
+          "cause": "protocol",
+          "payloads": 0,
+          "toolCalls": 0,
+          "selectors": null,
+          "stages": null,
+          "matcherKinds": null
+        },
+        {
+          "row": 35,
+          "iteration": 12,
+          "kind": "exchange",
+          "exchange": 2,
+          "outcome": "viewer",
+          "diagnosticsHead": "Located occurrences (viewer clauses write nothing): select isPair in src/lisp.ts resolve value src/lisp.ts:34:1 34 | function isPair(v: LispValue): v is LispPair { 35 | return ( 36 | typeof v === \"obj",
+          "replacementChars": null,
+          "finishReason": "stop",
+          "cause": null,
+          "payloads": 3,
+          "toolCalls": 0,
+          "selectors": null,
+          "stages": null,
+          "matcherKinds": null
+        },
+        {
+          "row": 36,
+          "iteration": 12,
+          "kind": "exchange",
+          "exchange": 3,
+          "outcome": "applied",
+          "diagnosticsHead": null,
+          "replacementChars": null,
+          "finishReason": "stop",
+          "cause": null,
+          "payloads": 3,
+          "toolCalls": 0,
+          "selectors": [
+            "whole-symbol",
+            "whole-symbol",
+            "whole-symbol"
+          ],
+          "stages": [
+            "whole-symbol",
+            "whole-symbol",
+            "whole-symbol"
+          ],
+          "matcherKinds": [
+            null,
+            null,
+            null
+          ]
+        },
+        {
+          "row": 37,
+          "iteration": 12,
+          "kind": "verification",
+          "exchange": null,
+          "outcome": "tsc",
+          "diagnosticsHead": "stage: tsc elsewhere in file: src/lisp.ts(34,37): error TS2677: A type predicate's type must be assignable to its parameter's type. Type 'LispPair' is not assignable to type 'LispValue'. — in declarat",
+          "replacementChars": null,
+          "finishReason": "stop",
+          "cause": null,
+          "payloads": 0,
+          "toolCalls": 0,
+          "selectors": null,
+          "stages": null,
+          "matcherKinds": null
+        },
+        {
+          "row": 38,
+          "iteration": 13,
+          "kind": "exchange",
+          "exchange": 2,
+          "outcome": "gate",
+          "diagnosticsHead": "stage: compact clause 1 of 1 ({\"path\":\"src/lisp.ts\",\"symbol\":\"run\",\"kind\":\"function\"} in \"src/lisp.ts\") failed; the whole compact reply is discarded and nothing is written stage: gate the edit was dis",
+          "replacementChars": null,
+          "finishReason": "stop",
+          "cause": "gate",
+          "payloads": 1,
+          "toolCalls": 0,
+          "selectors": [],
+          "stages": [],
+          "matcherKinds": []
+        }
+      ],
+      "exchangeStats": {
+        "turns": 30,
+        "payloads": 46,
+        "toolCalls": 0,
+        "applied": 8,
+        "rejected": 17,
+        "selected": 1,
+        "stopped": 0,
+        "selfChecks": 0,
+        "range": 0,
+        "matcher": 0,
+        "wholeSymbol": 17,
+        "stageWholeSymbol": 17,
+        "stageMatch": 0,
+        "stagePick": 0,
+        "snippet": 0,
+        "regex": 0,
+        "creates": 5
+      },
+      "loopDiagnostics": "token-budget: accumulated 120862 tokens exceeded the 120000 token budget",
+      "terminationReason": "token-budget",
+      "model": "deepseek-v4.1-flash",
+      "workspace": "tmp/benchmark/2026-10-21T19-43-18-249Z-f9b5cea3/minilisp-tc-rep1",
+      "logs": {
+        "side": "tmp/benchmark/2026-10-21T19-43-18-249Z-f9b5cea3/logs/minilisp-tc-rep1/side.log",
+        "judge": "tmp/benchmark/2026-10-21T19-43-18-249Z-f9b5cea3/logs/minilisp-tc-rep1/judge.log",
+        "session": null,
+        "stats": null
+      },
+      "versions": {
+        "bun": "1.3.13",
+        "opencode": null
+      },
+      "judge": {
+        "testsOk": false,
+        "tscOk": false,
+        "fixtureOk": true,
+        "detail": "tsc failed: src/lisp.ts(34,37): error TS2677: A type predicate's type must be assignable to its parameter's type.\n  Type 'LispPair' is not assignable to type 'LispValue'.\nsrc/lisp.ts(106,10): error TS2304: Cannot find name 'toValue'.\nsrc/lisp.ts(106,27): error TS2304: Cannot find name 'parse'.\nsrc/lisp.ts(106,73): error TS2554: Expected 2 arguments, but got 3.\nsrc/lisp.ts(126,16): error TS2304: Cannot find na...; bun test failed: bun test v1.3.13 (bf2e2cec)\n\nsrc/lisp.test.ts:\n101 | function truthy(v: LispValue): boolean {\n102 |   return v !== false;\n103 | }\n104 | \n105 | export function run(program: string): LispValue {\n106 |   return toValue(evaluate(parse(program), new Map<string, LispValue>(), null));\n               ^\nReferenceError: toValue is not defined\n      at run (/home/illu/repo/typescript-coder/tmp/benchmark/2026..."
+      },
+      "error": null,
+      "infraError": null
+    },
+    {
+      "task": "csv-parser",
+      "side": "tc",
+      "rep": 1,
+      "ok": true,
+      "sideOk": true,
+      "tokens": {
+        "input": 9710,
+        "output": 971,
+        "cacheRead": 2816,
+        "cacheWrite": null,
+        "reasoning": 0,
+        "total": 10681,
+        "billable": {
+          "in": 6894,
+          "out": 971,
+          "total": 7865
+        }
+      },
+      "usageAvailable": true,
+      "usageSource": "chat-completions",
+      "rawUsage": [
+        {
+          "prompt_tokens": 1462,
+          "completion_tokens": 12,
+          "total_tokens": 1474,
+          "prompt_tokens_details": {
+            "cached_tokens": 0
+          },
+          "completion_tokens_details": {
+            "reasoning_tokens": 0
+          }
+        },
+        {
+          "prompt_tokens": 2970,
+          "completion_tokens": 491,
+          "total_tokens": 3461,
+          "prompt_tokens_details": {
+            "cached_tokens": 1408
+          },
+          "completion_tokens_details": {
+            "reasoning_tokens": 0
+          }
+        },
+        {
+          "prompt_tokens": 2561,
+          "completion_tokens": 460,
+          "total_tokens": 3021,
+          "prompt_tokens_details": {
+            "cached_tokens": 1408
+          },
+          "completion_tokens_details": {
+            "reasoning_tokens": 0
+          }
+        },
+        {
+          "prompt_tokens": 2717,
+          "completion_tokens": 8,
+          "total_tokens": 2725,
+          "prompt_tokens_details": {
+            "cached_tokens": 0
+          },
+          "completion_tokens_details": {
+            "reasoning_tokens": 0
+          }
+        }
+      ],
+      "durationMs": 12039,
+      "startedAt": "2026-10-21T19:43:18.359Z",
+      "finishedAt": "2026-10-21T19:43:30.398Z",
+      "cost": 0.001625148,
+      "rateClass": "off-peak",
+      "steps": 5,
+      "records": [
+        {
+          "row": 1,
+          "iteration": 1,
+          "kind": "exchange",
+          "exchange": 1,
+          "outcome": "selected",
+          "diagnosticsHead": null,
+          "replacementChars": null,
+          "finishReason": "stop",
+          "cause": null,
+          "payloads": 0,
+          "toolCalls": 0,
+          "selectors": null,
+          "stages": null,
+          "matcherKinds": null
+        },
+        {
+          "row": 2,
+          "iteration": 1,
+          "kind": "exchange",
+          "exchange": 2,
+          "outcome": "protocol",
+          "diagnosticsHead": "stage: protocol the reply must be one or more `select … end` clauses; a JSON edit payload is not accepted in this mode",
+          "replacementChars": null,
+          "finishReason": "stop",
+          "cause": "protocol",
+          "payloads": 0,
+          "toolCalls": 0,
+          "selectors": null,
+          "stages": null,
+          "matcherKinds": null
+        },
+        {
+          "row": 3,
+          "iteration": 1,
+          "kind": "exchange",
+          "exchange": 3,
+          "outcome": "applied",
+          "diagnosticsHead": null,
+          "replacementChars": null,
+          "finishReason": "stop",
+          "cause": null,
+          "payloads": 1,
+          "toolCalls": 0,
+          "selectors": [
+            "whole-symbol"
+          ],
+          "stages": [
+            "whole-symbol"
+          ],
+          "matcherKinds": [
+            null
+          ]
+        },
+        {
+          "row": 4,
+          "iteration": 1,
+          "kind": "verification",
+          "exchange": null,
+          "outcome": "ok",
+          "diagnosticsHead": null,
+          "replacementChars": null,
+          "finishReason": "stop",
+          "cause": null,
+          "payloads": 0,
+          "toolCalls": 0,
+          "selectors": null,
+          "stages": null,
+          "matcherKinds": null
+        },
+        {
+          "row": 5,
+          "iteration": 1,
+          "kind": "exchange",
+          "exchange": 3,
+          "outcome": "confirmed",
+          "diagnosticsHead": null,
+          "replacementChars": null,
+          "finishReason": "stop",
+          "cause": null,
+          "payloads": 0,
+          "toolCalls": 0,
+          "selectors": null,
+          "stages": null,
+          "matcherKinds": null
+        }
+      ],
+      "exchangeStats": {
+        "turns": 4,
+        "payloads": 1,
+        "toolCalls": 0,
+        "applied": 1,
+        "rejected": 1,
+        "selected": 1,
+        "stopped": 0,
+        "selfChecks": 0,
+        "range": 0,
+        "matcher": 0,
+        "wholeSymbol": 1,
+        "stageWholeSymbol": 1,
+        "stageMatch": 0,
+        "stagePick": 0,
+        "snippet": 0,
+        "regex": 0,
+        "creates": 1
+      },
+      "loopDiagnostics": null,
+      "terminationReason": null,
+      "model": "deepseek-v4.1-flash",
+      "workspace": "tmp/benchmark/2026-10-21T19-43-18-249Z-f9b5cea3/csv-parser-tc-rep1",
+      "logs": {
+        "side": "tmp/benchmark/2026-10-21T19-43-18-249Z-f9b5cea3/logs/csv-parser-tc-rep1/side.log",
+        "judge": "tmp/benchmark/2026-10-21T19-43-18-249Z-f9b5cea3/logs/csv-parser-tc-rep1/judge.log",
+        "session": null,
+        "stats": null
+      },
+      "versions": {
+        "bun": "1.3.13",
+        "opencode": null
+      },
+      "judge": {
+        "testsOk": true,
+        "tscOk": true,
+        "fixtureOk": true,
+        "detail": null
+      },
+      "error": null,
+      "infraError": null
+    }
+  ],
+  "aggregates": {
+    "byTaskSide": [
+      {
+        "task": "json-parser",
+        "side": "tc",
+        "runs": 1,
+        "ok": 0,
+        "failed": 1,
+        "successRate": 0,
+        "usageRuns": 1,
+        "tokens": {
+          "in": {
+            "mean": 57212,
+            "total": 57212
+          },
+          "out": {
+            "mean": 29671,
+            "total": 29671
+          },
+          "total": {
+            "mean": 86883,
+            "total": 86883
+          }
+        },
+        "cost": {
+          "mean": 0.026501519999999997,
+          "total": 0.026501519999999997
+        },
+        "durationMsMean": 156542,
+        "stepsMean": 48,
+        "tokensPerSuccess": {
+          "in": null,
+          "out": null,
+          "total": null
+        },
+        "costPerSuccess": null,
+        "selectors": {
+          "range": 0,
+          "matcher": 0,
+          "wholeSymbol": 16
+        },
+        "stages": {
+          "wholeSymbol": 16,
+          "match": 0,
+          "pick": 0
+        },
+        "matcherKinds": {
+          "snippet": 0,
+          "regex": 0
+        },
+        "creates": 4
+      },
+      {
+        "task": "sexp-parser",
+        "side": "tc",
+        "runs": 1,
+        "ok": 1,
+        "failed": 0,
+        "successRate": 1,
+        "usageRuns": 1,
+        "tokens": {
+          "in": {
+            "mean": 3301,
+            "total": 3301
+          },
+          "out": {
+            "mean": 484,
+            "total": 484
+          },
+          "total": {
+            "mean": 3785,
+            "total": 3785
+          }
+        },
+        "cost": {
+          "mean": 0.000798222,
+          "total": 0.000798222
+        },
+        "durationMsMean": 8932,
+        "stepsMean": 5,
+        "tokensPerSuccess": {
+          "in": 3301,
+          "out": 484,
+          "total": 3785
+        },
+        "costPerSuccess": 0.000798222,
+        "selectors": {
+          "range": 0,
+          "matcher": 0,
+          "wholeSymbol": 1
+        },
+        "stages": {
+          "wholeSymbol": 1,
+          "match": 0,
+          "pick": 0
+        },
+        "matcherKinds": {
+          "snippet": 0,
+          "regex": 0
+        },
+        "creates": 1
+      },
+      {
+        "task": "minilisp",
+        "side": "tc",
+        "runs": 1,
+        "ok": 0,
+        "failed": 1,
+        "successRate": 0,
+        "usageRuns": 1,
+        "tokens": {
+          "in": {
+            "mean": 60882,
+            "total": 60882
+          },
+          "out": {
+            "mean": 24714,
+            "total": 24714
+          },
+          "total": {
+            "mean": 85596,
+            "total": 85596
+          }
+        },
+        "cost": {
+          "mean": 0.024079356,
+          "total": 0.024079356
+        },
+        "durationMsMean": 127898,
+        "stepsMean": 38,
+        "tokensPerSuccess": {
+          "in": null,
+          "out": null,
+          "total": null
+        },
+        "costPerSuccess": null,
+        "selectors": {
+          "range": 0,
+          "matcher": 0,
+          "wholeSymbol": 17
+        },
+        "stages": {
+          "wholeSymbol": 17,
+          "match": 0,
+          "pick": 0
+        },
+        "matcherKinds": {
+          "snippet": 0,
+          "regex": 0
+        },
+        "creates": 5
+      },
+      {
+        "task": "csv-parser",
+        "side": "tc",
+        "runs": 1,
+        "ok": 1,
+        "failed": 0,
+        "successRate": 1,
+        "usageRuns": 1,
+        "tokens": {
+          "in": {
+            "mean": 6894,
+            "total": 6894
+          },
+          "out": {
+            "mean": 971,
+            "total": 971
+          },
+          "total": {
+            "mean": 7865,
+            "total": 7865
+          }
+        },
+        "cost": {
+          "mean": 0.001625148,
+          "total": 0.001625148
+        },
+        "durationMsMean": 12039,
+        "stepsMean": 5,
+        "tokensPerSuccess": {
+          "in": 6894,
+          "out": 971,
+          "total": 7865
+        },
+        "costPerSuccess": 0.001625148,
+        "selectors": {
+          "range": 0,
+          "matcher": 0,
+          "wholeSymbol": 1
+        },
+        "stages": {
+          "wholeSymbol": 1,
+          "match": 0,
+          "pick": 0
+        },
+        "matcherKinds": {
+          "snippet": 0,
+          "regex": 0
+        },
+        "creates": 1
+      }
+    ],
+    "bySide": [
+      {
+        "task": null,
+        "side": "tc",
+        "runs": 4,
+        "ok": 2,
+        "failed": 2,
+        "successRate": 0.5,
+        "usageRuns": 4,
+        "tokens": {
+          "in": {
+            "mean": 32072.25,
+            "total": 128289
+          },
+          "out": {
+            "mean": 13960,
+            "total": 55840
+          },
+          "total": {
+            "mean": 46032.25,
+            "total": 184129
+          }
+        },
+        "cost": {
+          "mean": 0.0132510615,
+          "total": 0.053004246
+        },
+        "durationMsMean": 76352.75,
+        "stepsMean": 24,
+        "tokensPerSuccess": {
+          "in": 64144.5,
+          "out": 27920,
+          "total": 92064.5
+        },
+        "costPerSuccess": 0.026502123,
+        "selectors": {
+          "range": 0,
+          "matcher": 0,
+          "wholeSymbol": 35
+        },
+        "stages": {
+          "wholeSymbol": 35,
+          "match": 0,
+          "pick": 0
+        },
+        "matcherKinds": {
+          "snippet": 0,
+          "regex": 0
+        },
+        "creates": 11
+      }
+    ],
+    "overall": {
+      "task": null,
+      "side": null,
+      "runs": 4,
+      "ok": 2,
+      "failed": 2,
+      "successRate": 0.5,
+      "usageRuns": 4,
+      "tokens": {
+        "in": {
+          "mean": 32072.25,
+          "total": 128289
+        },
+        "out": {
+          "mean": 13960,
+          "total": 55840
+        },
+        "total": {
+          "mean": 46032.25,
+          "total": 184129
+        }
+      },
+      "cost": {
+        "mean": 0.0132510615,
+        "total": 0.053004246
+      },
+      "durationMsMean": 76352.75,
+      "stepsMean": 24,
+      "tokensPerSuccess": {
+        "in": 64144.5,
+        "out": 27920,
+        "total": 92064.5
+      },
+      "costPerSuccess": 0.026502123,
+      "selectors": {
+        "range": 0,
+        "matcher": 0,
+        "wholeSymbol": 35
+      },
+      "stages": {
+        "wholeSymbol": 35,
+        "match": 0,
+        "pick": 0
+      },
+      "matcherKinds": {
+        "snippet": 0,
+        "regex": 0
+      },
+      "creates": 11
+    }
+  },
+  "provenance": {
+    "inputs": {
+      "model": "eb1394ac7fc44dc30655e16d1ca9bc59b8549b0f3144076e0e467982d17b4474",
+      "taskIssue": "f804315c31409381af225e25efafbf67ce848cdd323c4eeec81d6b10bc598a24",
+      "fixture": "f7f2c7770301209f01f973de4e1b1b8e52302ffa3e749558993909f14d792681",
+      "systemPrompt": "18de99d35c5e82ccda9b570c9bcfb5d17854fd21da617b5c85a0678ad77bce7f",
+      "loopConfig": "338d9f24c53a704025896af31803b1f3caee41bc25050e0607a78424f4ab40a8",
+      "pricing": "aab6f45ac055bdc46329be2c46279a8ce322bfa62c0c61f0ef177d8b67766560"
+    },
+    "inputHash": "40cd038394ab71e643db02b246989476dc6c6ee5a41691f8464db9d95e2cc009",
+    "computedAt": "2026-10-21T19:43:18.246Z"
+  }
+}

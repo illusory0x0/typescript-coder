@@ -8,7 +8,11 @@ Sides are abbreviated `tc` (typescript-coder) and `oc` (opencode) in flags, labe
 Each task has one frozen issue string (`TASK_ISSUES` in `run.ts`), used verbatim by both sides and rendered into every report's `Frozen task specs` section.
 
 `results/consumption.md` is the canonical before/after efficiency view across the
-series (USD per success; the dated reports keep the token columns).
+series (USD per success; the dated reports keep the token columns). Every row
+carries its edit protocol: the compact protocol (#119) is the measured protocol
+from the compact-era baseline onward, and the JSON-era rows (deleted by the
+cleanup commit) are a **different protocol** — not like-for-like comparable to a
+compact row.
 
 ## Usage
 
@@ -59,8 +63,8 @@ result is never a change-set's evidence of _prompt fit_ — it gates only
 (`--all`), so its result is recorded in every row's `Notes` (the per-task
 columns stay the three tuned fixtures and `Overall` now spans all four tasks),
 but the rule above governs how a change-set may cite it.
-`benchmark/results/consumption.md` records the rule and the first held-out
-baseline row.
+`benchmark/results/consumption.md` records the rule; the held-out result is
+reported in each row's `Notes` and never as a tuned column.
 
 ## Metrics per record
 
