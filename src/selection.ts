@@ -173,8 +173,9 @@ class SelectionReader {
   private parseEditor(): Selection {
     this.expectKeyword("select", "expected `select` to begin a clause");
 
-    // `select [kind] <symbol> in <path>`: read the bare tokens before `in` and
-    // disambiguate. One token is the symbol; two are `<kind> <symbol>`.
+    // `select [kind] <symbol> in <path> [resolve …]`: read the bare tokens
+    // before `in` and disambiguate. One token is the symbol; two are
+    // `<kind> <symbol>`.
     const header: string[] = [];
     for (;;) {
       this.skipWhitespace();
@@ -187,7 +188,7 @@ class SelectionReader {
       header.push(this.readToken("expected `in <path>` after the symbol in `select`"));
       if (header.length > 2) {
         throw new SelectionSyntaxError(
-          "expected `select [kind] <symbol> in <path>`; too many tokens before `in`",
+          "expected `select [kind] <symbol> in <path> [resolve …]`; too many tokens before `in`",
         );
       }
     }

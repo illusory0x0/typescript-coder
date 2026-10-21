@@ -1,6 +1,6 @@
 import { cpSync, symlinkSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
-import type { LoopResult, ProviderLike } from "../src/loop";
+import type { LoopResult, ProtocolFormat, ProviderLike } from "../src/loop";
 import type { ChatMessage, ChatResponse, ToolDefinition } from "../src/openai";
 
 export interface ScriptedToolCall {
@@ -58,6 +58,8 @@ export interface Scenario {
   slow?: boolean;
   /** Live scenarios call the real model and run only with --live. */
   live?: boolean;
+  /** Edit protocol the scenario drives; omitted means the shipped `json` form. */
+  protocolFormat?: ProtocolFormat;
   issue: string;
   responses: ScriptedResponse[];
   prepare?: (dir: string, repoRoot: string) => void;
@@ -328,6 +330,25 @@ const TEST_PROPAGATION_RECOVER_EDIT = editResponse("return 3;", "return 2;");
 const GOOD_EDIT = editResponse("return 1;", "return 2;");
 const TEST_ISSUE = "make the failing test pass";
 
+// A compact viewer (`resolve value`, no `replace`) and a `match` + whole-line
+// `pick 2` editor with a six-tick fence, mirroring the §8 examples the model
+// sees. Multi-line replies are assembled from arrays for readability.
+const COMPACT_VIEWER = [
+  "select answer in src/helper.ts resolve value",
+  "match `return 1;`",
+  "end",
+].join("\n");
+const COMPACT_PICK_EDIT = [
+  "select answer in src/helper.ts resolve value",
+  "match `return 1;`",
+  "pick 2",
+  "replace with",
+  "``````",
+  "return 2;",
+  "``````",
+  "end",
+].join("\n");
+
 export const scenarios: Scenario[] = [
   {
     id: "fix-answer",
@@ -339,6 +360,23 @@ export const scenarios: Scenario[] = [
       hasOk(true),
       hasRecords(3),
       recordOutcomes(["selected", "applied", "ok"]),
+      fileContains("src/helper.ts", "return 2;"),
+      fileEqualsOriginal("src/helper.test.ts"),
+    ],
+  },
+  {
+    id: "compact-viewer-edit",
+    title: "compact viewer locates the number then a pick edit lands",
+    fixture: "fix-answer",
+    issue: TEST_ISSUE,
+    protocolFormat: "compact",
+    responses: [LOCATOR_JSON, COMPACT_VIEWER, COMPACT_PICK_EDIT],
+    assertions: [
+      hasOk(true),
+      hasRecords(4),
+      recordOutcomes(["selected", "viewer", "applied", "ok"]),
+      messageContains(2, "1 | export function answer(): number {"),
+      messageContains(2, "⁉️"),
       fileContains("src/helper.ts", "return 2;"),
       fileEqualsOriginal("src/helper.test.ts"),
     ],

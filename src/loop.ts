@@ -10,7 +10,12 @@ import {
 import { basename, dirname, isAbsolute, join, relative, resolve, sep } from "node:path";
 import { applyMatcherSplice, extractJsonObject, findMatcher, stripCodeFences } from "./matcher";
 import type { MatcherResult } from "./matcher";
-import { parseSelection, serializeSelections, SelectionSyntaxError } from "./selection";
+import {
+  END_OF_LINE_COLUMN,
+  parseSelection,
+  serializeSelections,
+  SelectionSyntaxError,
+} from "./selection";
 import type { Selection as CompactSelection } from "./selection";
 import { renderViewerFeedback, resolveCompactReply } from "./compact";
 import type { CompactFailure, CompactRegion, CompactResolution, CompactViewer } from "./compact";
@@ -174,9 +179,9 @@ const MULTI_PAYLOAD_SYSTEM_PARAGRAPH =
 // rejected). The target-selection paragraph and the JSON pick turn stay
 // unchanged; the `json` format never uses these paragraphs.
 const COMPACT_EDIT_SYSTEM_PARAGRAPH =
-  "Then you will be asked to edit the selected symbol. Reply with ONLY one or more `select … end` clauses: `select [kind] <symbol> in <path> [ match (<snippet> | /regex/) [ pick <range> ] ] [ replace with <fence> ] end`. Clauses apply in document order and independently; a clause that stops before `replace` is a viewer that locates and writes nothing. `match` locates a span inside the named declaration (narrow a tie with `pick <range>`, whose coordinates are the 1-based file-absolute positions of the numbered current-source block), and `replace with <fence>` rewrites the target. A bare `select … replace with … end` with no `match` rewrites the whole declaration; an empty fence deletes it. Keep the same declaration kind and name unless the task requires otherwise. No markdown fences and no explanations, and no JSON edit payload — it is rejected.";
+  "Then you will be asked to edit the selected symbol. Reply with ONLY one or more `select … end` clauses: `select <symbol> in <path> [ resolve <value|type|namespace> ] [ match (<snippet> | /regex/) [ pick <range> ] ] [ replace with <fence> ] end` (an optional declaration `kind` may precede the symbol). Clauses apply in document order and independently; a clause that stops before `replace` is a viewer that locates and writes nothing. `resolve value`, `resolve type`, or `resolve namespace` selects the TypeScript symbol space when the same name is declared in more than one, and a space miss names the available spaces instead of falling back. `match` locates a span inside the named declaration (narrow a tie with `pick <range>`, whose coordinates are the 1-based file-absolute positions of the numbered current-source block); a viewer renders the numbered declaration with `⁉️` on the matched lines. `replace with <fence>` rewrites the target, and the fence opens with 6 or more backticks and closes with the same run. A bare `select … replace with … end` with no `match` rewrites the whole declaration; an empty fence deletes it. Keep the same declaration kind and name unless the task requires otherwise. No markdown fences around the reply and no explanations, and no JSON edit payload — it is rejected.";
 const COMPACT_CREATE_DELETE_SYSTEM_PARAGRAPH =
-  'A "create" selection asks for the COMPLETE declaration in the fence; the harness appends it to the target file as a new top-level declaration, creating the file and any parent directories when needed. A "delete" selection carries no clause: the harness removes the declaration. To remove only part of a declaration, use `match` with an empty fence. The syntax gate discards any clause that leaves the file unparseable and writes nothing; the clauses that resolve apply independently.';
+  'A "create" selection asks for the COMPLETE declaration in the fence, which opens with 6 or more backticks; the harness appends it to the target file as a new top-level declaration, creating the file and any parent directories when needed. A complete top-level declaration is appended verbatim; otherwise the clause\'s `resolve` picks the wrapper: no `resolve` or `resolve value` wraps the body as `let <symbol> = <body>;`, `resolve type` as `type <symbol> = <body>;`, and `resolve namespace` as a `namespace <symbol> { … }` block. A "delete" selection carries no clause: the harness removes the declaration. To remove only part of a declaration, use `match` with an empty fence. The syntax gate discards any clause that leaves the file unparseable and writes nothing; the clauses that resolve apply independently.';
 const COMPACT_ROUNDS_SYSTEM_PARAGRAPH =
   "A round allows at most 3 exchanges: picking the target, writing the edit, and re-asking after a rejected edit share that budget. When an edit verifies, the run is done; when verification fails, the next round shows the current source and the failing diagnostics, and it may either revise the pinned declaration or re-pin to a different declaration in the same file by naming it in the clause's own `select` (the new address must resolve uniquely in the current source). A round that exhausts its 3 exchanges without a valid edit continues through a continuation prompt: reply `STOP` to end the run, or return a corrected edit (or, when no target is pinned, a corrected selection) to open a fresh round with a new 3-exchange budget; the run is capped at 32 rounds, after which it ends with the failure summary.";
 
@@ -192,7 +197,7 @@ export const COMPACT_FORCE_DIAGNOSTICS =
 // straight back to the payload this mode rejects (the observed rep1
 // `address ↔ protocol` loop).
 const COMPACT_PROTOCOL_CORRECTION =
-  "Reply with one or more `select … end` clauses as the entire response (`select [kind] <symbol> in <path> [ match (<snippet> | /regex/) [ pick <range> ] ] [ replace with <fence> ] end`); a JSON edit payload is not accepted in this mode.";
+  "Reply with one or more `select … end` clauses as the entire response (`select <symbol> in <path> [ resolve <value|type|namespace> ] [ match (<snippet> | /regex/) [ pick <range> ] ] [ replace with <fence> ] end`, where the fence opens with 6 or more backticks); a JSON edit payload is not accepted in this mode.";
 const COMPACT_PROTOCOL_ESCALATION =
   "This attempt MUST reply with only `select … end` clauses — one or more, with no prose, no markdown fences, and no JSON edit payload.";
 
@@ -298,19 +303,19 @@ export const SELF_CHECK_OFFER =
 
 // #111: the few-shot examples the fresh edit and modify-retry prompts carry
 // under the compact protocol (`--protocol-format=compact`). They show the §8
-// forms of `docs/edit-protocol.md` — a viewer, a bare declaration replace, a
-// `match` + `pick` disambiguation, a `match` + `replace` rewrite, a create
-// (#117), and a viewer-then-editor multi-clause reply (#117) — built with
-// `serializeSelections` so the grammar stays the single source of truth. Each
-// form is labelled so the examples are unambiguously separate. The block never
-// appears under the `json` format.
+// forms of `docs/edit-protocol.md` — a `resolve value` viewer, a bare
+// declaration replace, a `match` + `pick` edit, a `match` + `replace` rewrite,
+// a create (#117), and a viewer-then-editor multi-clause reply (#117) — built
+// with `serializeSelections` so the grammar stays the single source of truth.
+// Each form is labelled so the examples are unambiguously separate. The block
+// never appears under the `json` format.
 const COMPACT_EXAMPLE_FORMS: { label: string; selections: CompactSelection[] }[] = [
   {
-    label: "1. Viewer: locates a matched span and writes nothing.",
+    label: "1. Viewer: locates a matched span with `resolve value` and writes nothing.",
     selections: [
       {
         locator: { path: "src/x.ts", name: "f", kind: "function" },
-        space: null,
+        space: "value",
         matcher: { kind: "snippet", value: "Number.isNaN" },
         pick: null,
         replacement: null,
@@ -330,14 +335,14 @@ const COMPACT_EXAMPLE_FORMS: { label: string; selections: CompactSelection[] }[]
     ],
   },
   {
-    label: "3. `match` + `pick`: locate the candidates, then disambiguate and edit one.",
+    label: "3. `match` + `pick`: locate the candidates, then pick all of line 2 and edit it.",
     selections: [
       {
-        locator: { path: "src/x.ts", name: "tokenize", kind: "function" },
+        locator: { path: "src/x.ts", name: "answer", kind: "function" },
         space: null,
-        matcher: { kind: "regex", value: "^  if \\(" },
-        pick: [{ line: 12, column: 3, endLine: 12, endColumn: 12 }],
-        replacement: "  if (input.length === 0) return [];",
+        matcher: { kind: "snippet", value: "return 1;" },
+        pick: [{ line: 2, column: 1, endLine: 2, endColumn: END_OF_LINE_COLUMN }],
+        replacement: "return 2;",
       },
     ],
   },
@@ -405,15 +410,17 @@ function renderCompactExamples(): string {
  */
 function compactInstruction(): string {
   return [
-    "A reply is one or more `select … end` clauses (see the examples below), with no markdown fences and no explanations. Clauses apply in document order and independently; a clause that stops before `replace` is a viewer that writes nothing.",
+    "A reply is one or more `select … end` clauses (see the examples below), with no markdown fences around the reply and no explanations. Clauses apply in document order and independently; a clause that stops before `replace` is a viewer that writes nothing.",
     "",
-    "Each clause: `select [kind] <symbol> in <path>` names the declaration; `match <snippet | /regex/>` locates a span inside it (narrow a tie with `pick <range>`); `replace with <fence>` rewrites the target. Omit `match` for a whole-declaration rewrite; use an empty fence to delete. Coordinates are the 1-based file-absolute positions of the numbered source block.",
+    "Each clause: `select <symbol> in <path>` names the declaration (an optional `kind` may precede the symbol), and `resolve <value|type|namespace>` selects the TypeScript symbol space when the name is declared in more than one. `match <snippet | /regex/>` locates a span inside it (narrow a tie with `pick <range>`); `replace with <fence>` rewrites the target, where the fence opens with 6 or more backticks and closes with the same run. Omit `match` for a whole-declaration rewrite; use an empty fence to delete. Coordinates are the 1-based file-absolute positions of the numbered source block.",
+    "",
+    "A viewer's next prompt carries one numbered declaration block per clause with `⁉️` in the gutter on the matched lines.",
     "",
     "Examples:",
     "",
-    "```",
+    "```````",
     renderCompactExamples(),
-    "```",
+    "```````",
   ].join("\n");
 }
 
@@ -422,11 +429,14 @@ function compactInstruction(): string {
  * `compactInstruction()`. It teaches that a whole-declaration
  * `select … replace with <fence> end` clause becomes an *append* when the
  * symbol — or the whole file — is absent, and that such a create clause takes
- * neither `match` nor `pick`.
+ * neither `match` nor `pick`. A complete declaration is appended verbatim; any
+ * other body is wrapped by the clause's `resolve` space (`let` by default).
  */
 function compactCreateInstruction(): string {
   return [
-    'The pinned selection uses mode "create", so reply with a create clause. A whole-declaration `select [kind] <symbol> in <path> replace with <fence> end` clause with a non-empty fence creates the declaration: when the symbol — or the whole file — is absent the harness appends the COMPLETE declaration in the fence as a new top-level declaration, creating the file and its parent directories if needed.',
+    'The pinned selection uses mode "create", so reply with a create clause. A whole-declaration `select <symbol> in <path> [ resolve <value|type|namespace> ] replace with <fence> end` clause with a non-empty fence creates the declaration, where the fence opens with 6 or more backticks: when the symbol — or the whole file — is absent the harness appends the COMPLETE declaration in the fence as a new top-level declaration, creating the file and its parent directories if needed.',
+    "",
+    "A complete top-level declaration in the fence is appended verbatim. Any other body is wrapped by the clause's symbol space: no `resolve` or `resolve value` wraps it as `let <symbol> = <body>;`, `resolve type` as `type <symbol> = <body>;`, and `resolve namespace` as a `namespace <symbol> { … }` block.",
     "",
     "A create clause does not take `match` or `pick`. The replacement must keep the file parseable.",
     "",

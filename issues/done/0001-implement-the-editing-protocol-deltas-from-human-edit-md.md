@@ -1,7 +1,7 @@
 ---
 id: 1
 title: "Implement the editing-protocol deltas from human/edit.md"
-status: todo
+status: done
 priority: medium
 milestone: null
 parent: null

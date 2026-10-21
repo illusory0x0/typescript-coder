@@ -1,7 +1,7 @@
 ---
 id: 5
 title: "Teach and document the resolve protocol end to end"
-status: todo
+status: done
 priority: medium
 milestone: null
 parent: 1

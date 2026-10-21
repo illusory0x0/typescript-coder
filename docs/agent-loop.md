@@ -25,9 +25,12 @@ discovery, splicing, formatting, and verification. Implementation:
 4. **Edit.** The pinned declaration is shown with 1-based line numbers, and the
    model replies with one edit payload: an address, an optional `matcher`
    (snippet or 1-based `range`, the latter winning), and a `replacement`. The
-   compact protocol (`--protocol-format=compact`) substitutes `select … end`
-   clauses; the optional multi-payload protocol lets one reply batch
-   non-overlapping regions and/or multiple files, applied atomically.
+   compact protocol (`--protocol-format=compact`) substitutes `select <symbol>
+   in <path> [resolve <value|type|namespace>] … end` clauses with 6+ backtick
+   replacement fences; a clause with no `replace` is a viewer, and its next
+   prompt carries the numbered declaration block with `⁉️` on the matched lines.
+   The optional multi-payload protocol lets one reply batch non-overlapping
+   regions and/or multiple files, applied atomically.
 5. **Gates.** Before anything touches the disk, the candidate must pass, in
    order: address/splice guards (matcher must resolve uniquely, range must be
    inside the declaration, no-op and byte-identical resubmission are rejected),

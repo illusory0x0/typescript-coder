@@ -8539,9 +8539,11 @@ describe("compact protocol (#111/#119)", () => {
     expect(edit).toContain("A reply is one or more `select … end` clauses");
     expect(edit).toContain("a clause that stops before `replace` is a viewer that writes nothing");
     // The four forms are rendered from the grammar's own serializer.
-    expect(edit).toContain("select function f in src/x.ts");
+    expect(edit).toContain("select function f in src/x.ts resolve value");
     expect(edit).toContain("select const MAX_TOKENS in src/x.ts");
-    expect(edit).toContain("pick 12:3-12:12");
+    expect(edit).toContain("pick 2");
+    expect(edit).toContain(`match ${TICK}return 1;${TICK}`);
+    expect(edit).toContain(`${TICK.repeat(6)}\nreturn 2;\n${TICK.repeat(6)}`);
     expect(edit).toContain("select function clamp in src/x.ts");
     const retry = buildRetryPrompt({
       exchangeNumber: 2,
@@ -9188,8 +9190,11 @@ describe("compact protocol (#111/#119)", () => {
   test("under compact the system prompt teaches select … end and drops the JSON edit rule", () => {
     const prompt = buildSystemPrompt(false, "compact");
     // The compact edit rule and its create/delete semantics replace the JSON rule.
-    expect(prompt).toContain("select [kind] <symbol> in <path>");
+    expect(prompt).toContain("`select <symbol> in <path> [ resolve <value|type|namespace> ]");
+    expect(prompt).toContain("fence opens with 6 or more backticks");
     expect(prompt).toContain("a clause that stops before `replace` is a viewer");
+    expect(prompt).toContain("renders the numbered declaration with `⁉️` on the matched lines");
+    expect(prompt).not.toContain("select [kind]");
     expect(prompt).toContain(
       "A bare `select … replace with … end` with no `match` rewrites the whole declaration",
     );
@@ -9215,7 +9220,7 @@ describe("compact protocol (#111/#119)", () => {
     expect(json).toContain(
       "Then you will be asked to edit the selected symbol. Reply with ONLY one flat JSON object",
     );
-    expect(json).not.toContain("select [kind] <symbol> in <path>");
+    expect(json).not.toContain("select <symbol> in <path>");
   });
 
   test("under json the system prompt is byte-identical to the pre-#119 string", () => {
@@ -9247,9 +9252,11 @@ describe("compact protocol (#111/#119)", () => {
     );
     expect(edit).toContain("A reply is one or more `select … end` clauses");
     // The four pre-#117 forms remain.
-    expect(edit).toContain("select function f in src/x.ts");
+    expect(edit).toContain("select function f in src/x.ts resolve value");
     expect(edit).toContain("select const MAX_TOKENS in src/x.ts");
-    expect(edit).toContain("pick 12:3-12:12");
+    expect(edit).toContain("pick 2");
+    expect(edit).toContain(`match ${TICK}return 1;${TICK}`);
+    expect(edit).toContain(`${TICK.repeat(6)}\nreturn 2;\n${TICK.repeat(6)}`);
     expect(edit).toContain("select function clamp in src/x.ts");
     // #117 adds the create and the viewer-then-editor forms, labelled apart.
     expect(edit).toContain("5. Create:");
@@ -9279,7 +9286,7 @@ describe("compact protocol (#111/#119)", () => {
     expect(helperSource(dir)).toContain("return 2;");
     // The system prompt the run sent teaches the compact form (call-site wiring).
     const system = provider.calls[0]?.[0]?.content ?? "";
-    expect(system).toContain("select [kind] <symbol> in <path>");
+    expect(system).toContain("select <symbol> in <path>");
     expect(system).not.toContain(
       "Then you will be asked to edit the selected symbol. Reply with ONLY one flat JSON object",
     );
