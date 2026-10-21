@@ -9,28 +9,34 @@ discovery, splicing, formatting, and verification. Implementation:
 
 ## Shape of a run
 
-1. **Context.** The workspace's `.ts` files are discovered, parsed into a symbol
-   index, and rendered as a compact YAML context (path → name/kind/signature, with
-   a cap and a `truncated: true` flag). Test files, plus any file the issue names
-   inline, are attached whole as read-only spec files. One system prompt and one
-   user prompt (issue + context) open the run.
-2. **Round.** A round has a budget of **3 exchanges** shared by picking a
+1. **Context.** The workspace's `.ts` files are discovered and parsed into a
+   symbol index. Under the default compact protocol the index is rendered as
+   top-level `select <name> in <path> [resolve <space>]` lines (no signatures,
+   capped); explicit `--protocol-format=json` keeps the YAML context
+   (path → name/kind/signature, with a cap and a `truncated: true` flag). Test
+   files, plus any file the issue names inline, are attached whole as read-only
+   spec files. One system prompt and one user prompt (goal + index/context) open
+   the run.
+2. **Round.** A round has a budget of **3 exchanges** shared by selecting a
    target, writing an edit, and any retries after a rejection.
-3. **Pick.** The model replies with a JSON address `{mode, path, symbol, kind}`
-   (`modify` | `create` | `delete`). Resolution is strict: the composite address
-   must match exactly one indexed declaration. There is no silent first-match.
-   The first successful pick is pinned for the run; later exchanges must echo
-   it (a verification-repair round may re-pin to a different declaration in the
-   same file).
+3. **Select/pick.** Under compact, the first reply is one `select … end` clause
+   naming a symbol-index entry. A viewer (no `replace`) pins the declaration and
+   the harness sends a `# details` prompt with the declaration's source numbered
+   by file-absolute lines; an editor clause applies its own replacement. A
+   missing path, missing symbol, or space miss pins mode `create` and asks for a
+   create clause. Under explicit JSON, the model instead replies with a JSON
+   address `{mode, path, symbol, kind}` (`modify` | `create` | `delete`);
+   resolution is strict and there is no silent first-match. The first successful
+   selection is pinned for the run; later exchanges must echo it (a
+   verification-repair round may re-pin to a different declaration in the same
+   file).
 4. **Edit.** The pinned declaration is shown with 1-based line numbers, and the
-   model replies with one edit payload: an address, an optional `matcher`
-   (snippet or 1-based `range`, the latter winning), and a `replacement`. The
-   compact protocol (`--protocol-format=compact`) substitutes `select <symbol>
-   in <path> [resolve <value|type|namespace>] … end` clauses with 6+ backtick
-   replacement fences; a clause with no `replace` is a viewer, and its next
-   prompt carries the numbered declaration block with `⁉️` on the matched lines.
-   The optional multi-payload protocol lets one reply batch non-overlapping
-   regions and/or multiple files, applied atomically.
+   model replies with one edit payload. Under compact that is one or more
+   `select … end` clauses with 6+ backtick replacement fences; under JSON it is
+   an address, an optional `matcher` (snippet or 1-based `range`, the latter
+   winning), and a `replacement`. The optional multi-payload protocol lets one
+   JSON reply batch non-overlapping regions and/or multiple files, applied
+   atomically.
 5. **Gates.** Before anything touches the disk, the candidate must pass, in
    order: address/splice guards (matcher must resolve uniquely, range must be
    inside the declaration, no-op and byte-identical resubmission are rejected),
@@ -98,7 +104,9 @@ async function runLoop(options: LoopOptions): Promise<LoopResult> {
         return terminate("edit-exhausted", diagnostics);
       }
 
-      // 2. Pick, if nothing is pinned yet.
+      // 2. Select, if nothing is pinned yet. Compact parses one `select … end`
+      //    clause (a viewer yields `# details`, an editor prefetches its edit);
+      //    JSON resolves the strict {mode, path, symbol, kind} address.
       if (pinned === null) {
         const selection = resolveSelection(reply, options.cwd); // strict AND
         if (!selection.ok) {

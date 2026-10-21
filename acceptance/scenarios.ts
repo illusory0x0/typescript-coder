@@ -330,14 +330,11 @@ const TEST_PROPAGATION_RECOVER_EDIT = editResponse("return 3;", "return 2;");
 const GOOD_EDIT = editResponse("return 1;", "return 2;");
 const TEST_ISSUE = "make the failing test pass";
 
-// A compact viewer (`resolve value`, no `replace`) and a `match` + whole-line
-// `pick 2` editor with a six-tick fence, mirroring the §8 examples the model
-// sees. Multi-line replies are assembled from arrays for readability.
-const COMPACT_VIEWER = [
-  "select answer in src/helper.ts resolve value",
-  "match `return 1;`",
-  "end",
-].join("\n");
+// A compact select-first viewer (`resolve value`, no `replace`) and a
+// `match` + whole-line `pick 2` editor with a six-tick fence, mirroring the §8
+// examples the model sees. Multi-line replies are assembled from arrays for
+// readability.
+const COMPACT_VIEWER = ["select answer in src/helper.ts resolve value", "end"].join("\n");
 const COMPACT_PICK_EDIT = [
   "select answer in src/helper.ts resolve value",
   "match `return 1;`",
@@ -354,6 +351,7 @@ export const scenarios: Scenario[] = [
     id: "fix-answer",
     title: "failing test becomes green",
     fixture: "fix-answer",
+    protocolFormat: "json",
     issue: TEST_ISSUE,
     responses: [LOCATOR_JSON, GOOD_EDIT],
     assertions: [
@@ -366,17 +364,17 @@ export const scenarios: Scenario[] = [
   },
   {
     id: "compact-viewer-edit",
-    title: "compact viewer locates the number then a pick edit lands",
+    title: "compact select viewer opens details then an edit lands",
     fixture: "fix-answer",
     issue: TEST_ISSUE,
     protocolFormat: "compact",
-    responses: [LOCATOR_JSON, COMPACT_VIEWER, COMPACT_PICK_EDIT],
+    responses: [COMPACT_VIEWER, COMPACT_PICK_EDIT],
     assertions: [
       hasOk(true),
-      hasRecords(4),
-      recordOutcomes(["selected", "viewer", "applied", "ok"]),
-      messageContains(2, "1 | export function answer(): number {"),
-      messageContains(2, "⁉️"),
+      hasRecords(3),
+      recordOutcomes(["selected", "applied", "ok"]),
+      messageContains(1, "# details"),
+      messageContains(1, "1 | export function answer(): number {"),
       fileContains("src/helper.ts", "return 2;"),
       fileEqualsOriginal("src/helper.test.ts"),
     ],
@@ -386,6 +384,7 @@ export const scenarios: Scenario[] = [
     title: "real model makes the failing test pass",
     fixture: "fix-answer",
     live: true,
+    protocolFormat: "json",
     issue: TEST_ISSUE,
     responses: [],
     assertions: [
@@ -399,6 +398,7 @@ export const scenarios: Scenario[] = [
     id: "keep-progress-retry",
     title: "type-invalid replacement stays on disk and the next iteration builds on it",
     fixture: "keep-progress-retry",
+    protocolFormat: "json",
     issue: TEST_ISSUE,
     responses: [LOCATOR_JSON, BAD_EDIT, RECOVER_EDIT],
     assertions: [
@@ -414,6 +414,7 @@ export const scenarios: Scenario[] = [
     id: "persistent-failure",
     title: "a failed verification plus an exhausted Edit round ends with one summary after STOP",
     fixture: "persistent-failure",
+    protocolFormat: "json",
     issue: TEST_ISSUE,
     responses: [
       LOCATOR_JSON,
@@ -443,6 +444,7 @@ export const scenarios: Scenario[] = [
     id: "context-correctness",
     title: "context YAML exposes dotted signatures",
     fixture: "context-correctness",
+    protocolFormat: "json",
     issue: TEST_ISSUE,
     responses: [
       '{"path":"src/lexer.ts","symbol":"lexer.make","kind":"function"}',
@@ -496,6 +498,7 @@ export const scenarios: Scenario[] = [
     id: "check-test-propagation",
     title: "test-only failure feeds back diagnostics",
     fixture: "check-test-propagation",
+    protocolFormat: "json",
     issue: TEST_ISSUE,
     responses: [LOCATOR_JSON, TEST_PROPAGATION_EDIT, TEST_PROPAGATION_RECOVER_EDIT],
     assertions: [
@@ -512,6 +515,7 @@ export const scenarios: Scenario[] = [
     title: "agent edits its own sources and the copied suite stays green",
     fixture: null,
     slow: true,
+    protocolFormat: "json",
     issue:
       "Rewrite greet to store the greeting in a local variable, keeping its behavior identical.",
     prepare: (dir: string, repoRoot: string) => {

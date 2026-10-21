@@ -168,6 +168,38 @@ export function buildContextYaml(files: SourceFile[], build?: TolerantIndex): st
   return `${lines.join("\n")}\n`;
 }
 
+// Compact select-first index: one `select <name> in <path>` line per top-level
+// declaration, deduped by path+name, with a `resolve` space only when the
+// declaration occupies exactly one space (class/enum dual-space entries omit it).
+// Capped like the YAML context; a truncation note is a plain comment line.
+export function buildCompactSymbolIndex(index: SymbolIndex): string {
+  const seen = new Set<string>();
+  const lines: string[] = [];
+  let truncated = false;
+  for (const entry of index.entries) {
+    if (entry.locator.name.includes(".")) {
+      continue;
+    }
+    const key = `${entry.locator.path}\u0000${entry.locator.name}`;
+    if (seen.has(key)) {
+      continue;
+    }
+    if (seen.size >= CONTEXT_SYMBOL_LIMIT) {
+      truncated = true;
+      break;
+    }
+    seen.add(key);
+    const spaces = declarationSpaces(entry);
+    const first = spaces[0];
+    const resolve = spaces.length === 1 && first !== undefined ? ` resolve ${first}` : "";
+    lines.push(`select ${entry.locator.name} in ${entry.locator.path}${resolve}`);
+  }
+  if (truncated) {
+    lines.push(`# symbol index truncated at ${CONTEXT_SYMBOL_LIMIT} entries`);
+  }
+  return lines.join("\n");
+}
+
 // Opt-in multi-payload protocol (#69): appended to the system prompt when the
 // variant is enabled, so the default prompt stays byte-identical.
 const MULTI_PAYLOAD_SYSTEM_PARAGRAPH =
@@ -175,9 +207,10 @@ const MULTI_PAYLOAD_SYSTEM_PARAGRAPH =
 
 // #119 compact protocol (`--protocol-format=compact`, formerly the #117 forced
 // mode): the system prompt teaches `select … end` clauses in place of the JSON
-// edit rule, so the edit reply must be compact (a JSON edit payload is
-// rejected). The target-selection paragraph and the JSON pick turn stay
-// unchanged; the `json` format never uses these paragraphs.
+// edit rule, and the pick turn itself is a single select clause. The `json`
+// format never uses these paragraphs.
+const COMPACT_SELECT_SYSTEM_PARAGRAPH =
+  "First you will be asked to select the target. Reply with ONLY one `select <symbol> in <path> [ resolve <value|type|namespace> ] end` clause naming one symbol-index entry; the clause is a viewer unless it carries `replace`, and a viewer leads to a `# details` prompt before the edit. Keep the reply to that one clause with no prose and no JSON.";
 const COMPACT_EDIT_SYSTEM_PARAGRAPH =
   "Then you will be asked to edit the selected symbol. Reply with ONLY one or more `select … end` clauses: `select <symbol> in <path> [ resolve <value|type|namespace> ] [ match (<snippet> | /regex/) ] [ [ pick <range> ] replace with <fence> ] end` (an optional declaration `kind` may precede the symbol). Clauses apply in document order and independently; a clause that stops before `replace` is a viewer that locates and writes nothing unless it contains `pick`; `pick` requires `replace` and is not a viewer form. `resolve value`, `resolve type`, or `resolve namespace` selects the TypeScript symbol space when the same name is declared in more than one, and a space miss names the available spaces instead of falling back. `match` locates a span inside the named declaration (narrow a tie with `pick <range>`, whose coordinates are the 1-based file-absolute positions of the numbered current-source block); a viewer renders the numbered declaration with `⁉️` on the matched lines. `replace with <fence>` rewrites the target, and the fence opens with 6 or more backticks and closes with the same run. A bare `select … replace with … end` with no `match` rewrites the whole declaration; an empty fence deletes it. Keep the same declaration kind and name unless the task requires otherwise. No markdown fences around the reply and no explanations, and no JSON edit payload — it is rejected.";
 const COMPACT_CREATE_DELETE_SYSTEM_PARAGRAPH =
@@ -214,10 +247,10 @@ export function buildSystemPrompt(multiPayload = false, format: ProtocolFormat =
     "A round allows at most 3 exchanges: picking the target, writing the edit, and re-asking after a rejected edit share that budget. When an edit verifies, the run is done; when verification fails, the next round shows the current source and the failing diagnostics, and it may either revise the pinned declaration or re-pin to a different declaration in the same file by returning that declaration's own {path, symbol, kind} (the new address must resolve uniquely in the current source). A round that exhausts its 3 exchanges without a valid edit continues through a continuation prompt: reply `STOP` to end the run, or return a corrected edit (or, when no target is pinned, a corrected selection) to open a fresh round with a new 3-exchange budget; the run is capped at 32 rounds, after which it ends with the failure summary.",
     "",
   ];
-  // #119 the compact format teaches the compact edit rule in place of the JSON
-  // rule; the target-selection paragraph above is unchanged (the pick turn stays
-  // JSON).
+  // #119 the compact format teaches the select-first turn and the compact edit
+  // rule in place of the JSON rule; the json format never uses these paragraphs.
   if (format === "compact") {
+    lines[2] = COMPACT_SELECT_SYSTEM_PARAGRAPH;
     lines[4] = COMPACT_EDIT_SYSTEM_PARAGRAPH;
     lines[6] = COMPACT_CREATE_DELETE_SYSTEM_PARAGRAPH;
     lines[8] = COMPACT_ROUNDS_SYSTEM_PARAGRAPH;
@@ -289,6 +322,66 @@ export function numberedSourceBlock(source: string): string {
   return lines
     .map((line, index) => `${String(index + 1).padStart(width, " ")} | ${line}`)
     .join("\n");
+}
+
+function numberLinesFrom(source: string, startLine: number): string {
+  const lines = splitSourceLines(source);
+  if (lines.length === 0) {
+    return "";
+  }
+  const width = String(startLine + lines.length - 1).length;
+  return lines
+    .map((line, index) => `${String(startLine + index).padStart(width, " ")} | ${line}`)
+    .join("\n");
+}
+
+// Render the declaration range with its FILE-absolute 1-based line numbers.
+export function numberedSourceRange(source: string, start: number, end: number): string {
+  const safeStart = Math.max(0, Math.min(start, source.length));
+  const safeEnd = Math.max(safeStart, Math.min(end, source.length));
+  const startLine = source.slice(0, safeStart).split("\n").length;
+  return numberLinesFrom(source.slice(safeStart, safeEnd), startLine);
+}
+
+function compactGoal(issue: string, indexText: string): string {
+  return `# Goal\n\n${issue}\n\n# Symbol index\n\n${indexText}\n`;
+}
+
+function appendCompactSpecFiles(prompt: string, specFiles: readonly SourceFile[]): string {
+  if (specFiles.length === 0) {
+    return prompt;
+  }
+  return `${prompt}\n${buildSpecSection(specFiles)}\n`;
+}
+
+export function buildCompactUserPrompt(
+  issue: string,
+  indexText: string,
+  specFiles: readonly SourceFile[] = [],
+): string {
+  return appendCompactSpecFiles(compactGoal(issue, indexText), specFiles);
+}
+
+export function buildCompactDetailsPrompt(
+  issue: string,
+  indexText: string,
+  symbolSource: string,
+  specFiles: readonly SourceFile[] = [],
+  startLine = 1,
+): string {
+  const numbered = numberLinesFrom(symbolSource, startLine);
+  const prompt = `${compactGoal(issue, indexText)}\n# details\n\n\`\`\`text\n${numbered}\n\`\`\`\n\n${compactInstruction()}\n`;
+  return appendCompactSpecFiles(prompt, specFiles);
+}
+
+export function buildCompactCreatePrompt(
+  issue: string,
+  indexText: string,
+  path: string,
+  specFiles: readonly SourceFile[] = [],
+): string {
+  const prompt = `${compactGoal(issue, indexText)}\nTarget file:\n\n\`\`\`\n${path}\n\`\`\`\n\n${compactCreateInstruction()}\n`;
+  return appendCompactSpecFiles(prompt, specFiles);
 }
 
 // The optional `(line,column)` selector offered alongside `matcher` (#72).
@@ -1642,9 +1735,10 @@ export interface LoopOptions {
    */
   multiPayload?: boolean;
   /**
-   * Edit protocol format (#119): `compact` makes the `select … end` syntax the
-   * required reply form; `json` (default) keeps the flat JSON payload. Absent
-   * is `json`. Explicit-targets mode (#81) is JSON-only.
+   * Edit protocol format (#119): `compact` (default) makes the `select … end`
+   * syntax the required reply form and the first turn a select clause; `json`
+   * keeps the flat JSON payload. Absent is `compact`. Explicit-targets mode
+   * (#81) is JSON-only.
    */
   protocolFormat?: ProtocolFormat;
   /**
@@ -4967,9 +5061,14 @@ export async function runLoop(options: LoopOptions): Promise<LoopResult> {
   const multiPayload = options.multiPayload === true || targetsMode;
   // #119: the selected edit protocol. Explicit-targets mode (#81) is JSON-only,
   // so it overrides the flag to keep the batch/pick path byte-identical.
-  const protocolFormat: ProtocolFormat = targetsMode ? "json" : (options.protocolFormat ?? "json");
+  const protocolFormat: ProtocolFormat = targetsMode
+    ? "json"
+    : (options.protocolFormat ?? "compact");
   // #119: compact is only required outside explicit-targets mode.
   const compactRequired = protocolFormat === "compact" && !targetsMode;
+  // B1: the compact symbol index is a select-line list, not YAML. Build it only
+  // for the compact path so the explicit-json prompts stay byte-identical.
+  const compactIndexText = compactRequired ? buildCompactSymbolIndex(index) : "";
   // Pending targets (not yet applied), applied targets, and targets that never
   // resolved to a unique modify-able declaration.
   const targetQueue: Locator[] = [...targets];
@@ -4980,15 +5079,19 @@ export async function runLoop(options: LoopOptions): Promise<LoopResult> {
   };
   const issueMessage: ChatMessage = {
     role: "user",
-    content: buildUserPrompt(options.issue, contextYaml, specFiles),
+    content: compactRequired
+      ? buildCompactUserPrompt(options.issue, compactIndexText, specFiles)
+      : buildUserPrompt(options.issue, contextYaml, specFiles),
   };
-  // Lean issue message (#49): same issue text and project-context YAML without
-  // the spec-file section. Rounds opened by a `tsc`-stage verification failure
+  // Lean issue message (#49): same issue text and project context without the
+  // spec-file section. Rounds opened by a `tsc`-stage verification failure
   // send it on every content exchange — their repair is driven by the
   // diagnostics and the current source; all other rounds keep the full message.
   const leanIssueMessage: ChatMessage = {
     role: "user",
-    content: buildUserPrompt(options.issue, contextYaml, []),
+    content: compactRequired
+      ? buildCompactUserPrompt(options.issue, compactIndexText, [])
+      : buildUserPrompt(options.issue, contextYaml, []),
   };
   // Round 1 (and selection-continuation rounds, which carry no verification
   // stage) always starts from the full message; the per-round variant is chosen
@@ -5011,6 +5114,12 @@ export async function runLoop(options: LoopOptions): Promise<LoopResult> {
   // for the run; later exchanges revise content only and must echo the address.
   let pinned: { mode: SelectionMode; locator: Locator } | null = null;
   let pinnedAddressJson = "";
+  // Compact select-first: the model's own `select … end` reply is the
+  // assistant turn shown in the content exchange (JSON keeps the canonical pin).
+  let pinnedAssistantContent: string | null = null;
+  // A first-turn compact editor already carries its `replace`; its reply is
+  // applied in the content branch without a second provider call.
+  let prefetchedReply: ChatResponse | null = null;
   // Run-start source of the target file ("" when the file did not exist).
   let baseSource = "";
   // First content prompt after a pick; null once a retry prompt takes over.
@@ -5249,6 +5358,7 @@ export async function runLoop(options: LoopOptions): Promise<LoopResult> {
       return await terminate("edit-exhausted", capDiagnostics(pendingDiagnostics));
     }
     initialContentPrompt = null;
+    prefetchedReply = null;
     continueTargets = false;
     let verificationFailed = false;
     // True once this round writes an edit; a round that ends without one is a
@@ -5465,16 +5575,70 @@ export async function runLoop(options: LoopOptions): Promise<LoopResult> {
         let resolution: SelectionResolution | null = null;
         let diagnostic: string | null = null;
         let selectionStage: "protocol" | "address" = "protocol";
-        try {
-          const parsed = selectionFromResponse(response);
-          candidate = parsed.locator;
-          resolution = resolveSelection(cwd, index, files, skipped, parsed);
-        } catch (error) {
-          diagnostic = `stage: protocol\n${errorMessage(error)}`;
-        }
-        if (resolution !== null && !resolution.ok) {
-          diagnostic = resolution.diagnostic;
-          selectionStage = "address";
+        // Compact select-first (#B1): the pick reply is one `select … end`
+        // clause. It pins modify when the address resolves, create when the name
+        // or space is missing, and an editor clause prefetches its own reply for
+        // the content exchange.
+        let compactPick: {
+          selection: CompactSelection;
+          mode: "modify" | "create";
+          entry: IndexEntry | null;
+          source: string;
+        } | null = null;
+        if (compactRequired) {
+          try {
+            const parsed = parseSelection(stripCodeFences(response.content ?? ""));
+            if (parsed.length !== 1) {
+              diagnostic = `stage: protocol\nthe first compact reply must be exactly one \`select … end\` clause; found ${parsed.length}`;
+            } else {
+              const selected = parsed[0];
+              if (selected !== undefined) {
+                candidate = selected.locator;
+                const pickSource = readFileIfExists(join(cwd, selected.locator.path)) ?? "";
+                const resolved = resolveCurrentEntry(
+                  pickSource,
+                  selected.locator.path,
+                  selected.locator,
+                  selected.space,
+                );
+                if (resolved.ok) {
+                  compactPick = {
+                    selection: selected,
+                    mode: "modify",
+                    entry: resolved.entry,
+                    source: pickSource,
+                  };
+                } else if (resolved.undeclared || resolved.spaceMiss) {
+                  compactPick = {
+                    selection: selected,
+                    mode: "create",
+                    entry: null,
+                    source: pickSource,
+                  };
+                } else {
+                  diagnostic = resolved.diagnostics;
+                  selectionStage = "address";
+                }
+              }
+            }
+          } catch (error) {
+            if (!(error instanceof SelectionSyntaxError)) {
+              throw error;
+            }
+            diagnostic = COMPACT_FORCE_DIAGNOSTICS;
+          }
+        } else {
+          try {
+            const parsed = selectionFromResponse(response);
+            candidate = parsed.locator;
+            resolution = resolveSelection(cwd, index, files, skipped, parsed);
+          } catch (error) {
+            diagnostic = `stage: protocol\n${errorMessage(error)}`;
+          }
+          if (resolution !== null && !resolution.ok) {
+            diagnostic = resolution.diagnostic;
+            selectionStage = "address";
+          }
         }
         if (diagnostic !== null) {
           const cause = classifyRejection({ stage: selectionStage });
@@ -5511,6 +5675,61 @@ export async function runLoop(options: LoopOptions): Promise<LoopResult> {
           }
           messages.push({ role: "assistant", content: response.content ?? "" });
           messages.push({ role: "user", content: buildSelectionRetryPrompt(diagnostic) });
+          continue;
+        }
+        if (compactRequired) {
+          if (compactPick === null) {
+            // Unreachable: a compact success sets `compactPick`.
+            return await terminate(
+              "edit-exhausted",
+              exhaustedDiagnostics(iterationOpenedBy, diagnostic),
+            );
+          }
+          const { selection, mode, entry, source: pickSource } = compactPick;
+          pinned = { mode, locator: selection.locator };
+          pinnedAddressJson = pinJson(pinned);
+          pinnedAssistantContent = (response.content ?? "").trim();
+          records.push(
+            recordRow({
+              row: records.length + 1,
+              iteration,
+              kind: "exchange",
+              exchange,
+              locator: selection.locator,
+              replacement: null,
+              diagnostics: null,
+              outcome: "selected",
+              finishReason: response.finishReason,
+              toolCalls: response.toolCalls.length,
+            }),
+          );
+          messages.push({ role: "assistant", content: pinnedAssistantContent });
+          baseSource = pickSource;
+          if (mode === "modify" && entry !== null) {
+            const modifier = precedingExportModifier(pickSource, entry);
+            const declarationStart =
+              modifier === null ? entry.node.start : entry.node.start - modifier.length;
+            const startLine = pickSource.slice(0, declarationStart).split("\n").length;
+            initialContentPrompt = buildCompactDetailsPrompt(
+              options.issue,
+              compactIndexText,
+              pickSource.slice(declarationStart, entry.node.end),
+              specFiles,
+              startLine,
+            );
+          } else {
+            initialContentPrompt = buildCompactCreatePrompt(
+              options.issue,
+              compactIndexText,
+              selection.locator.path,
+              specFiles,
+            );
+          }
+          // A first-turn editor already carries its `replace`; apply it in the
+          // content branch without asking the provider again.
+          if (selection.replacement !== null) {
+            prefetchedReply = response;
+          }
           continue;
         }
         const selection = resolution !== null && resolution.ok ? resolution.selection : null;
@@ -5695,38 +5914,55 @@ export async function runLoop(options: LoopOptions): Promise<LoopResult> {
       messages = [
         systemMessage,
         roundIssueMessage,
-        { role: "assistant", content: pinnedAddressJson },
+        {
+          role: "assistant",
+          content:
+            protocolFormat === "compact"
+              ? (pinnedAssistantContent ?? pinnedAddressJson)
+              : pinnedAddressJson,
+        },
         { role: "user", content: contentPrompt },
       ];
       let response: ChatResponse;
-      try {
-        response = await options.provider.chat(messages, undefined, exchangeOptions);
-      } catch (error) {
-        const diagnostics = withTargetsReport(providerErrorDiagnostics(error)) ?? "";
-        return {
-          ok: false,
-          mode: pinnedTarget.mode,
-          locator: pinnedTarget.locator,
-          filePath: target,
-          editedSource: null,
-          records,
-          diagnostics,
-          explanation: await explain(
-            options.provider,
-            messages,
-            temperature,
-            "provider-error",
+      if (prefetchedReply !== null) {
+        // A first-turn compact editor: its select reply already carries the
+        // replacement, so apply it here without a second provider call (its
+        // tokens were counted on the pick exchange).
+        response = prefetchedReply;
+        prefetchedReply = null;
+      } else {
+        try {
+          response = await options.provider.chat(messages, undefined, exchangeOptions);
+        } catch (error) {
+          const diagnostics = withTargetsReport(providerErrorDiagnostics(error)) ?? "";
+          return {
+            ok: false,
+            mode: pinnedTarget.mode,
+            locator: pinnedTarget.locator,
+            filePath: target,
+            editedSource: null,
+            records,
             diagnostics,
-          ),
-          messages,
-          skipped,
-          tokens,
-        };
-      }
-      consumedTokens += tokensFromResponse(response);
-      addTokens(loopTokensFromResponse(response));
-      if (consumedTokens > tokenBudget) {
-        return await terminate("token-budget", tokenBudgetDiagnostics(consumedTokens, tokenBudget));
+            explanation: await explain(
+              options.provider,
+              messages,
+              temperature,
+              "provider-error",
+              diagnostics,
+            ),
+            messages,
+            skipped,
+            tokens,
+          };
+        }
+        consumedTokens += tokensFromResponse(response);
+        addTokens(loopTokensFromResponse(response));
+        if (consumedTokens > tokenBudget) {
+          return await terminate(
+            "token-budget",
+            tokenBudgetDiagnostics(consumedTokens, tokenBudget),
+          );
+        }
       }
       // The no-progress ask's STOP (#54), only at its first exchange; the
       // stalled diagnostics stay distinct from #52's exhausted-round text. A

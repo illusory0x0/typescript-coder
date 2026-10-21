@@ -5,6 +5,10 @@ import { basename, join } from "node:path";
 import { renderFailureArtifact } from "./failure-artifact";
 import {
   buildContextYaml,
+  buildCompactCreatePrompt,
+  buildCompactDetailsPrompt,
+  buildCompactSymbolIndex,
+  buildCompactUserPrompt,
   buildContinuationPrompt,
   buildCreatePrompt,
   buildEditPrompt,
@@ -36,6 +40,7 @@ import {
   matcherKindsOf,
   MULTI_PAYLOAD_KEY,
   numberedSourceBlock,
+  numberedSourceRange,
   parseEditResponse,
   parseEditResponseList,
   parseSelectionResponse,
@@ -50,7 +55,7 @@ import {
   renderSelfCheckCommand,
   renderSelfCheckRead,
   resolveEditRange,
-  runLoop,
+  runLoop as runLoopBase,
   selectorOf,
   selectorsOf,
   selectSpecFiles,
@@ -75,6 +80,13 @@ import { buildIndexTolerant } from "./utility";
 import type { SourceFile } from "./utility";
 
 const tempDirs: string[] = [];
+
+// Most loop tests exercise the JSON protocol. The production default is now
+// compact (B1), so this harness selects JSON explicitly unless a test overrides
+// it; the compact/default tests call `runLoopBase` directly.
+function runLoop(options: Parameters<typeof runLoopBase>[0]) {
+  return runLoopBase({ protocolFormat: "json", ...options });
+}
 
 function tempDir(): string {
   const dir = mkdtempSync(join(tmpdir(), "tsloop-"));
@@ -8444,6 +8456,138 @@ describe("compact protocol (#111/#119)", () => {
     };
   }
 
+  // The select-first turn: one viewer clause naming the target. The harness
+  // answers with `# details`; the next reply is the edit/create clause.
+  function compactSelect(
+    name: string,
+    path: string,
+    space: CompactSelection["space"] = null,
+    kind = "",
+  ): string {
+    return compactReply({
+      locator: { path, name, kind },
+      space,
+      matcher: null,
+      pick: null,
+      replacement: null,
+    });
+  }
+
+  test("runLoop defaults to the compact select-first protocol", async () => {
+    const dir = fixtureDir();
+    const provider = new ScriptedProvider([
+      compactSelect("answer", "src/helper.ts", "value"),
+      compactReply(answerEditor("return 2;", { kind: "snippet", value: "return 1;" })),
+    ]);
+    const result = await runLoopBase({
+      cwd: dir,
+      issue: "make the answer test pass",
+      provider,
+      checkCommand: TSC,
+      testCommand: ["bun", "test"],
+    });
+    expect(result.ok).toBe(true);
+    const system = provider.calls[0]?.[0]?.content ?? "";
+    expect(system).toContain("Reply with ONLY one `select <symbol> in <path>");
+    expect(system).not.toContain(
+      "First you will be asked to select the target. Reply with ONLY a JSON object",
+    );
+    expect(helperSource(dir)).toContain("return 2;");
+  }, 30000);
+
+  test("the compact symbol index is select lines with one-space resolve hints", () => {
+    const files: SourceFile[] = [
+      {
+        path: "src/a.ts",
+        source: [
+          "export class Widget {}",
+          "export enum Color { Red }",
+          "export interface Shape { side: number }",
+          "export type Alias = number;",
+          "export namespace Space {}",
+          "export function answer(): number {",
+          "  return 1;",
+          "}",
+          "",
+        ].join("\n"),
+      },
+    ];
+    const index = buildIndexTolerant(files).index;
+    const text = buildCompactSymbolIndex(index);
+    // A class/enum occupies both spaces, so no resolve hint is emitted.
+    expect(text).toContain("select Widget in src/a.ts");
+    expect(text).not.toContain("select Widget in src/a.ts resolve");
+    expect(text).toContain("select Color in src/a.ts");
+    expect(text).toContain("select Shape in src/a.ts resolve type");
+    expect(text).toContain("select Alias in src/a.ts resolve type");
+    expect(text).toContain("select Space in src/a.ts resolve namespace");
+    expect(text).toContain("select answer in src/a.ts resolve value");
+    expect(text).not.toContain("signature");
+    expect(text).not.toContain("files:");
+  });
+
+  test("the compact symbol index is capped with a plain truncation note", () => {
+    const declarations = Array.from(
+      { length: 501 },
+      (_, index) => `export const name${index} = ${index};`,
+    ).join("\n");
+    const index = buildIndexTolerant([{ path: "src/many.ts", source: declarations }]).index;
+    const text = buildCompactSymbolIndex(index);
+    expect(text.split("\n")).toHaveLength(501);
+    expect(text).toContain("# symbol index truncated at 500 entries");
+    expect(text).toContain("select name499 in src/many.ts resolve value");
+    expect(text).not.toContain("select name500 in src/many.ts");
+  });
+
+  test("the compact user and details prompts carry Goal, index, and file-absolute lines", () => {
+    const indexText = "select answer in src/helper.ts resolve value";
+    const user = buildCompactUserPrompt("make the answer test pass", indexText);
+    expect(user).toBe(
+      ["# Goal", "", "make the answer test pass", "", "# Symbol index", "", indexText, ""].join(
+        "\n",
+      ),
+    );
+    const source = [
+      "const before = 1;",
+      "",
+      "export function answer(): number {",
+      "  return 1;",
+      "}",
+      "",
+    ].join("\n");
+    const start = source.indexOf("export function answer");
+    const end = source.indexOf("\n", source.indexOf("}")) + 1;
+    expect(numberedSourceRange(source, start, end)).toBe(
+      ["3 | export function answer(): number {", "4 |   return 1;", "5 | }"].join("\n"),
+    );
+    const symbolSource = source.slice(start, end);
+    const details = buildCompactDetailsPrompt(
+      "make the answer test pass",
+      indexText,
+      symbolSource,
+      [],
+      3,
+    );
+    expect(details).toContain("# details");
+    expect(details).toContain("3 | export function answer(): number {");
+    expect(details).toContain("4 |   return 1;");
+    expect(details).not.toContain("1 | export function answer");
+    expect(details).toContain("A reply is one or more `select … end` clauses");
+  });
+
+  test("the compact create prompt names the target file and the create instruction", () => {
+    const prompt = buildCompactCreatePrompt(
+      "add an extra declaration",
+      "select extra in src/extra.ts",
+      "src/extra.ts",
+    );
+    expect(prompt).toContain("# Goal");
+    expect(prompt).toContain("# Symbol index");
+    expect(prompt).toContain("Target file:");
+    expect(prompt).toContain("src/extra.ts");
+    expect(prompt).toContain('The pinned selection uses mode "create"');
+  });
+
   test("the fresh edit prompt defaults to the JSON form", () => {
     const addressJson = '{"path":"src/a.ts","symbol":"make","kind":"function"}';
     const symbolSource = "export function make(): number {\n  return 1;\n}\n";
@@ -8586,10 +8730,90 @@ describe("compact protocol (#111/#119)", () => {
     expect(helperSource(dir)).toContain("return 2;");
   }, 30000);
 
+  test("under compact a select viewer pins and the next edit applies", async () => {
+    const dir = fixtureDir();
+    const provider = new ScriptedProvider([
+      compactSelect("answer", "src/helper.ts", "value"),
+      compactReply(answerEditor("return 2;", { kind: "snippet", value: "return 1;" })),
+    ]);
+    const result = await runLoop({
+      cwd: dir,
+      issue: "make the answer test pass",
+      provider,
+      protocolFormat: "compact",
+      checkCommand: TSC,
+      testCommand: ["bun", "test"],
+    });
+    expect(result.ok).toBe(true);
+    expect(provider.calls).toHaveLength(2);
+    expect(result.records.map((record) => record.outcome)).toEqual(["selected", "applied", "ok"]);
+    const details = provider.calls[1]?.at(-1)?.content ?? "";
+    expect(details).toContain("# details");
+    expect(details).toContain("1 | export function answer(): number {");
+    expect(helperSource(dir)).toContain("return 2;");
+  }, 30000);
+
+  test("under compact a missing symbol select pins create and the next clause creates", async () => {
+    const dir = fixtureDir();
+    const provider = new ScriptedProvider([
+      compactSelect("extra", "src/extra.ts"),
+      compactReply(
+        createEditor(
+          "src/extra.ts",
+          "extra",
+          "function",
+          "export function extra(): number {\n  return 1;\n}",
+        ),
+      ),
+      compactReply(answerEditor("return 2;", { kind: "snippet", value: "return 1;" })),
+    ]);
+    const result = await runLoop({
+      cwd: dir,
+      issue: "add an extra declaration",
+      provider,
+      protocolFormat: "compact",
+      checkCommand: TSC,
+      testCommand: ["bun", "test"],
+    });
+    expect(result.ok).toBe(true);
+    expect(provider.calls).toHaveLength(3);
+    expect(result.records.map((record) => record.outcome)).toEqual([
+      "selected",
+      "applied",
+      "tests",
+      "applied",
+      "ok",
+    ]);
+    const createPrompt = provider.calls[1]?.at(-1)?.content ?? "";
+    expect(createPrompt).toContain("# Symbol index");
+    expect(createPrompt).toContain("Target file:");
+    expect(createPrompt).toContain("src/extra.ts");
+    expect(readFileSync(join(dir, "src", "extra.ts"), "utf8")).toContain("export function extra");
+  }, 30000);
+
+  test("under compact a first-turn editor applies without a second provider call", async () => {
+    const dir = fixtureDir();
+    const provider = new ScriptedProvider([
+      compactReply(answerEditor("return 2;", { kind: "snippet", value: "return 1;" })),
+    ]);
+    const result = await runLoop({
+      cwd: dir,
+      issue: "make the answer test pass",
+      provider,
+      protocolFormat: "compact",
+      checkCommand: TSC,
+      testCommand: ["bun", "test"],
+    });
+    expect(result.ok).toBe(true);
+    expect(provider.calls).toHaveLength(1);
+    expect(result.records.map((record) => record.outcome)).toEqual(["selected", "applied", "ok"]);
+    expect(helperSource(dir)).toContain("return 2;");
+  }, 30000);
+
   test("under compact a `match` + `replace` reply applies end-to-end", async () => {
     const dir = fixtureDir();
     const provider = new ScriptedProvider([
-      selectionResponse(),
+      compactSelect("answer", "src/helper.ts", "value"),
       compactReply(answerEditor("return 2;", { kind: "snippet", value: "return 1;" })),
     ]);
     const result = await runLoop({
@@ -8612,7 +8836,7 @@ describe("compact protocol (#111/#119)", () => {
   test("under compact a JSON reply's retry re-teaches `select … end`, not JSON (#117)", async () => {
     const dir = fixtureDir();
     const provider = new ScriptedProvider([
-      selectionResponse(),
+      compactSelect("answer", "src/helper.ts", "value"),
       editResponse("return 1;", "return 2;"),
       compactReply(answerEditor("return 2;", { kind: "snippet", value: "return 1;" })),
     ]);
@@ -8639,7 +8863,7 @@ describe("compact protocol (#111/#119)", () => {
   test("under compact a fenced reply applies end-to-end", async () => {
     const dir = fixtureDir();
     const provider = new ScriptedProvider([
-      selectionResponse(),
+      compactSelect("answer", "src/helper.ts", "value"),
       `${TICK}${TICK}${TICK}\n${compactReply(
         answerEditor("return 2;", { kind: "snippet", value: "return 1;" }),
       )}\n${TICK}${TICK}${TICK}`,
@@ -8664,7 +8888,7 @@ describe("compact protocol (#111/#119)", () => {
   test("under compact a bare declaration replace records the whole-symbol stage", async () => {
     const dir = fixtureDir();
     const provider = new ScriptedProvider([
-      selectionResponse(),
+      compactSelect("answer", "src/helper.ts", "value"),
       compactReply(answerEditor("export function answer(): number {\n  return 2;\n}", null)),
     ]);
     const result = await runLoop({
@@ -8686,7 +8910,7 @@ describe("compact protocol (#111/#119)", () => {
   test("under compact a `match` + `pick` reply records the pick stage", async () => {
     const dir = fixtureDir();
     const provider = new ScriptedProvider([
-      selectionResponse(),
+      compactSelect("answer", "src/helper.ts", "value"),
       compactReply(
         answerEditor("return 2;", { kind: "snippet", value: "return 1;" }, [
           { line: 2, column: 3, endLine: 2, endColumn: 11 },
@@ -8712,7 +8936,7 @@ describe("compact protocol (#111/#119)", () => {
   test("under compact a viewer writes nothing and feeds its candidates into the next prompt", async () => {
     const dir = fixtureDir();
     const provider = new ScriptedProvider([
-      selectionResponse(),
+      compactSelect("answer", "src/helper.ts", "value"),
       // A viewer of a matched span: no `replace`, so it locates and writes nothing.
       compactReply(answerEditor(null, { kind: "snippet", value: "return 1;" })),
       compactReply(answerEditor("return 2;", { kind: "snippet", value: "return 1;" })),
@@ -8740,7 +8964,7 @@ describe("compact protocol (#111/#119)", () => {
   test("under compact a no-kind resolve value viewer addresses the function", async () => {
     const dir = fixtureDir();
     const provider = new ScriptedProvider([
-      selectionResponse(),
+      compactSelect("answer", "src/helper.ts", "value"),
       // No declaration kind, explicit value space: the path + name + space
       // resolve the exported function exactly once.
       "select answer in src/helper.ts resolve value\nend",
@@ -8768,7 +8992,7 @@ describe("compact protocol (#111/#119)", () => {
       "export interface Dual {}\nexport const Dual = 1;\n",
     );
     const provider = new ScriptedProvider([
-      selectionResponse(),
+      compactSelect("answer", "src/helper.ts", "value"),
       compactReply({
         locator: { path: "src/dual.ts", name: "Dual", kind: "" },
         space: null,
@@ -8799,7 +9023,7 @@ describe("compact protocol (#111/#119)", () => {
   test("under compact a malformed regex is classified as regex-invalid at the matcher stage", async () => {
     const dir = fixtureDir();
     const provider = new ScriptedProvider([
-      selectionResponse(),
+      compactSelect("answer", "src/helper.ts", "value"),
       compactReply(answerEditor("return 2;", { kind: "regex", value: "(" })),
       compactReply(answerEditor("return 2;", { kind: "snippet", value: "return 1;" })),
     ]);
@@ -8836,7 +9060,7 @@ describe("compact protocol (#111/#119)", () => {
   test("a multi-clause reply with one no-op clause applies the others and records the applied list", async () => {
     const dir = sameFileFixtureDir();
     const provider = new ScriptedProvider([
-      selectionResponse({ path: "src/pair.ts", symbol: "one", kind: "function" }),
+      compactSelect("one", "src/pair.ts"),
       compactReply(
         // Clause 1 applies `one`'s fix.
         pairEditor("one", "return 2;", { kind: "snippet", value: "return 1;" }),
@@ -8877,7 +9101,7 @@ describe("compact protocol (#111/#119)", () => {
   test("two overlapping compact clauses apply the earlier and report the later as an overlap", async () => {
     const dir = sameFileFixtureDir();
     const provider = new ScriptedProvider([
-      selectionResponse({ path: "src/pair.ts", symbol: "one", kind: "function" }),
+      compactSelect("one", "src/pair.ts"),
       compactReply(
         // Both clauses resolve to the same `return 1;` span in `one`.
         pairEditor("one", "return 2;", { kind: "snippet", value: "return 1;" }),
@@ -8974,7 +9198,7 @@ describe("compact protocol (#111/#119)", () => {
   test("under compact an undeclared whole-declaration clause creates the file", async () => {
     const dir = fixtureDir();
     const provider = new ScriptedProvider([
-      selectionResponse(),
+      compactSelect("extra", "src/extra.ts"),
       compactReply(
         createEditor(
           "src/extra.ts",
@@ -9014,7 +9238,7 @@ describe("compact protocol (#111/#119)", () => {
       "export function answer(): number {\n  if (Date.now() > 0) return 1;\n  return 1;\n}\n",
     );
     const provider = new ScriptedProvider([
-      selectionResponse(),
+      compactSelect("answer", "src/helper.ts", "value"),
       compactReply(
         answerEditor("  return 2;", null, [
           { line: 2, column: 1, endLine: 2, endColumn: END_OF_LINE_COLUMN },
@@ -9042,7 +9266,7 @@ describe("compact protocol (#111/#119)", () => {
   test("under compact a missing symbol with a match still creates (match is ignored)", async () => {
     const dir = fixtureDir();
     const provider = new ScriptedProvider([
-      selectionResponse(),
+      compactSelect("extra", "src/extra.ts"),
       compactReply({
         ...createEditor(
           "src/extra.ts",
@@ -9072,7 +9296,7 @@ describe("compact protocol (#111/#119)", () => {
   test("under compact a resolve type create appends a type alias", async () => {
     const dir = fixtureDir();
     const provider = new ScriptedProvider([
-      selectionResponse(),
+      compactSelect("Extra", "src/types.ts"),
       compactReply(createEditor("src/types.ts", "Extra", "type", "{ n: number }", "type")),
       compactReply(answerEditor("return 2;", { kind: "snippet", value: "return 1;" })),
     ]);
@@ -9094,7 +9318,7 @@ describe("compact protocol (#111/#119)", () => {
   test("under compact a no-kind undeclared clause still creates", async () => {
     const dir = fixtureDir();
     const provider = new ScriptedProvider([
-      selectionResponse(),
+      compactSelect("extra", "src/extra.ts"),
       compactReply(
         // No `kind`: `select extra in src/extra.ts` must still create.
         createEditor(
@@ -9122,7 +9346,7 @@ describe("compact protocol (#111/#119)", () => {
   test("under compact a resolve space miss creates in the requested space", async () => {
     const dir = fixtureDir();
     const provider = new ScriptedProvider([
-      selectionResponse(),
+      compactSelect("answer", "src/helper.ts", "type"),
       compactReply(
         // `answer` is a value-space function; `resolve type` is a space miss,
         // so the body is wrapped as a type alias in the requested space.
@@ -9146,7 +9370,7 @@ describe("compact protocol (#111/#119)", () => {
   test("under compact a no-resolve body creates a let binding in a new parent directory", async () => {
     const dir = fixtureDir();
     const provider = new ScriptedProvider([
-      selectionResponse(),
+      compactSelect("extra", "src/deep/new.ts"),
       compactReply(createEditor("src/deep/new.ts", "extra", "", "42")),
       compactReply(answerEditor("return 2;", { kind: "snippet", value: "return 1;" })),
     ]);
@@ -9166,7 +9390,7 @@ describe("compact protocol (#111/#119)", () => {
   test("under compact a create that duplicates an existing declaration is rejected", async () => {
     const dir = fixtureDir();
     const provider = new ScriptedProvider([
-      selectionResponse(),
+      compactSelect("missing", "src/helper.ts"),
       compactReply(
         createEditor(
           "src/helper.ts",
@@ -9197,7 +9421,7 @@ describe("compact protocol (#111/#119)", () => {
   test("under compact a create lists the created clause under a distinct resend line", async () => {
     const dir = fixtureDir();
     const provider = new ScriptedProvider([
-      selectionResponse(),
+      compactSelect("extra", "src/extra.ts"),
       compactReply(
         // Clause 1 creates a new file and applies; clause 2 is a kind miss on
         // an existing value-space name, so it keeps the address failure.
@@ -9282,8 +9506,12 @@ describe("compact protocol (#111/#119)", () => {
     expect(prompt).toContain("an empty fence deletes it");
     expect(prompt).toContain("no JSON edit payload");
     expect(prompt).toContain("naming it in the clause's own `select`");
-    // The target-selection paragraph (the JSON pick turn) is unchanged.
-    expect(prompt).toContain('{"mode": "modify", "path": ..., "symbol": ..., "kind": ...}');
+    // The pick turn is compact too: a select viewer leads to `# details`.
+    expect(prompt).toContain(
+      "First you will be asked to select the target. Reply with ONLY one `select <symbol> in <path>",
+    );
+    expect(prompt).toContain("`# details`");
+    expect(prompt).not.toContain('{"mode": "modify", "path": ..., "symbol": ..., "kind": ...}');
     // The JSON edit rule and create/delete paragraphs are gone.
     expect(prompt).not.toContain(
       "Then you will be asked to edit the selected symbol. Reply with ONLY one flat JSON object",
@@ -9349,7 +9577,7 @@ describe("compact protocol (#111/#119)", () => {
   test("under compact a JSON edit payload is a protocol rejection and a compact reply is accepted", async () => {
     const dir = fixtureDir();
     const provider = new ScriptedProvider([
-      selectionResponse(),
+      compactSelect("answer", "src/helper.ts", "value"),
       // A structurally valid JSON edit payload: compact rejects it outright.
       editResponse("return 1;", "return 2;"),
       // The required compact form lands on the next exchange.
@@ -9383,7 +9611,7 @@ describe("compact protocol (#111/#119)", () => {
   test("under compact a malformed reply is a protocol rejection (no JSON fallback)", async () => {
     const dir = fixtureDir();
     const provider = new ScriptedProvider([
-      selectionResponse(),
+      compactSelect("answer", "src/helper.ts", "value"),
       "not a clause and not JSON",
       compactReply(answerEditor("return 2;", { kind: "snippet", value: "return 1;" })),
     ]);

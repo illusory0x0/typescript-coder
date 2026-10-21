@@ -206,6 +206,9 @@ export async function runReplay(options: ReplayRunOptions): Promise<ReplayRun> {
       issue: options.bundle.issue,
       provider,
       temperature: 0,
+      // Replay bundles carry recorded JSON-format calls and no protocol field;
+      // keep their prompt/response contract on the explicit JSON path.
+      protocolFormat: "json",
       checkCommand: ["bun", options.tscBin, "--noEmit"],
       testCommand: ["bun", "test"],
     });

@@ -24,7 +24,7 @@ covered in [Live checks](#live-checks).
 | id                     | title                                                              | slow | live |
 | ---------------------- | ------------------------------------------------------------------ | ---- | ---- |
 | fix-answer             | failing test becomes green                                         | no   | no   |
-| compact-viewer-edit    | compact viewer locates the number then a pick edit lands           | no   | no   |
+| compact-viewer-edit    | compact select viewer opens details then an edit lands             | no   | no   |
 | live-fix-answer        | real model makes the failing test pass                             | no   | yes  |
 | keep-progress-retry    | type-invalid replacement stays and the next iteration builds on it | no   | no   |
 | persistent-failure     | exhausted Edit budget keeps the attempted state and explains       | no   | no   |

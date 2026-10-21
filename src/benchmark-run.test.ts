@@ -413,10 +413,10 @@ describe("oc model override (--oc-model)", () => {
 });
 
 describe("edit protocol override (--protocol-format) (#119)", () => {
-  test.skipIf(!runModulePresent)("parses --protocol-format and defaults to json", async () => {
+  test.skipIf(!runModulePresent)("parses --protocol-format and defaults to compact", async () => {
     const { parseArgs } = await loadRunModule();
-    expect(parseArgs([]).protocolFormat).toBe("json");
-    expect(parseArgs(["--multi-payload"]).protocolFormat).toBe("json");
+    expect(parseArgs([]).protocolFormat).toBe("compact");
+    expect(parseArgs(["--multi-payload"]).protocolFormat).toBe("compact");
     expect(parseArgs(["--protocol-format", "compact"]).protocolFormat).toBe("compact");
     expect(parseArgs(["--protocol-format", "json"]).protocolFormat).toBe("json");
   });

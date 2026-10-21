@@ -419,9 +419,9 @@ Options:
                                              tc side: a modify reply may batch path-independent
                                              edits in one {"payloads": [...]} object
                                              (default: off, one flat payload per exchange)
-  --protocol-format <json|compact>           edit protocol for the tc side (default: json);
-                                             compact requires the 'select … end' syntax in
-                                             place of the JSON edit payload (#119)
+  --protocol-format <json|compact>           edit protocol for the tc side (default: compact);
+                                             json keeps the flat JSON payload; compact
+                                             requires the 'select … end' syntax (#119)
   --help, -h                                 print this help and exit
 `);
 }
@@ -504,7 +504,7 @@ export function parseArgs(argv: string[]): CliArgs {
     tokenBudget: null,
     effort: null,
     multiPayload: false,
-    protocolFormat: "json",
+    protocolFormat: "compact",
     help: false,
   };
   for (let index = 0; index < argv.length; index += 1) {

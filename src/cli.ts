@@ -152,7 +152,7 @@ export function parseArgs(argv: string[]): CliOptions {
   let help = false;
   let model = DEFAULT_MODEL;
   let multiPayload = false;
-  let protocolFormat: ProtocolFormat = "json";
+  let protocolFormat: ProtocolFormat = "compact";
   let targets: Locator[] | null = null;
   let format: "text" | "json" = "text";
   let tokenBudget: number | null = null;
@@ -278,8 +278,8 @@ export function helpText(): string {
     '                     batch path-independent edits in one {"payloads": [...]} object',
     "                     (default: off, one flat payload per exchange)",
     "  --protocol-format <json|compact>",
-    "                     edit protocol (default: json); compact requires the",
-    "                     `select … end` syntax in place of the JSON edit payload",
+    "                     edit protocol (default: compact); json keeps the flat",
+    "                     JSON payload, compact requires the `select … end` syntax",
     "                     (#119; explicit-targets mode stays json)",
     "  --targets <file>   edit an explicit address list from a JSON file (#81); the",
     '                     file is an array or {"targets": [...]} of {"path","symbol",',

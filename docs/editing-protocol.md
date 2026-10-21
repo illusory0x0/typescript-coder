@@ -8,13 +8,14 @@ that payload: what the model may send, how each field resolves, and the checks
 that run before a byte reaches disk. The Edit → Verify loop around it is
 [`agent-loop.md`](agent-loop.md).
 
-Two reply formats exist, selected by `--protocol-format` (default `json`):
+Two reply formats exist, selected by `--protocol-format` (default `compact`):
 
-- **json**: one flat object per exchange. The shipped format; explicit-targets
-  mode (`--targets`) always uses it.
-- **compact**: one or more `select … end` clauses, on the same resolver but with
-  richer locators (regex, multi-range `pick`) and non-atomic multi-clause
-  replies. A JSON edit payload in this mode is a protocol rejection.
+- **compact**: the default. One or more `select … end` clauses, on the same
+  resolver but with richer locators (regex, multi-range `pick`) and non-atomic
+  multi-clause replies. A JSON edit payload in this mode is a protocol
+  rejection.
+- **json**: opt-in, one flat object per exchange. Explicit-targets mode
+  (`--targets`) always uses it.
 
 Implementation: `parseEditResponse` and `resolveEditRange` in `src/loop.ts`, the
 clause grammar in `src/selection.ts`, the cascade in `src/cascade.ts`, the reply
@@ -113,6 +114,15 @@ selection is never returned.
 A clause that stops before `replace` is a **viewer**: it locates and writes
 nothing (§4). A clause that stops after `pick` is not a viewer; `pick` requires
 `replace`.
+
+**Select first.** The first compact reply is exactly one clause. The harness
+renders its symbol index as top-level `select <name> in <path> [resolve <space>]`
+lines. A viewer (no `replace`) pins the declaration and the harness answers with
+a `# details` prompt: the goal, the symbol index, and the declaration source
+numbered with file-absolute lines; the next reply is the edit clause. An editor
+clause (with `replace`) carries its own edit and is applied without a second
+model call. A missing path, a missing symbol, or a space miss pins mode
+`create`, and the next prompt asks for a create clause.
 
 ### Grammar
 
@@ -236,17 +246,17 @@ These guards run before any gate:
 
 ## 4. Viewers
 
-A compact clause with no `replace` writes nothing and reports one numbered
-declaration block per clause as the next prompt's feedback: each candidate's
-exact file-absolute `path:line:col` position precedes the block, and every line
-intersected by a matched span carries `⁉️` in the gutter. A bare viewer (no
-`match`) renders the whole declaration once and marks nothing — the same
-`str_search`-like top-level default as the editor path. Where an editor
-treats ambiguity as failure, a viewer treats it as **information**: a `match`
-viewer returns all occurrences so the model can see the candidates, then add
-`replace` (optionally with a `pick` to narrow it) or lengthen the snippet. A
-`pick` requires `replace` and is not a viewer form. A malformed matcher still
-fails with its typed cause.
+A compact clause with no `replace` writes nothing and reports the declaration as
+the next prompt's `# details` block: the source is numbered with its
+file-absolute lines. A `match` viewer reports its candidate positions; the
+declaration block itself may be unmarked in this select-first pass. A bare
+viewer (no `match`) renders the whole declaration once — the same
+`str_search`-like top-level default as the editor path. Where an editor treats
+ambiguity as failure, a viewer treats it as **information**: a `match` viewer
+returns all occurrences so the model can see the candidates, then add `replace`
+(optionally with a `pick` to narrow it) or lengthen the snippet. A `pick`
+requires `replace` and is not a viewer form. A malformed matcher still fails
+with its typed cause.
 
 A locate turn is recorded as a `viewer` row, not an edit failure. A mixed reply
 applies its editors and carries the viewer results alongside the next

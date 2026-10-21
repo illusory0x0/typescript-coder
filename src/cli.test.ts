@@ -12,7 +12,7 @@ import {
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { helpText, parseArgs } from "./cli";
-import { runMain } from "./main";
+import { runMain as runMainBase } from "./main";
 import type { MainIo } from "./main";
 import type { ProviderLike } from "./loop";
 import type { ChatMessage, ChatResponse, ToolDefinition } from "./openai";
@@ -20,6 +20,12 @@ import type { ChatMessage, ChatResponse, ToolDefinition } from "./openai";
 const repoRoot = new URL("..", import.meta.url).pathname;
 const nestedSmoke = existsSync(join(repoRoot, ".nested-smoke"));
 const tempDirs: string[] = [];
+
+// The runMain tests script JSON responses; the production default is compact,
+// so select JSON explicitly unless a case overrides it.
+function runMain(options: Parameters<typeof runMainBase>[0]) {
+  return runMainBase({ protocolFormat: "json", ...options });
+}
 
 function tempDir(): string {
   const dir = mkdtempSync(join(tmpdir(), "tsmain-"));
@@ -42,7 +48,7 @@ describe("parseArgs", () => {
     help: false,
     model: "deepseek-v4.1-flash",
     multiPayload: false,
-    protocolFormat: "json" as const,
+    protocolFormat: "compact" as const,
     targets: null,
     format: "text" as const,
     tokenBudget: null,
@@ -76,8 +82,8 @@ describe("parseArgs", () => {
     expect(parseArgs(["--model", "qwen"]).multiPayload).toBe(false);
   });
 
-  test("reads --protocol-format json|compact, defaulting to json (#119)", () => {
-    expect(parseArgs([]).protocolFormat).toBe("json");
+  test("reads --protocol-format json|compact, defaulting to compact (#119)", () => {
+    expect(parseArgs([]).protocolFormat).toBe("compact");
     expect(parseArgs(["--protocol-format", "compact"]).protocolFormat).toBe("compact");
     expect(parseArgs(["--protocol-format=compact"]).protocolFormat).toBe("compact");
     expect(parseArgs(["--protocol-format", "json"]).protocolFormat).toBe("json");
@@ -268,6 +274,7 @@ describe("helpText", () => {
     expect(text).toContain("--cwd <dir>");
     expect(text).toContain("--timeout <ms>");
     expect(text).toContain("--protocol-format <json|compact>");
+    expect(text).toContain("edit protocol (default: compact)");
     expect(text).toContain("--targets <file>");
     expect(text).toContain("typescript-coder-result@1");
   });
