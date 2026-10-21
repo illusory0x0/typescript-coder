@@ -8437,6 +8437,7 @@ describe("compact protocol (#111/#119)", () => {
   ): CompactSelection {
     return {
       locator: { path: "src/helper.ts", name: "answer", kind: "function" },
+      space: null,
       matcher,
       pick,
       replacement,
@@ -8762,6 +8763,7 @@ describe("compact protocol (#111/#119)", () => {
   ): CompactSelection {
     return {
       locator: { path: "src/pair.ts", name: symbol, kind: "function" },
+      space: null,
       matcher,
       pick: null,
       replacement,
@@ -8896,7 +8898,13 @@ describe("compact protocol (#111/#119)", () => {
     kind: string,
     body: string,
   ): CompactSelection {
-    return { locator: { path, name: symbol, kind }, matcher: null, pick: null, replacement: body };
+    return {
+      locator: { path, name: symbol, kind },
+      space: null,
+      matcher: null,
+      pick: null,
+      replacement: body,
+    };
   }
 
   test("under compact an undeclared whole-declaration clause creates the file", async () => {
@@ -9043,6 +9051,7 @@ describe("compact protocol (#111/#119)", () => {
         ),
         {
           locator: { path: "src/helper.ts", name: "nope", kind: "function" },
+          space: null,
           matcher: { kind: "snippet", value: "return 1;" },
           pick: null,
           replacement: "return 5;",

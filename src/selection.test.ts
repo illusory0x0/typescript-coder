@@ -9,6 +9,8 @@ import {
 } from "./selection";
 import type { Selection } from "./selection";
 
+const FENCE = "``````";
+
 function first(text: string): Selection {
   const selections = parseSelection(text);
   const selection = selections[0];
@@ -38,6 +40,7 @@ describe("parseSelection", () => {
     expect(parseSelection("select function clamp in src/math.ts\nend")).toEqual([
       {
         locator: { path: "src/math.ts", name: "clamp", kind: "function" },
+        space: null,
         matcher: null,
         pick: null,
         replacement: null,
@@ -69,6 +72,32 @@ describe("parseSelection", () => {
       name: "function",
       kind: "",
     });
+  });
+
+  test("parses the resolve header after the path", () => {
+    const selection = first("select answer in main.ts resolve value end");
+    expect(selection.locator).toEqual({ path: "main.ts", name: "answer", kind: "" });
+    expect(selection.space).toBe("value");
+  });
+
+  test("parses each admitted resolve kind", () => {
+    for (const space of ["value", "type", "namespace"] as const) {
+      expect(first(`select answer in main.ts resolve ${space} end`).space).toBe(space);
+    }
+  });
+
+  test("parses a declaration kind and resolve together", () => {
+    const selection = first("select function answer in main.ts resolve value end");
+    expect(selection.locator).toEqual({
+      path: "main.ts",
+      name: "answer",
+      kind: "function",
+    });
+    expect(selection.space).toBe("value");
+  });
+
+  test("resolve is optional", () => {
+    expect(first("select answer in main.ts end").space).toBeNull();
   });
 
   test("parses a match snippet viewer", () => {
@@ -112,9 +141,9 @@ describe("parseSelection", () => {
       "select function clamp in src/math.ts",
       "match `Number.isNaN`",
       "replace with",
-      "```",
+      FENCE,
       "Number.isFinite",
-      "```",
+      FENCE,
       "end",
     ].join("\n");
     const selection = first(text);
@@ -126,9 +155,9 @@ describe("parseSelection", () => {
     const text = [
       "select const MAX in src/lexer.ts",
       "replace with",
-      "```",
+      FENCE,
       "return 1;",
-      "```",
+      FENCE,
       "end",
     ].join("\n");
     const selection = first(text);
@@ -141,8 +170,8 @@ describe("parseSelection", () => {
     const text = [
       "select const MAX_TOKENS in src/lexer.ts",
       "replace with",
-      "```",
-      "```",
+      FENCE,
+      FENCE,
       "end",
     ].join("\n");
     expect(first(text).replacement).toBe("");
@@ -150,8 +179,19 @@ describe("parseSelection", () => {
 
   test("preserves a multi-line fence body verbatim", () => {
     const body = "if (x) {\n  return 1;\n}";
-    const text = ["select foo in a.ts", "replace with", "```", body, "```", "end"].join("\n");
+    const text = ["select foo in a.ts", "replace with", FENCE, body, FENCE, "end"].join("\n");
     expect(first(text).replacement).toBe(body);
+  });
+
+  test("accepts a body with one or two backticks", () => {
+    const text = ["select foo in a.ts", "replace with", FENCE, "a``b", FENCE, "end"].join("\n");
+    expect(first(text).replacement).toBe("a``b");
+  });
+
+  test("accepts a longer opening when the closing run matches", () => {
+    const ticks = "````````";
+    const text = ["select foo in a.ts", "replace with", ticks, "x", ticks, "end"].join("\n");
+    expect(first(text).replacement).toBe("x");
   });
 
   test("parses one reply with several clauses", () => {
@@ -159,9 +199,9 @@ describe("parseSelection", () => {
       "select function clamp in src/math.ts",
       "match `Number.isNaN`",
       "replace with",
-      "```",
+      FENCE,
       "Number.isFinite",
-      "```",
+      FENCE,
       "end",
       "",
       "select function sum in src/math.ts",
@@ -210,6 +250,15 @@ describe("parseSelection failures", () => {
     expectSyntax("select a b c in d.ts end", "select");
   });
 
+  test("names an unknown resolve kind", () => {
+    expectSyntax("select foo in a.ts resolve function end", "resolve");
+    expectSyntax("select foo in a.ts resolve value, end", "resolve");
+  });
+
+  test("names a missing resolve kind", () => {
+    expectSyntax("select foo in a.ts resolve end", "value");
+  });
+
   test("rejects a pick without a match", () => {
     expectSyntax("select foo in a.ts\npick 10\nend", "pick");
   });
@@ -230,12 +279,22 @@ describe("parseSelection failures", () => {
     expectSyntax("select foo in a.ts\nmatch /abc\nend", "regex");
   });
 
-  test("names an unclosed fence", () => {
-    expectSyntax("select foo in a.ts\nreplace with\n```\nfoo\nend", "fence");
+  test("names an unclosed six-tick fence", () => {
+    expectSyntax(`select foo in a.ts\nreplace with\n${FENCE}\nfoo\nend`, "fence");
   });
 
-  test("rejects a fence body with a run as long as the opening", () => {
-    expectSyntax("select foo in a.ts\nreplace with\n```\na```b\n```\nend", "fence");
+  test("rejects a three-tick fence opening", () => {
+    expectSyntax("select foo in a.ts\nreplace with\n```\nx\n```\nend", "6");
+  });
+
+  test("rejects a closing run that differs from the opening", () => {
+    const seven = "`".repeat(7);
+    expectSyntax(`select foo in a.ts\nreplace with\n${FENCE}\nx\n${seven}\nend`, "fence");
+  });
+
+  test("rejects a fence body with three backticks", () => {
+    const body = `a${"`".repeat(3)}b`;
+    expectSyntax(`select foo in a.ts\nreplace with\n${FENCE}\n${body}\n${FENCE}\nend`, "fence");
   });
 
   test("rejects a non-1-based pick coordinate", () => {
@@ -267,24 +326,28 @@ describe("serializeSelection", () => {
     const table: Selection[] = [
       {
         locator: { path: "src/math.ts", name: "clamp", kind: "function" },
+        space: null,
         matcher: null,
         pick: null,
         replacement: null,
       },
       {
         locator: { path: "src/math.ts", name: "clamp", kind: "" },
+        space: "value",
         matcher: { kind: "snippet", value: "Number.isNaN" },
         pick: null,
         replacement: null,
       },
       {
         locator: { path: "src/lexer.ts", name: "tokenize", kind: "function" },
+        space: null,
         matcher: { kind: "regex", value: "^if \\(" },
         pick: [{ line: 12, column: 1, endLine: 12, endColumn: END_OF_LINE_COLUMN }],
         replacement: null,
       },
       {
         locator: { path: "src/lexer.ts", name: "tokenize", kind: "function" },
+        space: "namespace",
         matcher: { kind: "snippet", value: "x" },
         pick: [
           { line: 10, column: 1, endLine: 10, endColumn: END_OF_LINE_COLUMN },
@@ -294,18 +357,21 @@ describe("serializeSelection", () => {
       },
       {
         locator: { path: "src/math.ts", name: "clamp", kind: "function" },
+        space: null,
         matcher: { kind: "snippet", value: "Number.isNaN" },
         pick: null,
         replacement: "Number.isFinite",
       },
       {
         locator: { path: "src/lexer.ts", name: "MAX_TOKENS", kind: "const" },
+        space: null,
         matcher: null,
         pick: null,
         replacement: "",
       },
       {
         locator: { path: "src/math.ts", name: "sum", kind: "function" },
+        space: "type",
         matcher: null,
         pick: null,
         replacement: "a\nb\n",
@@ -318,9 +384,32 @@ describe("serializeSelection", () => {
     expect(parseSelection(serializeSelections(table))).toEqual(table);
   });
 
+  test("emits resolve after the path", () => {
+    const selection: Selection = {
+      locator: { path: "a.ts", name: "answer", kind: "" },
+      space: "value",
+      matcher: null,
+      pick: null,
+      replacement: null,
+    };
+    expect(serializeSelection(selection)).toBe("select answer in a.ts resolve value\nend");
+  });
+
+  test("uses a six-tick fence", () => {
+    const selection: Selection = {
+      locator: { path: "a.ts", name: "foo", kind: "" },
+      space: null,
+      matcher: null,
+      pick: null,
+      replacement: "y",
+    };
+    expect(serializeSelection(selection)).toContain(`${FENCE}\ny\n${FENCE}`);
+  });
+
   test("escapes a backtick and a backslash in a snippet", () => {
     const selection: Selection = {
       locator: { path: "a.ts", name: "foo", kind: "" },
+      space: null,
       matcher: { kind: "snippet", value: "a`b\\c" },
       pick: null,
       replacement: null,
@@ -332,6 +421,7 @@ describe("serializeSelection", () => {
   test("escapes a slash in a regex", () => {
     const selection: Selection = {
       locator: { path: "a.ts", name: "foo", kind: "" },
+      space: null,
       matcher: { kind: "regex", value: "a/b" },
       pick: null,
       replacement: null,
@@ -340,23 +430,23 @@ describe("serializeSelection", () => {
     expect(parseSelection(serializeSelection(selection))).toEqual([selection]);
   });
 
-  test("grows the fence past a backtick run in the body", () => {
+  test("throws when the body contains three backticks", () => {
     const selection: Selection = {
       locator: { path: "a.ts", name: "foo", kind: "" },
+      space: null,
       matcher: null,
       pick: null,
       replacement: "before\n```\nafter",
     };
-    const text = serializeSelection(selection);
-    expect(text).toContain("````");
-    expect(parseSelection(text)).toEqual([selection]);
+    expect(() => serializeSelection(selection)).toThrow(SelectionSyntaxError);
+    expect(() => serializeSelection(selection)).toThrow(/3 or more backticks/);
   });
 });
 
 describe("toEditPayload", () => {
   test("bridges a snippet editor with no pick", () => {
     const selection = first(
-      "select function clamp in src/math.ts\nmatch `Number.isNaN`\nreplace with\n```\nNumber.isFinite\n```\nend",
+      `select function clamp in src/math.ts\nmatch \`Number.isNaN\`\nreplace with\n${FENCE}\nNumber.isFinite\n${FENCE}\nend`,
     );
     expect(toEditPayload(selection)).toEqual({
       locator: { path: "src/math.ts", name: "clamp", kind: "function" },
@@ -367,20 +457,22 @@ describe("toEditPayload", () => {
   });
 
   test("bridges a whole-declaration rewrite and a delete", () => {
-    const rewrite = first("select const MAX in a.ts\nreplace with\n```\nreturn 1;\n```\nend");
+    const rewrite = first(
+      `select const MAX in a.ts\nreplace with\n${FENCE}\nreturn 1;\n${FENCE}\nend`,
+    );
     expect(toEditPayload(rewrite)).toEqual({
       locator: { path: "a.ts", name: "MAX", kind: "const" },
       matcher: null,
       range: null,
       replacement: "return 1;",
     });
-    const remove = first("select const MAX in a.ts\nreplace with\n```\n```\nend");
+    const remove = first(`select const MAX in a.ts\nreplace with\n${FENCE}\n${FENCE}\nend`);
     expect(toEditPayload(remove)?.replacement).toBe("");
   });
 
   test("bridges a single-range pick as a payload range", () => {
     const selection = first(
-      "select function tokenize in src/lexer.ts\nmatch `x`\npick 12:3-14:5\nreplace with\n```\ny\n```\nend",
+      `select function tokenize in src/lexer.ts\nmatch \`x\`\npick 12:3-14:5\nreplace with\n${FENCE}\ny\n${FENCE}\nend`,
     );
     expect(toEditPayload(selection)).toEqual({
       locator: { path: "src/lexer.ts", name: "tokenize", kind: "function" },
@@ -396,13 +488,22 @@ describe("toEditPayload", () => {
 
   test("has no payload form for a regex matcher", () => {
     expect(
-      toEditPayload(first("select foo in a.ts\nmatch /x/\nreplace with\n```\ny\n```\nend")),
+      toEditPayload(
+        first(`select foo in a.ts\nmatch /x/\nreplace with\n${FENCE}\ny\n${FENCE}\nend`),
+      ),
     ).toBeNull();
   });
 
   test("has no payload form for a multi-range pick", () => {
     const selection = first(
-      "select foo in a.ts\nmatch `x`\npick {1, 2}\nreplace with\n```\ny\n```\nend",
+      `select foo in a.ts\nmatch \`x\`\npick {1, 2}\nreplace with\n${FENCE}\ny\n${FENCE}\nend`,
+    );
+    expect(toEditPayload(selection)).toBeNull();
+  });
+
+  test("has no payload form when a resolve space is set", () => {
+    const selection = first(
+      `select answer in main.ts resolve value\nreplace with\n${FENCE}\nlet answer = 2;\n${FENCE}\nend`,
     );
     expect(toEditPayload(selection)).toBeNull();
   });

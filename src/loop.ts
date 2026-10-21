@@ -309,6 +309,7 @@ const COMPACT_EXAMPLE_FORMS: { label: string; selections: CompactSelection[] }[]
     selections: [
       {
         locator: { path: "src/x.ts", name: "f", kind: "function" },
+        space: null,
         matcher: { kind: "snippet", value: "Number.isNaN" },
         pick: null,
         replacement: null,
@@ -320,6 +321,7 @@ const COMPACT_EXAMPLE_FORMS: { label: string; selections: CompactSelection[] }[]
     selections: [
       {
         locator: { path: "src/x.ts", name: "MAX_TOKENS", kind: "const" },
+        space: null,
         matcher: null,
         pick: null,
         replacement: "const MAX_TOKENS = 8192;",
@@ -331,6 +333,7 @@ const COMPACT_EXAMPLE_FORMS: { label: string; selections: CompactSelection[] }[]
     selections: [
       {
         locator: { path: "src/x.ts", name: "tokenize", kind: "function" },
+        space: null,
         matcher: { kind: "regex", value: "^  if \\(" },
         pick: [{ line: 12, column: 3, endLine: 12, endColumn: 12 }],
         replacement: "  if (input.length === 0) return [];",
@@ -342,6 +345,7 @@ const COMPACT_EXAMPLE_FORMS: { label: string; selections: CompactSelection[] }[]
     selections: [
       {
         locator: { path: "src/x.ts", name: "clamp", kind: "function" },
+        space: null,
         matcher: { kind: "snippet", value: "Number.isNaN" },
         pick: null,
         replacement: "Number.isFinite",
@@ -354,6 +358,7 @@ const COMPACT_EXAMPLE_FORMS: { label: string; selections: CompactSelection[] }[]
     selections: [
       {
         locator: { path: "src/new.ts", name: "make", kind: "function" },
+        space: null,
         matcher: null,
         pick: null,
         replacement: "export function make(): number {\n  return 1;\n}",
@@ -366,12 +371,14 @@ const COMPACT_EXAMPLE_FORMS: { label: string; selections: CompactSelection[] }[]
     selections: [
       {
         locator: { path: "src/x.ts", name: "parse", kind: "function" },
+        space: null,
         matcher: { kind: "snippet", value: "return null;" },
         pick: null,
         replacement: null,
       },
       {
         locator: { path: "src/x.ts", name: "parse", kind: "function" },
+        space: null,
         matcher: { kind: "snippet", value: "return null;" },
         pick: null,
         replacement: "return undefined;",

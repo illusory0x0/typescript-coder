@@ -1,5 +1,5 @@
 import type { EditPayload, EditRange } from "./loop";
-import type { Locator } from "./utility";
+import type { Locator, SymbolSpace } from "./utility";
 
 /**
  * The matcher a compact clause carries: a verbatim source `snippet` or an
@@ -12,13 +12,19 @@ export interface SelectionMatcher {
 }
 
 /**
- * One parsed `select … end` clause, payload-equivalent to the JSON edit model
- * (`docs/edit-protocol.md` §9). `replacement === null` is a **viewer** (no
- * `replace`); `matcher === null` means no `match`; `pick === null` means no
- * `pick`.
+ * One parsed `select … end` clause. It is payload-equivalent to the JSON edit
+ * model (`docs/editing-protocol.md`) only while `space` is null; a clause that
+ * names a symbol space has no JSON form (see `toEditPayload`).
+ * `replacement === null` is a **viewer** (no `replace`); `matcher === null`
+ * means no `match`; `pick === null` means no `pick`.
  */
 export interface Selection {
   locator: Locator;
+  /**
+   * The `resolve <value|type|namespace>` disambiguator. `null` means the clause
+   * did not name a TypeScript symbol space and accepts any space.
+   */
+  space: SymbolSpace | null;
   matcher: SelectionMatcher | null;
   pick: EditRange[] | null;
   replacement: string | null;
@@ -43,6 +49,9 @@ const SELECTION_KINDS: ReadonlySet<string> = new Set([
   "enum",
   "namespace",
 ]);
+
+/** The `resolve` kinds the grammar admits: TypeScript symbol spaces. */
+const SELECTION_SPACES: ReadonlySet<string> = new Set(["value", "type", "namespace"]);
 
 /**
  * A malformed compact selection. Carries the loop's `stage:` style diagnostic
@@ -186,6 +195,11 @@ class SelectionReader {
 
     const path = this.readToken("expected a file path after `in`");
 
+    let space: SymbolSpace | null = null;
+    if (this.matchKeyword("resolve")) {
+      space = this.parseSpace();
+    }
+
     let kind = "";
     let name: string;
     if (header.length === 0) {
@@ -223,7 +237,17 @@ class SelectionReader {
 
     this.expectKeyword("end", "expected `end` to terminate the clause");
 
-    return { locator: { path, name, kind }, matcher, pick, replacement };
+    return { locator: { path, name, kind }, space, matcher, pick, replacement };
+  }
+
+  private parseSpace(): SymbolSpace {
+    const token = this.readToken("expected `value`, `type`, or `namespace` after `resolve`");
+    if (!SELECTION_SPACES.has(token)) {
+      throw new SelectionSyntaxError(
+        `unknown \`resolve\` kind \`${token}\`; expected one of value, type, namespace`,
+      );
+    }
+    return token as SymbolSpace;
   }
 
   private parseMatcher(): SelectionMatcher {
@@ -372,8 +396,10 @@ class SelectionReader {
       open += 1;
       this.pos += 1;
     }
-    if (open < 3) {
-      throw new SelectionSyntaxError("expected a fence (3+ backticks) after `replace with`");
+    if (open < 6) {
+      throw new SelectionSyntaxError(
+        "expected a fence opening with at least 6 backticks after `replace with`",
+      );
     }
     // The opening run must end its line; the body is raw until a closing line.
     let lineEnd = this.pos;
@@ -403,10 +429,8 @@ class SelectionReader {
         } else if (body.endsWith("\n") || body.endsWith("\r")) {
           body = body.slice(0, -1);
         }
-        if (longestBacktickRun(body) >= open) {
-          throw new SelectionSyntaxError(
-            "fence body contains a backtick run as long as the opening fence",
-          );
+        if (longestBacktickRun(body) >= 3) {
+          throw new SelectionSyntaxError("fence body contains a run of 3 or more backticks");
         }
         this.pos = end >= this.length ? this.length : end + 1;
         return body;
@@ -421,7 +445,7 @@ class SelectionReader {
 
 function isClosingFence(line: string, open: number): boolean {
   const trimmed = line.replace(/[ \t]+$/, "");
-  if (trimmed.length < open) {
+  if (trimmed.length !== open) {
     return false;
   }
   for (const char of trimmed) {
@@ -494,17 +518,25 @@ function longestBacktickRun(body: string): number {
 }
 
 function renderFence(body: string): string {
-  const ticks = "`".repeat(Math.max(3, longestBacktickRun(body) + 1));
+  if (longestBacktickRun(body) >= 3) {
+    throw new SelectionSyntaxError(
+      "cannot serialize a fence body containing a run of 3 or more backticks",
+    );
+  }
+  const ticks = "`".repeat(6);
   return `${ticks}\n${body}\n${ticks}`;
 }
 
 /** Render one selection back to the compact grammar (one `select … end` clause). */
 export function serializeSelection(selection: Selection): string {
   const { locator } = selection;
-  const head =
+  let head =
     locator.kind === ""
       ? `select ${locator.name} in ${locator.path}`
       : `select ${locator.kind} ${locator.name} in ${locator.path}`;
+  if (selection.space !== null) {
+    head += ` resolve ${selection.space}`;
+  }
   const parts = [head];
   if (selection.matcher !== null) {
     parts.push(`match ${renderMatcher(selection.matcher)}`);
@@ -533,6 +565,9 @@ export function serializeSelections(selections: Selection[]): string {
  */
 export function toEditPayload(selection: Selection): EditPayload | null {
   if (selection.replacement === null) {
+    return null;
+  }
+  if (selection.space !== null) {
     return null;
   }
   if (selection.matcher !== null && selection.matcher.kind !== "snippet") {

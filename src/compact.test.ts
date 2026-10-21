@@ -34,7 +34,7 @@ function deps(source: string): CompactDeps {
 describe("resolveCompactReply (#111)", () => {
   test("resolves an editor clause with its cascade stage and matcher kind", () => {
     const selections = parseSelection(
-      "select function once in a.ts\nmatch `return 1;`\nreplace with\n```\nreturn 2;\n```\nend",
+      "select function once in a.ts\nmatch `return 1;`\nreplace with\n``````\nreturn 2;\n``````\nend",
     );
     const result = resolveCompactReply(selections, deps(ONCE));
     expect(result.failures).toEqual([]);
@@ -49,7 +49,7 @@ describe("resolveCompactReply (#111)", () => {
 
   test("a whole-declaration replace records the whole-symbol stage and no matcher kind", () => {
     const selections = parseSelection(
-      "select function once in a.ts\nreplace with\n```\nfunction once(): number {\n  return 2;\n}\n```\nend",
+      "select function once in a.ts\nreplace with\n``````\nfunction once(): number {\n  return 2;\n}\n``````\nend",
     );
     const result = resolveCompactReply(selections, deps(ONCE));
     const region = result.regions[0];
@@ -80,7 +80,7 @@ describe("resolveCompactReply (#111)", () => {
 
   test("an ambiguous editor fails at the matcher stage with its cascade cause", () => {
     const selections = parseSelection(
-      "select function twice in a.ts\nmatch `return 1;`\nreplace with\n```\nreturn 2;\n```\nend",
+      "select function twice in a.ts\nmatch `return 1;`\nreplace with\n``````\nreturn 2;\n``````\nend",
     );
     const result = resolveCompactReply(selections, deps(TWICE));
     expect(result.regions).toEqual([]);
@@ -91,7 +91,7 @@ describe("resolveCompactReply (#111)", () => {
 
   test("a malformed regex fails as regex-invalid on the matcher stage", () => {
     const selections = parseSelection(
-      "select function once in a.ts\nmatch /(/\nreplace with\n```\nreturn 2;\n```\nend",
+      "select function once in a.ts\nmatch /(/\nreplace with\n``````\nreturn 2;\n``````\nend",
     );
     const result = resolveCompactReply(selections, deps(ONCE));
     expect(result.failures[0]?.stage).toBe("matcher");
@@ -100,7 +100,7 @@ describe("resolveCompactReply (#111)", () => {
 
   test("a matched unresolvable address fails at the address stage with the undeclared name", () => {
     const selections = parseSelection(
-      "select function missing in a.ts\nmatch `return 1;`\nreplace with\n```\nreturn 2;\n```\nend",
+      "select function missing in a.ts\nmatch `return 1;`\nreplace with\n``````\nreturn 2;\n``````\nend",
     );
     const result = resolveCompactReply(selections, deps(ONCE));
     expect(result.regions).toEqual([]);
@@ -110,7 +110,7 @@ describe("resolveCompactReply (#111)", () => {
 
   test("a whole-declaration editor on an undeclared name resolves to a create region", () => {
     const selections = parseSelection(
-      "select function missing in a.ts\nreplace with\n```\nfunction missing(): number {\n  return 0;\n}\n```\nend",
+      "select function missing in a.ts\nreplace with\n``````\nfunction missing(): number {\n  return 0;\n}\n``````\nend",
     );
     const result = resolveCompactReply(selections, deps(ONCE));
     expect(result.failures).toEqual([]);
@@ -126,7 +126,7 @@ describe("resolveCompactReply (#111)", () => {
 
   test("a create appends with no leading newline to an empty file", () => {
     const selections = parseSelection(
-      "select const NEW in src/new.ts\nreplace with\n```\nconst NEW = 1;\n```\nend",
+      "select const NEW in src/new.ts\nreplace with\n``````\nconst NEW = 1;\n``````\nend",
     );
     const result = resolveCompactReply(selections, deps(""));
     expect(result.regions[0]?.create).toBe(true);
@@ -135,7 +135,7 @@ describe("resolveCompactReply (#111)", () => {
 
   test("a no-kind whole-declaration editor on an undeclared name also creates", () => {
     const selections = parseSelection(
-      "select missing in a.ts\nreplace with\n```\nfunction missing(): number {\n  return 0;\n}\n```\nend",
+      "select missing in a.ts\nreplace with\n``````\nfunction missing(): number {\n  return 0;\n}\n``````\nend",
     );
     const result = resolveCompactReply(selections, deps(ONCE));
     expect(result.failures).toEqual([]);
@@ -149,7 +149,7 @@ describe("resolveCompactReply (#111)", () => {
     // `once` is declared as a function; a no-kind locator does not match it, but
     // the name is not undeclared either, so it stays an address failure.
     const selections = parseSelection(
-      "select once in a.ts\nreplace with\n```\nfunction once(): number {\n  return 2;\n}\n```\nend",
+      "select once in a.ts\nreplace with\n``````\nfunction once(): number {\n  return 2;\n}\n``````\nend",
     );
     const result = resolveCompactReply(selections, deps(ONCE));
     expect(result.regions).toEqual([]);
@@ -159,7 +159,7 @@ describe("resolveCompactReply (#111)", () => {
 
   test("a match on an undeclared name is not a create", () => {
     const selections = parseSelection(
-      "select function missing in a.ts\nmatch `return 1;`\nreplace with\n```\nreturn 2;\n```\nend",
+      "select function missing in a.ts\nmatch `return 1;`\nreplace with\n``````\nreturn 2;\n``````\nend",
     );
     const result = resolveCompactReply(selections, deps(ONCE));
     expect(result.regions).toEqual([]);
@@ -168,7 +168,7 @@ describe("resolveCompactReply (#111)", () => {
 
   test("an empty fence on an undeclared name is not a create", () => {
     const selections = parseSelection(
-      "select function missing in a.ts\nreplace with\n````\n````\nend",
+      "select function missing in a.ts\nreplace with\n``````\n``````\nend",
     );
     const result = resolveCompactReply(selections, deps(ONCE));
     expect(result.regions).toEqual([]);

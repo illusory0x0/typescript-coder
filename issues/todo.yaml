@@ -2,14 +2,6 @@
 # rewrites it; `add` appends; other writes keep it. `check` enforces it.
 # A dep, and every child of an umbrella, must be listed before its dependent.
 
-- id: 2
-  title: "Parse and serialize the resolve header and six-tick fences"
-  status: todo
-  priority: medium
-  milestone: null
-  parent: 1
-  deps: []
-  file: 0002-parse-and-serialize-the-resolve-header-and-six-tick-fences.md
 - id: 3
   title: "Resolve the compact address by TS symbol space and apply creation defaults"
   status: todo

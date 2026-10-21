@@ -1,7 +1,7 @@
 ---
 id: 2
 title: "Parse and serialize the resolve header and six-tick fences"
-status: todo
+status: done
 priority: medium
 milestone: null
 parent: 1
