@@ -3822,9 +3822,9 @@ function multiPayloadDiagnostics(
 }
 
 // One failing clause inside a compact reply (#111): names the clause position
-// and its own staged diagnostics. Application is non-atomic (§6), so the header
-// says the other resolved clauses may already be applied rather than claiming
-// nothing was written; the applied-list block that follows names them.
+// and its own staged diagnostics. Compact replies are atomic across the whole
+// reply (§6), so the header says every clause is discarded and nothing is
+// written.
 function compactClauseDiagnostics(
   index: number,
   total: number,
@@ -3834,13 +3834,13 @@ function compactClauseDiagnostics(
 ): string {
   return [
     "stage: compact",
-    `clause ${index} of ${total} (${addressJson(locator)} in ${JSON.stringify(path)}) failed; resolved clauses are applied non-atomically, so any other clause listed as applied below is already in the file`,
+    `clause ${index} of ${total} (${addressJson(locator)} in ${JSON.stringify(path)}) failed; the whole compact reply is discarded and nothing is written`,
     diagnostics,
   ].join("\n");
 }
 
-// Overlap rejection on the compact path (#111): the earlier clause won, so the
-// later one fails while the winner (and every other applied clause) stands.
+// Overlap rejection on the compact path (#111): both clauses are named, and the
+// whole reply is discarded because compact replies are atomic.
 function compactOverlapDiagnostics(
   total: number,
   path: string,
@@ -3849,35 +3849,9 @@ function compactOverlapDiagnostics(
 ): string {
   return [
     "stage: compact",
-    `clause ${earlier.index + 1} and clause ${later.index + 1} of ${total} both edit ${JSON.stringify(path)} but their regions overlap (offsets ${earlier.start}..${earlier.end} and ${later.start}..${later.end}); the earlier clause wins and the later is skipped`,
+    `clause ${earlier.index + 1} and clause ${later.index + 1} of ${total} both edit ${JSON.stringify(path)} but their regions overlap (offsets ${earlier.start}..${earlier.end} and ${later.start}..${later.end}); the whole compact reply is discarded and nothing is written`,
     `clause ${earlier.index + 1} (${addressJson(earlier.locator)}) and clause ${later.index + 1} (${addressJson(later.locator)}) must address non-overlapping regions, or be split across replies`,
   ].join("\n");
-}
-
-// The §7 "do not resend" list: the clauses of a compact reply that were applied
-// before the failure. Fed back with the failures so the model resends only the
-// failing clauses (a resend of an applied one now fails as `matcher-not-found`).
-function compactAppliedListDiagnostics(applied: readonly ResolvedRegion[], total: number): string {
-  const lines = ["stage: compact"];
-  const line = (region: ResolvedRegion): string =>
-    `- clause ${region.index + 1} of ${total} (${addressJson(region.locator)} in ${JSON.stringify(region.path)})`;
-  const modified = applied.filter((region) => !region.create);
-  const created = applied.filter((region) => region.create);
-  if (modified.length > 0) {
-    lines.push("already applied (do not resend):");
-    for (const region of modified) {
-      lines.push(line(region));
-    }
-  }
-  // An implicit create now exists in the file, so name it separately: a resend
-  // would be an address miss, not a `matcher-not-found`.
-  if (created.length > 0) {
-    lines.push("created (do not resend):");
-    for (const region of created) {
-      lines.push(line(region));
-    }
-  }
-  return lines.join("\n");
 }
 
 // Bridge a resolved compact editor clause into the shared `ResolvedRegion`
@@ -3951,10 +3925,11 @@ type RegionOverlapNote = (path: string, earlier: ResolvedRegion, later: Resolved
 /**
  * Apply already-resolved regions, one pass per file: overlap rejection, the
  * prev-broken/gate/duplicate/format/no-op guards, and the final formatted write.
- * Used by the JSON batch path (#69/#78), whose policy is atomic per file: a
+ * Used by both the JSON batch path (#69/#78) and compact replies (#111). A
  * per-file failure is reported through `noteFailure` for every region in that
  * file (the whole file is discarded) and the file is skipped; other files still
- * apply. The compact reply path (#111) uses the non-atomic variant below.
+ * produce writes here. The compact caller then treats any reported failure as
+ * whole-reply atomic and discards every returned write.
  */
 async function applyResolvedRegions(input: {
   regions: readonly ResolvedRegion[];
@@ -4065,136 +4040,6 @@ async function applyResolvedRegions(input: {
     writes.push({ path, source: formatted });
   }
   return writes;
-}
-
-/**
- * Apply already-resolved regions **non-atomically**, one pass per file (#111
- * §6): each region is spliced into its file's evolving source, in document
- * order, and guarded on its own. A region that overlaps an already-applied
- * region in the same file, leaves the file unparseable, duplicates a top-level
- * declaration, or formats back to the current source fails and is skipped; an
- * applied region stands even when a later region fails. Every region keeps its
- * original offsets, which are mapped onto the evolving source with a running
- * offset delta, and the file is formatted once at the end (as the atomic path
- * does). Returns the files that changed (with their final formatted source) and
- * the regions that applied, in document order; failures are reported through
- * `noteFailure`/`noteOverlap`.
- *
- * The JSON batch path keeps its atomic policy (`applyResolvedRegions` above) and
- * does not use this.
- */
-async function applyResolvedRegionsNonAtomic(input: {
-  regions: readonly ResolvedRegion[];
-  fileSourceOf: (path: string) => string;
-  target: string;
-  prevCheck: ParseCheck;
-  noteFailure: (note: RegionFailureNote) => void;
-  noteOverlap: RegionOverlapNote;
-}): Promise<{ writes: { path: string; source: string }[]; applied: ResolvedRegion[] }> {
-  // Group the resolved regions by file and apply each file independently.
-  const groups = new Map<string, ResolvedRegion[]>();
-  for (const region of input.regions) {
-    const group = groups.get(region.path);
-    if (group === undefined) {
-      groups.set(region.path, [region]);
-    } else {
-      group.push(region);
-    }
-  }
-  const writes: { path: string; source: string }[] = [];
-  const applied: ResolvedRegion[] = [];
-  for (const [path, group] of groups) {
-    const payloadSource = input.fileSourceOf(path);
-    const payloadCheck = path === input.target ? input.prevCheck : parseCheck(payloadSource);
-    if (!payloadCheck.ok) {
-      // Unreachable for extra files: a strict resolution succeeded, so the file
-      // parses. The pinned file's failure is external modification or a harness
-      // bug; the run keeps its existing prev-broken handling.
-      for (const region of group) {
-        input.noteFailure({
-          region,
-          path,
-          stage: "address",
-          diagnostics: prevBrokenDiagnostics(path, payloadCheck.failure),
-        });
-      }
-      continue;
-    }
-    // Document order: ascending original start. JS sort is stable, so equal
-    // starts keep reply order and the earlier clause is the overlap winner.
-    const ordered = [...group].sort((left, right) => left.start - right.start);
-    // The evolving source and the running delta between original and evolving
-    // coordinates. Each applied splice changes the length by
-    // `text.length - (end - start)`, which the next region's offsets absorb.
-    let evolving = payloadSource;
-    let evolvingProgram = payloadCheck.program;
-    let delta = 0;
-    let lastApplied: ResolvedRegion | null = null;
-    let lastAppliedEnd = -1;
-    // The last applied region's formatted source is the file's final formatted
-    // form (later failures change nothing), so it is the source to write.
-    let finalFormatted: string | null = null;
-    for (const region of ordered) {
-      const start = region.start + delta;
-      const end = region.end + delta;
-      if (lastApplied !== null && start < lastAppliedEnd) {
-        // The earlier clause in document order wins; the later fails naming it.
-        input.noteOverlap(path, lastApplied, region);
-        continue;
-      }
-      const spliced = applyMatcherSplice(evolving, start, end, region.text);
-      const gate = parseCheck(spliced);
-      if (!gate.ok) {
-        input.noteFailure({
-          region,
-          path,
-          stage: "gate",
-          diagnostics: gateDiagnostics(start, region.replacement, gate.failure),
-        });
-        continue;
-      }
-      const duplicate = duplicateDeclarationDiagnostics(
-        evolving,
-        path,
-        evolvingProgram,
-        gate.program,
-      );
-      if (duplicate !== null) {
-        input.noteFailure({ region, path, stage: "duplicate", diagnostics: duplicate });
-        continue;
-      }
-      let formatted: string | null = null;
-      try {
-        formatted = await formatSource(path, spliced);
-      } catch (error) {
-        input.noteFailure({
-          region,
-          path,
-          stage: "format",
-          diagnostics: `stage: format\n${errorMessage(error)}`,
-          formatMessage: errorMessage(error),
-        });
-        continue;
-      }
-      if (await sameAfterFormatting(path, evolving, formatted)) {
-        input.noteFailure({ region, path, stage: "no-op", diagnostics: NOOP_DIAGNOSTICS });
-        continue;
-      }
-      // Commit the region: the evolving source keeps the raw splice (formatting
-      // runs once at the end), the delta and the guard baseline advance.
-      evolving = spliced;
-      evolvingProgram = gate.program;
-      delta += region.text.length - (region.end - region.start);
-      lastApplied = region;
-      lastAppliedEnd = start + region.text.length;
-      finalFormatted = formatted;
-      applied.push(region);
-    }
-    if (lastApplied !== null && finalFormatted !== null && finalFormatted !== payloadSource) {
-      writes.push({ path, source: finalFormatted });
-    }
-  }
-  return { writes, applied };
 }
 
 function createExistsDiagnostics(
@@ -6754,11 +6599,10 @@ export async function runLoop(options: LoopOptions): Promise<LoopResult> {
       }
       // #111 compact application: resolve the parsed clauses into regions,
       // viewers, and typed failures, then apply the resolved editor clauses
-      // non-atomically (§6): per file, in document order, successes stand and
-      // failures are skipped. Viewers surface their occurrences as the next
-      // prompt's feedback and write nothing. When any clause failed the exchange
-      // is still a retry-driving rejection, but the successful writes persist and
-      // the diagnostics list the applied clauses (the §7 "do not resend" list).
+      // atomically across the whole reply (§6): any resolution failure or
+      // apply failure discards every region, including creates and files that
+      // passed their own guards. Viewers surface their occurrences as the next
+      // prompt's feedback and write nothing.
       let compactApplied = false;
       let compactAppliedRegions: ResolvedRegion[] = [];
       let compactCreates = 0;
@@ -6814,45 +6658,40 @@ export async function runLoop(options: LoopOptions): Promise<LoopResult> {
         // #111: count the create clauses the reply resolved, applied or not, so
         // the stage/metrics instrumentation records create-form adoption.
         compactCreates = compactResolution.regions.filter((region) => region.create).length;
-        // Resolve failures never abort the resolved clauses (§6): apply them
-        // non-atomically even when other clauses failed resolution.
-        const outcome = await applyResolvedRegionsNonAtomic({
-          regions,
-          fileSourceOf: (path) =>
-            path === target ? sourceBefore : (readFileIfExists(join(cwd, path)) ?? ""),
-          target,
-          prevCheck,
-          noteFailure: (note) => {
-            noteCompactFailure(
-              note.region.index,
-              note.path,
-              note.region.locator,
-              note.stage,
-              note.diagnostics,
-              { matcherCause: note.matcherCause },
-            );
-          },
-          noteOverlap: (path, earlier, later) => {
-            failureCause = "multi-duplicate";
-            if (firstCompactStage === null) {
-              firstCompactStage = "protocol";
-            }
-            blocks.push(compactOverlapDiagnostics(totalClauses, path, earlier, later));
-          },
-        });
-        compactAppliedRegions = outcome.applied;
+        // Whole-reply atomicity (§6): resolution failures discard every
+        // resolved region, and any apply failure discards every returned write
+        // (including files that passed). Nothing is written until both sets are
+        // clean.
+        let writes: { path: string; source: string }[] = [];
+        if (compactResolution.failures.length === 0) {
+          writes = await applyResolvedRegions({
+            regions,
+            fileSourceOf: (path) =>
+              path === target ? sourceBefore : (readFileIfExists(join(cwd, path)) ?? ""),
+            target,
+            prevCheck,
+            noteFailure: (note) => {
+              noteCompactFailure(
+                note.region.index,
+                note.path,
+                note.region.locator,
+                note.stage,
+                note.diagnostics,
+                { matcherCause: note.matcherCause },
+              );
+            },
+            noteOverlap: (path, earlier, later) => {
+              failureCause = "multi-duplicate";
+              if (firstCompactStage === null) {
+                firstCompactStage = "protocol";
+              }
+              blocks.push(compactOverlapDiagnostics(totalClauses, path, earlier, later));
+            },
+          });
+        }
         if (blocks.length > 0) {
-          // Partial updates persist (§6): write the files that changed before
-          // the retry-driving rejection.
-          for (const write of outcome.writes) {
-            writeTarget(cwd, write.path, write.source);
-          }
-          const appliedList =
-            outcome.applied.length > 0
-              ? compactAppliedListDiagnostics(outcome.applied, totalClauses)
-              : null;
-          const diagnostics = blocks.join("\n\n");
-          failure = appliedList === null ? diagnostics : `${diagnostics}\n\n${appliedList}`;
+          // The whole compact reply is discarded: no file write, no create.
+          failure = blocks.join("\n\n");
           if (firstCompactStage !== null) {
             failureStage = firstCompactStage;
           }
@@ -6860,8 +6699,9 @@ export async function runLoop(options: LoopOptions): Promise<LoopResult> {
           addressUndeclaredName = firstCompactUndeclared;
         } else if (regions.length > 0) {
           compactApplied = true;
-          batchWrites.push(...outcome.writes);
-          newSource = outcome.writes[0]?.source ?? null;
+          compactAppliedRegions = regions;
+          batchWrites.push(...writes);
+          newSource = writes[0]?.source ?? null;
         }
         if (compactResolution.viewers.length > 0) {
           compactViewerFeedback = renderViewerFeedback(compactResolution.viewers);
@@ -6869,8 +6709,8 @@ export async function runLoop(options: LoopOptions): Promise<LoopResult> {
       }
       // A viewer locate turn (#111): a reply that carried only viewers writes
       // nothing and is not an edit failure; its occurrences ride the next
-      // prompt. A mixed reply applied its editors above and carries the viewer
-      // results alongside the next diagnostics.
+      // prompt. A mixed reply carries viewer results alongside the diagnostics;
+      // its editors apply only when the whole reply is clean.
       if (compactViewerFeedback !== null) {
         if (failure !== null) {
           failure = `${failure}\n\n${compactViewerFeedback}`;

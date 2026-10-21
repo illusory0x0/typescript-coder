@@ -3034,7 +3034,10 @@ class ScriptedProvider implements ProviderLike {
   readonly toolsArgs: (ToolDefinition[] | undefined)[] = [];
   readonly optionCalls: (ChatOptions | undefined)[] = [];
 
-  constructor(private readonly responses: ScriptedResponse[]) {}
+  constructor(
+    private readonly responses: ScriptedResponse[],
+    private readonly onCall?: (callIndex: number) => void,
+  ) {}
 
   async chat(
     messages: ChatMessage[],
@@ -3044,6 +3047,7 @@ class ScriptedProvider implements ProviderLike {
     this.calls.push(structuredClone(messages));
     this.toolsArgs.push(tools);
     this.optionCalls.push(options);
+    this.onCall?.(this.calls.length - 1);
     const response = this.responses.shift();
     if (response === undefined) {
       throw new Error("no scripted response");
@@ -9327,8 +9331,8 @@ describe("compact protocol (#111/#119)", () => {
     expect(rejected?.diagnostics).toContain("stage: compact");
   }, 30000);
 
-  // A compact clause over a `pair.ts` declaration, for the multi-clause §6
-  // non-atomic application tests below.
+  // A compact clause over a `pair.ts` declaration, for the multi-clause atomic
+  // application tests below.
   function pairEditor(
     symbol: string,
     replacement: string,
@@ -9343,20 +9347,32 @@ describe("compact protocol (#111/#119)", () => {
     };
   }
 
-  test("a multi-clause reply with one no-op clause applies the others and records the applied list", async () => {
+  test("a compact multi-clause reply with one no-op clause writes nothing and the retry resends both", async () => {
     const dir = sameFileFixtureDir();
-    const provider = new ScriptedProvider([
-      compactSelect("one", "src/pair.ts"),
-      compactReply(
-        // Clause 1 applies `one`'s fix.
-        pairEditor("one", "return 2;", { kind: "snippet", value: "return 1;" }),
-        // Clause 2 changes nothing: its replacement equals the matched source.
-        pairEditor("two", "return 1;", { kind: "snippet", value: "return 1;" }),
-      ),
-      // The rejection's §7 feedback lists the applied clause, so the model
-      // retries only the remaining work; the run completes without a storm.
-      compactReply(pairEditor("two", "return 3;", { kind: "snippet", value: "return 1;" })),
-    ]);
+    const original = pairSource(dir);
+    let afterFailure = "";
+    const provider = new ScriptedProvider(
+      [
+        compactSelect("one", "src/pair.ts"),
+        compactReply(
+          // Clause 1 would apply `one`'s fix.
+          pairEditor("one", "return 2;", { kind: "snippet", value: "return 1;" }),
+          // Clause 2 changes nothing: its replacement equals the matched source.
+          pairEditor("two", "return 1;", { kind: "snippet", value: "return 1;" }),
+        ),
+        // The whole reply failed, so the retry must carry both edits.
+        compactReply(
+          pairEditor("one", "return 2;", { kind: "snippet", value: "return 1;" }),
+          pairEditor("two", "return 3;", { kind: "snippet", value: "return 1;" }),
+        ),
+        "Great! I resolve this problem!",
+      ],
+      (callIndex) => {
+        if (callIndex === 2) {
+          afterFailure = pairSource(dir);
+        }
+      },
+    );
     const result = await runLoop({
       cwd: dir,
       issue: "make both declarations satisfy the pair test",
@@ -9366,35 +9382,47 @@ describe("compact protocol (#111/#119)", () => {
       testCommand: ["bun", "test"],
     });
     expect(result.ok).toBe(true);
+    // The failed reply wrote nothing: the retry saw the original file.
+    expect(afterFailure).toBe(original);
     const source = pairSource(dir);
-    // Clause 1's write persisted even though clause 2 failed.
     expect(source).toContain("return 2;");
     expect(source).toContain("return 3;");
+    expect(source).not.toContain("return 1;");
     const rejected = result.records.find(
       (record) => record.kind === "exchange" && record.outcome === "no-op",
     );
     expect(rejected).toBeDefined();
-    // Every failed clause is named...
     expect(rejected?.diagnostics).toContain("clause 2 of 2");
     expect(rejected?.diagnostics).toContain("stage: no-op");
-    // ...and the applied clause is listed so it is not resent.
-    expect(rejected?.diagnostics).toContain("already applied (do not resend):");
-    expect(rejected?.diagnostics).toContain("clause 1 of 2");
-    // Only the applied clause is recorded in the metrics.
-    expect(rejected?.stages).toEqual(["match"]);
+    expect(rejected?.diagnostics).toContain("the whole compact reply is discarded");
+    expect(rejected?.diagnostics).not.toContain("already applied (do not resend):");
+    expect(rejected?.stages).toEqual([]);
   }, 30000);
 
-  test("two overlapping compact clauses apply the earlier and report the later as an overlap", async () => {
+  test("two overlapping compact clauses write nothing and the retry applies both", async () => {
     const dir = sameFileFixtureDir();
-    const provider = new ScriptedProvider([
-      compactSelect("one", "src/pair.ts"),
-      compactReply(
-        // Both clauses resolve to the same `return 1;` span in `one`.
-        pairEditor("one", "return 2;", { kind: "snippet", value: "return 1;" }),
-        pairEditor("one", "return 9;", { kind: "snippet", value: "return 1;" }),
-      ),
-      compactReply(pairEditor("two", "return 3;", { kind: "snippet", value: "return 1;" })),
-    ]);
+    const original = pairSource(dir);
+    let afterFailure = "";
+    const provider = new ScriptedProvider(
+      [
+        compactSelect("one", "src/pair.ts"),
+        compactReply(
+          // Both clauses resolve to the same `return 1;` span in `one`.
+          pairEditor("one", "return 2;", { kind: "snippet", value: "return 1;" }),
+          pairEditor("one", "return 9;", { kind: "snippet", value: "return 1;" }),
+        ),
+        compactReply(
+          pairEditor("one", "return 2;", { kind: "snippet", value: "return 1;" }),
+          pairEditor("two", "return 3;", { kind: "snippet", value: "return 1;" }),
+        ),
+        "Great! I resolve this problem!",
+      ],
+      (callIndex) => {
+        if (callIndex === 2) {
+          afterFailure = pairSource(dir);
+        }
+      },
+    );
     const result = await runLoop({
       cwd: dir,
       issue: "make both declarations satisfy the pair test",
@@ -9404,17 +9432,127 @@ describe("compact protocol (#111/#119)", () => {
       testCommand: ["bun", "test"],
     });
     expect(result.ok).toBe(true);
+    expect(afterFailure).toBe(original);
     const source = pairSource(dir);
-    // The earlier clause won; the later's `return 9;` never reached the file.
     expect(source).toContain("return 2;");
-    expect(source).not.toContain("return 9;");
     expect(source).toContain("return 3;");
+    expect(source).not.toContain("return 9;");
     const rejected = result.records.find((record) => record.cause === "multi-duplicate");
     expect(rejected).toBeDefined();
     expect(rejected?.diagnostics).toContain("overlap");
     expect(rejected?.diagnostics).toContain("clause 1");
     expect(rejected?.diagnostics).toContain("clause 2");
-    expect(rejected?.diagnostics).toContain("earlier clause wins");
+    expect(rejected?.diagnostics).toContain("the whole compact reply is discarded");
+    expect(rejected?.diagnostics).toContain("nothing is written");
+    expect(rejected?.diagnostics).not.toContain("earlier clause wins");
+  }, 30000);
+
+  test("a multi-file compact reply is all-or-none across files", async () => {
+    const dir = multiFixtureDir();
+    const originalA = readFileSync(join(dir, "src", "a.ts"), "utf8");
+    const originalB = readFileSync(join(dir, "src", "b.ts"), "utf8");
+    let afterFailure = "";
+    const provider = new ScriptedProvider(
+      [
+        compactSelect("one", "src/a.ts"),
+        compactReply(
+          // The `a.ts` clause would pass on its own; `b.ts` resolves but is a
+          // no-op, so the apply phase must discard `a.ts`'s returned write too.
+          {
+            locator: { path: "src/a.ts", name: "one", kind: "function" },
+            space: null,
+            matcher: { kind: "snippet", value: "return 1;" },
+            pick: null,
+            replacement: "return 2;",
+          },
+          {
+            locator: { path: "src/b.ts", name: "two", kind: "function" },
+            space: null,
+            matcher: { kind: "snippet", value: "return 1;" },
+            pick: null,
+            replacement: "return 1;",
+          },
+        ),
+        compactReply(
+          {
+            locator: { path: "src/a.ts", name: "one", kind: "function" },
+            space: null,
+            matcher: { kind: "snippet", value: "return 1;" },
+            pick: null,
+            replacement: "return 2;",
+          },
+          {
+            locator: { path: "src/b.ts", name: "two", kind: "function" },
+            space: null,
+            matcher: { kind: "snippet", value: "return 1;" },
+            pick: null,
+            replacement: "return 3;",
+          },
+        ),
+        "Great! I resolve this problem!",
+      ],
+      (callIndex) => {
+        if (callIndex === 2) {
+          afterFailure = `${readFileSync(join(dir, "src", "a.ts"), "utf8")}\n${readFileSync(join(dir, "src", "b.ts"), "utf8")}`;
+        }
+      },
+    );
+    const result = await runLoop({
+      cwd: dir,
+      issue: "make both declarations satisfy the pair test",
+      provider,
+      protocolFormat: "compact",
+      checkCommand: TSC,
+      testCommand: ["bun", "test"],
+    });
+    expect(result.ok).toBe(true);
+    expect(afterFailure).toBe(`${originalA}\n${originalB}`);
+    expect(readFileSync(join(dir, "src", "a.ts"), "utf8")).toContain("return 2;");
+    expect(readFileSync(join(dir, "src", "b.ts"), "utf8")).toContain("return 3;");
+    const rejected = result.records.find(
+      (record) => record.kind === "exchange" && record.outcome === "no-op",
+    );
+    expect(rejected?.diagnostics).toContain("clause 2 of 2");
+    expect(rejected?.diagnostics).toContain("the whole compact reply is discarded");
+    expect(rejected?.diagnostics).not.toContain("already applied (do not resend):");
+  }, 30000);
+
+  test("a mixed viewer+editor failing reply writes nothing but carries viewer feedback", async () => {
+    const dir = fixtureDir();
+    const original = helperSource(dir);
+    let afterFailure = "";
+    const provider = new ScriptedProvider(
+      [
+        compactSelect("answer", "src/helper.ts", "value"),
+        compactReply(
+          answerEditor(null, { kind: "snippet", value: "return 1;" }),
+          answerEditor("return 2;", { kind: "snippet", value: "return 9;" }),
+        ),
+        compactReply(answerEditor("return 2;", { kind: "snippet", value: "return 1;" })),
+        "Great! I resolve this problem!",
+      ],
+      (callIndex) => {
+        if (callIndex === 2) {
+          afterFailure = helperSource(dir);
+        }
+      },
+    );
+    const result = await runLoop({
+      cwd: dir,
+      issue: "make the answer test pass",
+      provider,
+      protocolFormat: "compact",
+      checkCommand: TSC,
+      testCommand: ["bun", "test"],
+    });
+    expect(result.ok).toBe(true);
+    expect(afterFailure).toBe(original);
+    expect(helperSource(dir)).toContain("return 2;");
+    const rejected = result.records.find(
+      (record) => record.kind === "exchange" && record.outcome === "matcher",
+    );
+    expect(rejected?.diagnostics).toContain("the whole compact reply is discarded");
+    expect(rejected?.diagnostics).toContain("Located occurrences");
   }, 30000);
 
   test("with the compact format the create prompts teach the compact create form", () => {
@@ -9704,29 +9842,51 @@ describe("compact protocol (#111/#119)", () => {
     expect(rejected?.diagnostics).toContain("answer");
   }, 30000);
 
-  test("under compact a create lists the created clause under a distinct resend line", async () => {
+  test("under compact a failing create reply creates no file and the retry resends both", async () => {
     const dir = fixtureDir();
-    const provider = new ScriptedProvider([
-      compactSelect("extra", "src/extra.ts"),
-      compactReply(
-        // Clause 1 creates a new file and applies; clause 2 is a kind miss on
-        // an existing value-space name, so it keeps the address failure.
-        createEditor(
-          "src/extra.ts",
-          "extra",
-          "function",
-          "export function extra(): number {\n  return 1;\n}",
+    const originalHelper = helperSource(dir);
+    let extraAfterFailure: string | null = null;
+    let helperAfterFailure = "";
+    const provider = new ScriptedProvider(
+      [
+        compactSelect("extra", "src/extra.ts"),
+        compactReply(
+          // Clause 1 would create a new file; clause 2 is a kind miss on an
+          // existing value-space name, so the whole reply must be discarded.
+          createEditor(
+            "src/extra.ts",
+            "extra",
+            "function",
+            "export function extra(): number {\n  return 1;\n}",
+          ),
+          {
+            locator: { path: "src/helper.ts", name: "answer", kind: "const" },
+            space: null,
+            matcher: { kind: "snippet", value: "return 1;" },
+            pick: null,
+            replacement: "return 5;",
+          },
         ),
-        {
-          locator: { path: "src/helper.ts", name: "answer", kind: "const" },
-          space: null,
-          matcher: { kind: "snippet", value: "return 1;" },
-          pick: null,
-          replacement: "return 5;",
-        },
-      ),
-      compactReply(answerEditor("return 2;", { kind: "snippet", value: "return 1;" })),
-    ]);
+        compactReply(
+          createEditor(
+            "src/extra.ts",
+            "extra",
+            "function",
+            "export function extra(): number {\n  return 1;\n}",
+          ),
+          answerEditor("return 2;", { kind: "snippet", value: "return 1;" }),
+        ),
+        "Great! I resolve this problem!",
+      ],
+      (callIndex) => {
+        if (callIndex === 2) {
+          extraAfterFailure = existsSync(join(dir, "src", "extra.ts"))
+            ? readFileSync(join(dir, "src", "extra.ts"), "utf8")
+            : null;
+          helperAfterFailure = helperSource(dir);
+        }
+      },
+    );
     const result = await runLoop({
       cwd: dir,
       issue: "make the answer test pass",
@@ -9736,14 +9896,18 @@ describe("compact protocol (#111/#119)", () => {
       testCommand: ["bun", "test"],
     });
     expect(result.ok).toBe(true);
+    // The first reply wrote nothing: no create, no helper change.
+    expect(extraAfterFailure).toBeNull();
+    expect(helperAfterFailure).toBe(originalHelper);
     expect(readFileSync(join(dir, "src", "extra.ts"), "utf8")).toContain("export function extra");
+    expect(helperSource(dir)).toContain("return 2;");
     const rejected = result.records.find(
-      (record) =>
-        record.kind === "exchange" && record.diagnostics?.includes("created (do not resend):"),
+      (record) => record.kind === "exchange" && record.outcome === "address",
     );
     expect(rejected).toBeDefined();
-    expect(rejected?.diagnostics).toContain("created (do not resend):");
-    expect(rejected?.diagnostics).toContain("clause 1 of 2");
+    expect(rejected?.diagnostics).toContain("clause 2 of 2");
+    expect(rejected?.diagnostics).toContain("the whole compact reply is discarded");
+    expect(rejected?.diagnostics).not.toContain("created (do not resend):");
   }, 30000);
 
   test("under json an undeclared whole-declaration clause is still a protocol failure", async () => {

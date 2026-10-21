@@ -11,7 +11,7 @@ that run before a byte reaches disk. The Edit → Verify loop around it is
 Two reply formats exist, selected by `--protocol-format` (default `compact`):
 
 - **compact**: the default. One or more `select … end` clauses, on the same
-  resolver but with richer locators (regex, multi-range `pick`) and non-atomic
+  resolver but with richer locators (regex, multi-range `pick`) and atomic
   multi-clause replies. A JSON edit payload in this mode is a protocol
   rejection.
 - **json**: opt-in, one flat object per exchange. Explicit-targets mode
@@ -281,8 +281,8 @@ the vocabulary so metrics compare.
 | `format`               | oxfmt rejected the result, or the formatted source equals the pre-edit source.                    |
 
 When a compact clause fails, its diagnostic names the clause, its position in
-the reply (`clause N of M`), its locator and path, and, when other clauses
-applied, the applied list, so the model resends only the failing clauses.
+the reply (`clause N of M`), its locator and path, and states that the whole
+reply was discarded, so the model must resend the full corrected reply.
 
 ## 6. Application and gating
 
@@ -300,14 +300,14 @@ The formats differ in what a batch means:
   the end so earlier offsets stay valid, and if any guard fails the whole
   exchange is discarded. Overlapping same-file regions discard the exchange and
   name both regions.
-- **Compact replies are non-atomic.** Clauses apply per file in document order,
-  each guarded on its own: an applied clause stands even when a later clause
-  fails. Every clause keeps its original offsets, mapped onto the evolving
-  source with a running offset delta, and the file is formatted once at the end.
-  A clause overlapping an applied one is skipped, the earlier winning. A reply
-  with failures is still a retry-driving rejection, but the successful writes
-  persist and are listed as "already applied (do not resend)"; a resend of an
-  applied clause now fails as `matcher-not-found`.
+- **Compact replies are atomic across the whole reply.** Every clause resolves
+  against its file's current source; if any clause fails resolution, or the
+  apply pipeline reports any guard/overlap failure, the whole reply is discarded
+  and nothing is written — no file, including creates. Only a reply with no
+  failures writes every resolved region. A mixed viewer+editor reply that fails
+  writes nothing but still carries the viewer feedback. A failing reply is a
+  retry-driving rejection, and the retry must carry the full corrected reply
+  (there is no "already applied" list).
 
 A reply whose clauses all fail writes nothing; one whose clauses all apply goes
 to verification. A failed verification does **not** roll back: the attempted
@@ -372,8 +372,8 @@ rejection of the same cause, an escalation. The format-specific corrections are:
 - A viewer's occurrences ride the next prompt as located candidates, so the
   model can disambiguate instead of guessing.
 
-An applied-clause list or a viewer's candidates are placed beside the rejection
-text, keeping "what already happened" apart from "what still fails".
+A viewer's candidates are placed beside the rejection text, keeping "what still
+fails" apart from what the model can pick next.
 
 ## 8. Skeleton
 

@@ -315,9 +315,9 @@ function pickOverlapDiagnostics(selection: Selection): string {
 /**
  * Resolve a parsed compact reply (`docs/edit-protocol.md` §3) into editor
  * regions, viewer occurrences, and typed failures. Each clause is resolved
- * independently against its own file's current source; a failed clause never
- * aborts the others. The loop then applies the resolved regions non-atomically
- * (§6): successes stand, failures are skipped.
+ * independently against its own file's current source; the loop applies the
+ * whole reply atomically (§6): any failing clause discards every resolved
+ * region, and no file is written.
  */
 export function resolveCompactReply(
   selections: readonly Selection[],
