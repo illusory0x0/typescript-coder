@@ -62,7 +62,9 @@ give-up:
 
 - **Rejection retry** — the same round, with the failure class (`protocol`,
   `address`, `matcher`, `gate`, `format`, `no-op`, `repeat`, …) turned into a
-  correction sentence. The same class repeated escalates.
+  correction sentence. The same class repeated escalates. Compact retries and
+  continuations reuse the select-first `# Goal` + `# Symbol index` + `# details`
+  shape; JSON keeps its pinned-selection block.
 - **Before editing, a repair exchange may ask one bounded self-check** —
   `{"request":"read" | "check" | "test"}` — to see the current source or run
   the task's commands itself. It does not write anything.

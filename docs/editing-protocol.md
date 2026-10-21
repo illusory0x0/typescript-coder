@@ -359,12 +359,16 @@ exchange. The json protocol has no confirmation turn.
 
 A rejection is never a give-up; it is a retry with better information. The next
 prompt carries the stage-tagged diagnostic, and from the second consecutive
-rejection of the same cause, an escalation. Two corrections are
-format-specific:
+rejection of the same cause, an escalation. The format-specific corrections are:
 
 - Under compact, a `protocol` rejection re-teaches the `select … end` form.
   Restating the JSON edit rule would drive the model back to the payload this
   mode rejects.
+- Compact edit retries and round continuations keep the select-first shape:
+  `# Goal`, the select-line `# Symbol index`, and `# details` with the numbered
+  current declaration. They never carry the JSON `Pinned selection` block.
+  A rejected selection retry or selection continuation asks for exactly one
+  `select … end` clause naming a symbol-index entry.
 - A viewer's occurrences ride the next prompt as located candidates, so the
   model can disambiguate instead of guessing.
 

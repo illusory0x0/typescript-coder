@@ -742,6 +742,12 @@ export interface RetryPromptInput {
    */
   protocolFormat?: ProtocolFormat;
   /**
+   * Compact retry context (#B4): Goal + symbol index for the compact prompt
+   * shape, plus the file-absolute start line of `currentSource`. Absent keeps
+   * the JSON prompt byte-identical.
+   */
+  compactContext?: { issue: string; indexText: string; startLine?: number };
+  /**
    * Bounded self-verification result (#73), appended after the Diagnostics
    * block as a `Self-check result:` section. Rendered only on the prompt that
    * immediately follows the executed request; ordinary retries set nothing.
@@ -916,6 +922,37 @@ export function buildRetryPrompt(input: RetryPromptInput): string {
   if (stalled !== undefined && isDecisionAsk(stalled)) {
     return `${header}\n\n${DECISION_INSTRUCTION}\n\nDiagnostics:\n\n\`\`\`\n${diagnostics}\n\`\`\`\n${failureHistorySection}${digestSection}`;
   }
+  // Compact retry/continuation (#B4): Goal + select-line symbol index + the
+  // declaration details, with no JSON pinned-selection block. The compact
+  // instruction already carries the clause rules, including create mode.
+  if (input.protocolFormat === "compact" && input.compactContext !== undefined) {
+    const context = input.compactContext;
+    const compactNumbered =
+      input.preRenderedSource ?? numberLinesFrom(currentSource, context.startLine ?? 1);
+    return `${header === "" ? "" : `${header}\n\n`}# Goal
+
+${context.issue}
+
+# Symbol index
+
+${context.indexText}
+
+# details
+
+\`\`\`text
+${compactNumbered}
+\`\`\`
+
+Diagnostics:
+
+\`\`\`
+${diagnostics}
+\`\`\`
+
+${SELF_CHECK_OFFER}
+${selfCheckSection}${approachSection}${failureHistorySection}${digestSection}
+${instruction}`;
+  }
   return `${header === "" ? "" : `${header}\n\n`}${instruction}
 
 ${SELF_CHECK_OFFER}
@@ -972,6 +1009,8 @@ export interface ContinuationPromptInput {
   multiPayload?: boolean;
   /** Edit protocol format (#119); forwarded to the retry prompt. */
   protocolFormat?: ProtocolFormat;
+  /** Compact Goal/index context (#B4); forwarded to the retry prompt. */
+  compactContext?: { issue: string; indexText: string; startLine?: number };
 }
 
 /**
@@ -997,6 +1036,7 @@ export function buildContinuationPrompt(input: ContinuationPromptInput): string 
     failureHistory: input.failureHistory,
     multiPayload: input.multiPayload,
     protocolFormat: input.protocolFormat,
+    compactContext: input.compactContext,
   });
 }
 
@@ -1049,6 +1089,25 @@ export function buildSelectionRetryPrompt(diagnostics: string): string {
   return `The previous selection was rejected. ${selectionRetryBody(diagnostics)}`;
 }
 
+/** Compact selection retry (#B4): Goal + symbol index, then the rejection. */
+export function buildCompactSelectionRetryPrompt(
+  issue: string,
+  indexText: string,
+  diagnostics: string,
+): string {
+  return `${compactGoal(issue, indexText)}
+The previous selection was rejected.
+
+Diagnostics:
+
+\`\`\`
+${diagnostics}
+\`\`\`
+
+Reply with ONLY one \`select … end\` clause naming one symbol-index entry.
+`;
+}
+
 /**
  * Selection-side round continuation (#52): the exhausted round never pinned a
  * target, so the fresh round re-asks for the selection (or `STOP`); the
@@ -1071,6 +1130,33 @@ export function buildSelectionContinuationPrompt(input: {
   return `Round ${input.round} of ${input.maxRounds} exhausted its ${MAX_EDIT_EXCHANGES}-exchange selection budget without a valid pick. Reply STOP to end the run, or return a corrected selection to continue with a fresh round.
 
 ${selectionRetryBody(input.diagnostics)}${failureHistorySection}${digestSection}`;
+}
+
+/** Compact selection continuation (#B4): STOP or one select clause, same shape. */
+export function buildCompactSelectionContinuationPrompt(input: {
+  round: number;
+  maxRounds: number;
+  issue: string;
+  indexText: string;
+  diagnostics: string;
+  digest?: string;
+  failureHistory?: string;
+}): string {
+  const digestSection =
+    input.digest === undefined || input.digest.trim() === "" ? "" : `\n${input.digest}\n`;
+  const failureHistorySection =
+    input.failureHistory === undefined || input.failureHistory.trim() === ""
+      ? ""
+      : `\n${input.failureHistory}\n`;
+  return `Round ${input.round} of ${input.maxRounds} exhausted its ${MAX_EDIT_EXCHANGES}-exchange selection budget without a valid selection. Reply STOP to end the run, or return one \`select … end\` clause naming a symbol-index entry.
+
+${compactGoal(input.issue, input.indexText)}
+Diagnostics:
+
+\`\`\`
+${input.diagnostics}
+\`\`\`
+${failureHistorySection}${digestSection}`;
 }
 
 export { stripCodeFences };
@@ -4559,6 +4645,26 @@ function currentSourceForPrompt(
   return currentSource;
 }
 
+// File-absolute start line for a compact retry's `# details` block. Create
+// mode and whole-file repair views start at line 1; a pinned declaration slice
+// starts at its declaration's line.
+function compactPromptStartLine(
+  mode: "modify" | "create",
+  targetPath: string,
+  locator: Locator,
+  diskSource: string,
+  wholeFile: boolean,
+): number {
+  if (mode === "create" || wholeFile) {
+    return 1;
+  }
+  const resolved = resolveCurrentEntry(diskSource, targetPath, locator, null);
+  if (!resolved.ok) {
+    return 1;
+  }
+  return diskSource.slice(0, resolved.entry.node.start).split("\n").length;
+}
+
 // The source a retry/continuation prompt shows. A repair iteration in modify
 // mode shrinks the whole file to the declarations that matter when the toggle
 // is on (returning the partial block as `preRendered`); otherwise this is the
@@ -5467,13 +5573,23 @@ export async function runLoop(options: LoopOptions): Promise<LoopResult> {
       const failurePattern = detectFailurePattern(records);
       const failureHistory = renderFailureHistoryNote(failurePattern);
       if (pendingContinuation.pick) {
-        continuationPrompt = buildSelectionContinuationPrompt({
-          round: pendingContinuation.round,
-          maxRounds: MAX_RUN_ITERATIONS,
-          diagnostics: pendingContinuation.diagnostics,
-          digest: digestText(),
-          failureHistory,
-        });
+        continuationPrompt = compactRequired
+          ? buildCompactSelectionContinuationPrompt({
+              round: pendingContinuation.round,
+              maxRounds: MAX_RUN_ITERATIONS,
+              issue: options.issue,
+              indexText: compactIndexText,
+              diagnostics: pendingContinuation.diagnostics,
+              digest: digestText(),
+              failureHistory,
+            })
+          : buildSelectionContinuationPrompt({
+              round: pendingContinuation.round,
+              maxRounds: MAX_RUN_ITERATIONS,
+              diagnostics: pendingContinuation.diagnostics,
+              digest: digestText(),
+              failureHistory,
+            });
         messages = [systemMessage, issueMessage, { role: "user", content: continuationPrompt }];
       } else {
         const continuedTarget = pinned;
@@ -5521,6 +5637,19 @@ export async function runLoop(options: LoopOptions): Promise<LoopResult> {
           stalled: stalledInfo,
           multiPayload: multiPayload,
           protocolFormat,
+          compactContext: compactRequired
+            ? {
+                issue: options.issue,
+                indexText: compactIndexText,
+                startLine: compactPromptStartLine(
+                  continuedTarget.mode === "create" ? "create" : "modify",
+                  target,
+                  continuedTarget.locator,
+                  diskSource,
+                  repair,
+                ),
+              }
+            : undefined,
         });
       }
     }
@@ -5695,7 +5824,12 @@ export async function runLoop(options: LoopOptions): Promise<LoopResult> {
             break;
           }
           messages.push({ role: "assistant", content: response.content ?? "" });
-          messages.push({ role: "user", content: buildSelectionRetryPrompt(diagnostic) });
+          messages.push({
+            role: "user",
+            content: compactRequired
+              ? buildCompactSelectionRetryPrompt(options.issue, compactIndexText, diagnostic)
+              : buildSelectionRetryPrompt(diagnostic),
+          });
           continue;
         }
         if (compactRequired) {
@@ -5929,6 +6063,19 @@ export async function runLoop(options: LoopOptions): Promise<LoopResult> {
           multiPayload: multiPayload,
           protocolFormat,
           selfCheck: selfCheck ?? undefined,
+          compactContext: compactRequired
+            ? {
+                issue: options.issue,
+                indexText: compactIndexText,
+                startLine: compactPromptStartLine(
+                  pinnedTarget.mode === "create" ? "create" : "modify",
+                  target,
+                  pinnedTarget.locator,
+                  diskSource,
+                  repair,
+                ),
+              }
+            : undefined,
         });
         repairExchange = true;
       }

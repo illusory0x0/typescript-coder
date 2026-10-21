@@ -8,6 +8,8 @@ import {
   buildCompactCreatePrompt,
   buildCompactDetailsPrompt,
   buildCompactModifiedPrompt,
+  buildCompactSelectionContinuationPrompt,
+  buildCompactSelectionRetryPrompt,
   buildCompactSymbolIndex,
   buildCompactUserPrompt,
   buildContinuationPrompt,
@@ -8614,6 +8616,68 @@ describe("compact protocol (#111/#119)", () => {
     expect(prompt).not.toContain("Examples:");
   });
 
+  test("a compact retry prompt uses Goal, index, and details without the JSON block", () => {
+    const prompt = buildRetryPrompt({
+      exchangeNumber: 2,
+      maxExchanges: 3,
+      mode: "modify",
+      locatorJson: '{"mode":"modify","path":"src/helper.ts","symbol":"answer","kind":"function"}',
+      currentSource: "function answer(): number {\n  return 1;\n}",
+      diagnostics: "stage: matcher\nthe matcher was not found",
+      failure: "edit",
+      repin: false,
+      protocolFormat: "compact",
+      compactContext: {
+        issue: "make the answer test pass",
+        indexText: "select answer in src/helper.ts resolve value",
+        startLine: 4,
+      },
+    });
+    expect(prompt).toContain("# Goal");
+    expect(prompt).toContain("make the answer test pass");
+    expect(prompt).toContain("# Symbol index");
+    expect(prompt).toContain("select answer in src/helper.ts resolve value");
+    expect(prompt).toContain("# details");
+    expect(prompt).toContain("4 | function answer(): number {");
+    expect(prompt).toContain("A reply is one or more `select … end` clauses");
+    expect(prompt).not.toContain("Pinned selection:");
+    expect(prompt).not.toContain("```json");
+    expect(prompt).not.toContain("Each line below is prefixed");
+    expect(prompt).not.toContain("Optionally locate the span");
+  });
+
+  test("compact selection retry and continuation prompts use the select-first shape", () => {
+    const retry = buildCompactSelectionRetryPrompt(
+      "make the answer test pass",
+      "select answer in src/helper.ts resolve value",
+      "stage: address\nthe address matches 2 declarations",
+    );
+    expect(retry).toContain("# Goal");
+    expect(retry).toContain("# Symbol index");
+    expect(retry).toContain("The previous selection was rejected.");
+    expect(retry).toContain("Reply with ONLY one `select … end` clause");
+    expect(retry).not.toContain("Output ONLY a corrected selection JSON object");
+
+    const continuation = buildCompactSelectionContinuationPrompt({
+      round: 2,
+      maxRounds: 32,
+      issue: "make the answer test pass",
+      indexText: "select answer in src/helper.ts resolve value",
+      diagnostics: "stage: protocol\nthe reply must be one clause",
+      failureHistory: "failure history",
+      digest: "attempt digest",
+    });
+    expect(continuation).toContain("Round 2 of 32 exhausted its 3-exchange selection budget");
+    expect(continuation).toContain(
+      "Reply STOP to end the run, or return one `select … end` clause",
+    );
+    expect(continuation).toContain("# Goal");
+    expect(continuation).toContain("# Symbol index");
+    expect(continuation).toContain("failure history");
+    expect(continuation).toContain("attempt digest");
+    expect(continuation).not.toContain("corrected selection JSON object");
+  });
+
   test("the fresh edit prompt defaults to the JSON form", () => {
     const addressJson = '{"path":"src/a.ts","symbol":"make","kind":"function"}';
     const symbolSource = "export function make(): number {\n  return 1;\n}\n";
@@ -8968,6 +9032,68 @@ describe("compact protocol (#111/#119)", () => {
       "confirmed",
     ]);
     expect(helperSource(dir)).toContain("return 2;");
+  }, 30000);
+
+  test("under compact an edit rejection retry uses Goal, index, and details", async () => {
+    const dir = fixtureDir();
+    const provider = new ScriptedProvider([
+      compactSelect("answer", "src/helper.ts", "value"),
+      compactReply(answerEditor("return 2;", { kind: "snippet", value: "return 9;" })),
+      compactReply(answerEditor("return 2;", { kind: "snippet", value: "return 1;" })),
+      "Great! I resolve this problem!",
+    ]);
+    const result = await runLoop({
+      cwd: dir,
+      issue: "make the answer test pass",
+      provider,
+      protocolFormat: "compact",
+      checkCommand: TSC,
+      testCommand: ["bun", "test"],
+    });
+    expect(result.ok).toBe(true);
+    expect(result.records.map((record) => record.outcome)).toEqual([
+      "selected",
+      "matcher",
+      "applied",
+      "ok",
+      "confirmed",
+    ]);
+    const retry = provider.calls[2]?.at(-1)?.content ?? "";
+    expect(retry).toContain("# Goal");
+    expect(retry).toContain("# Symbol index");
+    expect(retry).toContain("# details");
+    expect(retry).toContain("A reply is one or more `select … end` clauses");
+    expect(retry).not.toContain("Pinned selection:");
+    expect(retry).not.toContain("```json");
+  }, 30000);
+
+  test("under compact a rejected selection retry asks for one select clause", async () => {
+    const dir = fixtureDir();
+    writeFileSync(
+      join(dir, "src", "dual.ts"),
+      "export interface Dual {}\nexport const Dual = 1;\n",
+    );
+    const provider = new ScriptedProvider([
+      compactSelect("Dual", "src/dual.ts"),
+      compactSelect("answer", "src/helper.ts", "value"),
+      compactReply(answerEditor("return 2;", { kind: "snippet", value: "return 1;" })),
+      "Great! I resolve this problem!",
+    ]);
+    const result = await runLoop({
+      cwd: dir,
+      issue: "make the answer test pass",
+      provider,
+      protocolFormat: "compact",
+      checkCommand: TSC,
+      testCommand: ["bun", "test"],
+    });
+    expect(result.ok).toBe(true);
+    const retry = provider.calls[1]?.at(-1)?.content ?? "";
+    expect(retry).toContain("# Goal");
+    expect(retry).toContain("# Symbol index");
+    expect(retry).toContain("The previous selection was rejected.");
+    expect(retry).toContain("Reply with ONLY one `select … end` clause");
+    expect(retry).not.toContain("Output ONLY a corrected selection JSON object");
   }, 30000);
 
   test("under compact a `match` + `replace` reply applies end-to-end", async () => {
