@@ -1,0 +1,4299 @@
+{
+  "generatedAt": "2026-10-21T00:28:51.514Z",
+  "date": "2026-10-21",
+  "mode": "full",
+  "tasks": [
+    "minilisp"
+  ],
+  "sides": [
+    "tc"
+  ],
+  "reps": 5,
+  "concurrency": 4,
+  "model": "deepseek-v4.1-flash",
+  "ocModel": null,
+  "effort": null,
+  "multiPayload": false,
+  "tokenBudget": null,
+  "bunVersion": "1.3.13",
+  "opencodeVersion": null,
+  "pilotReference": null,
+  "infraErrors": [],
+  "runs": [
+    {
+      "task": "minilisp",
+      "side": "tc",
+      "rep": 1,
+      "ok": true,
+      "sideOk": true,
+      "tokens": {
+        "input": 6337,
+        "output": 3333,
+        "cacheRead": 5504,
+        "cacheWrite": null,
+        "reasoning": 0,
+        "total": 9670,
+        "billable": {
+          "in": 833,
+          "out": 3333,
+          "total": 4166
+        }
+      },
+      "usageAvailable": true,
+      "usageSource": "chat-completions",
+      "rawUsage": [
+        {
+          "completion_tokens": 27,
+          "prompt_tokens": 1752,
+          "total_tokens": 1779,
+          "prompt_tokens_details": {
+            "cached_tokens": 1664
+          },
+          "completion_tokens_details": {
+            "reasoning_tokens": 0
+          }
+        },
+        {
+          "completion_tokens": 1562,
+          "prompt_tokens": 2186,
+          "total_tokens": 3748,
+          "prompt_tokens_details": {
+            "cached_tokens": 2176
+          },
+          "completion_tokens_details": {
+            "reasoning_tokens": 0
+          }
+        },
+        {
+          "completion_tokens": 1744,
+          "prompt_tokens": 2399,
+          "total_tokens": 4143,
+          "prompt_tokens_details": {
+            "cached_tokens": 1664
+          },
+          "completion_tokens_details": {
+            "reasoning_tokens": 0
+          }
+        }
+      ],
+      "durationMs": 16412,
+      "startedAt": "2026-10-21T00:28:51.536Z",
+      "finishedAt": "2026-10-21T00:29:07.948Z",
+      "cost": 0.0021412619999999997,
+      "rateClass": "off-peak",
+      "steps": 4,
+      "records": [
+        {
+          "row": 1,
+          "iteration": 1,
+          "kind": "exchange",
+          "exchange": 1,
+          "outcome": "selected",
+          "diagnosticsHead": null,
+          "replacementChars": null,
+          "finishReason": "stop",
+          "cause": null,
+          "payloads": 0,
+          "toolCalls": 0,
+          "selectors": null,
+          "stages": null,
+          "matcherKinds": null
+        },
+        {
+          "row": 2,
+          "iteration": 1,
+          "kind": "exchange",
+          "exchange": 2,
+          "outcome": "protocol",
+          "diagnosticsHead": "stage: protocol expected {\"path\": ..., \"symbol\": ..., \"kind\": ..., \"matcher\": ..., \"replacement\": ...}; JSON Parse error: Expected '}'",
+          "replacementChars": null,
+          "finishReason": "stop",
+          "cause": "protocol",
+          "payloads": 0,
+          "toolCalls": 0,
+          "selectors": null,
+          "stages": null,
+          "matcherKinds": null
+        },
+        {
+          "row": 3,
+          "iteration": 1,
+          "kind": "exchange",
+          "exchange": 3,
+          "outcome": "applied",
+          "diagnosticsHead": null,
+          "replacementChars": null,
+          "finishReason": "stop",
+          "cause": null,
+          "payloads": 1,
+          "toolCalls": 0,
+          "selectors": [
+            "whole-symbol"
+          ],
+          "stages": [
+            "whole-symbol"
+          ],
+          "matcherKinds": [
+            null
+          ]
+        },
+        {
+          "row": 4,
+          "iteration": 1,
+          "kind": "verification",
+          "exchange": null,
+          "outcome": "ok",
+          "diagnosticsHead": null,
+          "replacementChars": null,
+          "finishReason": "stop",
+          "cause": null,
+          "payloads": 0,
+          "toolCalls": 0,
+          "selectors": null,
+          "stages": null,
+          "matcherKinds": null
+        }
+      ],
+      "exchangeStats": {
+        "turns": 3,
+        "payloads": 1,
+        "toolCalls": 0,
+        "applied": 1,
+        "rejected": 1,
+        "selected": 1,
+        "stopped": 0,
+        "selfChecks": 0,
+        "range": 0,
+        "matcher": 0,
+        "wholeSymbol": 1,
+        "stageWholeSymbol": 1,
+        "stageMatch": 0,
+        "stagePick": 0,
+        "snippet": 0,
+        "regex": 0,
+        "creates": 1
+      },
+      "loopDiagnostics": null,
+      "terminationReason": null,
+      "model": "deepseek-v4.1-flash",
+      "workspace": "tmp/benchmark/2026-10-21T00-28-51-520Z-872a4250/minilisp-tc-rep1",
+      "logs": {
+        "side": "tmp/benchmark/2026-10-21T00-28-51-520Z-872a4250/logs/minilisp-tc-rep1/side.log",
+        "judge": "tmp/benchmark/2026-10-21T00-28-51-520Z-872a4250/logs/minilisp-tc-rep1/judge.log",
+        "session": null,
+        "stats": null
+      },
+      "versions": {
+        "bun": "1.3.13",
+        "opencode": null
+      },
+      "judge": {
+        "testsOk": true,
+        "tscOk": true,
+        "fixtureOk": true,
+        "detail": null
+      },
+      "error": null,
+      "infraError": null
+    },
+    {
+      "task": "minilisp",
+      "side": "tc",
+      "rep": 2,
+      "ok": false,
+      "sideOk": false,
+      "tokens": {
+        "input": 119133,
+        "output": 6951,
+        "cacheRead": 29440,
+        "cacheWrite": null,
+        "reasoning": 14,
+        "total": 126084,
+        "billable": {
+          "in": 89693,
+          "out": 6965,
+          "total": 96658
+        }
+      },
+      "usageAvailable": true,
+      "usageSource": "chat-completions",
+      "rawUsage": [
+        {
+          "completion_tokens": 27,
+          "prompt_tokens": 1752,
+          "total_tokens": 1779,
+          "prompt_tokens_details": {
+            "cached_tokens": 1664
+          },
+          "completion_tokens_details": {
+            "reasoning_tokens": 0
+          }
+        },
+        {
+          "completion_tokens": 1731,
+          "prompt_tokens": 2186,
+          "total_tokens": 3917,
+          "prompt_tokens_details": {
+            "cached_tokens": 2176
+          },
+          "completion_tokens_details": {
+            "reasoning_tokens": 0
+          }
+        },
+        {
+          "completion_tokens": 1847,
+          "prompt_tokens": 2399,
+          "total_tokens": 4246,
+          "prompt_tokens_details": {
+            "cached_tokens": 2304
+          },
+          "completion_tokens_details": {
+            "reasoning_tokens": 0
+          }
+        },
+        {
+          "completion_tokens": 5,
+          "prompt_tokens": 3333,
+          "total_tokens": 3338,
+          "prompt_tokens_details": {
+            "cached_tokens": 768
+          },
+          "completion_tokens_details": {
+            "reasoning_tokens": 0
+          }
+        },
+        {
+          "completion_tokens": 96,
+          "prompt_tokens": 5785,
+          "total_tokens": 5881,
+          "prompt_tokens_details": {
+            "cached_tokens": 768
+          },
+          "completion_tokens_details": {
+            "reasoning_tokens": 0
+          }
+        },
+        {
+          "completion_tokens": 112,
+          "prompt_tokens": 3609,
+          "total_tokens": 3721,
+          "prompt_tokens_details": {
+            "cached_tokens": 768
+          },
+          "completion_tokens_details": {
+            "reasoning_tokens": 0
+          }
+        },
+        {
+          "completion_tokens": 5,
+          "prompt_tokens": 3581,
+          "total_tokens": 3586,
+          "prompt_tokens_details": {
+            "cached_tokens": 0
+          },
+          "completion_tokens_details": {
+            "reasoning_tokens": 0
+          }
+        },
+        {
+          "completion_tokens": 5,
+          "prompt_tokens": 5785,
+          "total_tokens": 5790,
+          "prompt_tokens_details": {
+            "cached_tokens": 0
+          },
+          "completion_tokens_details": {
+            "reasoning_tokens": 0
+          }
+        },
+        {
+          "completion_tokens": 279,
+          "prompt_tokens": 3397,
+          "total_tokens": 3676,
+          "prompt_tokens_details": {
+            "cached_tokens": 768
+          },
+          "completion_tokens_details": {
+            "reasoning_tokens": 0
+          }
+        },
+        {
+          "completion_tokens": 5,
+          "prompt_tokens": 3917,
+          "total_tokens": 3922,
+          "prompt_tokens_details": {
+            "cached_tokens": 768
+          },
+          "completion_tokens_details": {
+            "reasoning_tokens": 0
+          }
+        },
+        {
+          "completion_tokens": 371,
+          "prompt_tokens": 5801,
+          "total_tokens": 6172,
+          "prompt_tokens_details": {
+            "cached_tokens": 0
+          },
+          "completion_tokens_details": {
+            "reasoning_tokens": 0
+          }
+        },
+        {
+          "completion_tokens": 5,
+          "prompt_tokens": 4482,
+          "total_tokens": 4487,
+          "prompt_tokens_details": {
+            "cached_tokens": 0
+          },
+          "completion_tokens_details": {
+            "reasoning_tokens": 0
+          }
+        },
+        {
+          "completion_tokens": 46,
+          "prompt_tokens": 3710,
+          "total_tokens": 3756,
+          "prompt_tokens_details": {
+            "cached_tokens": 768
+          },
+          "completion_tokens_details": {
+            "reasoning_tokens": 0
+          }
+        },
+        {
+          "completion_tokens": 5,
+          "prompt_tokens": 3431,
+          "total_tokens": 3436,
+          "prompt_tokens_details": {
+            "cached_tokens": 768
+          },
+          "completion_tokens_details": {
+            "reasoning_tokens": 0
+          }
+        },
+        {
+          "completion_tokens": 181,
+          "prompt_tokens": 5894,
+          "total_tokens": 6075,
+          "prompt_tokens_details": {
+            "cached_tokens": 768
+          },
+          "completion_tokens_details": {
+            "reasoning_tokens": 0
+          }
+        },
+        {
+          "completion_tokens": 265,
+          "prompt_tokens": 4083,
+          "total_tokens": 4348,
+          "prompt_tokens_details": {
+            "cached_tokens": 768
+          },
+          "completion_tokens_details": {
+            "reasoning_tokens": 0
+          }
+        },
+        {
+          "completion_tokens": 5,
+          "prompt_tokens": 2669,
+          "total_tokens": 2674,
+          "prompt_tokens_details": {
+            "cached_tokens": 768
+          },
+          "completion_tokens_details": {
+            "reasoning_tokens": 0
+          }
+        },
+        {
+          "completion_tokens": 41,
+          "prompt_tokens": 5150,
+          "total_tokens": 5191,
+          "prompt_tokens_details": {
+            "cached_tokens": 768
+          },
+          "completion_tokens_details": {
+            "reasoning_tokens": 0
+          }
+        },
+        {
+          "completion_tokens": 113,
+          "prompt_tokens": 2818,
+          "total_tokens": 2931,
+          "prompt_tokens_details": {
+            "cached_tokens": 768
+          },
+          "completion_tokens_details": {
+            "reasoning_tokens": 0
+          }
+        },
+        {
+          "completion_tokens": 51,
+          "prompt_tokens": 3107,
+          "total_tokens": 3158,
+          "prompt_tokens_details": {
+            "cached_tokens": 768
+          },
+          "completion_tokens_details": {
+            "reasoning_tokens": 0
+          }
+        },
+        {
+          "completion_tokens": 5,
+          "prompt_tokens": 2735,
+          "total_tokens": 2740,
+          "prompt_tokens_details": {
+            "cached_tokens": 768
+          },
+          "completion_tokens_details": {
+            "reasoning_tokens": 0
+          }
+        },
+        {
+          "completion_tokens": 483,
+          "prompt_tokens": 5216,
+          "total_tokens": 5699,
+          "prompt_tokens_details": {
+            "cached_tokens": 768
+          },
+          "completion_tokens_details": {
+            "reasoning_tokens": 0
+          }
+        },
+        {
+          "completion_tokens": 5,
+          "prompt_tokens": 4426,
+          "total_tokens": 4431,
+          "prompt_tokens_details": {
+            "cached_tokens": 768
+          },
+          "completion_tokens_details": {
+            "reasoning_tokens": 0
+          }
+        },
+        {
+          "completion_tokens": 388,
+          "prompt_tokens": 5150,
+          "total_tokens": 5538,
+          "prompt_tokens_details": {
+            "cached_tokens": 5120
+          },
+          "completion_tokens_details": {
+            "reasoning_tokens": 0
+          }
+        },
+        {
+          "completion_tokens": 5,
+          "prompt_tokens": 3992,
+          "total_tokens": 3997,
+          "prompt_tokens_details": {
+            "cached_tokens": 2048
+          },
+          "completion_tokens_details": {
+            "reasoning_tokens": 0
+          }
+        },
+        {
+          "completion_tokens": 149,
+          "prompt_tokens": 3008,
+          "total_tokens": 3157,
+          "prompt_tokens_details": {
+            "cached_tokens": 768
+          },
+          "completion_tokens_details": {
+            "reasoning_tokens": 0
+          }
+        },
+        {
+          "completion_tokens": 5,
+          "prompt_tokens": 2798,
+          "total_tokens": 2803,
+          "prompt_tokens_details": {
+            "cached_tokens": 768
+          },
+          "completion_tokens_details": {
+            "reasoning_tokens": 0
+          }
+        },
+        {
+          "completion_tokens": 93,
+          "prompt_tokens": 5297,
+          "total_tokens": 5390,
+          "prompt_tokens_details": {
+            "cached_tokens": 768
+          },
+          "completion_tokens_details": {
+            "reasoning_tokens": 0
+          }
+        },
+        {
+          "completion_tokens": 113,
+          "prompt_tokens": 3051,
+          "total_tokens": 3164,
+          "prompt_tokens_details": {
+            "cached_tokens": 768
+          },
+          "completion_tokens_details": {
+            "reasoning_tokens": 0
+          }
+        },
+        {
+          "completion_tokens": 112,
+          "prompt_tokens": 3223,
+          "total_tokens": 3335,
+          "prompt_tokens_details": {
+            "cached_tokens": 768
+          },
+          "completion_tokens_details": {
+            "reasoning_tokens": 0
+          }
+        },
+        {
+          "completion_tokens": 398,
+          "prompt_tokens": 3348,
+          "total_tokens": 3746,
+          "prompt_tokens_details": {
+            "cached_tokens": 0
+          },
+          "completion_tokens_details": {
+            "reasoning_tokens": 14
+          }
+        }
+      ],
+      "durationMs": 84066,
+      "startedAt": "2026-10-21T00:28:51.566Z",
+      "finishedAt": "2026-10-21T00:30:15.632Z",
+      "cost": 0.017721269999999997,
+      "rateClass": "off-peak",
+      "steps": 32,
+      "records": [
+        {
+          "row": 1,
+          "iteration": 1,
+          "kind": "exchange",
+          "exchange": 1,
+          "outcome": "selected",
+          "diagnosticsHead": null,
+          "replacementChars": null,
+          "finishReason": "stop",
+          "cause": null,
+          "payloads": 0,
+          "toolCalls": 0,
+          "selectors": null,
+          "stages": null,
+          "matcherKinds": null
+        },
+        {
+          "row": 2,
+          "iteration": 1,
+          "kind": "exchange",
+          "exchange": 2,
+          "outcome": "protocol",
+          "diagnosticsHead": "stage: protocol expected {\"path\": ..., \"symbol\": ..., \"kind\": ..., \"matcher\": ..., \"replacement\": ...}; JSON Parse error: Expected '}'",
+          "replacementChars": null,
+          "finishReason": "stop",
+          "cause": "protocol",
+          "payloads": 0,
+          "toolCalls": 0,
+          "selectors": null,
+          "stages": null,
+          "matcherKinds": null
+        },
+        {
+          "row": 3,
+          "iteration": 1,
+          "kind": "exchange",
+          "exchange": 3,
+          "outcome": "applied",
+          "diagnosticsHead": null,
+          "replacementChars": null,
+          "finishReason": "stop",
+          "cause": null,
+          "payloads": 1,
+          "toolCalls": 0,
+          "selectors": [
+            "whole-symbol"
+          ],
+          "stages": [
+            "whole-symbol"
+          ],
+          "matcherKinds": [
+            null
+          ]
+        },
+        {
+          "row": 4,
+          "iteration": 1,
+          "kind": "verification",
+          "exchange": null,
+          "outcome": "tsc",
+          "diagnosticsHead": "stage: tsc replacement line 85: TS2677: A type predicate's type must be assignable to its parameter's type. Type 'string' is not assignable to type 'LispValue'. — in declaration `isSymbol` (function) ",
+          "replacementChars": null,
+          "finishReason": "stop",
+          "cause": null,
+          "payloads": 0,
+          "toolCalls": 0,
+          "selectors": null,
+          "stages": null,
+          "matcherKinds": null
+        },
+        {
+          "row": 5,
+          "iteration": 2,
+          "kind": "exchange",
+          "exchange": 1,
+          "outcome": "self-check",
+          "diagnosticsHead": "Self-check (read): src/lisp.ts (236 line(s), truncated at 8000 characters). 1 | export type LispValue = number | boolean | LispValue[] | null; 2 | 3 | type Env = Map<string, LispValue>; 4 | 5 | type B",
+          "replacementChars": null,
+          "finishReason": "stop",
+          "cause": null,
+          "payloads": 0,
+          "toolCalls": 0,
+          "selectors": null,
+          "stages": null,
+          "matcherKinds": null
+        },
+        {
+          "row": 6,
+          "iteration": 2,
+          "kind": "exchange",
+          "exchange": 2,
+          "outcome": "address",
+          "diagnosticsHead": "stage: compact clause 1 of 2 ({\"path\":\"src/lisp.ts\",\"symbol\":\"car\",\"kind\":\"function\"} in \"src/lisp.ts\") failed; resolved clauses are applied non-atomically, so any other clause listed as applied below",
+          "replacementChars": null,
+          "finishReason": "stop",
+          "cause": "address",
+          "payloads": 2,
+          "toolCalls": 0,
+          "selectors": [],
+          "stages": [],
+          "matcherKinds": []
+        },
+        {
+          "row": 7,
+          "iteration": 2,
+          "kind": "exchange",
+          "exchange": 3,
+          "outcome": "no-op",
+          "diagnosticsHead": "stage: compact clause 1 of 1 ({\"path\":\"src/lisp.ts\",\"symbol\":\"run\",\"kind\":\"function\"} in \"src/lisp.ts\") failed; resolved clauses are applied non-atomically, so any other clause listed as applied below",
+          "replacementChars": null,
+          "finishReason": "stop",
+          "cause": "no-op",
+          "payloads": 1,
+          "toolCalls": 0,
+          "selectors": [],
+          "stages": [],
+          "matcherKinds": []
+        },
+        {
+          "row": 8,
+          "iteration": 3,
+          "kind": "exchange",
+          "exchange": 1,
+          "outcome": "self-check",
+          "diagnosticsHead": "Self-check (read): src/lisp.ts (236 line(s), truncated at 8000 characters). 1 | export type LispValue = number | boolean | LispValue[] | null; 2 | 3 | type Env = Map<string, LispValue>; 4 | 5 | type B",
+          "replacementChars": null,
+          "finishReason": "stop",
+          "cause": null,
+          "payloads": 0,
+          "toolCalls": 0,
+          "selectors": null,
+          "stages": null,
+          "matcherKinds": null
+        },
+        {
+          "row": 9,
+          "iteration": 3,
+          "kind": "exchange",
+          "exchange": 2,
+          "outcome": "protocol",
+          "diagnosticsHead": "stage: protocol the round already used its one self-verification request; return an edit payload now (the harness runs at most one request per round)",
+          "replacementChars": null,
+          "finishReason": "stop",
+          "cause": "protocol",
+          "payloads": 0,
+          "toolCalls": 0,
+          "selectors": null,
+          "stages": null,
+          "matcherKinds": null
+        },
+        {
+          "row": 10,
+          "iteration": 3,
+          "kind": "exchange",
+          "exchange": 3,
+          "outcome": "no-op",
+          "diagnosticsHead": "stage: compact clause 1 of 6 ({\"path\":\"src/lisp.ts\",\"symbol\":\"isSymbol\",\"kind\":\"function\"} in \"src/lisp.ts\") failed; resolved clauses are applied non-atomically, so any other clause listed as applied ",
+          "replacementChars": null,
+          "finishReason": "stop",
+          "cause": "no-op",
+          "payloads": 6,
+          "toolCalls": 0,
+          "selectors": [
+            "matcher",
+            "matcher",
+            "matcher",
+            "matcher"
+          ],
+          "stages": [
+            "match",
+            "match",
+            "match",
+            "match"
+          ],
+          "matcherKinds": [
+            "snippet",
+            "snippet",
+            "snippet",
+            "snippet"
+          ]
+        },
+        {
+          "row": 11,
+          "iteration": 4,
+          "kind": "exchange",
+          "exchange": 1,
+          "outcome": "self-check",
+          "diagnosticsHead": "Self-check (read): src/lisp.ts (236 line(s), truncated at 8000 characters). 1 | export type LispValue = number | boolean | LispValue[] | null; 2 | 3 | type Env = Map<string, LispValue>; 4 | 5 | type B",
+          "replacementChars": null,
+          "finishReason": "stop",
+          "cause": null,
+          "payloads": 0,
+          "toolCalls": 0,
+          "selectors": null,
+          "stages": null,
+          "matcherKinds": null
+        },
+        {
+          "row": 12,
+          "iteration": 4,
+          "kind": "exchange",
+          "exchange": 2,
+          "outcome": "address",
+          "diagnosticsHead": "stage: compact clause 2 of 9 ({\"path\":\"src/lisp.ts\",\"symbol\":\"builtins\",\"kind\":\"const\"} in \"src/lisp.ts\") failed; resolved clauses are applied non-atomically, so any other clause listed as applied bel",
+          "replacementChars": null,
+          "finishReason": "stop",
+          "cause": "address",
+          "payloads": 9,
+          "toolCalls": 0,
+          "selectors": [
+            "whole-symbol"
+          ],
+          "stages": [
+            "whole-symbol"
+          ],
+          "matcherKinds": [
+            null
+          ]
+        },
+        {
+          "row": 13,
+          "iteration": 4,
+          "kind": "exchange",
+          "exchange": 3,
+          "outcome": "protocol",
+          "diagnosticsHead": "stage: protocol the round already used its one self-verification request; return an edit payload now (the harness runs at most one request per round)",
+          "replacementChars": null,
+          "finishReason": "stop",
+          "cause": "protocol",
+          "payloads": 0,
+          "toolCalls": 0,
+          "selectors": null,
+          "stages": null,
+          "matcherKinds": null
+        },
+        {
+          "row": 14,
+          "iteration": 5,
+          "kind": "exchange",
+          "exchange": 1,
+          "outcome": "matcher",
+          "diagnosticsHead": "stage: matcher the matcher could not be parsed as TypeScript: expected \"}\" (line 1, column 43); a matcher must be a single copied statement or expression, or a contiguous run of statements copied from",
+          "replacementChars": 42,
+          "finishReason": "stop",
+          "cause": "matcher-unparseable",
+          "payloads": 1,
+          "toolCalls": 0,
+          "selectors": [
+            "matcher"
+          ],
+          "stages": [
+            "match"
+          ],
+          "matcherKinds": [
+            "snippet"
+          ]
+        },
+        {
+          "row": 15,
+          "iteration": 5,
+          "kind": "exchange",
+          "exchange": 2,
+          "outcome": "self-check",
+          "diagnosticsHead": "Self-check (read): src/lisp.ts (236 line(s), truncated at 8000 characters). 1 | export type LispValue = number | boolean | LispValue[] | null; 2 | 3 | type Env = Map<string, LispValue>; 4 | 5 | type B",
+          "replacementChars": null,
+          "finishReason": "stop",
+          "cause": null,
+          "payloads": 0,
+          "toolCalls": 0,
+          "selectors": null,
+          "stages": null,
+          "matcherKinds": null
+        },
+        {
+          "row": 16,
+          "iteration": 5,
+          "kind": "exchange",
+          "exchange": 3,
+          "outcome": "no-op",
+          "diagnosticsHead": "stage: compact clause 1 of 4 ({\"path\":\"src/lisp.ts\",\"symbol\":\"checkArity\",\"kind\":\"function\"} in \"src/lisp.ts\") failed; resolved clauses are applied non-atomically, so any other clause listed as applie",
+          "replacementChars": null,
+          "finishReason": "stop",
+          "cause": "no-op",
+          "payloads": 4,
+          "toolCalls": 0,
+          "selectors": [],
+          "stages": [],
+          "matcherKinds": []
+        },
+        {
+          "row": 17,
+          "iteration": 6,
+          "kind": "exchange",
+          "exchange": 1,
+          "outcome": "applied",
+          "diagnosticsHead": null,
+          "replacementChars": 373,
+          "finishReason": "stop",
+          "cause": null,
+          "payloads": 1,
+          "toolCalls": 0,
+          "selectors": [
+            "matcher"
+          ],
+          "stages": [
+            "match"
+          ],
+          "matcherKinds": [
+            "snippet"
+          ]
+        },
+        {
+          "row": 18,
+          "iteration": 6,
+          "kind": "verification",
+          "exchange": null,
+          "outcome": "tsc",
+          "diagnosticsHead": "stage: tsc replacement line 2: TS2323: Cannot redeclare exported variable 'run'. 237 | 238 | export { run }; 239 | export type { LispValue }; replacement line 2: TS2484: Export declaration conflicts w",
+          "replacementChars": 373,
+          "finishReason": "stop",
+          "cause": null,
+          "payloads": 0,
+          "toolCalls": 0,
+          "selectors": null,
+          "stages": null,
+          "matcherKinds": null
+        },
+        {
+          "row": 19,
+          "iteration": 7,
+          "kind": "exchange",
+          "exchange": 1,
+          "outcome": "self-check",
+          "diagnosticsHead": "Self-check (read): src/lisp.ts (239 line(s), truncated at 8000 characters). 1 | export type LispValue = number | boolean | LispValue[] | null; 2 | 3 | type Env = Map<string, LispValue>; 4 | 5 | type B",
+          "replacementChars": null,
+          "finishReason": "stop",
+          "cause": null,
+          "payloads": 0,
+          "toolCalls": 0,
+          "selectors": null,
+          "stages": null,
+          "matcherKinds": null
+        },
+        {
+          "row": 20,
+          "iteration": 7,
+          "kind": "exchange",
+          "exchange": 2,
+          "outcome": "matcher",
+          "diagnosticsHead": "stage: compact clause 1 of 1 ({\"path\":\"src/lisp.ts\",\"symbol\":\"run\",\"kind\":\"function\"} in \"src/lisp.ts\") failed; resolved clauses are applied non-atomically, so any other clause listed as applied below",
+          "replacementChars": null,
+          "finishReason": "stop",
+          "cause": "matcher-unparseable",
+          "payloads": 1,
+          "toolCalls": 0,
+          "selectors": [],
+          "stages": [],
+          "matcherKinds": []
+        },
+        {
+          "row": 21,
+          "iteration": 7,
+          "kind": "exchange",
+          "exchange": 3,
+          "outcome": "no-op",
+          "diagnosticsHead": "stage: compact clause 1 of 1 ({\"path\":\"src/lisp.ts\",\"symbol\":\"run\",\"kind\":\"function\"} in \"src/lisp.ts\") failed; resolved clauses are applied non-atomically, so any other clause listed as applied below",
+          "replacementChars": null,
+          "finishReason": "stop",
+          "cause": "no-op",
+          "payloads": 1,
+          "toolCalls": 0,
+          "selectors": [],
+          "stages": [],
+          "matcherKinds": []
+        },
+        {
+          "row": 22,
+          "iteration": 8,
+          "kind": "exchange",
+          "exchange": 1,
+          "outcome": "matcher",
+          "diagnosticsHead": "stage: matcher the matcher was not found inside function \"run\" in src/lisp.ts (line 225, column 8); copy a complete snippet from the current source, or omit \"matcher\" for a whole-symbol rewrite",
+          "replacementChars": 42,
+          "finishReason": "stop",
+          "cause": "matcher-not-found",
+          "payloads": 1,
+          "toolCalls": 0,
+          "selectors": [
+            "matcher"
+          ],
+          "stages": [
+            "match"
+          ],
+          "matcherKinds": [
+            "snippet"
+          ]
+        },
+        {
+          "row": 23,
+          "iteration": 8,
+          "kind": "exchange",
+          "exchange": 2,
+          "outcome": "self-check",
+          "diagnosticsHead": "Self-check (read): src/lisp.ts (239 line(s), truncated at 8000 characters). 1 | export type LispValue = number | boolean | LispValue[] | null; 2 | 3 | type Env = Map<string, LispValue>; 4 | 5 | type B",
+          "replacementChars": null,
+          "finishReason": "stop",
+          "cause": null,
+          "payloads": 0,
+          "toolCalls": 0,
+          "selectors": null,
+          "stages": null,
+          "matcherKinds": null
+        },
+        {
+          "row": 24,
+          "iteration": 8,
+          "kind": "exchange",
+          "exchange": 3,
+          "outcome": "no-op",
+          "diagnosticsHead": "stage: compact clause 1 of 11 ({\"path\":\"src/lisp.ts\",\"symbol\":\"run\",\"kind\":\"function\"} in \"src/lisp.ts\") failed; resolved clauses are applied non-atomically, so any other clause listed as applied belo",
+          "replacementChars": null,
+          "finishReason": "stop",
+          "cause": "no-op",
+          "payloads": 11,
+          "toolCalls": 0,
+          "selectors": [],
+          "stages": [],
+          "matcherKinds": []
+        },
+        {
+          "row": 25,
+          "iteration": 9,
+          "kind": "exchange",
+          "exchange": 1,
+          "outcome": "self-check",
+          "diagnosticsHead": "Self-check (read): src/lisp.ts (239 line(s), truncated at 8000 characters). 1 | export type LispValue = number | boolean | LispValue[] | null; 2 | 3 | type Env = Map<string, LispValue>; 4 | 5 | type B",
+          "replacementChars": null,
+          "finishReason": "stop",
+          "cause": null,
+          "payloads": 0,
+          "toolCalls": 0,
+          "selectors": null,
+          "stages": null,
+          "matcherKinds": null
+        },
+        {
+          "row": 26,
+          "iteration": 9,
+          "kind": "exchange",
+          "exchange": 2,
+          "outcome": "matcher",
+          "diagnosticsHead": "stage: compact clause 1 of 10 ({\"path\":\"src/lisp.ts\",\"symbol\":\"run\",\"kind\":\"function\"} in \"src/lisp.ts\") failed; resolved clauses are applied non-atomically, so any other clause listed as applied belo",
+          "replacementChars": null,
+          "finishReason": "stop",
+          "cause": "matcher-unparseable",
+          "payloads": 10,
+          "toolCalls": 0,
+          "selectors": [],
+          "stages": [],
+          "matcherKinds": []
+        },
+        {
+          "row": 27,
+          "iteration": 9,
+          "kind": "exchange",
+          "exchange": 3,
+          "outcome": "protocol",
+          "diagnosticsHead": "stage: protocol the round already used its one self-verification request; return an edit payload now (the harness runs at most one request per round)",
+          "replacementChars": null,
+          "finishReason": "stop",
+          "cause": "protocol",
+          "payloads": 0,
+          "toolCalls": 0,
+          "selectors": null,
+          "stages": null,
+          "matcherKinds": null
+        },
+        {
+          "row": 28,
+          "iteration": 10,
+          "kind": "exchange",
+          "exchange": 1,
+          "outcome": "applied",
+          "diagnosticsHead": null,
+          "replacementChars": 373,
+          "finishReason": "stop",
+          "cause": null,
+          "payloads": 1,
+          "toolCalls": 0,
+          "selectors": [
+            "whole-symbol"
+          ],
+          "stages": [
+            "whole-symbol"
+          ],
+          "matcherKinds": [
+            null
+          ]
+        },
+        {
+          "row": 29,
+          "iteration": 10,
+          "kind": "verification",
+          "exchange": null,
+          "outcome": "tsc",
+          "diagnosticsHead": "stage: tsc replacement line 2: TS2300: Duplicate identifier 'run'. 240 | 241 | export { run }; 242 | export type { LispValue }; replacement line 3: TS2300: Duplicate identifier 'LispValue'. 241 | expo",
+          "replacementChars": 373,
+          "finishReason": "stop",
+          "cause": null,
+          "payloads": 0,
+          "toolCalls": 0,
+          "selectors": null,
+          "stages": null,
+          "matcherKinds": null
+        },
+        {
+          "row": 30,
+          "iteration": 11,
+          "kind": "exchange",
+          "exchange": 1,
+          "outcome": "self-check",
+          "diagnosticsHead": "Self-check (read): src/lisp.ts (242 line(s), truncated at 8000 characters). 1 | export type LispValue = number | boolean | LispValue[] | null; 2 | 3 | type Env = Map<string, LispValue>; 4 | 5 | type B",
+          "replacementChars": null,
+          "finishReason": "stop",
+          "cause": null,
+          "payloads": 0,
+          "toolCalls": 0,
+          "selectors": null,
+          "stages": null,
+          "matcherKinds": null
+        },
+        {
+          "row": 31,
+          "iteration": 11,
+          "kind": "exchange",
+          "exchange": 2,
+          "outcome": "matcher",
+          "diagnosticsHead": "stage: compact clause 1 of 2 ({\"path\":\"src/lisp.ts\",\"symbol\":\"run\",\"kind\":\"function\"} in \"src/lisp.ts\") failed; resolved clauses are applied non-atomically, so any other clause listed as applied below",
+          "replacementChars": null,
+          "finishReason": "stop",
+          "cause": "matcher-unparseable",
+          "payloads": 2,
+          "toolCalls": 0,
+          "selectors": [],
+          "stages": [],
+          "matcherKinds": []
+        },
+        {
+          "row": 32,
+          "iteration": 11,
+          "kind": "exchange",
+          "exchange": 3,
+          "outcome": "no-op",
+          "diagnosticsHead": "stage: compact clause 1 of 1 ({\"path\":\"src/lisp.ts\",\"symbol\":\"run\",\"kind\":\"function\"} in \"src/lisp.ts\") failed; resolved clauses are applied non-atomically, so any other clause listed as applied below",
+          "replacementChars": null,
+          "finishReason": "stop",
+          "cause": "no-op",
+          "payloads": 1,
+          "toolCalls": 0,
+          "selectors": [],
+          "stages": [],
+          "matcherKinds": []
+        }
+      ],
+      "exchangeStats": {
+        "turns": 29,
+        "payloads": 53,
+        "toolCalls": 0,
+        "applied": 3,
+        "rejected": 17,
+        "selected": 1,
+        "stopped": 0,
+        "selfChecks": 8,
+        "range": 0,
+        "matcher": 7,
+        "wholeSymbol": 3,
+        "stageWholeSymbol": 3,
+        "stageMatch": 7,
+        "stagePick": 0,
+        "snippet": 7,
+        "regex": 0,
+        "creates": 1
+      },
+      "loopDiagnostics": "token-budget: accumulated 122338 tokens exceeded the 120000 token budget",
+      "terminationReason": "token-budget",
+      "model": "deepseek-v4.1-flash",
+      "workspace": "tmp/benchmark/2026-10-21T00-28-51-520Z-872a4250/minilisp-tc-rep2",
+      "logs": {
+        "side": "tmp/benchmark/2026-10-21T00-28-51-520Z-872a4250/logs/minilisp-tc-rep2/side.log",
+        "judge": "tmp/benchmark/2026-10-21T00-28-51-520Z-872a4250/logs/minilisp-tc-rep2/judge.log",
+        "session": null,
+        "stats": null
+      },
+      "versions": {
+        "bun": "1.3.13",
+        "opencode": null
+      },
+      "judge": {
+        "testsOk": false,
+        "tscOk": false,
+        "fixtureOk": true,
+        "detail": "tsc failed: src/lisp.ts(1,13): error TS2300: Duplicate identifier 'LispValue'.\nsrc/lisp.ts(85,39): error TS2677: A type predicate's type must be assignable to its parameter's type.\n  Type 'string' is not assignable to type 'LispValue'.\nsrc/lisp.ts(119,5): error TS2554: Expected 3 arguments, but got 2.\nsrc/lisp.ts(123,5): error TS2554: Expected 3 arguments, but got 2.\nsrc/lisp.ts(127,5): error TS2554: Expected...; bun test failed: bun test v1.3.13 (bf2e2cec)\n\nsrc/lisp.test.ts:\n\n# Unhandled error between tests\n-------------------------------\n233 |     result = evalForm(form, env);\n234 |   }\n235 |   return result;\n236 | }\n237 | \n238 | export { run };\n      ^\nSyntaxError: Cannot export a duplicate name 'run'.\n      at <parse> (/home/illu/repo/typescript-coder/tmp/benchmark/2026-10-21T00-28-51-520Z-872a4250/minilisp-tc-rep2/src..."
+      },
+      "error": null,
+      "infraError": null
+    },
+    {
+      "task": "minilisp",
+      "side": "tc",
+      "rep": 3,
+      "ok": false,
+      "sideOk": false,
+      "tokens": {
+        "input": 117283,
+        "output": 6287,
+        "cacheRead": 41600,
+        "cacheWrite": null,
+        "reasoning": 115,
+        "total": 123570,
+        "billable": {
+          "in": 75683,
+          "out": 6402,
+          "total": 82085
+        }
+      },
+      "usageAvailable": true,
+      "usageSource": "chat-completions",
+      "rawUsage": [
+        {
+          "completion_tokens": 27,
+          "prompt_tokens": 1752,
+          "total_tokens": 1779,
+          "prompt_tokens_details": {
+            "cached_tokens": 1664
+          },
+          "completion_tokens_details": {
+            "reasoning_tokens": 0
+          }
+        },
+        {
+          "completion_tokens": 1731,
+          "prompt_tokens": 2186,
+          "total_tokens": 3917,
+          "prompt_tokens_details": {
+            "cached_tokens": 2176
+          },
+          "completion_tokens_details": {
+            "reasoning_tokens": 0
+          }
+        },
+        {
+          "completion_tokens": 1363,
+          "prompt_tokens": 2399,
+          "total_tokens": 3762,
+          "prompt_tokens_details": {
+            "cached_tokens": 2304
+          },
+          "completion_tokens_details": {
+            "reasoning_tokens": 0
+          }
+        },
+        {
+          "completion_tokens": 5,
+          "prompt_tokens": 2973,
+          "total_tokens": 2978,
+          "prompt_tokens_details": {
+            "cached_tokens": 768
+          },
+          "completion_tokens_details": {
+            "reasoning_tokens": 0
+          }
+        },
+        {
+          "completion_tokens": 5,
+          "prompt_tokens": 4800,
+          "total_tokens": 4805,
+          "prompt_tokens_details": {
+            "cached_tokens": 0
+          },
+          "completion_tokens_details": {
+            "reasoning_tokens": 0
+          }
+        },
+        {
+          "completion_tokens": 111,
+          "prompt_tokens": 3037,
+          "total_tokens": 3148,
+          "prompt_tokens_details": {
+            "cached_tokens": 0
+          },
+          "completion_tokens_details": {
+            "reasoning_tokens": 0
+          }
+        },
+        {
+          "completion_tokens": 5,
+          "prompt_tokens": 3210,
+          "total_tokens": 3215,
+          "prompt_tokens_details": {
+            "cached_tokens": 768
+          },
+          "completion_tokens_details": {
+            "reasoning_tokens": 0
+          }
+        },
+        {
+          "completion_tokens": 5,
+          "prompt_tokens": 4800,
+          "total_tokens": 4805,
+          "prompt_tokens_details": {
+            "cached_tokens": 4736
+          },
+          "completion_tokens_details": {
+            "reasoning_tokens": 0
+          }
+        },
+        {
+          "completion_tokens": 278,
+          "prompt_tokens": 3037,
+          "total_tokens": 3315,
+          "prompt_tokens_details": {
+            "cached_tokens": 2944
+          },
+          "completion_tokens_details": {
+            "reasoning_tokens": 0
+          }
+        },
+        {
+          "completion_tokens": 5,
+          "prompt_tokens": 3659,
+          "total_tokens": 3664,
+          "prompt_tokens_details": {
+            "cached_tokens": 768
+          },
+          "completion_tokens_details": {
+            "reasoning_tokens": 0
+          }
+        },
+        {
+          "completion_tokens": 5,
+          "prompt_tokens": 4834,
+          "total_tokens": 4839,
+          "prompt_tokens_details": {
+            "cached_tokens": 768
+          },
+          "completion_tokens_details": {
+            "reasoning_tokens": 0
+          }
+        },
+        {
+          "completion_tokens": 272,
+          "prompt_tokens": 3054,
+          "total_tokens": 3326,
+          "prompt_tokens_details": {
+            "cached_tokens": 768
+          },
+          "completion_tokens_details": {
+            "reasoning_tokens": 0
+          }
+        },
+        {
+          "completion_tokens": 131,
+          "prompt_tokens": 3928,
+          "total_tokens": 4059,
+          "prompt_tokens_details": {
+            "cached_tokens": 768
+          },
+          "completion_tokens_details": {
+            "reasoning_tokens": 0
+          }
+        },
+        {
+          "completion_tokens": 5,
+          "prompt_tokens": 3079,
+          "total_tokens": 3084,
+          "prompt_tokens_details": {
+            "cached_tokens": 768
+          },
+          "completion_tokens_details": {
+            "reasoning_tokens": 0
+          }
+        },
+        {
+          "completion_tokens": 85,
+          "prompt_tokens": 4923,
+          "total_tokens": 5008,
+          "prompt_tokens_details": {
+            "cached_tokens": 768
+          },
+          "completion_tokens_details": {
+            "reasoning_tokens": 0
+          }
+        },
+        {
+          "completion_tokens": 119,
+          "prompt_tokens": 3466,
+          "total_tokens": 3585,
+          "prompt_tokens_details": {
+            "cached_tokens": 768
+          },
+          "completion_tokens_details": {
+            "reasoning_tokens": 0
+          }
+        },
+        {
+          "completion_tokens": 5,
+          "prompt_tokens": 2964,
+          "total_tokens": 2969,
+          "prompt_tokens_details": {
+            "cached_tokens": 768
+          },
+          "completion_tokens_details": {
+            "reasoning_tokens": 0
+          }
+        },
+        {
+          "completion_tokens": 54,
+          "prompt_tokens": 4812,
+          "total_tokens": 4866,
+          "prompt_tokens_details": {
+            "cached_tokens": 768
+          },
+          "completion_tokens_details": {
+            "reasoning_tokens": 0
+          }
+        },
+        {
+          "completion_tokens": 5,
+          "prompt_tokens": 2544,
+          "total_tokens": 2549,
+          "prompt_tokens_details": {
+            "cached_tokens": 768
+          },
+          "completion_tokens_details": {
+            "reasoning_tokens": 0
+          }
+        },
+        {
+          "completion_tokens": 66,
+          "prompt_tokens": 4393,
+          "total_tokens": 4459,
+          "prompt_tokens_details": {
+            "cached_tokens": 768
+          },
+          "completion_tokens_details": {
+            "reasoning_tokens": 0
+          }
+        },
+        {
+          "completion_tokens": 143,
+          "prompt_tokens": 2820,
+          "total_tokens": 2963,
+          "prompt_tokens_details": {
+            "cached_tokens": 768
+          },
+          "completion_tokens_details": {
+            "reasoning_tokens": 0
+          }
+        },
+        {
+          "completion_tokens": 5,
+          "prompt_tokens": 2544,
+          "total_tokens": 2549,
+          "prompt_tokens_details": {
+            "cached_tokens": 2432
+          },
+          "completion_tokens_details": {
+            "reasoning_tokens": 0
+          }
+        },
+        {
+          "completion_tokens": 143,
+          "prompt_tokens": 4534,
+          "total_tokens": 4677,
+          "prompt_tokens_details": {
+            "cached_tokens": 2048
+          },
+          "completion_tokens_details": {
+            "reasoning_tokens": 0
+          }
+        },
+        {
+          "completion_tokens": 5,
+          "prompt_tokens": 2808,
+          "total_tokens": 2813,
+          "prompt_tokens_details": {
+            "cached_tokens": 768
+          },
+          "completion_tokens_details": {
+            "reasoning_tokens": 0
+          }
+        },
+        {
+          "completion_tokens": 5,
+          "prompt_tokens": 2932,
+          "total_tokens": 2937,
+          "prompt_tokens_details": {
+            "cached_tokens": 768
+          },
+          "completion_tokens_details": {
+            "reasoning_tokens": 0
+          }
+        },
+        {
+          "completion_tokens": 72,
+          "prompt_tokens": 4534,
+          "total_tokens": 4606,
+          "prompt_tokens_details": {
+            "cached_tokens": 4480
+          },
+          "completion_tokens_details": {
+            "reasoning_tokens": 0
+          }
+        },
+        {
+          "completion_tokens": 5,
+          "prompt_tokens": 2808,
+          "total_tokens": 2813,
+          "prompt_tokens_details": {
+            "cached_tokens": 2688
+          },
+          "completion_tokens_details": {
+            "reasoning_tokens": 0
+          }
+        },
+        {
+          "completion_tokens": 67,
+          "prompt_tokens": 2895,
+          "total_tokens": 2962,
+          "prompt_tokens_details": {
+            "cached_tokens": 768
+          },
+          "completion_tokens_details": {
+            "reasoning_tokens": 0
+          }
+        },
+        {
+          "completion_tokens": 95,
+          "prompt_tokens": 2175,
+          "total_tokens": 2270,
+          "prompt_tokens_details": {
+            "cached_tokens": 768
+          },
+          "completion_tokens_details": {
+            "reasoning_tokens": 0
+          }
+        },
+        {
+          "completion_tokens": 171,
+          "prompt_tokens": 2385,
+          "total_tokens": 2556,
+          "prompt_tokens_details": {
+            "cached_tokens": 0
+          },
+          "completion_tokens_details": {
+            "reasoning_tokens": 0
+          }
+        },
+        {
+          "completion_tokens": 88,
+          "prompt_tokens": 2707,
+          "total_tokens": 2795,
+          "prompt_tokens_details": {
+            "cached_tokens": 0
+          },
+          "completion_tokens_details": {
+            "reasoning_tokens": 0
+          }
+        },
+        {
+          "completion_tokens": 136,
+          "prompt_tokens": 2181,
+          "total_tokens": 2317,
+          "prompt_tokens_details": {
+            "cached_tokens": 0
+          },
+          "completion_tokens_details": {
+            "reasoning_tokens": 0
+          }
+        },
+        {
+          "completion_tokens": 137,
+          "prompt_tokens": 2377,
+          "total_tokens": 2514,
+          "prompt_tokens_details": {
+            "cached_tokens": 768
+          },
+          "completion_tokens_details": {
+            "reasoning_tokens": 0
+          }
+        },
+        {
+          "completion_tokens": 88,
+          "prompt_tokens": 2658,
+          "total_tokens": 2746,
+          "prompt_tokens_details": {
+            "cached_tokens": 768
+          },
+          "completion_tokens_details": {
+            "reasoning_tokens": 0
+          }
+        },
+        {
+          "completion_tokens": 168,
+          "prompt_tokens": 2161,
+          "total_tokens": 2329,
+          "prompt_tokens_details": {
+            "cached_tokens": 768
+          },
+          "completion_tokens_details": {
+            "reasoning_tokens": 0
+          }
+        },
+        {
+          "completion_tokens": 137,
+          "prompt_tokens": 2394,
+          "total_tokens": 2531,
+          "prompt_tokens_details": {
+            "cached_tokens": 0
+          },
+          "completion_tokens_details": {
+            "reasoning_tokens": 0
+          }
+        },
+        {
+          "completion_tokens": 540,
+          "prompt_tokens": 2520,
+          "total_tokens": 3060,
+          "prompt_tokens_details": {
+            "cached_tokens": 0
+          },
+          "completion_tokens_details": {
+            "reasoning_tokens": 115
+          }
+        }
+      ],
+      "durationMs": 85200,
+      "startedAt": "2026-10-21T00:28:51.579Z",
+      "finishedAt": "2026-10-21T00:30:16.779Z",
+      "cost": 0.015318449999999997,
+      "rateClass": "off-peak",
+      "steps": 38,
+      "records": [
+        {
+          "row": 1,
+          "iteration": 1,
+          "kind": "exchange",
+          "exchange": 1,
+          "outcome": "selected",
+          "diagnosticsHead": null,
+          "replacementChars": null,
+          "finishReason": "stop",
+          "cause": null,
+          "payloads": 0,
+          "toolCalls": 0,
+          "selectors": null,
+          "stages": null,
+          "matcherKinds": null
+        },
+        {
+          "row": 2,
+          "iteration": 1,
+          "kind": "exchange",
+          "exchange": 2,
+          "outcome": "protocol",
+          "diagnosticsHead": "stage: protocol expected {\"path\": ..., \"symbol\": ..., \"kind\": ..., \"matcher\": ..., \"replacement\": ...}; JSON Parse error: Expected '}'",
+          "replacementChars": null,
+          "finishReason": "stop",
+          "cause": "protocol",
+          "payloads": 0,
+          "toolCalls": 0,
+          "selectors": null,
+          "stages": null,
+          "matcherKinds": null
+        },
+        {
+          "row": 3,
+          "iteration": 1,
+          "kind": "exchange",
+          "exchange": 3,
+          "outcome": "applied",
+          "diagnosticsHead": null,
+          "replacementChars": null,
+          "finishReason": "stop",
+          "cause": null,
+          "payloads": 1,
+          "toolCalls": 0,
+          "selectors": [
+            "whole-symbol"
+          ],
+          "stages": [
+            "whole-symbol"
+          ],
+          "matcherKinds": [
+            null
+          ]
+        },
+        {
+          "row": 4,
+          "iteration": 1,
+          "kind": "verification",
+          "exchange": null,
+          "outcome": "tsc",
+          "diagnosticsHead": "stage: tsc replacement line 61: TS2677: A type predicate's type must be assignable to its parameter's type. Type 'Lambda' is not assignable to type 'LispValue'. — in declaration `isLambda` (function) ",
+          "replacementChars": null,
+          "finishReason": "stop",
+          "cause": null,
+          "payloads": 0,
+          "toolCalls": 0,
+          "selectors": null,
+          "stages": null,
+          "matcherKinds": null
+        },
+        {
+          "row": 5,
+          "iteration": 2,
+          "kind": "exchange",
+          "exchange": 1,
+          "outcome": "self-check",
+          "diagnosticsHead": "Self-check (read): src/lisp.ts (170 line(s), truncated at 8000 characters). 1 | export type LispValue = number | boolean | LispValue[] | null; 2 | 3 | type Env = Map<string, LispValue>; 4 | 5 | type B",
+          "replacementChars": null,
+          "finishReason": "stop",
+          "cause": null,
+          "payloads": 0,
+          "toolCalls": 0,
+          "selectors": null,
+          "stages": null,
+          "matcherKinds": null
+        },
+        {
+          "row": 6,
+          "iteration": 2,
+          "kind": "exchange",
+          "exchange": 2,
+          "outcome": "protocol",
+          "diagnosticsHead": "stage: protocol the round already used its one self-verification request; return an edit payload now (the harness runs at most one request per round)",
+          "replacementChars": null,
+          "finishReason": "stop",
+          "cause": "protocol",
+          "payloads": 0,
+          "toolCalls": 0,
+          "selectors": null,
+          "stages": null,
+          "matcherKinds": null
+        },
+        {
+          "row": 7,
+          "iteration": 2,
+          "kind": "exchange",
+          "exchange": 3,
+          "outcome": "no-op",
+          "diagnosticsHead": "stage: compact clause 1 of 1 ({\"path\":\"src/lisp.ts\",\"symbol\":\"run\",\"kind\":\"function\"} in \"src/lisp.ts\") failed; resolved clauses are applied non-atomically, so any other clause listed as applied below",
+          "replacementChars": null,
+          "finishReason": "stop",
+          "cause": "no-op",
+          "payloads": 1,
+          "toolCalls": 0,
+          "selectors": [],
+          "stages": [],
+          "matcherKinds": []
+        },
+        {
+          "row": 8,
+          "iteration": 3,
+          "kind": "exchange",
+          "exchange": 1,
+          "outcome": "self-check",
+          "diagnosticsHead": "Self-check (read): src/lisp.ts (170 line(s), truncated at 8000 characters). 1 | export type LispValue = number | boolean | LispValue[] | null; 2 | 3 | type Env = Map<string, LispValue>; 4 | 5 | type B",
+          "replacementChars": null,
+          "finishReason": "stop",
+          "cause": null,
+          "payloads": 0,
+          "toolCalls": 0,
+          "selectors": null,
+          "stages": null,
+          "matcherKinds": null
+        },
+        {
+          "row": 9,
+          "iteration": 3,
+          "kind": "exchange",
+          "exchange": 2,
+          "outcome": "protocol",
+          "diagnosticsHead": "stage: protocol the round already used its one self-verification request; return an edit payload now (the harness runs at most one request per round)",
+          "replacementChars": null,
+          "finishReason": "stop",
+          "cause": "protocol",
+          "payloads": 0,
+          "toolCalls": 0,
+          "selectors": null,
+          "stages": null,
+          "matcherKinds": null
+        },
+        {
+          "row": 10,
+          "iteration": 3,
+          "kind": "exchange",
+          "exchange": 3,
+          "outcome": "no-op",
+          "diagnosticsHead": "stage: compact clause 1 of 6 ({\"path\":\"src/lisp.ts\",\"symbol\":\"isLambda\",\"kind\":\"function\"} in \"src/lisp.ts\") failed; resolved clauses are applied non-atomically, so any other clause listed as applied ",
+          "replacementChars": null,
+          "finishReason": "stop",
+          "cause": "no-op",
+          "payloads": 6,
+          "toolCalls": 0,
+          "selectors": [
+            "matcher",
+            "matcher",
+            "matcher"
+          ],
+          "stages": [
+            "match",
+            "match",
+            "match"
+          ],
+          "matcherKinds": [
+            "snippet",
+            "snippet",
+            "snippet"
+          ]
+        },
+        {
+          "row": 11,
+          "iteration": 4,
+          "kind": "exchange",
+          "exchange": 1,
+          "outcome": "self-check",
+          "diagnosticsHead": "Self-check (read): src/lisp.ts (170 line(s), truncated at 8000 characters). 1 | export type LispValue = number | boolean | LispValue[] | null; 2 | 3 | type Env = Map<string, LispValue>; 4 | 5 | type B",
+          "replacementChars": null,
+          "finishReason": "stop",
+          "cause": null,
+          "payloads": 0,
+          "toolCalls": 0,
+          "selectors": null,
+          "stages": null,
+          "matcherKinds": null
+        },
+        {
+          "row": 12,
+          "iteration": 4,
+          "kind": "exchange",
+          "exchange": 2,
+          "outcome": "protocol",
+          "diagnosticsHead": "stage: protocol the round already used its one self-verification request; return an edit payload now (the harness runs at most one request per round)",
+          "replacementChars": null,
+          "finishReason": "stop",
+          "cause": "protocol",
+          "payloads": 0,
+          "toolCalls": 0,
+          "selectors": null,
+          "stages": null,
+          "matcherKinds": null
+        },
+        {
+          "row": 13,
+          "iteration": 4,
+          "kind": "exchange",
+          "exchange": 3,
+          "outcome": "no-op",
+          "diagnosticsHead": "stage: compact clause 1 of 6 ({\"path\":\"src/lisp.ts\",\"symbol\":\"isLambda\",\"kind\":\"function\"} in \"src/lisp.ts\") failed; resolved clauses are applied non-atomically, so any other clause listed as applied ",
+          "replacementChars": null,
+          "finishReason": "stop",
+          "cause": "no-op",
+          "payloads": 6,
+          "toolCalls": 0,
+          "selectors": [],
+          "stages": [],
+          "matcherKinds": []
+        },
+        {
+          "row": 14,
+          "iteration": 5,
+          "kind": "exchange",
+          "exchange": 1,
+          "outcome": "no-op",
+          "diagnosticsHead": "stage: no-op the edit does not change the file: the replacement is identical to the text it replaces; change the code so the diagnostics are actually addressed",
+          "replacementChars": 329,
+          "finishReason": "stop",
+          "cause": "no-op",
+          "payloads": 1,
+          "toolCalls": 0,
+          "selectors": [
+            "whole-symbol"
+          ],
+          "stages": [
+            "whole-symbol"
+          ],
+          "matcherKinds": [
+            null
+          ]
+        },
+        {
+          "row": 15,
+          "iteration": 5,
+          "kind": "exchange",
+          "exchange": 2,
+          "outcome": "self-check",
+          "diagnosticsHead": "Self-check (read): src/lisp.ts (170 line(s), truncated at 8000 characters). 1 | export type LispValue = number | boolean | LispValue[] | null; 2 | 3 | type Env = Map<string, LispValue>; 4 | 5 | type B",
+          "replacementChars": null,
+          "finishReason": "stop",
+          "cause": null,
+          "payloads": 0,
+          "toolCalls": 0,
+          "selectors": null,
+          "stages": null,
+          "matcherKinds": null
+        },
+        {
+          "row": 16,
+          "iteration": 5,
+          "kind": "exchange",
+          "exchange": 3,
+          "outcome": "matcher",
+          "diagnosticsHead": "stage: compact clause 2 of 2 ({\"path\":\"src/lisp.ts\",\"symbol\":\"evaluate\",\"kind\":\"function\"} in \"src/lisp.ts\") failed; resolved clauses are applied non-atomically, so any other clause listed as applied ",
+          "replacementChars": null,
+          "finishReason": "stop",
+          "cause": "matcher-not-found",
+          "payloads": 2,
+          "toolCalls": 0,
+          "selectors": [
+            "whole-symbol"
+          ],
+          "stages": [
+            "whole-symbol"
+          ],
+          "matcherKinds": [
+            null
+          ]
+        },
+        {
+          "row": 17,
+          "iteration": 6,
+          "kind": "exchange",
+          "exchange": 1,
+          "outcome": "no-op",
+          "diagnosticsHead": "stage: no-op the edit does not change the file: the replacement is identical to the text it replaces; change the code so the diagnostics are actually addressed",
+          "replacementChars": 145,
+          "finishReason": "stop",
+          "cause": "no-op",
+          "payloads": 1,
+          "toolCalls": 0,
+          "selectors": [
+            "matcher"
+          ],
+          "stages": [
+            "match"
+          ],
+          "matcherKinds": [
+            "snippet"
+          ]
+        },
+        {
+          "row": 18,
+          "iteration": 6,
+          "kind": "exchange",
+          "exchange": 2,
+          "outcome": "self-check",
+          "diagnosticsHead": "Self-check (read): src/lisp.ts (170 line(s), truncated at 8000 characters). 1 | export type LispValue = number | boolean | LispValue[] | null; 2 | 3 | type Env = Map<string, LispValue>; 4 | 5 | type B",
+          "replacementChars": null,
+          "finishReason": "stop",
+          "cause": null,
+          "payloads": 0,
+          "toolCalls": 0,
+          "selectors": null,
+          "stages": null,
+          "matcherKinds": null
+        },
+        {
+          "row": 19,
+          "iteration": 6,
+          "kind": "exchange",
+          "exchange": 3,
+          "outcome": "applied",
+          "diagnosticsHead": null,
+          "replacementChars": null,
+          "finishReason": "stop",
+          "cause": null,
+          "payloads": 1,
+          "toolCalls": 0,
+          "selectors": [
+            "whole-symbol"
+          ],
+          "stages": [
+            "whole-symbol"
+          ],
+          "matcherKinds": [
+            null
+          ]
+        },
+        {
+          "row": 20,
+          "iteration": 6,
+          "kind": "verification",
+          "exchange": null,
+          "outcome": "tsc",
+          "diagnosticsHead": "stage: tsc elsewhere in file: src/lisp.ts(61,47): error TS2677: A type predicate's type must be assignable to its parameter's type. Type 'Lambda' is not assignable to type 'LispValue'. — in declaratio",
+          "replacementChars": null,
+          "finishReason": "stop",
+          "cause": null,
+          "payloads": 0,
+          "toolCalls": 0,
+          "selectors": null,
+          "stages": null,
+          "matcherKinds": null
+        },
+        {
+          "row": 21,
+          "iteration": 7,
+          "kind": "exchange",
+          "exchange": 1,
+          "outcome": "self-check",
+          "diagnosticsHead": "Self-check (read): src/lisp.ts (170 line(s), truncated at 8000 characters). 1 | export type LispValue = number | boolean | LispValue[] | null; 2 | 3 | type Env = Map<string, LispValue>; 4 | 5 | type B",
+          "replacementChars": null,
+          "finishReason": "stop",
+          "cause": null,
+          "payloads": 0,
+          "toolCalls": 0,
+          "selectors": null,
+          "stages": null,
+          "matcherKinds": null
+        },
+        {
+          "row": 22,
+          "iteration": 7,
+          "kind": "exchange",
+          "exchange": 2,
+          "outcome": "address",
+          "diagnosticsHead": "stage: compact clause 1 of 2 ({\"path\":\"src/lisp.ts\",\"symbol\":\"car\",\"kind\":\"function\"} in \"src/lisp.ts\") failed; resolved clauses are applied non-atomically, so any other clause listed as applied below",
+          "replacementChars": null,
+          "finishReason": "stop",
+          "cause": "address",
+          "payloads": 2,
+          "toolCalls": 0,
+          "selectors": [],
+          "stages": [],
+          "matcherKinds": []
+        },
+        {
+          "row": 23,
+          "iteration": 7,
+          "kind": "exchange",
+          "exchange": 3,
+          "outcome": "applied",
+          "diagnosticsHead": null,
+          "replacementChars": null,
+          "finishReason": "stop",
+          "cause": null,
+          "payloads": 2,
+          "toolCalls": 0,
+          "selectors": [
+            "whole-symbol",
+            "whole-symbol"
+          ],
+          "stages": [
+            "whole-symbol",
+            "whole-symbol"
+          ],
+          "matcherKinds": [
+            null,
+            null
+          ]
+        },
+        {
+          "row": 24,
+          "iteration": 7,
+          "kind": "verification",
+          "exchange": null,
+          "outcome": "tsc",
+          "diagnosticsHead": "stage: tsc elsewhere in file: src/lisp.ts(61,47): error TS2677: A type predicate's type must be assignable to its parameter's type. Type 'Lambda' is not assignable to type 'LispValue'. — in declaratio",
+          "replacementChars": null,
+          "finishReason": "stop",
+          "cause": null,
+          "payloads": 0,
+          "toolCalls": 0,
+          "selectors": null,
+          "stages": null,
+          "matcherKinds": null
+        },
+        {
+          "row": 25,
+          "iteration": 8,
+          "kind": "exchange",
+          "exchange": 1,
+          "outcome": "self-check",
+          "diagnosticsHead": "Self-check (read): src/lisp.ts (184 line(s), truncated at 8000 characters). 1 | export type LispValue = number | boolean | LispValue[] | null; 2 | 3 | type Env = Map<string, LispValue>; 4 | 5 | type B",
+          "replacementChars": null,
+          "finishReason": "stop",
+          "cause": null,
+          "payloads": 0,
+          "toolCalls": 0,
+          "selectors": null,
+          "stages": null,
+          "matcherKinds": null
+        },
+        {
+          "row": 26,
+          "iteration": 8,
+          "kind": "exchange",
+          "exchange": 2,
+          "outcome": "no-op",
+          "diagnosticsHead": "stage: compact clause 1 of 2 ({\"path\":\"src/lisp.ts\",\"symbol\":\"car\",\"kind\":\"function\"} in \"src/lisp.ts\") failed; resolved clauses are applied non-atomically, so any other clause listed as applied below",
+          "replacementChars": null,
+          "finishReason": "stop",
+          "cause": "no-op",
+          "payloads": 2,
+          "toolCalls": 0,
+          "selectors": [],
+          "stages": [],
+          "matcherKinds": []
+        },
+        {
+          "row": 27,
+          "iteration": 8,
+          "kind": "exchange",
+          "exchange": 3,
+          "outcome": "protocol",
+          "diagnosticsHead": "stage: protocol the round already used its one self-verification request; return an edit payload now (the harness runs at most one request per round)",
+          "replacementChars": null,
+          "finishReason": "stop",
+          "cause": "protocol",
+          "payloads": 0,
+          "toolCalls": 0,
+          "selectors": null,
+          "stages": null,
+          "matcherKinds": null
+        },
+        {
+          "row": 28,
+          "iteration": 9,
+          "kind": "exchange",
+          "exchange": 1,
+          "outcome": "self-check",
+          "diagnosticsHead": "Self-check (read): src/lisp.ts (184 line(s), truncated at 8000 characters). 1 | export type LispValue = number | boolean | LispValue[] | null; 2 | 3 | type Env = Map<string, LispValue>; 4 | 5 | type B",
+          "replacementChars": null,
+          "finishReason": "stop",
+          "cause": null,
+          "payloads": 0,
+          "toolCalls": 0,
+          "selectors": null,
+          "stages": null,
+          "matcherKinds": null
+        },
+        {
+          "row": 29,
+          "iteration": 9,
+          "kind": "exchange",
+          "exchange": 2,
+          "outcome": "no-op",
+          "diagnosticsHead": "stage: compact clause 1 of 2 ({\"path\":\"src/lisp.ts\",\"symbol\":\"car\",\"kind\":\"function\"} in \"src/lisp.ts\") failed; resolved clauses are applied non-atomically, so any other clause listed as applied below",
+          "replacementChars": null,
+          "finishReason": "stop",
+          "cause": "no-op",
+          "payloads": 2,
+          "toolCalls": 0,
+          "selectors": [],
+          "stages": [],
+          "matcherKinds": []
+        },
+        {
+          "row": 30,
+          "iteration": 9,
+          "kind": "exchange",
+          "exchange": 3,
+          "outcome": "protocol",
+          "diagnosticsHead": "stage: protocol the round already used its one self-verification request; return an edit payload now (the harness runs at most one request per round)",
+          "replacementChars": null,
+          "finishReason": "stop",
+          "cause": "protocol",
+          "payloads": 0,
+          "toolCalls": 0,
+          "selectors": null,
+          "stages": null,
+          "matcherKinds": null
+        },
+        {
+          "row": 31,
+          "iteration": 10,
+          "kind": "exchange",
+          "exchange": 1,
+          "outcome": "matcher",
+          "diagnosticsHead": "stage: matcher the matcher could not be parsed as TypeScript: expected \"}\" (line 2, column 20); a matcher must be a single copied statement or expression, or a contiguous run of statements copied from",
+          "replacementChars": 67,
+          "finishReason": "stop",
+          "cause": "matcher-unparseable",
+          "payloads": 1,
+          "toolCalls": 0,
+          "selectors": [
+            "matcher"
+          ],
+          "stages": [
+            "match"
+          ],
+          "matcherKinds": [
+            "snippet"
+          ]
+        },
+        {
+          "row": 32,
+          "iteration": 10,
+          "kind": "exchange",
+          "exchange": 2,
+          "outcome": "matcher",
+          "diagnosticsHead": "stage: compact clause 2 of 3 ({\"path\":\"src/lisp.ts\",\"symbol\":\"isLambda\",\"kind\":\"function\"} in \"src/lisp.ts\") failed; resolved clauses are applied non-atomically, so any other clause listed as applied ",
+          "replacementChars": null,
+          "finishReason": "stop",
+          "cause": "matcher-unparseable",
+          "payloads": 3,
+          "toolCalls": 0,
+          "selectors": [
+            "matcher"
+          ],
+          "stages": [
+            "match"
+          ],
+          "matcherKinds": [
+            "snippet"
+          ]
+        },
+        {
+          "row": 33,
+          "iteration": 10,
+          "kind": "exchange",
+          "exchange": 3,
+          "outcome": "no-op",
+          "diagnosticsHead": "stage: compact clause 1 of 3 ({\"path\":\"src/lisp.ts\",\"symbol\":\"car\",\"kind\":\"function\"} in \"src/lisp.ts\") failed; resolved clauses are applied non-atomically, so any other clause listed as applied below",
+          "replacementChars": null,
+          "finishReason": "stop",
+          "cause": "no-op",
+          "payloads": 3,
+          "toolCalls": 0,
+          "selectors": [],
+          "stages": [],
+          "matcherKinds": []
+        },
+        {
+          "row": 34,
+          "iteration": 11,
+          "kind": "exchange",
+          "exchange": 1,
+          "outcome": "no-op",
+          "diagnosticsHead": "stage: no-op the edit does not change the file: the replacement is identical to the text it replaces; change the code so the diagnostics are actually addressed",
+          "replacementChars": 184,
+          "finishReason": "stop",
+          "cause": "no-op",
+          "payloads": 1,
+          "toolCalls": 0,
+          "selectors": [
+            "whole-symbol"
+          ],
+          "stages": [
+            "whole-symbol"
+          ],
+          "matcherKinds": [
+            null
+          ]
+        },
+        {
+          "row": 35,
+          "iteration": 11,
+          "kind": "exchange",
+          "exchange": 2,
+          "outcome": "no-op",
+          "diagnosticsHead": "stage: compact clause 1 of 3 ({\"path\":\"src/lisp.ts\",\"symbol\":\"isLambda\",\"kind\":\"function\"} in \"src/lisp.ts\") failed; resolved clauses are applied non-atomically, so any other clause listed as applied ",
+          "replacementChars": null,
+          "finishReason": "stop",
+          "cause": "no-op",
+          "payloads": 3,
+          "toolCalls": 0,
+          "selectors": [
+            "matcher"
+          ],
+          "stages": [
+            "match"
+          ],
+          "matcherKinds": [
+            "snippet"
+          ]
+        },
+        {
+          "row": 36,
+          "iteration": 11,
+          "kind": "exchange",
+          "exchange": 3,
+          "outcome": "no-op",
+          "diagnosticsHead": "stage: compact clause 2 of 3 ({\"path\":\"src/lisp.ts\",\"symbol\":\"isLambda\",\"kind\":\"function\"} in \"src/lisp.ts\") failed; resolved clauses are applied non-atomically, so any other clause listed as applied ",
+          "replacementChars": null,
+          "finishReason": "stop",
+          "cause": "no-op",
+          "payloads": 3,
+          "toolCalls": 0,
+          "selectors": [
+            "matcher"
+          ],
+          "stages": [
+            "match"
+          ],
+          "matcherKinds": [
+            "snippet"
+          ]
+        },
+        {
+          "row": 37,
+          "iteration": 12,
+          "kind": "exchange",
+          "exchange": 1,
+          "outcome": "repeat",
+          "diagnosticsHead": "stage: repeat this exact edit was just rejected (stage: no-op); resending it verbatim cannot succeed — change the payload",
+          "replacementChars": 184,
+          "finishReason": "stop",
+          "cause": "repeat",
+          "payloads": 1,
+          "toolCalls": 0,
+          "selectors": [
+            "whole-symbol"
+          ],
+          "stages": [
+            "whole-symbol"
+          ],
+          "matcherKinds": [
+            null
+          ]
+        },
+        {
+          "row": 38,
+          "iteration": 12,
+          "kind": "exchange",
+          "exchange": 2,
+          "outcome": "no-op",
+          "diagnosticsHead": "stage: compact clause 2 of 3 ({\"path\":\"src/lisp.ts\",\"symbol\":\"isLambda\",\"kind\":\"function\"} in \"src/lisp.ts\") failed; resolved clauses are applied non-atomically, so any other clause listed as applied ",
+          "replacementChars": null,
+          "finishReason": "stop",
+          "cause": "no-op",
+          "payloads": 3,
+          "toolCalls": 0,
+          "selectors": [
+            "whole-symbol"
+          ],
+          "stages": [
+            "whole-symbol"
+          ],
+          "matcherKinds": [
+            null
+          ]
+        }
+      ],
+      "exchangeStats": {
+        "turns": 35,
+        "payloads": 45,
+        "toolCalls": 0,
+        "applied": 3,
+        "rejected": 23,
+        "selected": 1,
+        "stopped": 0,
+        "selfChecks": 8,
+        "range": 0,
+        "matcher": 8,
+        "wholeSymbol": 9,
+        "stageWholeSymbol": 9,
+        "stageMatch": 8,
+        "stagePick": 0,
+        "snippet": 8,
+        "regex": 0,
+        "creates": 3
+      },
+      "loopDiagnostics": "token-budget: accumulated 120510 tokens exceeded the 120000 token budget",
+      "terminationReason": "token-budget",
+      "model": "deepseek-v4.1-flash",
+      "workspace": "tmp/benchmark/2026-10-21T00-28-51-520Z-872a4250/minilisp-tc-rep3",
+      "logs": {
+        "side": "tmp/benchmark/2026-10-21T00-28-51-520Z-872a4250/logs/minilisp-tc-rep3/side.log",
+        "judge": "tmp/benchmark/2026-10-21T00-28-51-520Z-872a4250/logs/minilisp-tc-rep3/judge.log",
+        "session": null,
+        "stats": null
+      },
+      "versions": {
+        "bun": "1.3.13",
+        "opencode": null
+      },
+      "judge": {
+        "testsOk": false,
+        "tscOk": false,
+        "fixtureOk": true,
+        "detail": "tsc failed: src/lisp.ts(61,47): error TS2677: A type predicate's type must be assignable to its parameter's type.\n  Type 'Lambda' is not assignable to type 'LispValue'.\nsrc/lisp.ts(65,48): error TS2677: A type predicate's type must be assignable to its parameter's type.\n  Type 'Builtin' is not assignable to type 'LispValue'.; bun test failed: bun test v1.3.13 (bf2e2cec)\n\nsrc/lisp.test.ts:\n112 |   }\n113 |   throw new Error(\"not a function\");\n114 | }\n115 | \n116 | function checkArity(args: LispValue[], expected = 2): void {\n117 |   if (args.length !== expected) throw new Error(`expected exactly ${expected} arguments`);\n                                                                                              ^\nerror: expected exactly 2..."
+      },
+      "error": null,
+      "infraError": null
+    },
+    {
+      "task": "minilisp",
+      "side": "tc",
+      "rep": 4,
+      "ok": true,
+      "sideOk": true,
+      "tokens": {
+        "input": 28662,
+        "output": 2771,
+        "cacheRead": 9728,
+        "cacheWrite": null,
+        "reasoning": 0,
+        "total": 31433,
+        "billable": {
+          "in": 18934,
+          "out": 2771,
+          "total": 21705
+        }
+      },
+      "usageAvailable": true,
+      "usageSource": "chat-completions",
+      "rawUsage": [
+        {
+          "completion_tokens": 27,
+          "prompt_tokens": 1752,
+          "total_tokens": 1779,
+          "prompt_tokens_details": {
+            "cached_tokens": 1664
+          },
+          "completion_tokens_details": {
+            "reasoning_tokens": 0
+          }
+        },
+        {
+          "completion_tokens": 1399,
+          "prompt_tokens": 2186,
+          "total_tokens": 3585,
+          "prompt_tokens_details": {
+            "cached_tokens": 2176
+          },
+          "completion_tokens_details": {
+            "reasoning_tokens": 0
+          }
+        },
+        {
+          "completion_tokens": 5,
+          "prompt_tokens": 2760,
+          "total_tokens": 2765,
+          "prompt_tokens_details": {
+            "cached_tokens": 0
+          },
+          "completion_tokens_details": {
+            "reasoning_tokens": 0
+          }
+        },
+        {
+          "completion_tokens": 73,
+          "prompt_tokens": 4688,
+          "total_tokens": 4761,
+          "prompt_tokens_details": {
+            "cached_tokens": 768
+          },
+          "completion_tokens_details": {
+            "reasoning_tokens": 0
+          }
+        },
+        {
+          "completion_tokens": 5,
+          "prompt_tokens": 2958,
+          "total_tokens": 2963,
+          "prompt_tokens_details": {
+            "cached_tokens": 768
+          },
+          "completion_tokens_details": {
+            "reasoning_tokens": 0
+          }
+        },
+        {
+          "completion_tokens": 115,
+          "prompt_tokens": 2916,
+          "total_tokens": 3031,
+          "prompt_tokens_details": {
+            "cached_tokens": 768
+          },
+          "completion_tokens_details": {
+            "reasoning_tokens": 0
+          }
+        },
+        {
+          "completion_tokens": 5,
+          "prompt_tokens": 3133,
+          "total_tokens": 3138,
+          "prompt_tokens_details": {
+            "cached_tokens": 768
+          },
+          "completion_tokens_details": {
+            "reasoning_tokens": 0
+          }
+        },
+        {
+          "completion_tokens": 150,
+          "prompt_tokens": 5064,
+          "total_tokens": 5214,
+          "prompt_tokens_details": {
+            "cached_tokens": 2048
+          },
+          "completion_tokens_details": {
+            "reasoning_tokens": 0
+          }
+        },
+        {
+          "completion_tokens": 992,
+          "prompt_tokens": 3205,
+          "total_tokens": 4197,
+          "prompt_tokens_details": {
+            "cached_tokens": 768
+          },
+          "completion_tokens_details": {
+            "reasoning_tokens": 0
+          }
+        }
+      ],
+      "durationMs": 24179,
+      "startedAt": "2026-10-21T00:28:51.588Z",
+      "finishedAt": "2026-10-21T00:29:15.767Z",
+      "cost": 0.004531884,
+      "rateClass": "off-peak",
+      "steps": 11,
+      "records": [
+        {
+          "row": 1,
+          "iteration": 1,
+          "kind": "exchange",
+          "exchange": 1,
+          "outcome": "selected",
+          "diagnosticsHead": null,
+          "replacementChars": null,
+          "finishReason": "stop",
+          "cause": null,
+          "payloads": 0,
+          "toolCalls": 0,
+          "selectors": null,
+          "stages": null,
+          "matcherKinds": null
+        },
+        {
+          "row": 2,
+          "iteration": 1,
+          "kind": "exchange",
+          "exchange": 2,
+          "outcome": "applied",
+          "diagnosticsHead": null,
+          "replacementChars": null,
+          "finishReason": "stop",
+          "cause": null,
+          "payloads": 1,
+          "toolCalls": 0,
+          "selectors": [
+            "whole-symbol"
+          ],
+          "stages": [
+            "whole-symbol"
+          ],
+          "matcherKinds": [
+            null
+          ]
+        },
+        {
+          "row": 3,
+          "iteration": 1,
+          "kind": "verification",
+          "exchange": null,
+          "outcome": "tsc",
+          "diagnosticsHead": "stage: tsc replacement line 123: TS2322: Type 'Expr' is not assignable to type 'LispValue'. Type 'string' is not assignable to type 'LispValue'. — in declaration `evaluate` (function) 122 | params, 12",
+          "replacementChars": null,
+          "finishReason": "stop",
+          "cause": null,
+          "payloads": 0,
+          "toolCalls": 0,
+          "selectors": null,
+          "stages": null,
+          "matcherKinds": null
+        },
+        {
+          "row": 4,
+          "iteration": 2,
+          "kind": "exchange",
+          "exchange": 1,
+          "outcome": "self-check",
+          "diagnosticsHead": "Self-check (read): src/lisp.ts (203 line(s), truncated at 8000 characters). 1 | export type LispValue = number | boolean | LispValue[] | LispClosure; 2 | 3 | export interface LispClosure { 4 | kind: \"",
+          "replacementChars": null,
+          "finishReason": "stop",
+          "cause": null,
+          "payloads": 0,
+          "toolCalls": 0,
+          "selectors": null,
+          "stages": null,
+          "matcherKinds": null
+        },
+        {
+          "row": 5,
+          "iteration": 2,
+          "kind": "exchange",
+          "exchange": 2,
+          "outcome": "matcher",
+          "diagnosticsHead": "stage: compact clause 1 of 2 ({\"path\":\"src/lisp.ts\",\"symbol\":\"evaluate\",\"kind\":\"function\"} in \"src/lisp.ts\") failed; resolved clauses are applied non-atomically, so any other clause listed as applied ",
+          "replacementChars": null,
+          "finishReason": "stop",
+          "cause": "matcher-unparseable",
+          "payloads": 2,
+          "toolCalls": 0,
+          "selectors": [
+            "matcher"
+          ],
+          "stages": [
+            "match"
+          ],
+          "matcherKinds": [
+            "snippet"
+          ]
+        },
+        {
+          "row": 6,
+          "iteration": 2,
+          "kind": "exchange",
+          "exchange": 3,
+          "outcome": "protocol",
+          "diagnosticsHead": "stage: protocol the round already used its one self-verification request; return an edit payload now (the harness runs at most one request per round)",
+          "replacementChars": null,
+          "finishReason": "stop",
+          "cause": "protocol",
+          "payloads": 0,
+          "toolCalls": 0,
+          "selectors": null,
+          "stages": null,
+          "matcherKinds": null
+        },
+        {
+          "row": 7,
+          "iteration": 3,
+          "kind": "exchange",
+          "exchange": 1,
+          "outcome": "matcher",
+          "diagnosticsHead": "stage: compact clause 1 of 3 ({\"path\":\"src/lisp.ts\",\"symbol\":\"evaluate\",\"kind\":\"function\"} in \"src/lisp.ts\") failed; resolved clauses are applied non-atomically, so any other clause listed as applied ",
+          "replacementChars": null,
+          "finishReason": "stop",
+          "cause": "matcher-unparseable",
+          "payloads": 3,
+          "toolCalls": 0,
+          "selectors": [],
+          "stages": [],
+          "matcherKinds": []
+        },
+        {
+          "row": 8,
+          "iteration": 3,
+          "kind": "exchange",
+          "exchange": 2,
+          "outcome": "self-check",
+          "diagnosticsHead": "Self-check (read): src/lisp.ts (203 line(s), truncated at 8000 characters). 1 | export type LispValue = number | boolean | LispValue[] | LispClosure; 2 | 3 | export interface LispClosure { 4 | kind: \"",
+          "replacementChars": null,
+          "finishReason": "stop",
+          "cause": null,
+          "payloads": 0,
+          "toolCalls": 0,
+          "selectors": null,
+          "stages": null,
+          "matcherKinds": null
+        },
+        {
+          "row": 9,
+          "iteration": 3,
+          "kind": "exchange",
+          "exchange": 3,
+          "outcome": "matcher",
+          "diagnosticsHead": "stage: compact clause 1 of 3 ({\"path\":\"src/lisp.ts\",\"symbol\":\"evaluate\",\"kind\":\"function\"} in \"src/lisp.ts\") failed; resolved clauses are applied non-atomically, so any other clause listed as applied ",
+          "replacementChars": null,
+          "finishReason": "stop",
+          "cause": "matcher-unparseable",
+          "payloads": 3,
+          "toolCalls": 0,
+          "selectors": [
+            "matcher",
+            "matcher"
+          ],
+          "stages": [
+            "match",
+            "match"
+          ],
+          "matcherKinds": [
+            "snippet",
+            "snippet"
+          ]
+        },
+        {
+          "row": 10,
+          "iteration": 4,
+          "kind": "exchange",
+          "exchange": 1,
+          "outcome": "applied",
+          "diagnosticsHead": null,
+          "replacementChars": 2943,
+          "finishReason": "stop",
+          "cause": null,
+          "payloads": 1,
+          "toolCalls": 0,
+          "selectors": [
+            "whole-symbol"
+          ],
+          "stages": [
+            "whole-symbol"
+          ],
+          "matcherKinds": [
+            null
+          ]
+        },
+        {
+          "row": 11,
+          "iteration": 4,
+          "kind": "verification",
+          "exchange": null,
+          "outcome": "ok",
+          "diagnosticsHead": null,
+          "replacementChars": 2943,
+          "finishReason": "stop",
+          "cause": null,
+          "payloads": 0,
+          "toolCalls": 0,
+          "selectors": null,
+          "stages": null,
+          "matcherKinds": null
+        }
+      ],
+      "exchangeStats": {
+        "turns": 9,
+        "payloads": 10,
+        "toolCalls": 0,
+        "applied": 2,
+        "rejected": 4,
+        "selected": 1,
+        "stopped": 0,
+        "selfChecks": 2,
+        "range": 0,
+        "matcher": 3,
+        "wholeSymbol": 2,
+        "stageWholeSymbol": 2,
+        "stageMatch": 3,
+        "stagePick": 0,
+        "snippet": 3,
+        "regex": 0,
+        "creates": 1
+      },
+      "loopDiagnostics": null,
+      "terminationReason": null,
+      "model": "deepseek-v4.1-flash",
+      "workspace": "tmp/benchmark/2026-10-21T00-28-51-520Z-872a4250/minilisp-tc-rep4",
+      "logs": {
+        "side": "tmp/benchmark/2026-10-21T00-28-51-520Z-872a4250/logs/minilisp-tc-rep4/side.log",
+        "judge": "tmp/benchmark/2026-10-21T00-28-51-520Z-872a4250/logs/minilisp-tc-rep4/judge.log",
+        "session": null,
+        "stats": null
+      },
+      "versions": {
+        "bun": "1.3.13",
+        "opencode": null
+      },
+      "judge": {
+        "testsOk": true,
+        "tscOk": true,
+        "fixtureOk": true,
+        "detail": null
+      },
+      "error": null,
+      "infraError": null
+    },
+    {
+      "task": "minilisp",
+      "side": "tc",
+      "rep": 5,
+      "ok": false,
+      "sideOk": false,
+      "tokens": {
+        "input": 117829,
+        "output": 5658,
+        "cacheRead": 43776,
+        "cacheWrite": null,
+        "reasoning": 293,
+        "total": 123487,
+        "billable": {
+          "in": 74053,
+          "out": 5951,
+          "total": 80004
+        }
+      },
+      "usageAvailable": true,
+      "usageSource": "chat-completions",
+      "rawUsage": [
+        {
+          "completion_tokens": 27,
+          "prompt_tokens": 1752,
+          "total_tokens": 1779,
+          "prompt_tokens_details": {
+            "cached_tokens": 1664
+          },
+          "completion_tokens_details": {
+            "reasoning_tokens": 0
+          }
+        },
+        {
+          "completion_tokens": 1795,
+          "prompt_tokens": 2186,
+          "total_tokens": 3981,
+          "prompt_tokens_details": {
+            "cached_tokens": 2176
+          },
+          "completion_tokens_details": {
+            "reasoning_tokens": 0
+          }
+        },
+        {
+          "completion_tokens": 5,
+          "prompt_tokens": 2010,
+          "total_tokens": 2015,
+          "prompt_tokens_details": {
+            "cached_tokens": 768
+          },
+          "completion_tokens_details": {
+            "reasoning_tokens": 0
+          }
+        },
+        {
+          "completion_tokens": 77,
+          "prompt_tokens": 4351,
+          "total_tokens": 4428,
+          "prompt_tokens_details": {
+            "cached_tokens": 768
+          },
+          "completion_tokens_details": {
+            "reasoning_tokens": 0
+          }
+        },
+        {
+          "completion_tokens": 5,
+          "prompt_tokens": 2209,
+          "total_tokens": 2214,
+          "prompt_tokens_details": {
+            "cached_tokens": 1152
+          },
+          "completion_tokens_details": {
+            "reasoning_tokens": 0
+          }
+        },
+        {
+          "completion_tokens": 74,
+          "prompt_tokens": 2169,
+          "total_tokens": 2243,
+          "prompt_tokens_details": {
+            "cached_tokens": 0
+          },
+          "completion_tokens_details": {
+            "reasoning_tokens": 0
+          }
+        },
+        {
+          "completion_tokens": 77,
+          "prompt_tokens": 2235,
+          "total_tokens": 2312,
+          "prompt_tokens_details": {
+            "cached_tokens": 768
+          },
+          "completion_tokens_details": {
+            "reasoning_tokens": 0
+          }
+        },
+        {
+          "completion_tokens": 5,
+          "prompt_tokens": 2205,
+          "total_tokens": 2210,
+          "prompt_tokens_details": {
+            "cached_tokens": 768
+          },
+          "completion_tokens_details": {
+            "reasoning_tokens": 0
+          }
+        },
+        {
+          "completion_tokens": 156,
+          "prompt_tokens": 2259,
+          "total_tokens": 2415,
+          "prompt_tokens_details": {
+            "cached_tokens": 768
+          },
+          "completion_tokens_details": {
+            "reasoning_tokens": 0
+          }
+        },
+        {
+          "completion_tokens": 5,
+          "prompt_tokens": 2372,
+          "total_tokens": 2377,
+          "prompt_tokens_details": {
+            "cached_tokens": 768
+          },
+          "completion_tokens_details": {
+            "reasoning_tokens": 0
+          }
+        },
+        {
+          "completion_tokens": 75,
+          "prompt_tokens": 4715,
+          "total_tokens": 4790,
+          "prompt_tokens_details": {
+            "cached_tokens": 0
+          },
+          "completion_tokens_details": {
+            "reasoning_tokens": 0
+          }
+        },
+        {
+          "completion_tokens": 38,
+          "prompt_tokens": 2518,
+          "total_tokens": 2556,
+          "prompt_tokens_details": {
+            "cached_tokens": 768
+          },
+          "completion_tokens_details": {
+            "reasoning_tokens": 0
+          }
+        },
+        {
+          "completion_tokens": 75,
+          "prompt_tokens": 2188,
+          "total_tokens": 2263,
+          "prompt_tokens_details": {
+            "cached_tokens": 768
+          },
+          "completion_tokens_details": {
+            "reasoning_tokens": 0
+          }
+        },
+        {
+          "completion_tokens": 5,
+          "prompt_tokens": 2205,
+          "total_tokens": 2210,
+          "prompt_tokens_details": {
+            "cached_tokens": 2176
+          },
+          "completion_tokens_details": {
+            "reasoning_tokens": 0
+          }
+        },
+        {
+          "completion_tokens": 47,
+          "prompt_tokens": 2348,
+          "total_tokens": 2395,
+          "prompt_tokens_details": {
+            "cached_tokens": 1152
+          },
+          "completion_tokens_details": {
+            "reasoning_tokens": 0
+          }
+        },
+        {
+          "completion_tokens": 36,
+          "prompt_tokens": 2021,
+          "total_tokens": 2057,
+          "prompt_tokens_details": {
+            "cached_tokens": 768
+          },
+          "completion_tokens_details": {
+            "reasoning_tokens": 0
+          }
+        },
+        {
+          "completion_tokens": 104,
+          "prompt_tokens": 2066,
+          "total_tokens": 2170,
+          "prompt_tokens_details": {
+            "cached_tokens": 768
+          },
+          "completion_tokens_details": {
+            "reasoning_tokens": 0
+          }
+        },
+        {
+          "completion_tokens": 47,
+          "prompt_tokens": 2484,
+          "total_tokens": 2531,
+          "prompt_tokens_details": {
+            "cached_tokens": 0
+          },
+          "completion_tokens_details": {
+            "reasoning_tokens": 0
+          }
+        },
+        {
+          "completion_tokens": 5,
+          "prompt_tokens": 1987,
+          "total_tokens": 1992,
+          "prompt_tokens_details": {
+            "cached_tokens": 768
+          },
+          "completion_tokens_details": {
+            "reasoning_tokens": 0
+          }
+        },
+        {
+          "completion_tokens": 38,
+          "prompt_tokens": 4334,
+          "total_tokens": 4372,
+          "prompt_tokens_details": {
+            "cached_tokens": 768
+          },
+          "completion_tokens_details": {
+            "reasoning_tokens": 0
+          }
+        },
+        {
+          "completion_tokens": 5,
+          "prompt_tokens": 2344,
+          "total_tokens": 2349,
+          "prompt_tokens_details": {
+            "cached_tokens": 768
+          },
+          "completion_tokens_details": {
+            "reasoning_tokens": 0
+          }
+        },
+        {
+          "completion_tokens": 71,
+          "prompt_tokens": 4261,
+          "total_tokens": 4332,
+          "prompt_tokens_details": {
+            "cached_tokens": 768
+          },
+          "completion_tokens_details": {
+            "reasoning_tokens": 0
+          }
+        },
+        {
+          "completion_tokens": 75,
+          "prompt_tokens": 2162,
+          "total_tokens": 2237,
+          "prompt_tokens_details": {
+            "cached_tokens": 0
+          },
+          "completion_tokens_details": {
+            "reasoning_tokens": 0
+          }
+        },
+        {
+          "completion_tokens": 5,
+          "prompt_tokens": 2481,
+          "total_tokens": 2486,
+          "prompt_tokens_details": {
+            "cached_tokens": 768
+          },
+          "completion_tokens_details": {
+            "reasoning_tokens": 0
+          }
+        },
+        {
+          "completion_tokens": 71,
+          "prompt_tokens": 4261,
+          "total_tokens": 4332,
+          "prompt_tokens_details": {
+            "cached_tokens": 4224
+          },
+          "completion_tokens_details": {
+            "reasoning_tokens": 0
+          }
+        },
+        {
+          "completion_tokens": 5,
+          "prompt_tokens": 2162,
+          "total_tokens": 2167,
+          "prompt_tokens_details": {
+            "cached_tokens": 768
+          },
+          "completion_tokens_details": {
+            "reasoning_tokens": 0
+          }
+        },
+        {
+          "completion_tokens": 47,
+          "prompt_tokens": 2291,
+          "total_tokens": 2338,
+          "prompt_tokens_details": {
+            "cached_tokens": 768
+          },
+          "completion_tokens_details": {
+            "reasoning_tokens": 0
+          }
+        },
+        {
+          "completion_tokens": 5,
+          "prompt_tokens": 1986,
+          "total_tokens": 1991,
+          "prompt_tokens_details": {
+            "cached_tokens": 1920
+          },
+          "completion_tokens_details": {
+            "reasoning_tokens": 0
+          }
+        },
+        {
+          "completion_tokens": 38,
+          "prompt_tokens": 4333,
+          "total_tokens": 4371,
+          "prompt_tokens_details": {
+            "cached_tokens": 768
+          },
+          "completion_tokens_details": {
+            "reasoning_tokens": 0
+          }
+        },
+        {
+          "completion_tokens": 5,
+          "prompt_tokens": 2341,
+          "total_tokens": 2346,
+          "prompt_tokens_details": {
+            "cached_tokens": 768
+          },
+          "completion_tokens_details": {
+            "reasoning_tokens": 0
+          }
+        },
+        {
+          "completion_tokens": 71,
+          "prompt_tokens": 4261,
+          "total_tokens": 4332,
+          "prompt_tokens_details": {
+            "cached_tokens": 4224
+          },
+          "completion_tokens_details": {
+            "reasoning_tokens": 0
+          }
+        },
+        {
+          "completion_tokens": 75,
+          "prompt_tokens": 2162,
+          "total_tokens": 2237,
+          "prompt_tokens_details": {
+            "cached_tokens": 2048
+          },
+          "completion_tokens_details": {
+            "reasoning_tokens": 0
+          }
+        },
+        {
+          "completion_tokens": 1327,
+          "prompt_tokens": 2436,
+          "total_tokens": 3763,
+          "prompt_tokens_details": {
+            "cached_tokens": 768
+          },
+          "completion_tokens_details": {
+            "reasoning_tokens": 0
+          }
+        },
+        {
+          "completion_tokens": 38,
+          "prompt_tokens": 1986,
+          "total_tokens": 2024,
+          "prompt_tokens_details": {
+            "cached_tokens": 0
+          },
+          "completion_tokens_details": {
+            "reasoning_tokens": 0
+          }
+        },
+        {
+          "completion_tokens": 75,
+          "prompt_tokens": 2086,
+          "total_tokens": 2161,
+          "prompt_tokens_details": {
+            "cached_tokens": 768
+          },
+          "completion_tokens_details": {
+            "reasoning_tokens": 0
+          }
+        },
+        {
+          "completion_tokens": 65,
+          "prompt_tokens": 1638,
+          "total_tokens": 1703,
+          "prompt_tokens_details": {
+            "cached_tokens": 768
+          },
+          "completion_tokens_details": {
+            "reasoning_tokens": 0
+          }
+        },
+        {
+          "completion_tokens": 36,
+          "prompt_tokens": 2012,
+          "total_tokens": 2048,
+          "prompt_tokens_details": {
+            "cached_tokens": 0
+          },
+          "completion_tokens_details": {
+            "reasoning_tokens": 0
+          }
+        },
+        {
+          "completion_tokens": 112,
+          "prompt_tokens": 2089,
+          "total_tokens": 2201,
+          "prompt_tokens_details": {
+            "cached_tokens": 768
+          },
+          "completion_tokens_details": {
+            "reasoning_tokens": 0
+          }
+        },
+        {
+          "completion_tokens": 47,
+          "prompt_tokens": 2460,
+          "total_tokens": 2507,
+          "prompt_tokens_details": {
+            "cached_tokens": 768
+          },
+          "completion_tokens_details": {
+            "reasoning_tokens": 0
+          }
+        },
+        {
+          "completion_tokens": 67,
+          "prompt_tokens": 2023,
+          "total_tokens": 2090,
+          "prompt_tokens_details": {
+            "cached_tokens": 768
+          },
+          "completion_tokens_details": {
+            "reasoning_tokens": 0
+          }
+        },
+        {
+          "completion_tokens": 5,
+          "prompt_tokens": 2114,
+          "total_tokens": 2119,
+          "prompt_tokens_details": {
+            "cached_tokens": 768
+          },
+          "completion_tokens_details": {
+            "reasoning_tokens": 0
+          }
+        },
+        {
+          "completion_tokens": 47,
+          "prompt_tokens": 2276,
+          "total_tokens": 2323,
+          "prompt_tokens_details": {
+            "cached_tokens": 768
+          },
+          "completion_tokens_details": {
+            "reasoning_tokens": 0
+          }
+        },
+        {
+          "completion_tokens": 5,
+          "prompt_tokens": 1989,
+          "total_tokens": 1994,
+          "prompt_tokens_details": {
+            "cached_tokens": 768
+          },
+          "completion_tokens_details": {
+            "reasoning_tokens": 0
+          }
+        },
+        {
+          "completion_tokens": 38,
+          "prompt_tokens": 4338,
+          "total_tokens": 4376,
+          "prompt_tokens_details": {
+            "cached_tokens": 768
+          },
+          "completion_tokens_details": {
+            "reasoning_tokens": 0
+          }
+        },
+        {
+          "completion_tokens": 5,
+          "prompt_tokens": 2299,
+          "total_tokens": 2304,
+          "prompt_tokens_details": {
+            "cached_tokens": 768
+          },
+          "completion_tokens_details": {
+            "reasoning_tokens": 0
+          }
+        },
+        {
+          "completion_tokens": 622,
+          "prompt_tokens": 2424,
+          "total_tokens": 3046,
+          "prompt_tokens_details": {
+            "cached_tokens": 0
+          },
+          "completion_tokens_details": {
+            "reasoning_tokens": 293
+          }
+        }
+      ],
+      "durationMs": 93053,
+      "startedAt": "2026-10-21T00:29:08.091Z",
+      "finishedAt": "2026-10-21T00:30:41.143Z",
+      "cost": 0.014809877999999999,
+      "rateClass": "off-peak",
+      "steps": 45,
+      "records": [
+        {
+          "row": 1,
+          "iteration": 1,
+          "kind": "exchange",
+          "exchange": 1,
+          "outcome": "selected",
+          "diagnosticsHead": null,
+          "replacementChars": null,
+          "finishReason": "stop",
+          "cause": null,
+          "payloads": 0,
+          "toolCalls": 0,
+          "selectors": null,
+          "stages": null,
+          "matcherKinds": null
+        },
+        {
+          "row": 2,
+          "iteration": 1,
+          "kind": "exchange",
+          "exchange": 2,
+          "outcome": "applied",
+          "diagnosticsHead": null,
+          "replacementChars": null,
+          "finishReason": "stop",
+          "cause": null,
+          "payloads": 1,
+          "toolCalls": 0,
+          "selectors": [
+            "whole-symbol"
+          ],
+          "stages": [
+            "whole-symbol"
+          ],
+          "matcherKinds": [
+            null
+          ]
+        },
+        {
+          "row": 3,
+          "iteration": 1,
+          "kind": "verification",
+          "exchange": null,
+          "outcome": "tsc",
+          "diagnosticsHead": "stage: tsc replacement line 73: TS2322: Type 'string' is not assignable to type 'LispValue'. — in declaration `parse` (function) 72 | if (!Number.isNaN(num) && tok.trim() !== \"\") return num; 73 | retu",
+          "replacementChars": null,
+          "finishReason": "stop",
+          "cause": null,
+          "payloads": 0,
+          "toolCalls": 0,
+          "selectors": null,
+          "stages": null,
+          "matcherKinds": null
+        },
+        {
+          "row": 4,
+          "iteration": 2,
+          "kind": "exchange",
+          "exchange": 1,
+          "outcome": "self-check",
+          "diagnosticsHead": "Self-check (read): src/lisp.ts (208 line(s), truncated at 8000 characters). 1 | export type LispValue = number | boolean | LispValue[] | null; 2 | 3 | type Env = Map<string, LispValue>; 4 | 5 | type B",
+          "replacementChars": null,
+          "finishReason": "stop",
+          "cause": null,
+          "payloads": 0,
+          "toolCalls": 0,
+          "selectors": null,
+          "stages": null,
+          "matcherKinds": null
+        },
+        {
+          "row": 5,
+          "iteration": 2,
+          "kind": "exchange",
+          "exchange": 2,
+          "outcome": "matcher",
+          "diagnosticsHead": "stage: compact clause 2 of 2 ({\"path\":\"src/lisp.ts\",\"symbol\":\"isSymbol\",\"kind\":\"function\"} in \"src/lisp.ts\") failed; resolved clauses are applied non-atomically, so any other clause listed as applied ",
+          "replacementChars": null,
+          "finishReason": "stop",
+          "cause": "matcher-unparseable",
+          "payloads": 2,
+          "toolCalls": 0,
+          "selectors": [
+            "matcher"
+          ],
+          "stages": [
+            "match"
+          ],
+          "matcherKinds": [
+            "snippet"
+          ]
+        },
+        {
+          "row": 6,
+          "iteration": 2,
+          "kind": "exchange",
+          "exchange": 3,
+          "outcome": "protocol",
+          "diagnosticsHead": "stage: protocol the round already used its one self-verification request; return an edit payload now (the harness runs at most one request per round)",
+          "replacementChars": null,
+          "finishReason": "stop",
+          "cause": "protocol",
+          "payloads": 0,
+          "toolCalls": 0,
+          "selectors": null,
+          "stages": null,
+          "matcherKinds": null
+        },
+        {
+          "row": 7,
+          "iteration": 3,
+          "kind": "exchange",
+          "exchange": 1,
+          "outcome": "no-op",
+          "diagnosticsHead": "stage: compact clause 2 of 2 ({\"path\":\"src/lisp.ts\",\"symbol\":\"isSymbol\",\"kind\":\"function\"} in \"src/lisp.ts\") failed; resolved clauses are applied non-atomically, so any other clause listed as applied ",
+          "replacementChars": null,
+          "finishReason": "stop",
+          "cause": "no-op",
+          "payloads": 2,
+          "toolCalls": 0,
+          "selectors": [
+            "whole-symbol"
+          ],
+          "stages": [
+            "whole-symbol"
+          ],
+          "matcherKinds": [
+            null
+          ]
+        },
+        {
+          "row": 8,
+          "iteration": 3,
+          "kind": "exchange",
+          "exchange": 2,
+          "outcome": "matcher",
+          "diagnosticsHead": "stage: compact clause 2 of 2 ({\"path\":\"src/lisp.ts\",\"symbol\":\"isSymbol\",\"kind\":\"function\"} in \"src/lisp.ts\") failed; resolved clauses are applied non-atomically, so any other clause listed as applied ",
+          "replacementChars": null,
+          "finishReason": "stop",
+          "cause": "matcher-unparseable",
+          "payloads": 2,
+          "toolCalls": 0,
+          "selectors": [
+            "matcher"
+          ],
+          "stages": [
+            "match"
+          ],
+          "matcherKinds": [
+            "snippet"
+          ]
+        },
+        {
+          "row": 9,
+          "iteration": 3,
+          "kind": "exchange",
+          "exchange": 3,
+          "outcome": "protocol",
+          "diagnosticsHead": "stage: protocol there is no exchange left in this round to return a self-check result; return an edit payload",
+          "replacementChars": null,
+          "finishReason": "stop",
+          "cause": "protocol",
+          "payloads": 0,
+          "toolCalls": 0,
+          "selectors": null,
+          "stages": null,
+          "matcherKinds": null
+        },
+        {
+          "row": 10,
+          "iteration": 4,
+          "kind": "exchange",
+          "exchange": 1,
+          "outcome": "no-op",
+          "diagnosticsHead": "stage: compact clause 1 of 3 ({\"path\":\"src/lisp.ts\",\"symbol\":\"LispValue\",\"kind\":\"type\"} in \"src/lisp.ts\") failed; resolved clauses are applied non-atomically, so any other clause listed as applied bel",
+          "replacementChars": null,
+          "finishReason": "stop",
+          "cause": "no-op",
+          "payloads": 3,
+          "toolCalls": 0,
+          "selectors": [],
+          "stages": [],
+          "matcherKinds": []
+        },
+        {
+          "row": 11,
+          "iteration": 4,
+          "kind": "exchange",
+          "exchange": 2,
+          "outcome": "self-check",
+          "diagnosticsHead": "Self-check (read): src/lisp.ts (208 line(s), truncated at 8000 characters). 1 | export type LispValue = number | boolean | string | LispValue[] | null; 2 | 3 | type Env = Map<string, LispValue>; 4 | 5",
+          "replacementChars": null,
+          "finishReason": "stop",
+          "cause": null,
+          "payloads": 0,
+          "toolCalls": 0,
+          "selectors": null,
+          "stages": null,
+          "matcherKinds": null
+        },
+        {
+          "row": 12,
+          "iteration": 4,
+          "kind": "exchange",
+          "exchange": 3,
+          "outcome": "matcher",
+          "diagnosticsHead": "stage: compact clause 2 of 2 ({\"path\":\"src/lisp.ts\",\"symbol\":\"isSymbol\",\"kind\":\"function\"} in \"src/lisp.ts\") failed; resolved clauses are applied non-atomically, so any other clause listed as applied ",
+          "replacementChars": null,
+          "finishReason": "stop",
+          "cause": "matcher-unparseable",
+          "payloads": 2,
+          "toolCalls": 0,
+          "selectors": [
+            "matcher"
+          ],
+          "stages": [
+            "match"
+          ],
+          "matcherKinds": [
+            "snippet"
+          ]
+        },
+        {
+          "row": 13,
+          "iteration": 5,
+          "kind": "exchange",
+          "exchange": 1,
+          "outcome": "no-op",
+          "diagnosticsHead": "stage: compact clause 1 of 1 ({\"path\":\"src/lisp.ts\",\"symbol\":\"isSymbol\",\"kind\":\"function\"} in \"src/lisp.ts\") failed; resolved clauses are applied non-atomically, so any other clause listed as applied ",
+          "replacementChars": null,
+          "finishReason": "stop",
+          "cause": "no-op",
+          "payloads": 1,
+          "toolCalls": 0,
+          "selectors": [],
+          "stages": [],
+          "matcherKinds": []
+        },
+        {
+          "row": 14,
+          "iteration": 5,
+          "kind": "exchange",
+          "exchange": 2,
+          "outcome": "matcher",
+          "diagnosticsHead": "stage: compact clause 2 of 2 ({\"path\":\"src/lisp.ts\",\"symbol\":\"isSymbol\",\"kind\":\"function\"} in \"src/lisp.ts\") failed; resolved clauses are applied non-atomically, so any other clause listed as applied ",
+          "replacementChars": null,
+          "finishReason": "stop",
+          "cause": "matcher-unparseable",
+          "payloads": 2,
+          "toolCalls": 0,
+          "selectors": [
+            "matcher"
+          ],
+          "stages": [
+            "match"
+          ],
+          "matcherKinds": [
+            "snippet"
+          ]
+        },
+        {
+          "row": 15,
+          "iteration": 5,
+          "kind": "exchange",
+          "exchange": 3,
+          "outcome": "protocol",
+          "diagnosticsHead": "stage: protocol there is no exchange left in this round to return a self-check result; return an edit payload",
+          "replacementChars": null,
+          "finishReason": "stop",
+          "cause": "protocol",
+          "payloads": 0,
+          "toolCalls": 0,
+          "selectors": null,
+          "stages": null,
+          "matcherKinds": null
+        },
+        {
+          "row": 16,
+          "iteration": 6,
+          "kind": "exchange",
+          "exchange": 1,
+          "outcome": "no-op",
+          "diagnosticsHead": "stage: no-op the edit does not change the file: the replacement is identical to the text it replaces; change the code so the diagnostics are actually addressed",
+          "replacementChars": 80,
+          "finishReason": "stop",
+          "cause": "no-op",
+          "payloads": 1,
+          "toolCalls": 0,
+          "selectors": [
+            "whole-symbol"
+          ],
+          "stages": [
+            "whole-symbol"
+          ],
+          "matcherKinds": [
+            null
+          ]
+        },
+        {
+          "row": 17,
+          "iteration": 6,
+          "kind": "exchange",
+          "exchange": 2,
+          "outcome": "no-op",
+          "diagnosticsHead": "stage: compact clause 1 of 1 ({\"path\":\"src/lisp.ts\",\"symbol\":\"LispValue\",\"kind\":\"type\"} in \"src/lisp.ts\") failed; resolved clauses are applied non-atomically, so any other clause listed as applied bel",
+          "replacementChars": null,
+          "finishReason": "stop",
+          "cause": "no-op",
+          "payloads": 1,
+          "toolCalls": 0,
+          "selectors": [],
+          "stages": [],
+          "matcherKinds": []
+        },
+        {
+          "row": 18,
+          "iteration": 6,
+          "kind": "exchange",
+          "exchange": 3,
+          "outcome": "no-op",
+          "diagnosticsHead": "stage: compact clause 1 of 3 ({\"path\":\"src/lisp.ts\",\"symbol\":\"LispValue\",\"kind\":\"type\"} in \"src/lisp.ts\") failed; resolved clauses are applied non-atomically, so any other clause listed as applied bel",
+          "replacementChars": null,
+          "finishReason": "stop",
+          "cause": "no-op",
+          "payloads": 3,
+          "toolCalls": 0,
+          "selectors": [
+            "matcher"
+          ],
+          "stages": [
+            "match"
+          ],
+          "matcherKinds": [
+            "snippet"
+          ]
+        },
+        {
+          "row": 19,
+          "iteration": 7,
+          "kind": "exchange",
+          "exchange": 1,
+          "outcome": "repeat",
+          "diagnosticsHead": "stage: repeat this exact edit was just rejected (stage: no-op); resending it verbatim cannot succeed — change the payload",
+          "replacementChars": 80,
+          "finishReason": "stop",
+          "cause": "repeat",
+          "payloads": 1,
+          "toolCalls": 0,
+          "selectors": [
+            "whole-symbol"
+          ],
+          "stages": [
+            "whole-symbol"
+          ],
+          "matcherKinds": [
+            null
+          ]
+        },
+        {
+          "row": 20,
+          "iteration": 7,
+          "kind": "exchange",
+          "exchange": 2,
+          "outcome": "self-check",
+          "diagnosticsHead": "Self-check (read): src/lisp.ts (208 line(s), truncated at 8000 characters). 1 | export type LispValue = number | boolean | string | LispValue[] | null; 2 | 3 | type Env = Map<string, LispValue>; 4 | 5",
+          "replacementChars": null,
+          "finishReason": "stop",
+          "cause": null,
+          "payloads": 0,
+          "toolCalls": 0,
+          "selectors": null,
+          "stages": null,
+          "matcherKinds": null
+        },
+        {
+          "row": 21,
+          "iteration": 7,
+          "kind": "exchange",
+          "exchange": 3,
+          "outcome": "no-op",
+          "diagnosticsHead": "stage: compact clause 1 of 1 ({\"path\":\"src/lisp.ts\",\"symbol\":\"isSymbol\",\"kind\":\"function\"} in \"src/lisp.ts\") failed; resolved clauses are applied non-atomically, so any other clause listed as applied ",
+          "replacementChars": null,
+          "finishReason": "stop",
+          "cause": "no-op",
+          "payloads": 1,
+          "toolCalls": 0,
+          "selectors": [],
+          "stages": [],
+          "matcherKinds": []
+        },
+        {
+          "row": 22,
+          "iteration": 8,
+          "kind": "exchange",
+          "exchange": 1,
+          "outcome": "self-check",
+          "diagnosticsHead": "Self-check (read): src/lisp.ts (208 line(s), truncated at 8000 characters). 1 | export type LispValue = number | boolean | string | LispValue[] | null; 2 | 3 | type Env = Map<string, LispValue>; 4 | 5",
+          "replacementChars": null,
+          "finishReason": "stop",
+          "cause": null,
+          "payloads": 0,
+          "toolCalls": 0,
+          "selectors": null,
+          "stages": null,
+          "matcherKinds": null
+        },
+        {
+          "row": 23,
+          "iteration": 8,
+          "kind": "exchange",
+          "exchange": 2,
+          "outcome": "no-op",
+          "diagnosticsHead": "stage: compact clause 1 of 2 ({\"path\":\"src/lisp.ts\",\"symbol\":\"isSymbol\",\"kind\":\"function\"} in \"src/lisp.ts\") failed; resolved clauses are applied non-atomically, so any other clause listed as applied ",
+          "replacementChars": null,
+          "finishReason": "stop",
+          "cause": "no-op",
+          "payloads": 2,
+          "toolCalls": 0,
+          "selectors": [],
+          "stages": [],
+          "matcherKinds": []
+        },
+        {
+          "row": 24,
+          "iteration": 8,
+          "kind": "exchange",
+          "exchange": 3,
+          "outcome": "no-op",
+          "diagnosticsHead": "stage: compact clause 1 of 2 ({\"path\":\"src/lisp.ts\",\"symbol\":\"LispValue\",\"kind\":\"type\"} in \"src/lisp.ts\") failed; resolved clauses are applied non-atomically, so any other clause listed as applied bel",
+          "replacementChars": null,
+          "finishReason": "stop",
+          "cause": "no-op",
+          "payloads": 2,
+          "toolCalls": 0,
+          "selectors": [],
+          "stages": [],
+          "matcherKinds": []
+        },
+        {
+          "row": 25,
+          "iteration": 9,
+          "kind": "exchange",
+          "exchange": 1,
+          "outcome": "self-check",
+          "diagnosticsHead": "Self-check (read): src/lisp.ts (208 line(s), truncated at 8000 characters). 1 | export type LispValue = number | boolean | string | LispValue[] | null; 2 | 3 | type Env = Map<string, LispValue>; 4 | 5",
+          "replacementChars": null,
+          "finishReason": "stop",
+          "cause": null,
+          "payloads": 0,
+          "toolCalls": 0,
+          "selectors": null,
+          "stages": null,
+          "matcherKinds": null
+        },
+        {
+          "row": 26,
+          "iteration": 9,
+          "kind": "exchange",
+          "exchange": 2,
+          "outcome": "no-op",
+          "diagnosticsHead": "stage: compact clause 1 of 2 ({\"path\":\"src/lisp.ts\",\"symbol\":\"isSymbol\",\"kind\":\"function\"} in \"src/lisp.ts\") failed; resolved clauses are applied non-atomically, so any other clause listed as applied ",
+          "replacementChars": null,
+          "finishReason": "stop",
+          "cause": "no-op",
+          "payloads": 2,
+          "toolCalls": 0,
+          "selectors": [],
+          "stages": [],
+          "matcherKinds": []
+        },
+        {
+          "row": 27,
+          "iteration": 9,
+          "kind": "exchange",
+          "exchange": 3,
+          "outcome": "protocol",
+          "diagnosticsHead": "stage: protocol the round already used its one self-verification request; return an edit payload now (the harness runs at most one request per round)",
+          "replacementChars": null,
+          "finishReason": "stop",
+          "cause": "protocol",
+          "payloads": 0,
+          "toolCalls": 0,
+          "selectors": null,
+          "stages": null,
+          "matcherKinds": null
+        },
+        {
+          "row": 28,
+          "iteration": 10,
+          "kind": "exchange",
+          "exchange": 1,
+          "outcome": "repeat",
+          "diagnosticsHead": "stage: repeat this exact edit was just rejected (stage: repeat); resending it verbatim cannot succeed — change the payload",
+          "replacementChars": 80,
+          "finishReason": "stop",
+          "cause": "repeat",
+          "payloads": 1,
+          "toolCalls": 0,
+          "selectors": [
+            "whole-symbol"
+          ],
+          "stages": [
+            "whole-symbol"
+          ],
+          "matcherKinds": [
+            null
+          ]
+        },
+        {
+          "row": 29,
+          "iteration": 10,
+          "kind": "exchange",
+          "exchange": 2,
+          "outcome": "self-check",
+          "diagnosticsHead": "Self-check (read): src/lisp.ts (208 line(s), truncated at 8000 characters). 1 | export type LispValue = number | boolean | string | LispValue[] | null; 2 | 3 | type Env = Map<string, LispValue>; 4 | 5",
+          "replacementChars": null,
+          "finishReason": "stop",
+          "cause": null,
+          "payloads": 0,
+          "toolCalls": 0,
+          "selectors": null,
+          "stages": null,
+          "matcherKinds": null
+        },
+        {
+          "row": 30,
+          "iteration": 10,
+          "kind": "exchange",
+          "exchange": 3,
+          "outcome": "no-op",
+          "diagnosticsHead": "stage: compact clause 1 of 1 ({\"path\":\"src/lisp.ts\",\"symbol\":\"isSymbol\",\"kind\":\"function\"} in \"src/lisp.ts\") failed; resolved clauses are applied non-atomically, so any other clause listed as applied ",
+          "replacementChars": null,
+          "finishReason": "stop",
+          "cause": "no-op",
+          "payloads": 1,
+          "toolCalls": 0,
+          "selectors": [],
+          "stages": [],
+          "matcherKinds": []
+        },
+        {
+          "row": 31,
+          "iteration": 11,
+          "kind": "exchange",
+          "exchange": 1,
+          "outcome": "self-check",
+          "diagnosticsHead": "Self-check (read): src/lisp.ts (208 line(s), truncated at 8000 characters). 1 | export type LispValue = number | boolean | string | LispValue[] | null; 2 | 3 | type Env = Map<string, LispValue>; 4 | 5",
+          "replacementChars": null,
+          "finishReason": "stop",
+          "cause": null,
+          "payloads": 0,
+          "toolCalls": 0,
+          "selectors": null,
+          "stages": null,
+          "matcherKinds": null
+        },
+        {
+          "row": 32,
+          "iteration": 11,
+          "kind": "exchange",
+          "exchange": 2,
+          "outcome": "no-op",
+          "diagnosticsHead": "stage: compact clause 1 of 2 ({\"path\":\"src/lisp.ts\",\"symbol\":\"isSymbol\",\"kind\":\"function\"} in \"src/lisp.ts\") failed; resolved clauses are applied non-atomically, so any other clause listed as applied ",
+          "replacementChars": null,
+          "finishReason": "stop",
+          "cause": "no-op",
+          "payloads": 2,
+          "toolCalls": 0,
+          "selectors": [],
+          "stages": [],
+          "matcherKinds": []
+        },
+        {
+          "row": 33,
+          "iteration": 11,
+          "kind": "exchange",
+          "exchange": 3,
+          "outcome": "no-op",
+          "diagnosticsHead": "stage: compact clause 1 of 2 ({\"path\":\"src/lisp.ts\",\"symbol\":\"LispValue\",\"kind\":\"type\"} in \"src/lisp.ts\") failed; resolved clauses are applied non-atomically, so any other clause listed as applied bel",
+          "replacementChars": null,
+          "finishReason": "stop",
+          "cause": "no-op",
+          "payloads": 2,
+          "toolCalls": 0,
+          "selectors": [],
+          "stages": [],
+          "matcherKinds": []
+        },
+        {
+          "row": 34,
+          "iteration": 12,
+          "kind": "exchange",
+          "exchange": 1,
+          "outcome": "duplicate",
+          "diagnosticsHead": "stage: duplicate the edit was discarded: it would add a second top-level function \"isClosure\" (src/lisp.ts already declares it at line 16); replace the existing declaration instead of adding another c",
+          "replacementChars": 3836,
+          "finishReason": "stop",
+          "cause": "duplicate",
+          "payloads": 1,
+          "toolCalls": 0,
+          "selectors": [
+            "whole-symbol"
+          ],
+          "stages": [
+            "whole-symbol"
+          ],
+          "matcherKinds": [
+            null
+          ]
+        },
+        {
+          "row": 35,
+          "iteration": 12,
+          "kind": "exchange",
+          "exchange": 2,
+          "outcome": "no-op",
+          "diagnosticsHead": "stage: compact clause 1 of 1 ({\"path\":\"src/lisp.ts\",\"symbol\":\"isSymbol\",\"kind\":\"function\"} in \"src/lisp.ts\") failed; resolved clauses are applied non-atomically, so any other clause listed as applied ",
+          "replacementChars": null,
+          "finishReason": "stop",
+          "cause": "no-op",
+          "payloads": 1,
+          "toolCalls": 0,
+          "selectors": [],
+          "stages": [],
+          "matcherKinds": []
+        },
+        {
+          "row": 36,
+          "iteration": 12,
+          "kind": "exchange",
+          "exchange": 3,
+          "outcome": "no-op",
+          "diagnosticsHead": "stage: compact clause 1 of 2 ({\"path\":\"src/lisp.ts\",\"symbol\":\"LispValue\",\"kind\":\"type\"} in \"src/lisp.ts\") failed; resolved clauses are applied non-atomically, so any other clause listed as applied bel",
+          "replacementChars": null,
+          "finishReason": "stop",
+          "cause": "no-op",
+          "payloads": 2,
+          "toolCalls": 0,
+          "selectors": [],
+          "stages": [],
+          "matcherKinds": []
+        },
+        {
+          "row": 37,
+          "iteration": 13,
+          "kind": "exchange",
+          "exchange": 1,
+          "outcome": "gate",
+          "diagnosticsHead": "stage: gate the edit was discarded because the resulting source does not parse; nothing was written unexpected token \"...\" (line 1, column 107) replacement line 1, column 100: 1 | export type LispValu",
+          "replacementChars": 142,
+          "finishReason": "stop",
+          "cause": "gate",
+          "payloads": 1,
+          "toolCalls": 0,
+          "selectors": [
+            "whole-symbol"
+          ],
+          "stages": [
+            "whole-symbol"
+          ],
+          "matcherKinds": [
+            null
+          ]
+        },
+        {
+          "row": 38,
+          "iteration": 13,
+          "kind": "exchange",
+          "exchange": 2,
+          "outcome": "no-op",
+          "diagnosticsHead": "stage: compact clause 1 of 1 ({\"path\":\"src/lisp.ts\",\"symbol\":\"LispValue\",\"kind\":\"type\"} in \"src/lisp.ts\") failed; resolved clauses are applied non-atomically, so any other clause listed as applied bel",
+          "replacementChars": null,
+          "finishReason": "stop",
+          "cause": "no-op",
+          "payloads": 1,
+          "toolCalls": 0,
+          "selectors": [],
+          "stages": [],
+          "matcherKinds": []
+        },
+        {
+          "row": 39,
+          "iteration": 13,
+          "kind": "exchange",
+          "exchange": 3,
+          "outcome": "matcher",
+          "diagnosticsHead": "stage: compact clause 3 of 3 ({\"path\":\"src/lisp.ts\",\"symbol\":\"isSymbol\",\"kind\":\"function\"} in \"src/lisp.ts\") failed; resolved clauses are applied non-atomically, so any other clause listed as applied ",
+          "replacementChars": null,
+          "finishReason": "stop",
+          "cause": "matcher-unparseable",
+          "payloads": 3,
+          "toolCalls": 0,
+          "selectors": [
+            "whole-symbol",
+            "matcher"
+          ],
+          "stages": [
+            "whole-symbol",
+            "match"
+          ],
+          "matcherKinds": [
+            null,
+            "snippet"
+          ]
+        },
+        {
+          "row": 40,
+          "iteration": 14,
+          "kind": "exchange",
+          "exchange": 1,
+          "outcome": "no-op",
+          "diagnosticsHead": "stage: no-op the edit does not change the file: the replacement is identical to the text it replaces; change the code so the diagnostics are actually addressed",
+          "replacementChars": 80,
+          "finishReason": "stop",
+          "cause": "no-op",
+          "payloads": 1,
+          "toolCalls": 0,
+          "selectors": [
+            "whole-symbol"
+          ],
+          "stages": [
+            "whole-symbol"
+          ],
+          "matcherKinds": [
+            null
+          ]
+        },
+        {
+          "row": 41,
+          "iteration": 14,
+          "kind": "exchange",
+          "exchange": 2,
+          "outcome": "no-op",
+          "diagnosticsHead": "stage: compact clause 1 of 2 ({\"path\":\"src/lisp.ts\",\"symbol\":\"isSymbol\",\"kind\":\"function\"} in \"src/lisp.ts\") failed; resolved clauses are applied non-atomically, so any other clause listed as applied ",
+          "replacementChars": null,
+          "finishReason": "stop",
+          "cause": "no-op",
+          "payloads": 2,
+          "toolCalls": 0,
+          "selectors": [
+            "matcher"
+          ],
+          "stages": [
+            "match"
+          ],
+          "matcherKinds": [
+            "snippet"
+          ]
+        },
+        {
+          "row": 42,
+          "iteration": 14,
+          "kind": "exchange",
+          "exchange": 3,
+          "outcome": "protocol",
+          "diagnosticsHead": "stage: protocol there is no exchange left in this round to return a self-check result; return an edit payload",
+          "replacementChars": null,
+          "finishReason": "stop",
+          "cause": "protocol",
+          "payloads": 0,
+          "toolCalls": 0,
+          "selectors": null,
+          "stages": null,
+          "matcherKinds": null
+        },
+        {
+          "row": 43,
+          "iteration": 15,
+          "kind": "exchange",
+          "exchange": 1,
+          "outcome": "repeat",
+          "diagnosticsHead": "stage: repeat this exact edit was just rejected (stage: no-op); resending it verbatim cannot succeed — change the payload",
+          "replacementChars": 80,
+          "finishReason": "stop",
+          "cause": "repeat",
+          "payloads": 1,
+          "toolCalls": 0,
+          "selectors": [
+            "whole-symbol"
+          ],
+          "stages": [
+            "whole-symbol"
+          ],
+          "matcherKinds": [
+            null
+          ]
+        },
+        {
+          "row": 44,
+          "iteration": 15,
+          "kind": "exchange",
+          "exchange": 2,
+          "outcome": "self-check",
+          "diagnosticsHead": "Self-check (read): src/lisp.ts (208 line(s), truncated at 8000 characters). 1 | export type LispValue = number | boolean | string | LispValue[] | null | Closure; 2 | 3 | type Env = Map<string, LispVal",
+          "replacementChars": null,
+          "finishReason": "stop",
+          "cause": null,
+          "payloads": 0,
+          "toolCalls": 0,
+          "selectors": null,
+          "stages": null,
+          "matcherKinds": null
+        },
+        {
+          "row": 45,
+          "iteration": 15,
+          "kind": "exchange",
+          "exchange": 3,
+          "outcome": "no-op",
+          "diagnosticsHead": "stage: compact clause 1 of 1 ({\"path\":\"src/lisp.ts\",\"symbol\":\"isSymbol\",\"kind\":\"function\"} in \"src/lisp.ts\") failed; resolved clauses are applied non-atomically, so any other clause listed as applied ",
+          "replacementChars": null,
+          "finishReason": "stop",
+          "cause": "no-op",
+          "payloads": 1,
+          "toolCalls": 0,
+          "selectors": [],
+          "stages": [],
+          "matcherKinds": []
+        }
+      ],
+      "exchangeStats": {
+        "turns": 44,
+        "payloads": 48,
+        "toolCalls": 0,
+        "applied": 1,
+        "rejected": 34,
+        "selected": 1,
+        "stopped": 0,
+        "selfChecks": 8,
+        "range": 0,
+        "matcher": 7,
+        "wholeSymbol": 10,
+        "stageWholeSymbol": 10,
+        "stageMatch": 7,
+        "stagePick": 0,
+        "snippet": 7,
+        "regex": 0,
+        "creates": 1
+      },
+      "loopDiagnostics": "token-budget: accumulated 120441 tokens exceeded the 120000 token budget",
+      "terminationReason": "token-budget",
+      "model": "deepseek-v4.1-flash",
+      "workspace": "tmp/benchmark/2026-10-21T00-28-51-520Z-872a4250/minilisp-tc-rep5",
+      "logs": {
+        "side": "tmp/benchmark/2026-10-21T00-28-51-520Z-872a4250/logs/minilisp-tc-rep5/side.log",
+        "judge": "tmp/benchmark/2026-10-21T00-28-51-520Z-872a4250/logs/minilisp-tc-rep5/judge.log",
+        "session": null,
+        "stats": null
+      },
+      "versions": {
+        "bun": "1.3.13",
+        "opencode": null
+      },
+      "judge": {
+        "testsOk": true,
+        "tscOk": true,
+        "fixtureOk": true,
+        "detail": null
+      },
+      "error": null,
+      "infraError": null
+    }
+  ],
+  "aggregates": {
+    "byTaskSide": [
+      {
+        "task": "minilisp",
+        "side": "tc",
+        "runs": 5,
+        "ok": 2,
+        "failed": 3,
+        "successRate": 0.4,
+        "usageRuns": 5,
+        "tokens": {
+          "in": {
+            "mean": 51839.2,
+            "total": 259196
+          },
+          "out": {
+            "mean": 5084.4,
+            "total": 25422
+          },
+          "total": {
+            "mean": 56923.6,
+            "total": 284618
+          }
+        },
+        "cost": {
+          "mean": 0.010904548799999999,
+          "total": 0.05452274399999999
+        },
+        "durationMsMean": 60582,
+        "stepsMean": 26,
+        "tokensPerSuccess": {
+          "in": 129598,
+          "out": 12711,
+          "total": 142309
+        },
+        "costPerSuccess": 0.027261371999999996,
+        "selectors": {
+          "range": 0,
+          "matcher": 25,
+          "wholeSymbol": 25
+        },
+        "stages": {
+          "wholeSymbol": 25,
+          "match": 25,
+          "pick": 0
+        },
+        "matcherKinds": {
+          "snippet": 25,
+          "regex": 0
+        },
+        "creates": 7
+      }
+    ],
+    "bySide": [
+      {
+        "task": null,
+        "side": "tc",
+        "runs": 5,
+        "ok": 2,
+        "failed": 3,
+        "successRate": 0.4,
+        "usageRuns": 5,
+        "tokens": {
+          "in": {
+            "mean": 51839.2,
+            "total": 259196
+          },
+          "out": {
+            "mean": 5084.4,
+            "total": 25422
+          },
+          "total": {
+            "mean": 56923.6,
+            "total": 284618
+          }
+        },
+        "cost": {
+          "mean": 0.010904548799999999,
+          "total": 0.05452274399999999
+        },
+        "durationMsMean": 60582,
+        "stepsMean": 26,
+        "tokensPerSuccess": {
+          "in": 129598,
+          "out": 12711,
+          "total": 142309
+        },
+        "costPerSuccess": 0.027261371999999996,
+        "selectors": {
+          "range": 0,
+          "matcher": 25,
+          "wholeSymbol": 25
+        },
+        "stages": {
+          "wholeSymbol": 25,
+          "match": 25,
+          "pick": 0
+        },
+        "matcherKinds": {
+          "snippet": 25,
+          "regex": 0
+        },
+        "creates": 7
+      }
+    ],
+    "overall": {
+      "task": null,
+      "side": null,
+      "runs": 5,
+      "ok": 2,
+      "failed": 3,
+      "successRate": 0.4,
+      "usageRuns": 5,
+      "tokens": {
+        "in": {
+          "mean": 51839.2,
+          "total": 259196
+        },
+        "out": {
+          "mean": 5084.4,
+          "total": 25422
+        },
+        "total": {
+          "mean": 56923.6,
+          "total": 284618
+        }
+      },
+      "cost": {
+        "mean": 0.010904548799999999,
+        "total": 0.05452274399999999
+      },
+      "durationMsMean": 60582,
+      "stepsMean": 26,
+      "tokensPerSuccess": {
+        "in": 129598,
+        "out": 12711,
+        "total": 142309
+      },
+      "costPerSuccess": 0.027261371999999996,
+      "selectors": {
+        "range": 0,
+        "matcher": 25,
+        "wholeSymbol": 25
+      },
+      "stages": {
+        "wholeSymbol": 25,
+        "match": 25,
+        "pick": 0
+      },
+      "matcherKinds": {
+        "snippet": 25,
+        "regex": 0
+      },
+      "creates": 7
+    }
+  },
+  "provenance": {
+    "inputs": {
+      "model": "eb1394ac7fc44dc30655e16d1ca9bc59b8549b0f3144076e0e467982d17b4474",
+      "taskIssue": "377474aaaf634fe28c8e9bb36bbd63f2186151931b7bba8b7379fb4533a5b43d",
+      "fixture": "77c8545d1e0cc5eb7af124dc04e77e0d44fe9b8b92d3e85a35f49dff71f9cd1b",
+      "systemPrompt": "cdd21ce09270b89e9ae01ac4bde7417226789419a618155f02ed401e4e82f5c4",
+      "loopConfig": "021008cff76abe29bf46eba05a25371e1e167c779ba1ee1b4031139352bffccd",
+      "pricing": "aab6f45ac055bdc46329be2c46279a8ce322bfa62c0c61f0ef177d8b67766560"
+    },
+    "inputHash": "0c6d41cdb3b37e2b8a4b9a0d04f7fe00e3048db5ebcf2d2052670e04b2555903",
+    "computedAt": "2026-10-21T00:28:51.514Z"
+  }
+}

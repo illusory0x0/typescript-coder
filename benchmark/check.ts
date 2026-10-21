@@ -125,6 +125,7 @@ function checkLedgerFile(ledgerPath: string, repoRoot: string): LedgerOutcome {
       const reps = typeof json["reps"] === "number" ? json["reps"] : 1;
       const effort = typeof json["effort"] === "string" ? json["effort"] : null;
       const multiPayload = json["multiPayload"] === true;
+      const protocolFormat = json["protocolFormat"] === "compact" ? "compact" : "json";
       const tokenBudget = typeof json["tokenBudget"] === "number" ? json["tokenBudget"] : null;
       try {
         return currentInputHashes(repoRoot, {
@@ -132,6 +133,7 @@ function checkLedgerFile(ledgerPath: string, repoRoot: string): LedgerOutcome {
           taskIssues: TASK_ISSUES,
           model,
           multiPayload,
+          protocolFormat,
           effort,
           reps,
           tokenBudget,

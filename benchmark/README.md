@@ -353,7 +353,7 @@ order never changes a hash.
 | `model` | the gateway model id | `report.model` |
 | `taskIssue` | the frozen task text of every task in the report, keyed by task | `TASK_ISSUES` (`run.ts`) |
 | `fixture` | the on-disk content of `benchmark/fixtures/<task>/`, keyed by task and relative path | current tree |
-| `systemPrompt` | the model-facing system + protocol text | `buildSystemPrompt(multiPayload)` (`src/loop.ts`) |
+| `systemPrompt` | the model-facing system + protocol text | `buildSystemPrompt(multiPayload, protocolFormat)` (`src/loop.ts`) |
 | `loopConfig` | token budget, edit/iteration/stall caps, `effort`, `reps`, `multiPayload` | loop constants + run flags |
 | `pricing` | the peak/off-peak rate table plus `PRICING_FETCHED_ON` | `src/benchmark-pricing.ts` |
 
