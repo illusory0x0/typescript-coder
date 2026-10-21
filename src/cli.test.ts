@@ -40,8 +40,10 @@ describe("parseArgs", () => {
   // The full default option set (#80): text format and no sub-agent overrides.
   const DEFAULTS = {
     help: false,
+    mode: null,
     model: "deepseek-v4.1-flash",
     multiPayload: false,
+    protocolFormat: "json" as const,
     targets: null,
     format: "text" as const,
     tokenBudget: null,
@@ -60,6 +62,20 @@ describe("parseArgs", () => {
     expect(parseArgs(["-h"])).toEqual({ ...DEFAULTS, help: true });
   });
 
+  test("reads --serve and --one-shot into mode (#104)", () => {
+    expect(parseArgs(["--serve"]).mode).toBe("serve");
+    expect(parseArgs(["--one-shot"]).mode).toBe("one-shot");
+    expect(parseArgs([]).mode).toBeNull();
+    // Order does not matter, and other flags still parse.
+    expect(parseArgs(["--serve", "--format", "json"]).mode).toBe("serve");
+    expect(parseArgs(["--format=json", "--one-shot"]).mode).toBe("one-shot");
+  });
+
+  test("throws when --serve and --one-shot are both given (#104)", () => {
+    expect(() => parseArgs(["--serve", "--one-shot"])).toThrow("mutually exclusive");
+    expect(() => parseArgs(["--one-shot", "--serve"])).toThrow("mutually exclusive");
+  });
+
   test("reads --model with a separate value", () => {
     expect(parseArgs(["--model", "qwen"])).toEqual({ ...DEFAULTS, model: "qwen" });
   });
@@ -73,6 +89,26 @@ describe("parseArgs", () => {
     expect(parseArgs(["--multiPayload"]).multiPayload).toBe(true);
     expect(parseArgs(["--multi-payload", "--model", "qwen"]).multiPayload).toBe(true);
     expect(parseArgs(["--model", "qwen"]).multiPayload).toBe(false);
+  });
+
+  test("reads --protocol-format json|compact, defaulting to json (#119)", () => {
+    expect(parseArgs([]).protocolFormat).toBe("json");
+    expect(parseArgs(["--protocol-format", "compact"]).protocolFormat).toBe("compact");
+    expect(parseArgs(["--protocol-format=compact"]).protocolFormat).toBe("compact");
+    expect(parseArgs(["--protocol-format", "json"]).protocolFormat).toBe("json");
+    expect(parseArgs(["--protocol-format=json"]).protocolFormat).toBe("json");
+    expect(parseArgs(["--protocol-format", "compact", "--model", "qwen"])).toEqual({
+      ...DEFAULTS,
+      protocolFormat: "compact",
+      model: "qwen",
+    });
+  });
+
+  test("throws on an unknown --protocol-format value (#119)", () => {
+    expect(() => parseArgs(["--protocol-format", "yaml"])).toThrow(
+      '--protocol-format must be "json" or "compact"',
+    );
+    expect(() => parseArgs(["--protocol-format="])).toThrow("--protocol-format requires a value");
   });
 
   test("throws when --model has no value", () => {
@@ -92,7 +128,11 @@ describe("parseArgs", () => {
     expect(parseArgs(["--model=qwen", "--model=deepseek-v4.1-flash"]).model).toBe(
       "deepseek-v4.1-flash",
     );
-    expect(parseArgs(["--help", "--model", "qwen"])).toEqual({ ...DEFAULTS, help: true, model: "qwen" });
+    expect(parseArgs(["--help", "--model", "qwen"])).toEqual({
+      ...DEFAULTS,
+      help: true,
+      model: "qwen",
+    });
   });
 
   test("reads --format text and json, in both value forms, defaulting to text", () => {
@@ -126,7 +166,11 @@ describe("parseArgs", () => {
       "run",
       "typecheck",
     ]);
-    expect(parseArgs(["--check=bun tsc --noEmit"]).checkCommand).toEqual(["bun", "tsc", "--noEmit"]);
+    expect(parseArgs(["--check=bun tsc --noEmit"]).checkCommand).toEqual([
+      "bun",
+      "tsc",
+      "--noEmit",
+    ]);
     expect(parseArgs(["--test", "bun test"]).testCommand).toEqual(["bun", "test"]);
     expect(parseArgs(["--test=bun test"]).testCommand).toEqual(["bun", "test"]);
   });
@@ -238,8 +282,17 @@ describe("helpText", () => {
     expect(text).toContain("--test <cmd>");
     expect(text).toContain("--cwd <dir>");
     expect(text).toContain("--timeout <ms>");
+    expect(text).toContain("--protocol-format <json|compact>");
     expect(text).toContain("--targets <file>");
     expect(text).toContain("typescript-coder-result@1");
+  });
+
+  test("documents the two modes and the --serve protocol (#104)", () => {
+    const text = helpText();
+    expect(text).toContain("--one-shot");
+    expect(text).toContain("--serve");
+    expect(text).toContain("line-delimited JSON");
+    expect(text).toContain("shutdown");
   });
 });
 

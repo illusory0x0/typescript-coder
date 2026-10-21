@@ -51,6 +51,96 @@ bun run src/main.ts --format json --token-budget <n> --model <id> … < task.txt
 
 Credentials come from the environment: `OPENAI_API_KEY`, `OPENAI_BASE_URL`.
 
+## Interactive mode (`--serve`) (#104)
+
+`--serve` keeps one `tc` process alive and speaks **line-delimited JSON** over
+stdin/stdout: one request object per stdin line, exactly one result line per
+`run`, looping until EOF or an explicit shutdown. This is how an `oc` main agent
+sends an instruction, reads the reply, and sends the next one **on the same
+process** — one-shot reads stdin to EOF, so it cannot do that.
+
+```
+tc --serve [--cwd <dir>] [--model <id>] [--token-budget <n>] \
+   [--check <cmd>] [--test <cmd>] [--timeout <ms>] [--targets <file.json>]
+```
+
+- **stdout carries only responses**: one `typescript-coder-result@1` line per
+  `run`, or the single ack line for `shutdown`. Diagnostics, progress, and the
+  failure summary go to stderr.
+- The **provider is built once** at startup; missing credentials
+  (`OPENAI_API_KEY`/`OPENAI_BASE_URL`) is a startup error (exit 1).
+- **EOF** ends the loop and exits 0. A **malformed line or invalid request**
+  never crashes the process: it answers with one failed result and keeps
+  serving.
+- `--one-shot` makes the one-shot path explicit (the default when stdin is
+  piped); with a TTY stdin and no mode flag, `tc` prints help and exits 0.
+  `--serve` and `--one-shot` are mutually exclusive.
+
+### Request (one JSON object per line)
+
+| field | type | meaning |
+| ----- | ---- | ------- |
+| `issue` | string | the task text; **required for a run** |
+| `cwd` | string | workspace root for this request (default: the CLI `--cwd`, else the process cwd) |
+| `targets` | `Array<{path,symbol,kind}>` | explicit addresses (#81); same shape/validation as the targets file, inline instead |
+| `tokenBudget` | positive int | hard per-call token cap for this request |
+| `check` | string or `string[]` | verify command; a string is split on whitespace |
+| `test` | string or `string[]` | test command; a string is split on whitespace |
+| `timeout` | positive int | per-command timeout in milliseconds |
+| `multiPayload` | boolean | opt in to `{"payloads":[…]}` batch replies |
+| `op` | `"run"` (default) or `"shutdown"` | request kind; `{"shutdown":true}` is an alias |
+
+Every field except `issue` (for a run) is optional and **overrides the CLI
+default** for that request. Unknown fields are ignored. An invalid value is a
+failed result naming the field, never a crash.
+
+### Response
+
+Each `run` writes exactly one `typescript-coder-result@1` line to stdout — the
+same contract as one-shot `--format json` (see the table above), so one parser
+serves both modes. A `shutdown` request writes exactly one ack line:
+
+```json
+{"format":"typescript-coder-serve@1","shutdown":true}
+```
+
+and the loop ends. A malformed line or invalid request writes one
+`typescript-coder-result@1` line with `status:"failed"`, `verified:false`, and a
+`diagnostics` string naming the problem.
+
+### State and multi-turn semantics (#104)
+
+- **Stateless per request.** A `serve` request is exactly one `run`: `tc` keeps
+  no cross-request memory, so context that still matters must be re-sent.
+- **On-disk keep-progress, no rollback.** A failed request leaves its attempted
+  state in `cwd`, exactly like one-shot; the next request sees those files.
+- **Retry after `verified:false`** is a **new request** with refined text (and
+  maybe new `targets`), never a resend of an identical edit (that is rejected as
+  `stage: repeat`).
+- **A failed turn does not end the session.** The process survives a
+  `verified:false` result or a malformed request and answers the next line.
+
+### Maturity bar and go/no-go (#104)
+
+- **Verification trust.** Unchanged: `tc` owns verification, and `verified:true`
+  means its own `--check` + `--test` gates passed on the final state; the caller
+  trusts `verified` and does not re-run the gates.
+- **Cost bound.** `--token-budget` (default `120000`) is a hard
+  **per-request** cap; each `run` is priced independently through `tokens`, so a
+  caller bounds each turn and sums `tokens.total` over the session for a total
+  bound.
+- **Credentials.** One provider per process, from `OPENAI_API_KEY` and
+  `OPENAI_BASE_URL`; a missing pair is a startup error (exit 1).
+- **Known limits.** No request ids or streaming; a request is answered only when
+  its run ends, so a long run blocks the session (one request in flight).
+  Responses are line-delimited JSON; diagnostics and progress interleave on
+  stderr. The provider is built once, so every request shares one model.
+- **Go/no-go:** **go.** An `oc` main agent may delegate to `tc` over `--serve`:
+  send one request per instruction, read exactly one result line per turn, bound
+  each turn's tokens, and retry with a new request after `verified:false`. This
+  is a coordination convenience; it does not weaken verification ownership or
+  change the one-shot contract.
+
 ## Task text (stdin)
 
 Free text, the `oc`-authored issue. Because `tc` keeps no state, include what a

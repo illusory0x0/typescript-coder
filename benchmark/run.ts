@@ -14,7 +14,7 @@ import { fileURLToPath } from "node:url";
 import { archiveFailureArtifacts, writeFailureArtifact } from "../src/failure-artifact";
 import { exchangeStats, runLoop } from "../src/loop";
 import { OpenAIProvider, readConfigFromEnv } from "../src/openai";
-import type { ProviderLike, RejectionCause } from "../src/loop";
+import type { ProviderLike, ProtocolFormat, RejectionCause } from "../src/loop";
 import { ReplayRecorder, usageFromRaw } from "../src/replay-format";
 import {
   PRICING_FETCHED_ON,
@@ -50,6 +50,8 @@ interface CliArgs {
   tokenBudget: number | null;
   effort: ReasoningEffort | null;
   multiPayload: boolean;
+  /** Edit protocol (#119) forwarded to the tc side; `json` is the default. */
+  protocolFormat: ProtocolFormat;
   help: boolean;
 }
 
@@ -97,6 +99,10 @@ interface RecordSummary {
   readonly toolCalls: number;
   /** Selectors the exchange's payloads used (#101); null when it carried none. */
   readonly selectors: string[] | null;
+  /** Resolved cascade stages the exchange's payloads used (#110); null when none. */
+  readonly stages: string[] | null;
+  /** Matcher kinds the exchange's payloads used (#110); null when none. */
+  readonly matcherKinds: (string | null)[] | null;
 }
 
 /**
@@ -116,6 +122,15 @@ export interface RecordExchangeStats {
   readonly range: number;
   readonly matcher: number;
   readonly wholeSymbol: number;
+  /** Resolved cascade-stage adoption across the run's payloads (#110). */
+  readonly stageWholeSymbol: number;
+  readonly stageMatch: number;
+  readonly stagePick: number;
+  /** Matcher-kind adoption across the run's payloads (#110). */
+  readonly snippet: number;
+  readonly regex: number;
+  /** Compact implicit-create clauses the run's replies carried (#111). */
+  readonly creates: number;
 }
 
 interface SideOutcome {
@@ -208,6 +223,12 @@ export interface AggregateRow {
   costPerSuccess: number | null;
   /** Selector adoption summed over the selected runs' exchanges (#101). */
   selectors: { range: number; matcher: number; wholeSymbol: number };
+  /** Resolved cascade-stage adoption summed over the selected runs (#110). */
+  stages: { wholeSymbol: number; match: number; pick: number };
+  /** Matcher-kind adoption summed over the selected runs (#110). */
+  matcherKinds: { snippet: number; regex: number };
+  /** Compact implicit-create clauses summed over the selected runs (#111). */
+  creates: number;
 }
 
 export interface Aggregates {
@@ -230,6 +251,8 @@ export interface Report {
   effort: ReasoningEffort | null;
   /** Opt-in multi-payload exchanges (#69): whether the tc side batched edits. */
   multiPayload: boolean;
+  /** Edit protocol (#119) the tc side used; `json` is the default. */
+  protocolFormat: ProtocolFormat;
   /** Token budget forwarded to the tc side; null means `DEFAULT_TOKEN_BUDGET`. */
   tokenBudget: number | null;
   bunVersion: string;
@@ -254,6 +277,8 @@ interface RunContext {
   readonly tokenBudget: number | null;
   /** Opt-in multi-payload exchanges (#69) forwarded to the tc side; off by default. */
   readonly multiPayload: boolean;
+  /** Edit protocol (#119) forwarded to the tc side; `json` is the default. */
+  readonly protocolFormat: ProtocolFormat;
 }
 
 interface BenchmarkJob {
@@ -394,6 +419,9 @@ Options:
                                              tc side: a modify reply may batch path-independent
                                              edits in one {"payloads": [...]} object
                                              (default: off, one flat payload per exchange)
+  --protocol-format <json|compact>           edit protocol for the tc side (default: json);
+                                             compact requires the 'select … end' syntax in
+                                             place of the JSON edit payload (#119)
   --help, -h                                 print this help and exit
 `);
 }
@@ -438,6 +466,13 @@ function parseEffort(value: string): ReasoningEffort {
   failUsage(`invalid --effort value: ${value}`);
 }
 
+function parseProtocolFormat(value: string): ProtocolFormat {
+  if (value === "json" || value === "compact") {
+    return value;
+  }
+  failUsage(`invalid --protocol-format value: ${value}`);
+}
+
 function parseSide(value: string): SideSelection {
   if (value === "tc" || value === "oc" || value === "both") {
     return value;
@@ -469,6 +504,7 @@ export function parseArgs(argv: string[]): CliArgs {
     tokenBudget: null,
     effort: null,
     multiPayload: false,
+    protocolFormat: "json",
     help: false,
   };
   for (let index = 0; index < argv.length; index += 1) {
@@ -586,6 +622,15 @@ export function parseArgs(argv: string[]): CliArgs {
       }
       case "--multi-payload": {
         args.multiPayload = true;
+        break;
+      }
+      case "--protocol-format": {
+        const value = argv[index + 1];
+        if (value === undefined || value.startsWith("-")) {
+          failUsage("missing value for --protocol-format");
+        }
+        args.protocolFormat = parseProtocolFormat(value);
+        index += 1;
         break;
       }
       default: {
@@ -813,6 +858,8 @@ async function runTypescriptCoderSide(options: {
   effort: ReasoningEffort | null;
   /** Opt-in multi-payload exchanges (#69); forwarded to the loop. */
   multiPayload: boolean;
+  /** Edit protocol (#119); forwarded to the loop. */
+  protocolFormat: ProtocolFormat;
   /** Repo root receiving failure artifacts under `failures/` (#43). */
   failureRoot: string;
 }): Promise<SideOutcome> {
@@ -841,6 +888,7 @@ async function runTypescriptCoderSide(options: {
       tokenBudget: options.tokenBudget ?? undefined,
       effortOverride: options.effort ?? undefined,
       multiPayload: options.multiPayload,
+      protocolFormat: options.protocolFormat,
     });
   } catch (caught) {
     error = errorMessage(caught);
@@ -915,6 +963,8 @@ async function runTypescriptCoderSide(options: {
           payloads: record.payloads ?? 0,
           toolCalls: record.toolCalls ?? 0,
           selectors: record.selectors ?? null,
+          stages: record.stages ?? null,
+          matcherKinds: record.matcherKinds ?? null,
         }));
   const recordsExchangeStats =
     result === null ? null : (exchangeStats(result.records) as RecordExchangeStats);
@@ -1275,6 +1325,7 @@ async function runOnce(
       tokenBudget: context.tokenBudget,
       effort: context.effort,
       multiPayload: context.multiPayload,
+      protocolFormat: context.protocolFormat,
       failureRoot: context.repoRoot,
     });
   } else {
@@ -1425,6 +1476,25 @@ export function aggregateRuns(
     }),
     { range: 0, matcher: 0, wholeSymbol: 0 },
   );
+  // Resolved cascade-stage and matcher-kind adoption (#110), summed the same way
+  // so the aggregate row is the A/B total #111 needs.
+  const stages = selected.reduce(
+    (sum, run) => ({
+      wholeSymbol: sum.wholeSymbol + (run.exchangeStats?.stageWholeSymbol ?? 0),
+      match: sum.match + (run.exchangeStats?.stageMatch ?? 0),
+      pick: sum.pick + (run.exchangeStats?.stagePick ?? 0),
+    }),
+    { wholeSymbol: 0, match: 0, pick: 0 },
+  );
+  const matcherKinds = selected.reduce(
+    (sum, run) => ({
+      snippet: sum.snippet + (run.exchangeStats?.snippet ?? 0),
+      regex: sum.regex + (run.exchangeStats?.regex ?? 0),
+    }),
+    { snippet: 0, regex: 0 },
+  );
+  // Compact implicit-create clauses (#111), summed over the selected runs.
+  const creates = selected.reduce((sum, run) => sum + (run.exchangeStats?.creates ?? 0), 0);
   return {
     task,
     side,
@@ -1448,6 +1518,9 @@ export function aggregateRuns(
     },
     costPerSuccess: perSuccess(cost),
     selectors,
+    stages,
+    matcherKinds,
+    creates,
   };
 }
 
@@ -1599,6 +1672,7 @@ export function writeMarkdownReport(mdPath: string, report: Report): void {
     ...(report.ocModel === null ? [] : [`- oc model: ${report.ocModel}`]),
     `- effort: ${report.effort ?? "none (default)"}`,
     `- multi-payload: ${report.multiPayload ? "on (#69)" : "off (default)"}`,
+    `- protocol-format: ${report.protocolFormat ?? "json"} (#119)`,
     `- concurrency: ${report.concurrency}`,
     `- tasks: ${report.tasks.join(", ")}`,
     `- sides: ${report.sides.join(", ")}`,
@@ -1740,6 +1814,44 @@ export function writeMarkdownReport(mdPath: string, report: Report): void {
         row.selectors.wholeSymbol
       } |`,
     );
+  }
+  lines.push("");
+  lines.push("Resolved cascade stages and matcher kinds (#110):", "");
+  lines.push("Per task and side (payloads that resolved at each stage / used each matcher):", "");
+  lines.push(
+    "| Task | Side | whole-symbol | match | pick | snippet | regex |",
+    "| --- | --- | ---: | ---: | ---: | ---: | ---: |",
+  );
+  for (const row of aggregates.byTaskSide) {
+    lines.push(
+      `| ${row.task ?? "all"} | ${row.side ?? "all"} | ${row.stages.wholeSymbol} | ${
+        row.stages.match
+      } | ${row.stages.pick} | ${row.matcherKinds.snippet} | ${row.matcherKinds.regex} |`,
+    );
+  }
+  lines.push("");
+  lines.push(
+    "| Side | whole-symbol | match | pick | snippet | regex |",
+    "| --- | ---: | ---: | ---: | ---: | ---: |",
+  );
+  for (const row of aggregates.bySide) {
+    lines.push(
+      `| ${row.side ?? "all"} | ${row.stages.wholeSymbol} | ${row.stages.match} | ${
+        row.stages.pick
+      } | ${row.matcherKinds.snippet} | ${row.matcherKinds.regex} |`,
+    );
+  }
+  lines.push("");
+  // #111: compact implicit-create clauses the replies carried.
+  lines.push("Implicit creates (#111):", "");
+  lines.push("| Task | Side | creates |", "| --- | --- | ---: |");
+  for (const row of aggregates.byTaskSide) {
+    lines.push(`| ${row.task ?? "all"} | ${row.side ?? "all"} | ${row.creates} |`);
+  }
+  lines.push("");
+  lines.push("| Side | creates |", "| --- | ---: |");
+  for (const row of aggregates.bySide) {
+    lines.push(`| ${row.side ?? "all"} | ${row.creates} |`);
   }
   lines.push("");
 
@@ -1896,6 +2008,7 @@ async function main(): Promise<number> {
     ocModel: args.ocModel === null || args.ocModel === args.model ? null : args.ocModel,
     effort: args.effort,
     multiPayload: args.multiPayload,
+    protocolFormat: args.protocolFormat,
     tokenBudget: args.tokenBudget,
     bunVersion: Bun.version,
     opencodeVersion: null,
@@ -1913,6 +2026,7 @@ async function main(): Promise<number> {
         taskIssues: TASK_ISSUES,
         model: args.model,
         multiPayload: args.multiPayload,
+        protocolFormat: args.protocolFormat,
         effort: args.effort,
         reps,
         tokenBudget: args.tokenBudget,
@@ -1969,6 +2083,7 @@ async function main(): Promise<number> {
     replayDir,
     tokenBudget: args.tokenBudget,
     multiPayload: args.multiPayload,
+    protocolFormat: args.protocolFormat,
   };
 
   // Bounded worker pool: workers claim jobs by index so each run keeps its own

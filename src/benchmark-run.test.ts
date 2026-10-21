@@ -30,6 +30,9 @@ interface AggregateLike {
   tokens: { in: TokenStatsLike; out: TokenStatsLike; total: TokenStatsLike };
   tokensPerSuccess: { in: number | null; out: number | null; total: number | null };
   selectors: { range: number; matcher: number; wholeSymbol: number };
+  stages: { wholeSymbol: number; match: number; pick: number };
+  matcherKinds: { snippet: number; regex: number };
+  creates: number;
 }
 
 interface AggregatesLike {
@@ -50,7 +53,7 @@ interface RunModule {
     byTaskSide: readonly AggregateLike[],
   ): string;
   writeMarkdownReport(path: string, report: unknown): void;
-  parseArgs(argv: string[]): { model: string; ocModel: string | null };
+  parseArgs(argv: string[]): { model: string; ocModel: string | null; protocolFormat: string };
   opencodeModelFor(model: string, ocModel: string | null): string;
 }
 
@@ -231,6 +234,12 @@ describe("rendered report (#89)", () => {
         expect(markdown).toContain("## Selector adoption (#101)");
         expect(markdown).toContain("| Task | Side | range | matcher | whole-symbol |");
         expect(markdown).toContain("| Side | range | matcher | whole-symbol |");
+        // #110: resolved stages and matcher kinds surface alongside.
+        expect(markdown).toContain("Resolved cascade stages and matcher kinds (#110)");
+        expect(markdown).toContain("| Task | Side | whole-symbol | match | pick | snippet | regex |");
+        expect(markdown).toContain("| Side | whole-symbol | match | pick | snippet | regex |");
+        // #111: compact implicit-create clauses surface alongside.
+        expect(markdown).toContain("Implicit creates (#111):");
       } finally {
         rmSync(dir, { recursive: true, force: true });
       }
@@ -267,6 +276,60 @@ describe("selector adoption aggregates (#101)", () => {
       const aggregates = computeAggregates(runs, ["json-parser"], ["tc"]);
       const bySide = aggregates.bySide.find((row) => row.side === "tc");
       expect(bySide?.selectors).toEqual({ range: 2, matcher: 4, wholeSymbol: 1 });
+    },
+  );
+});
+
+describe("resolved stage and matcher-kind aggregates (#110)", () => {
+  const stageStats = (over: Record<string, number> = {}) => ({
+    turns: 3,
+    payloads: 3,
+    toolCalls: 0,
+    applied: 3,
+    rejected: 0,
+    selected: 0,
+    stopped: 0,
+    range: 0,
+    matcher: 0,
+    wholeSymbol: 0,
+    stageWholeSymbol: 0,
+    stageMatch: 0,
+    stagePick: 0,
+    snippet: 0,
+    regex: 0,
+    creates: 0,
+    ...over,
+  });
+
+  test.skipIf(!runModulePresent)(
+    "sums per-run stage and matcher-kind counts onto byTaskSide and bySide; absent stats contribute zero",
+    async () => {
+      const { aggregateRuns, computeAggregates } = await loadRunModule();
+      const runs = [
+        makeRun(
+          "json-parser",
+          "tc",
+          { input: 10, output: 5 },
+          stageStats({ stageMatch: 1, stagePick: 1, snippet: 1 }),
+        ),
+        makeRun(
+          "json-parser",
+          "tc",
+          { input: 10, output: 5 },
+          stageStats({ stageWholeSymbol: 1, stageMatch: 1, snippet: 1, creates: 1 }),
+        ),
+        makeRun("json-parser", "tc", { input: 10, output: 5 }),
+      ];
+      const jsonTc = aggregateRuns(runs, "json-parser", "tc");
+      expect(jsonTc.stages).toEqual({ wholeSymbol: 1, match: 2, pick: 1 });
+      expect(jsonTc.matcherKinds).toEqual({ snippet: 2, regex: 0 });
+      expect(jsonTc.creates).toBe(1);
+
+      const aggregates = computeAggregates(runs, ["json-parser"], ["tc"]);
+      const bySide = aggregates.bySide.find((row) => row.side === "tc");
+      expect(bySide?.stages).toEqual({ wholeSymbol: 1, match: 2, pick: 1 });
+      expect(bySide?.matcherKinds).toEqual({ snippet: 2, regex: 0 });
+      expect(bySide?.creates).toBe(1);
     },
   );
 });
@@ -345,4 +408,65 @@ describe("oc model override (--oc-model)", () => {
       rmSync(dir, { recursive: true, force: true });
     }
   });
+});
+
+describe("edit protocol override (--protocol-format) (#119)", () => {
+  test.skipIf(!runModulePresent)("parses --protocol-format and defaults to json", async () => {
+    const { parseArgs } = await loadRunModule();
+    expect(parseArgs([]).protocolFormat).toBe("json");
+    expect(parseArgs(["--multi-payload"]).protocolFormat).toBe("json");
+    expect(parseArgs(["--protocol-format", "compact"]).protocolFormat).toBe("compact");
+    expect(parseArgs(["--protocol-format", "json"]).protocolFormat).toBe("json");
+  });
+
+  test.skipIf(!runModulePresent)(
+    "the report renders the selected protocol format",
+    async () => {
+      const { computeAggregates, writeMarkdownReport } = await loadRunModule();
+      const runs = sampleRuns();
+      const tasks = ["json-parser"];
+      const sides = ["tc"];
+      const report = {
+        generatedAt: "2026-10-20T00:00:00.000Z",
+        date: "2026-10-20",
+        mode: "full",
+        tasks,
+        sides,
+        reps: 1,
+        concurrency: 1,
+        model: "deepseek-v4.1-flash",
+        ocModel: null,
+        effort: null,
+        multiPayload: false,
+        protocolFormat: "compact",
+        tokenBudget: null,
+        bunVersion: "1.0.0",
+        opencodeVersion: null,
+        pilotReference: null,
+        infraErrors: [],
+        runs,
+        aggregates: computeAggregates(runs, tasks, sides),
+        provenance: {
+          inputs: {
+            model: "m",
+            taskIssue: "t",
+            fixture: "f",
+            systemPrompt: "s",
+            loopConfig: "l",
+            pricing: "p",
+          },
+          inputHash: "h",
+          computedAt: "2026-10-20T00:00:00.000Z",
+        },
+      };
+      const dir = mkdtempSync(join(tmpdir(), "run-protocol-format-"));
+      try {
+        const md = join(dir, "compact.md");
+        writeMarkdownReport(md, report);
+        expect(readFileSync(md, "utf8")).toContain("- protocol-format: compact (#119)");
+      } finally {
+        rmSync(dir, { recursive: true, force: true });
+      }
+    },
+  );
 });

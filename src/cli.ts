@@ -1,11 +1,20 @@
 import { readFileSync } from "node:fs";
+import type { ProtocolFormat } from "./loop";
 import type { Locator } from "./utility";
 
 export interface CliOptions {
   help: boolean;
+  /**
+   * Execution mode (#104): `one-shot` reads stdin to EOF and runs one loop,
+   * `serve` keeps one process alive for line-delimited JSON requests, and
+   * `null` leaves the choice to the entry point (TTY ⇒ help, piped ⇒ one-shot).
+   */
+  mode: "one-shot" | "serve" | null;
   model: string;
   /** Opt-in multi-payload exchanges (#69); default off. */
   multiPayload: boolean;
+  /** Edit protocol format (#119): `json` (default) or the compact syntax. */
+  protocolFormat: ProtocolFormat;
   /** Explicit addresses to edit (#81); null = the default discovery path. */
   targets: Locator[] | null;
   /** stdout format (#80): `text` (default) or the machine-readable `json` result. */
@@ -147,8 +156,10 @@ export function readTargetsFile(file: string): Locator[] {
 
 export function parseArgs(argv: string[]): CliOptions {
   let help = false;
+  let mode: "one-shot" | "serve" | null = null;
   let model = DEFAULT_MODEL;
   let multiPayload = false;
+  let protocolFormat: ProtocolFormat = "json";
   let targets: Locator[] | null = null;
   let format: "text" | "json" = "text";
   let tokenBudget: number | null = null;
@@ -165,8 +176,33 @@ export function parseArgs(argv: string[]): CliOptions {
       help = true;
       continue;
     }
+    if (arg === "--serve") {
+      if (mode === "one-shot") {
+        throw new Error("--serve and --one-shot are mutually exclusive");
+      }
+      mode = "serve";
+      continue;
+    }
+    if (arg === "--one-shot") {
+      if (mode === "serve") {
+        throw new Error("--serve and --one-shot are mutually exclusive");
+      }
+      mode = "one-shot";
+      continue;
+    }
     if (arg === "--multi-payload" || arg === "--multiPayload") {
       multiPayload = true;
+      continue;
+    }
+    if (arg === "--protocol-format" || arg.startsWith("--protocol-format=")) {
+      const { value, next } = flagValue(argv, index, "--protocol-format");
+      if (value !== "json" && value !== "compact") {
+        throw new Error(
+          `--protocol-format must be "json" or "compact" (got ${JSON.stringify(value)})`,
+        );
+      }
+      protocolFormat = value;
+      index = next;
       continue;
     }
     if (arg === "--model" || arg.startsWith("--model=")) {
@@ -222,7 +258,20 @@ export function parseArgs(argv: string[]): CliOptions {
     }
     throw new Error(`unknown argument: ${arg}`);
   }
-  return { help, model, multiPayload, targets, format, tokenBudget, checkCommand, testCommand, cwd, commandTimeoutMs };
+  return {
+    help,
+    mode,
+    model,
+    multiPayload,
+    protocolFormat,
+    targets,
+    format,
+    tokenBudget,
+    checkCommand,
+    testCommand,
+    cwd,
+    commandTimeoutMs,
+  };
 }
 
 export function helpText(): string {
@@ -230,8 +279,19 @@ export function helpText(): string {
     "typescript-coder — read an issue on stdin and apply a verified LLM edit",
     "",
     "Usage:",
-    "  tc [--model <id>] [--format <text|json>] [--token-budget <n>] [--multi-payload] [--targets <file>] < issue.txt",
-    "  bun run src/main.ts [--model <id>] [--format <text|json>] [--token-budget <n>] [--multi-payload] [--targets <file>] < issue.txt",
+    "  tc [--model <id>] [--format <text|json>] [--protocol-format <json|compact>] [--token-budget <n>] [--multi-payload] [--targets <file>] < issue.txt",
+    "  bun run src/main.ts [--model <id>] [--format <text|json>] [--protocol-format <json|compact>] [--token-budget <n>] [--multi-payload] [--targets <file>] < issue.txt",
+    "",
+    "Modes:",
+    "  --one-shot         read stdin to EOF, run one loop, print one result, exit",
+    "                     (the default when stdin is piped or redirected)",
+    "  --serve            keep one process alive for line-delimited JSON: one",
+    "                     request object per stdin line, exactly one",
+    "                     typescript-coder-result@1 result line per run on stdout",
+    '                     (diagnostics/progress on stderr); {"op":"shutdown"}',
+    "                     writes an ack and ends the loop; EOF ends the loop",
+    "  (no flag)          with a TTY stdin, print this help and exit 0; with",
+    "                     piped stdin, behave as --one-shot",
     "",
     "Options:",
     "  --model <id>       model id for the OpenAI-compatible provider (default: deepseek-v4.1-flash)",
@@ -250,6 +310,10 @@ export function helpText(): string {
     "  --multi-payload    opt in to multi-payload exchanges (#69): a modify reply may",
     '                     batch path-independent edits in one {"payloads": [...]} object',
     "                     (default: off, one flat payload per exchange)",
+    "  --protocol-format <json|compact>",
+    "                     edit protocol (default: json); compact requires the",
+    "                     `select … end` syntax in place of the JSON edit payload",
+    "                     (#119; explicit-targets mode stays json)",
     "  --targets <file>   edit an explicit address list from a JSON file (#81); the",
     '                     file is an array or {"targets": [...]} of {"path","symbol",',
     '                     "kind"} entries; each file is edited once per exchange and',
