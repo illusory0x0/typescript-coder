@@ -18,6 +18,7 @@ import {
 } from "./selection";
 import type { Selection as CompactSelection } from "./selection";
 import {
+  duplicateDeclarationNote,
   markedViewerLines,
   markerGutter,
   renderViewerFeedback,
@@ -415,9 +416,11 @@ export function buildCompactDetailsPrompt(
   specFiles: readonly SourceFile[] = [],
   startLine = 1,
   markedLines: ReadonlySet<number> | null = null,
+  duplicateNote: string | null = null,
 ): string {
   const numbered = numberLinesFrom(symbolSource, startLine, markedLines);
-  const prompt = `${compactGoal(issue, indexText)}\n# details\n\n\`\`\`text\n${numbered}\n\`\`\`\n\n${compactInstruction()}\n`;
+  const note = duplicateNote === null ? "" : `\n${duplicateNote}\n`;
+  const prompt = `${compactGoal(issue, indexText)}\n# details\n\n\`\`\`text\n${numbered}\n\`\`\`\n${note}\n${compactInstruction()}\n`;
   return appendCompactSpecFiles(prompt, specFiles);
 }
 
@@ -3757,6 +3760,13 @@ function resolveEntrySplice(
     start = matched.start;
     end = matched.end;
   }
+  // A whole-declaration empty fence deletes the declaration (#14): include the
+  // leading `export`/`export default` modifier so the deletion does not leave a
+  // dangling keyword behind. The compact protocol documents this as the delete
+  // form, and a duplicate is repaired by deleting the indexed copy this way.
+  if (matcher === null && range === null && text.trim() === "" && modifier !== null) {
+    start = entry.node.start - modifier.length;
+  }
   // Per-region no-op guard (#59): the replacement equals the exact text it
   // replaces, so this region alone would change nothing.
   if (text === sourceBefore.slice(start, end)) {
@@ -4013,13 +4023,26 @@ async function applyResolvedRegions(input: {
     // Overlap policy (#78): two regions share source text, so the whole
     // exchange is discarded and both regions are named.
     let overlapping: [ResolvedRegion, ResolvedRegion] | null = null;
-    for (let i = 1; i < ordered.length; i += 1) {
+    // Zero-width inserts do not advance the sorted interval, so track every
+    // insertion offset seen: two inserts at one offset overlap even when a
+    // same-start non-zero region sorts between them (#13).
+    const insertsAt = new Map<number, ResolvedRegion>();
+    for (let i = 0; i < ordered.length; i += 1) {
       const previous = ordered[i - 1];
       const current = ordered[i];
       if (previous !== undefined && current !== undefined && current.start < previous.end) {
         overlapping = [previous, current];
         break;
       }
+      if (current === undefined || current.start !== current.end) {
+        continue;
+      }
+      const earlierInsert = insertsAt.get(current.start);
+      if (earlierInsert !== undefined) {
+        overlapping = [earlierInsert, current];
+        break;
+      }
+      insertsAt.set(current.start, current);
     }
     if (overlapping !== null) {
       input.noteOverlap(path, overlapping[0], overlapping[1]);
@@ -4335,9 +4358,17 @@ function duplicateDeclarationDiagnostics(
     const occurrences = (seen.get(key) ?? 0) + 1;
     seen.set(key, occurrences);
     const beforeCount = counts.get(key) ?? 0;
-    // A name the file did not declare is a new declaration, not a duplicate.
-    if (beforeCount === 0 || occurrences <= beforeCount) {
+    // A name the file did not declare is new only on its first occurrence: two
+    // new declarations of the same (kind, name) in one pass are still a
+    // duplicate (#13), even though `before` has no line to point at.
+    if (occurrences <= Math.max(beforeCount, 1)) {
       continue;
+    }
+    if (beforeCount === 0) {
+      return [
+        "stage: duplicate",
+        `the edit was discarded: it would add a second top-level ${declaration.kind} ${JSON.stringify(declaration.name)} in ${target}; a single exchange may declare a new name only once`,
+      ].join("\n");
     }
     const first = existing.find(
       (candidate) => candidate.kind === declaration.kind && candidate.name === declaration.name,
@@ -5805,6 +5836,7 @@ export async function runLoop(options: LoopOptions): Promise<LoopResult> {
               specFiles,
               startLine,
               markedLines,
+              duplicateDeclarationNote(selection.locator.path, pickSource, entry),
             );
           } else {
             initialContentPrompt = buildCompactCreatePrompt(

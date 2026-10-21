@@ -1,7 +1,7 @@
 ---
 id: 13
 title: "Reject duplicate creates and same-offset zero-width regions in one compact reply"
-status: todo
+status: done
 priority: medium
 milestone: null
 parent: 12
@@ -52,3 +52,4 @@ Add focused tests for (a) the four-clause draft-plus-correction reply above and 
 
 - The original replay bundle is under `tmp/replay-compact/` (prunable); the durable evidence is the #11 baseline JSON.
 - Do not tune prompts or code against the held-out `csv-parser` fixture.
+- Resolved. Create conflicts are now rejected at compact resolution: `src/compact.ts` derives the kind/name the fence body actually creates (`createBodyText`/`CreatedDeclaration`), keys queued creates by `path × kind × name`, and turns a repeat into a `duplicate` failure naming both clauses (`createConflictDiagnostics`); `CompactFailureStage` gains `duplicate`. The shared apply pass (`src/loop.ts` `applyResolvedRegions`) now tracks zero-width insert offsets, so two inserts at one offset are an overlap even when a same-start non-zero region sorts between them; adjacent non-zero regions stay legal. `duplicateDeclarationDiagnostics` also rejects a new name added twice in one pass (`occurrences > max(beforeCount, 1)`) with a dedicated message as defense-in-depth. Tests: resolver unit test for the four-clause draft-plus-correction reply (`src/compact.test.ts`) and two loop-level tests (four-clause rejection with no file written; two same-offset zero-width creates rejected and only the retry's Alpha created) in `src/loop.test.ts`. Observed: `bun test src/compact.test.ts src/loop.test.ts` 407 pass / 0 fail; `bunx tsc --noEmit` clean.

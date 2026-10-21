@@ -1,7 +1,7 @@
 ---
 id: 12
 title: "Fix duplicate-declaration handling in the compact edit protocol"
-status: todo
+status: done
 priority: medium
 milestone: null
 parent: null
@@ -40,3 +40,4 @@ The open list contains no issue parented to this umbrella.
 - Children: the create/overlap guard fix, and duplicate-declaration repairability.
 - The #11 compact baseline stays as recorded; do not rewrite it. Re-measure with `--reps 3` only after both children land.
 - Held-out rule: do not tune prompts or code against `csv-parser`.
+- Both children are done: #13 (create-conflict and same-offset zero-width guards, plus defense-in-depth duplicate detection) and #14 (duplicates rendered in the viewer/details with a grammar-valid empty-fence delete repair, and the dangling-`export` fix for whole-declaration deletes). The umbrella itself changed no code or docs. `issue check` is clean and no child is open. Re-measuring the compact benchmark (--reps 3) is deliberately left out of this resolution and can be run separately once approved.

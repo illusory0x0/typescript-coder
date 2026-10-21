@@ -543,6 +543,28 @@ export class SymbolIndex {
   }
 }
 
+/**
+ * The declarations of `symbol` that TypeScript rejects as a duplicate (#14), or
+ * an empty list when the symbol is single/absent or its declarations are a
+ * legal merge. Mirrors the loop's #48 guard (`topLevelDeclarations`): only the
+ * kinds that cannot be redeclared at top level are considered — a function with
+ * a body, a class, or a type alias. Overload signatures, interfaces, enums and
+ * namespaces merge, so they stay unflagged.
+ */
+export function duplicateDeclarations(symbol: Symbol): Node[] {
+  const declarations = symbol.declarations.filter((declaration) => {
+    if (!("kind" in declaration)) {
+      return false;
+    }
+    const kind = (declaration as { kind: string }).kind;
+    if (kind === "FunctionDeclaration") {
+      return (declaration as FunctionDeclaration).body !== null;
+    }
+    return kind === "ClassDeclaration" || kind === "TypeAliasDeclaration";
+  });
+  return declarations.length > 1 ? declarations : [];
+}
+
 function declarationKind(node: Node): string | null {
   if (!("kind" in node)) {
     return null;

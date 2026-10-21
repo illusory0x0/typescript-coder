@@ -202,6 +202,62 @@ describe("resolveCompactReply (#111)", () => {
     expect(result.regions[0]?.locator.kind).toBe("");
   });
 
+  test("rejects repeated implicit creates of the same declaration (#13)", () => {
+    // The #11 json-parser reply: two creates followed by a "correction" that
+    // asks for the other locator kind. Both fences add the same type alias /
+    // function, so the correction clauses must conflict with the first pair.
+    const selections = parseSelection(
+      [
+        "select const JsonValue in src/json.ts",
+        "replace with",
+        "``````",
+        "export type JsonValue = string | number;",
+        "``````",
+        "end",
+        "select function parseJson in src/json.ts",
+        "replace with",
+        "``````",
+        "export function parseJson(text: string): JsonValue {",
+        "  return text;",
+        "}",
+        "``````",
+        "end",
+        "select type JsonValue in src/json.ts resolve type",
+        "replace with",
+        "``````",
+        "export type JsonValue = string | number;",
+        "``````",
+        "end",
+        "select function parseJson in src/json.ts resolve value",
+        "replace with",
+        "``````",
+        "export function parseJson(text: string): JsonValue {",
+        "  return text;",
+        "}",
+        "``````",
+        "end",
+      ].join("\n"),
+    );
+    const result = resolveCompactReply(selections, deps(""));
+    // The first create of each name is queued; the repeats are rejected.
+    expect(result.regions.map((region) => region.locator.name)).toEqual(["JsonValue", "parseJson"]);
+    expect(result.failures).toHaveLength(2);
+    const [first, second] = result.failures;
+    expect(first?.index).toBe(2);
+    expect(first?.stage).toBe("duplicate");
+    expect(first?.diagnostics).toContain(
+      'clause 1 and clause 3 both create the same top-level type "JsonValue"',
+    );
+    expect(first?.diagnostics).toContain(
+      "the whole compact reply is discarded and nothing is written",
+    );
+    expect(second?.index).toBe(3);
+    expect(second?.stage).toBe("duplicate");
+    expect(second?.diagnostics).toContain(
+      'clause 2 and clause 4 both create the same top-level function "parseJson"',
+    );
+  });
+
   test("a no-kind clause resolves a declaration of any kind", () => {
     // The empty kind is the compact wildcard: path + name only.
     const selections = parseSelection(
@@ -565,6 +621,28 @@ describe("resolveCompactReply (#111)", () => {
         "",
         "Reply with an edit clause: add `replace` (use `pick` only with `replace`).",
       ].join("\n"),
+    );
+  });
+
+  test("a duplicate-symbol viewer renders every declaration and names the delete repair", () => {
+    const source = ["export type Value = number;", "", "export type Value = string;", ""].join(
+      "\n",
+    );
+    const selections = parseSelection("select type Value in a.ts end");
+    const result = resolveCompactReply(selections, deps(source));
+    expect(result.failures).toEqual([]);
+    expect(result.viewers).toHaveLength(1);
+    const viewer = result.viewers[0];
+    expect(viewer?.duplicates).toHaveLength(2);
+    expect(viewer?.duplicateNote).toContain(
+      'Duplicate declarations: the top-level type "Value" in a.ts is declared 2 times, at a.ts:1 and a.ts:3.',
+    );
+    const feedback = renderViewerFeedback(result.viewers);
+    expect(feedback).toContain("1 | export type Value = number;");
+    expect(feedback).toContain("duplicate declaration at a.ts:3");
+    expect(feedback).toContain("3 | export type Value = string;");
+    expect(feedback).toContain(
+      "To remove one duplicate, reply with an empty-fence `replace with` clause on this address",
     );
   });
 

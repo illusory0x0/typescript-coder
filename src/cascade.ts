@@ -460,6 +460,12 @@ export function resolveCascade(
     start === declaration.start
       ? stripLeadingExport(selection.replacement, modifier)
       : selection.replacement;
+  // An empty fence on a whole-declaration target deletes it (#14); include the
+  // leading `export`/`export default` modifier so the deletion does not leave a
+  // dangling keyword behind.
+  if (modifier !== null && start === declaration.start && selection.replacement.trim() === "") {
+    start -= modifier.length;
+  }
   // Per-region no-op guard (#59): the replacement equals the exact text it
   // replaces, so this region alone would change nothing.
   if (text === source.slice(start, end)) {

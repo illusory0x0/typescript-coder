@@ -14,16 +14,17 @@
 import { resolveCascade, resolveCascadeViewer } from "./cascade";
 import type { CascadeCause, SelectionStage } from "./cascade";
 import { Parser } from "./parser";
-import type { Program, Statement } from "./parser";
+import type { Node, Program, Statement } from "./parser";
 import type { Selection } from "./selection";
 import { Binder } from "./utility";
 import type { IndexEntry, Locator, SymbolSpace } from "./utility";
+import { duplicateDeclarations } from "./utility";
 
 /** #110 `MatcherKind`, mirrored to avoid a value-level import cycle with loop. */
 export type CompactMatcherKind = "snippet" | "regex";
 
 /** The stage a compact clause failed at, mapped to the loop's failure stages. */
-export type CompactFailureStage = "address" | "matcher" | "range" | "no-op";
+export type CompactFailureStage = "address" | "matcher" | "range" | "no-op" | "duplicate";
 
 /** Callbacks the loop supplies: address resolution (echo/kind rules) and file reads. */
 export interface CompactDeps {
@@ -90,6 +91,15 @@ export interface CompactViewer {
   stage: SelectionStage;
   /** The whole resolved declaration's source lines, for the numbered block. */
   declaration: OccurrenceLine[];
+  /**
+   * Every declaration of a duplicate top-level symbol (#14), in source order.
+   * Empty for a single declaration or a legal TypeScript merge; when present,
+   * `declaration` is the indexed (editable) first copy and these blocks name
+   * the copies the index merged out of view.
+   */
+  duplicates: OccurrenceLine[][];
+  /** The #14 duplicate note naming every location and the delete repair, or null. */
+  duplicateNote: string | null;
   occurrences: CompactOccurrence[];
 }
 
@@ -158,6 +168,34 @@ function occurrenceLines(source: string, start: number, end: number): Occurrence
   return lines;
 }
 
+/**
+ * The #14 duplicate-declaration note: names every merged-out copy by
+ * `path:line` and gives a repair that works with the current grammar — the
+ * address edits the indexed (first) copy, an identical whole-declaration
+ * replacement is a no-op, and an empty fence deletes that copy so the remaining
+ * declaration becomes selectable. Null when the symbol is not a duplicate.
+ */
+export function duplicateDeclarationNote(
+  path: string,
+  source: string,
+  entry: IndexEntry,
+): string | null {
+  const duplicates = duplicateDeclarations(entry.symbol);
+  if (duplicates.length < 2) {
+    return null;
+  }
+  const locations = duplicates.map((node) => `${path}:${positionAt(source, node.start).line}`);
+  const first = locations[0] ?? `${path}:1`;
+  const last = locations.at(-1) ?? first;
+  const listed = locations.length <= 1 ? first : `${locations.slice(0, -1).join(", ")} and ${last}`;
+  const label = `${entry.locator.kind} ${JSON.stringify(entry.locator.name)}`;
+  return [
+    `Duplicate declarations: the top-level ${label} in ${path} is declared ${duplicates.length} times, at ${listed}.`,
+    `The address edits the first declaration (${first}); replacing it with identical text is a no-op.`,
+    `To remove one duplicate, reply with an empty-fence \`replace with\` clause on this address: it deletes the indexed declaration at ${first}, and the remaining copy is then selectable by name.`,
+  ].join("\n");
+}
+
 // A create fence is appended verbatim when it already carries complete
 // top-level declarations; any other body is wrapped by the clause's symbol
 // space (`human/edit.md` creation defaults).
@@ -183,7 +221,15 @@ function isDeclarationStatement(statement: Statement): boolean {
   }
 }
 
-type CreateBody = { ok: true; text: string } | { ok: false; diagnostics: string };
+/** The declaration a create fence actually adds, independent of the locator kind. */
+interface CreatedDeclaration {
+  kind: string;
+  name: string;
+}
+
+type CreateBody =
+  | { ok: true; text: string; declaration: CreatedDeclaration }
+  | { ok: false; diagnostics: string };
 
 function createAddressDiagnostics(selection: Selection, detail: string): string {
   const { locator } = selection;
@@ -221,10 +267,12 @@ function createBodyText(selection: Selection, body: string): CreateBody {
   try {
     program = new Parser(body).parseProgram();
   } catch {
-    return { ok: true, text: wrapCreateBody(name, selection.space, body) };
+    const wrapped = wrapCreateBody(name, selection.space, body);
+    return { ok: true, text: wrapped.text, declaration: wrapped.declaration };
   }
   if (!program.body.some(isDeclarationStatement)) {
-    return { ok: true, text: wrapCreateBody(name, selection.space, body) };
+    const wrapped = wrapCreateBody(name, selection.space, body);
+    return { ok: true, text: wrapped.text, declaration: wrapped.declaration };
   }
   const binder = new Binder(program);
   const symbols = binder.rootScope.resolveLocal(name);
@@ -280,19 +328,65 @@ function createBodyText(selection: Selection, body: string): CreateBody {
       };
     }
   }
-  return { ok: true, text: body };
+  return { ok: true, text: body, declaration: { kind: declarationKindOf(declaration), name } };
 }
 
-function wrapCreateBody(name: string, space: SymbolSpace | null, body: string): string {
+// The declaration kind the fence body actually creates (#13). The locator's
+// requested kind is only an address hint: `select const X` may carry a
+// `type X = …` fence, and two clauses conflict when they add the same
+// declaration in the same file, whatever their locators asked for.
+function declarationKindOf(declaration: Node): string {
+  const kind = (declaration as Node & { kind: string }).kind;
+  switch (kind) {
+    case "FunctionDeclaration":
+      return "function";
+    case "ClassDeclaration":
+      return "class";
+    case "TypeAliasDeclaration":
+      return "type";
+    case "InterfaceDeclaration":
+      return "interface";
+    case "EnumDeclaration":
+      return "enum";
+    case "NamespaceDeclaration":
+      return "namespace";
+    case "VariableDeclarator":
+      return "variable";
+    default:
+      return kind;
+  }
+}
+
+function wrapCreateBody(
+  name: string,
+  space: SymbolSpace | null,
+  body: string,
+): { text: string; declaration: CreatedDeclaration } {
   switch (space) {
     case "type":
-      return `type ${name} = ${body};`;
+      return { text: `type ${name} = ${body};`, declaration: { kind: "type", name } };
     case "namespace":
-      return `namespace ${name} {\n${body}\n}`;
+      return {
+        text: `namespace ${name} {\n${body}\n}`,
+        declaration: { kind: "namespace", name },
+      };
     default:
       // No `resolve` defaults to a `let` binding; `value` uses the same form.
-      return `let ${name} = ${body};`;
+      return { text: `let ${name} = ${body};`, declaration: { kind: "variable", name } };
   }
+}
+
+function createConflictDiagnostics(
+  path: string,
+  declaration: CreatedDeclaration,
+  earlierIndex: number,
+  index: number,
+): string {
+  return [
+    "stage: duplicate",
+    `clause ${earlierIndex + 1} and clause ${index + 1} both create the same top-level ${declaration.kind} ${JSON.stringify(declaration.name)} in ${JSON.stringify(path)}; the whole compact reply is discarded and nothing is written`,
+    `declare ${JSON.stringify(declaration.name)} once per reply, or replace the existing declaration instead of adding another copy`,
+  ].join("\n");
 }
 
 interface PickExpansion {
@@ -326,6 +420,11 @@ export function resolveCompactReply(
   const regions: CompactRegion[] = [];
   const viewers: CompactViewer[] = [];
   const failures: CompactFailure[] = [];
+  // #13: the creates a reply has already queued, keyed by file and the
+  // declaration the fence body actually adds. Every create appends at the same
+  // pre-reply offset, so the shared overlap pass cannot see two creates of the
+  // same name; reject the repeat here, naming both clauses.
+  const creates = new Map<string, number>();
 
   for (let index = 0; index < selections.length; index += 1) {
     const selection = selections[index];
@@ -359,6 +458,24 @@ export function resolveCompactReply(
           });
           continue;
         }
+        // The created declaration's kind comes from the fence body, not the
+        // locator: both `select const X` with a type fence and `select type X`
+        // add the same type alias and must not both apply.
+        const createKey = `${path}\u0000${created.declaration.kind}\u0000${created.declaration.name}`;
+        const earlierIndex = creates.get(createKey);
+        if (earlierIndex !== undefined) {
+          failures.push({
+            index,
+            path,
+            locator: selection.locator,
+            stage: "duplicate",
+            cause: null,
+            diagnostics: createConflictDiagnostics(path, created.declaration, earlierIndex, index),
+            undeclaredName: null,
+          });
+          continue;
+        }
+        creates.set(createKey, index);
         regions.push({
           index,
           path,
@@ -408,6 +525,10 @@ export function resolveCompactReply(
         space: selection.space,
         stage: viewed.stage,
         declaration: occurrenceLines(source, address.entry.node.start, address.entry.node.end),
+        duplicates: duplicateDeclarations(address.entry.symbol).map((node) =>
+          occurrenceLines(source, node.start, node.end),
+        ),
+        duplicateNote: duplicateDeclarationNote(path, source, address.entry),
         occurrences: viewed.spans.map((span) => {
           const { line, column } = positionAt(source, span.start);
           return {
@@ -430,7 +551,13 @@ export function resolveCompactReply(
       for (const range of selection.pick) {
         const part = resolveCascade(source, address.entry, { ...selection, pick: [range] });
         if (!part.ok) {
-          firstFailure = { cause: part.cause, diagnostics: part.diagnostics };
+          const duplicateNote =
+            part.cause === "no-op" ? duplicateDeclarationNote(path, source, address.entry) : null;
+          firstFailure = {
+            cause: part.cause,
+            diagnostics:
+              duplicateNote === null ? part.diagnostics : `${part.diagnostics}\n${duplicateNote}`,
+          };
           break;
         }
         expanded.push({
@@ -491,13 +618,18 @@ export function resolveCompactReply(
     }
     const resolved = resolveCascade(source, address.entry, selection);
     if (!resolved.ok) {
+      const duplicateNote =
+        resolved.cause === "no-op" ? duplicateDeclarationNote(path, source, address.entry) : null;
       failures.push({
         index,
         path,
         locator: selection.locator,
         stage: stageForCause(resolved.cause),
         cause: resolved.cause,
-        diagnostics: resolved.diagnostics,
+        diagnostics:
+          duplicateNote === null
+            ? resolved.diagnostics
+            : `${resolved.diagnostics}\n${duplicateNote}`,
         undeclaredName: null,
       });
       continue;
@@ -573,10 +705,23 @@ export function renderViewerFeedback(viewers: readonly CompactViewer[]): string 
     // match, so it marks nothing. Every matched span marks each display line it
     // intersects, and the declaration is rendered once regardless of candidates.
     const marked = markedViewerLines(viewer);
-    const width = String(viewer.declaration.at(-1)?.line ?? 0).length;
-    for (const line of viewer.declaration) {
-      const gutter = markerGutter(marked.has(line.line));
-      lines.push(`${gutter}${String(line.line).padStart(width)} | ${line.text}`);
+    const blocks = viewer.duplicates.length > 0 ? viewer.duplicates : [viewer.declaration];
+    const width = String(Math.max(...blocks.map((block) => block.at(-1)?.line ?? 0))).length;
+    for (let blockIndex = 0; blockIndex < blocks.length; blockIndex += 1) {
+      const block = blocks[blockIndex];
+      if (block === undefined) {
+        continue;
+      }
+      if (blockIndex > 0) {
+        lines.push(`  duplicate declaration at ${viewer.path}:${block[0]?.line ?? 0}`);
+      }
+      for (const line of block) {
+        const gutter = markerGutter(marked.has(line.line));
+        lines.push(`${gutter}${String(line.line).padStart(width)} | ${line.text}`);
+      }
+    }
+    if (viewer.duplicateNote !== null) {
+      lines.push("", viewer.duplicateNote);
     }
   }
   lines.push("", "Reply with an edit clause: add `replace` (use `pick` only with `replace`).");

@@ -8561,6 +8561,66 @@ describe("compact protocol (#111/#119)", () => {
     expect(helperSource(dir)).toContain("return 2;");
   }, 30000);
 
+  test("a duplicate top-level declaration is named in retry diagnostics and repairable by deletion", async () => {
+    const dir = fixtureDir();
+    writeFileSync(
+      join(dir, "src", "helper.ts"),
+      [
+        "export function answer(): number {",
+        "  return 1;",
+        "}",
+        "",
+        "export function answer(): number {",
+        "  return 2;",
+        "}",
+        "",
+      ].join("\n"),
+    );
+    const firstCopy = ["export function answer(): number {", "  return 1;", "}"].join("\n");
+    const address = { path: "src/helper.ts", name: "answer", kind: "function" };
+    const provider = new ScriptedProvider([
+      compactSelect("answer", "src/helper.ts", "value"),
+      // Rewriting the visible (indexed) copy with identical text is a no-op.
+      compactReply({
+        locator: address,
+        space: null,
+        matcher: null,
+        pick: null,
+        replacement: firstCopy,
+      }),
+      // The prescribed repair: an empty fence deletes the indexed copy.
+      compactReply({
+        locator: address,
+        space: null,
+        matcher: null,
+        pick: null,
+        replacement: "",
+      }),
+    ]);
+    const result = await runLoopBase({
+      cwd: dir,
+      issue: "make the answer test pass",
+      provider,
+      checkCommand: TSC,
+      testCommand: ["bun", "test"],
+    });
+    expect(result.ok).toBe(true);
+    // The select turn's `# details` names both copies and the repair.
+    const details = provider.calls[1]?.at(-1)?.content ?? "";
+    expect(details).toContain("Duplicate declarations:");
+    expect(details).toContain("src/helper.ts:1 and src/helper.ts:5");
+    expect(details).toContain("empty-fence");
+    // The no-op retry carries the same duplicate note.
+    const retry = provider.calls[2]?.at(-1)?.content ?? "";
+    expect(retry).toContain("stage: no-op");
+    expect(retry).toContain("Duplicate declarations:");
+    expect(retry).toContain("src/helper.ts:1 and src/helper.ts:5");
+    const finalSource = helperSource(dir);
+    expect(finalSource).not.toContain("return 1;");
+    expect(finalSource).toContain("return 2;");
+    expect(finalSource.match(/function answer/g)).toHaveLength(1);
+  }, 30000);
+
   test("the compact symbol index is select lines with one-space resolve hints", () => {
     const files: SourceFile[] = [
       {
@@ -9635,6 +9695,142 @@ describe("compact protocol (#111/#119)", () => {
     expect(rejected?.diagnostics).toContain("the whole compact reply is discarded");
     expect(rejected?.diagnostics).toContain("nothing is written");
     expect(rejected?.diagnostics).not.toContain("earlier clause wins");
+  }, 30000);
+
+  test("a four-clause draft-plus-correction reply cannot create the same declarations twice (#13)", async () => {
+    const dir = fixtureDir();
+    const originalHelper = helperSource(dir);
+    const parseBody =
+      "export function parseJson(text: string): JsonValue {\n  return text as JsonValue;\n}";
+    let jsonAfterFailure: string | null = "unread";
+    let helperAfterFailure = "";
+    const provider = new ScriptedProvider(
+      [
+        compactSelect("JsonValue", "src/json.ts"),
+        compactReply(
+          // The #11 shape: two creates, then the same two fences again asking
+          // for the other locator kind. Every fence creates the same
+          // declaration, so clauses 3 and 4 conflict with 1 and 2.
+          createEditor(
+            "src/json.ts",
+            "JsonValue",
+            "const",
+            "export type JsonValue = string | number;",
+          ),
+          createEditor("src/json.ts", "parseJson", "function", parseBody),
+          createEditor(
+            "src/json.ts",
+            "JsonValue",
+            "type",
+            "export type JsonValue = string | number;",
+            "type",
+          ),
+          createEditor("src/json.ts", "parseJson", "function", parseBody, "value"),
+        ),
+        compactReply(answerEditor("return 2;", { kind: "snippet", value: "return 1;" })),
+        "Great! I resolve this problem!",
+      ],
+      (callIndex) => {
+        if (callIndex === 2) {
+          const jsonPath = join(dir, "src", "json.ts");
+          jsonAfterFailure = existsSync(jsonPath) ? readFileSync(jsonPath, "utf8") : null;
+          helperAfterFailure = helperSource(dir);
+        }
+      },
+    );
+    const result = await runLoop({
+      cwd: dir,
+      issue: "add the JSON declaration",
+      provider,
+      protocolFormat: "compact",
+      checkCommand: TSC,
+      testCommand: ["bun", "test"],
+    });
+    expect(result.ok).toBe(true);
+    // The whole reply was discarded: no file, no helper change.
+    expect(jsonAfterFailure).toBeNull();
+    expect(helperAfterFailure).toBe(originalHelper);
+    const rejected = result.records.find(
+      (record) => record.kind === "exchange" && record.outcome === "duplicate",
+    );
+    expect(rejected).toBeDefined();
+    expect(rejected?.diagnostics).toContain("stage: duplicate");
+    expect(rejected?.diagnostics).toContain(
+      'clause 1 and clause 3 both create the same top-level type "JsonValue"',
+    );
+    expect(rejected?.diagnostics).toContain(
+      'clause 2 and clause 4 both create the same top-level function "parseJson"',
+    );
+    expect(rejected?.diagnostics).toContain("the whole compact reply is discarded");
+    expect(rejected?.diagnostics).toContain("nothing is written");
+    expect(helperSource(dir)).toContain("return 2;");
+  }, 30000);
+
+  test("two same-offset zero-width creates are overlapping and write nothing (#13)", async () => {
+    const dir = fixtureDir();
+    const originalHelper = helperSource(dir);
+    let newAfterFailure: string | null = "unread";
+    let helperAfterFailure = "";
+    const provider = new ScriptedProvider(
+      [
+        compactSelect("Alpha", "src/new.ts"),
+        compactReply(
+          // Both creates append at the empty file's offset 0..0.
+          createEditor(
+            "src/new.ts",
+            "Alpha",
+            "function",
+            "export function Alpha(): number {\n  return 1;\n}",
+          ),
+          createEditor(
+            "src/new.ts",
+            "Beta",
+            "function",
+            "export function Beta(): number {\n  return 2;\n}",
+          ),
+        ),
+        compactReply(
+          createEditor(
+            "src/new.ts",
+            "Alpha",
+            "function",
+            "export function Alpha(): number {\n  return 1;\n}",
+          ),
+        ),
+        compactReply(answerEditor("return 2;", { kind: "snippet", value: "return 1;" })),
+        "Great! I resolve this problem!",
+      ],
+      (callIndex) => {
+        if (callIndex === 2) {
+          const newPath = join(dir, "src", "new.ts");
+          newAfterFailure = existsSync(newPath) ? readFileSync(newPath, "utf8") : null;
+          helperAfterFailure = helperSource(dir);
+        }
+      },
+    );
+    const result = await runLoop({
+      cwd: dir,
+      issue: "add the Alpha declaration",
+      provider,
+      protocolFormat: "compact",
+      checkCommand: TSC,
+      testCommand: ["bun", "test"],
+    });
+    expect(result.ok).toBe(true);
+    expect(newAfterFailure).toBeNull();
+    expect(helperAfterFailure).toBe(originalHelper);
+    const rejected = result.records.find((record) => record.cause === "multi-duplicate");
+    expect(rejected).toBeDefined();
+    expect(rejected?.diagnostics).toContain("overlap");
+    expect(rejected?.diagnostics).toContain("0..0");
+    expect(rejected?.diagnostics).toContain("clause 1");
+    expect(rejected?.diagnostics).toContain("clause 2");
+    expect(rejected?.diagnostics).toContain("the whole compact reply is discarded");
+    expect(rejected?.diagnostics).toContain("nothing is written");
+    const created = readFileSync(join(dir, "src", "new.ts"), "utf8");
+    expect(created).toContain("export function Alpha");
+    expect(created).not.toContain("export function Beta");
+    expect(helperSource(dir)).toContain("return 2;");
   }, 30000);
 
   test("a multi-file compact reply is all-or-none across files", async () => {
