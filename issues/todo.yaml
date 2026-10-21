@@ -2,14 +2,6 @@
 # rewrites it; `add` appends; other writes keep it. `check` enforces it.
 # A dep, and every child of an umbrella, must be listed before its dependent.
 
-- id: 4
-  title: "Render viewer details as a numbered declaration block with match markers"
-  status: todo
-  priority: medium
-  milestone: null
-  parent: 1
-  deps: [2]
-  file: 0004-render-viewer-details-as-a-numbered-declaration-block-with-match-markers.md
 - id: 5
   title: "Teach and document the resolve protocol end to end"
   status: todo

@@ -82,7 +82,11 @@ export interface CompactViewer {
   index: number;
   path: string;
   locator: Locator;
+  /** The clause's `resolve <value|type|namespace>` disambiguator, or `null`. */
+  space: SymbolSpace | null;
   stage: SelectionStage;
+  /** The whole resolved declaration's source lines, for the numbered block. */
+  declaration: OccurrenceLine[];
   occurrences: CompactOccurrence[];
 }
 
@@ -285,7 +289,9 @@ export function resolveCompactReply(
         index,
         path,
         locator: selection.locator,
+        space: selection.space,
         stage: viewed.stage,
+        declaration: occurrenceLines(source, address.entry.node.start, address.entry.node.end),
         occurrences: viewed.spans.map((span) => {
           const { line, column } = positionAt(source, span.start);
           return {
@@ -329,17 +335,22 @@ export function resolveCompactReply(
 }
 
 /**
- * Render the viewer occurrences as the next prompt's feedback: each candidate's
- * file-absolute `line:col` plus its numbered source snippet. A locate turn that
- * resolved at least one viewer but wrote nothing carries this text so the model
- * can add `pick` or a `replace`.
+ * Render the viewer results as the next prompt's feedback: one numbered block
+ * of the whole resolved declaration per clause, with every line intersected by
+ * a matched AST span marked `⁉️` in the gutter (a bare viewer marks nothing).
+ * The exact candidate `path:line:col` positions precede each block. A locate
+ * turn that resolved at least one viewer but wrote nothing carries this text so
+ * the model can add `pick` or a `replace`.
  */
 export function renderViewerFeedback(viewers: readonly CompactViewer[]): string {
   const lines = ["Located occurrences (viewer clauses write nothing):"];
   for (const viewer of viewers) {
     const { kind, name } = viewer.locator;
-    const head =
+    let head =
       kind === "" ? `select ${name} in ${viewer.path}` : `select ${kind} ${name} in ${viewer.path}`;
+    if (viewer.space !== null) {
+      head += ` resolve ${viewer.space}`;
+    }
     lines.push("", head);
     if (viewer.occurrences.length === 0) {
       lines.push("  (no occurrences)");
@@ -347,10 +358,22 @@ export function renderViewerFeedback(viewers: readonly CompactViewer[]): string 
     }
     for (const occurrence of viewer.occurrences) {
       lines.push(`  ${viewer.path}:${occurrence.line}:${occurrence.column}`);
-      const width = String(occurrence.lines.at(-1)?.line ?? occurrence.line).length;
-      for (const line of occurrence.lines) {
-        lines.push(`    ${String(line.line).padStart(width)} | ${line.text}`);
+    }
+    // A bare viewer's only occurrence is the declaration itself; it is not a
+    // match, so it marks nothing. Every matched span marks each display line it
+    // intersects, and the declaration is rendered once regardless of candidates.
+    const marked = new Set<number>();
+    if (viewer.stage !== "whole-symbol") {
+      for (const occurrence of viewer.occurrences) {
+        for (const line of occurrence.lines) {
+          marked.add(line.line);
+        }
       }
+    }
+    const width = String(viewer.declaration.at(-1)?.line ?? 0).length;
+    for (const line of viewer.declaration) {
+      const gutter = marked.has(line.line) ? "⁉️  " : "    ";
+      lines.push(`${gutter}${String(line.line).padStart(width)} | ${line.text}`);
     }
   }
   lines.push("", "Reply with an edit clause (add `replace`) or narrow a viewer with `pick`.");

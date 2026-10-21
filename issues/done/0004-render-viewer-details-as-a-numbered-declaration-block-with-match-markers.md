@@ -1,7 +1,7 @@
 ---
 id: 4
 title: "Render viewer details as a numbered declaration block with match markers"
-status: todo
+status: done
 priority: medium
 milestone: null
 parent: 1

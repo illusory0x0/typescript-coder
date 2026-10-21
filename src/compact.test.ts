@@ -325,13 +325,98 @@ describe("resolveCompactReply (#111)", () => {
     expect(result.failures[0]?.stage).toBe("address");
   });
 
-  test("renderViewerFeedback names each candidate by file-absolute line:col with a numbered snippet", () => {
+  test("a bare viewer renders the whole declaration once, unmarked", () => {
+    const selections = parseSelection("select answer in src/helper.ts resolve value end");
+    const result = resolveCompactReply(selections, deps(ONCE.replace(/once/g, "answer")));
+    expect(renderViewerFeedback(result.viewers)).toBe(
+      [
+        "Located occurrences (viewer clauses write nothing):",
+        "",
+        "select answer in src/helper.ts resolve value",
+        "  src/helper.ts:1:8",
+        "    1 | export function answer(): number {",
+        "    2 |   return 1;",
+        "    3 | }",
+        "",
+        "Reply with an edit clause (add `replace`) or narrow a viewer with `pick`.",
+      ].join("\n"),
+    );
+  });
+
+  test("a match viewer marks the matched line in the declaration block", () => {
+    const selections = parseSelection(
+      "select answer in src/helper.ts resolve value\nmatch `return 1;`\nend",
+    );
+    const result = resolveCompactReply(selections, deps(ONCE.replace(/once/g, "answer")));
+    expect(renderViewerFeedback(result.viewers)).toBe(
+      [
+        "Located occurrences (viewer clauses write nothing):",
+        "",
+        "select answer in src/helper.ts resolve value",
+        "  src/helper.ts:2:3",
+        "    1 | export function answer(): number {",
+        "⁉️  2 |   return 1;",
+        "    3 | }",
+        "",
+        "Reply with an edit clause (add `replace`) or narrow a viewer with `pick`.",
+      ].join("\n"),
+    );
+  });
+
+  test("a multi-candidate viewer marks every line and renders the declaration once", () => {
     const selections = parseSelection("select function twice in a.ts\nmatch `return 1;`\nend");
     const result = resolveCompactReply(selections, deps(TWICE));
-    const text = renderViewerFeedback(result.viewers);
-    expect(text).toContain("a.ts:2:3");
-    expect(text).toContain("a.ts:3:3");
-    expect(text).toContain("2 |   return 1;");
-    expect(text).toContain("viewer clauses write nothing");
+    expect(renderViewerFeedback(result.viewers)).toBe(
+      [
+        "Located occurrences (viewer clauses write nothing):",
+        "",
+        "select function twice in a.ts",
+        "  a.ts:2:3",
+        "  a.ts:3:3",
+        "    1 | export function twice(): number {",
+        "⁉️  2 |   return 1;",
+        "⁉️  3 |   return 1;",
+        "    4 | }",
+        "",
+        "Reply with an edit clause (add `replace`) or narrow a viewer with `pick`.",
+      ].join("\n"),
+    );
+  });
+
+  test("a viewer with no occurrences keeps the empty marker and skips the block", () => {
+    const selections = parseSelection("select function twice in a.ts\nmatch `return 9;`\nend");
+    const result = resolveCompactReply(selections, deps(TWICE));
+    expect(result.viewers).toHaveLength(1);
+    expect(result.viewers[0]?.occurrences).toEqual([]);
+    expect(renderViewerFeedback(result.viewers)).toBe(
+      [
+        "Located occurrences (viewer clauses write nothing):",
+        "",
+        "select function twice in a.ts",
+        "  (no occurrences)",
+        "",
+        "Reply with an edit clause (add `replace`) or narrow a viewer with `pick`.",
+      ].join("\n"),
+    );
+  });
+
+  test("a viewer that fails its matcher reports stage matcher and renders no block", () => {
+    const selections = parseSelection("select function twice in a.ts\nmatch /(/\nend");
+    const result = resolveCompactReply(selections, deps(TWICE));
+    expect(result.viewers).toEqual([]);
+    expect(result.failures).toHaveLength(1);
+    expect(result.failures[0]?.stage).toBe("matcher");
+    expect(result.failures[0]?.diagnostics).toContain("stage: matcher");
+  });
+
+  test("a viewer with an invalid pick range reports stage range and renders no block", () => {
+    const selections = parseSelection(
+      "select function twice in a.ts\nmatch `return 1;`\npick 99\nend",
+    );
+    const result = resolveCompactReply(selections, deps(TWICE));
+    expect(result.viewers).toEqual([]);
+    expect(result.failures).toHaveLength(1);
+    expect(result.failures[0]?.stage).toBe("range");
+    expect(result.failures[0]?.diagnostics).toContain("stage: range");
   });
 });
