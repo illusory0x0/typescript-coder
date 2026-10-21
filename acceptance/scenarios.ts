@@ -345,6 +345,7 @@ const COMPACT_PICK_EDIT = [
   "``````",
   "end",
 ].join("\n");
+const COMPACT_CONFIRMATION = "Great! I resolve this problem!";
 
 export const scenarios: Scenario[] = [
   {
@@ -368,13 +369,15 @@ export const scenarios: Scenario[] = [
     fixture: "fix-answer",
     issue: TEST_ISSUE,
     protocolFormat: "compact",
-    responses: [COMPACT_VIEWER, COMPACT_PICK_EDIT],
+    responses: [COMPACT_VIEWER, COMPACT_PICK_EDIT, COMPACT_CONFIRMATION],
     assertions: [
       hasOk(true),
-      hasRecords(3),
-      recordOutcomes(["selected", "applied", "ok"]),
+      hasRecords(4),
+      recordOutcomes(["selected", "applied", "ok", "confirmed"]),
       messageContains(1, "# details"),
       messageContains(1, "1 | export function answer(): number {"),
+      messageContains(2, "# modified text"),
+      messageContains(2, "2 |   return 2;"),
       fileContains("src/helper.ts", "return 2;"),
       fileEqualsOriginal("src/helper.test.ts"),
     ],

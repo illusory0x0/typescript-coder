@@ -344,6 +344,17 @@ The json path creates only through a `create` selection and deletes only through
 a `delete` selection; the compact path creates implicitly and deletes with an
 empty fence.
 
+**Compact confirmation.** When a compact edit passes verification, the harness
+sends one `# modified text` prompt containing the goal, the symbol index, and
+the edited declaration with file-absolute line numbers. A reply that parses as
+at least one editor clause (a clause with `replace`) continues the exchange loop
+and is applied without another model call; every other reply — `Great! I resolve
+this problem!`, prose, a malformed clause, or a viewer — confirms success and
+ends the run. If the verified edit consumed the last exchange of the round, an
+editor reply still ends successfully rather than losing the verified state. The
+confirmation itself records a `confirmed` row, not an applied or rejected
+exchange. The json protocol has no confirmation turn.
+
 ## 7. Repair feedback
 
 A rejection is never a give-up; it is a retry with better information. The next

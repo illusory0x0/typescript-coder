@@ -47,6 +47,10 @@ discovery, splicing, formatting, and verification. Implementation:
    and the task's test command, no model call involved. Pass ends the run
    successfully. A failure does not roll back: the attempted state stays on
    disk, and the diagnostics open the next round.
+7. **Confirm (compact).** After a compact edit verifies, the harness sends a
+   `# modified text` prompt with the edited declaration. `Great! I resolve this
+   problem!` (or any non-editor reply) confirms and ends; an editor clause with
+   exchange room is applied and verified again. JSON has no confirmation turn.
 
 Each exchange and each verification is recorded as a row (`records`), which is
 what the result contract (`src/result.ts`) and the benchmark harnesses consume.

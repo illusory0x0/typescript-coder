@@ -7,6 +7,7 @@ import {
   buildContextYaml,
   buildCompactCreatePrompt,
   buildCompactDetailsPrompt,
+  buildCompactModifiedPrompt,
   buildCompactSymbolIndex,
   buildCompactUserPrompt,
   buildContinuationPrompt,
@@ -1760,6 +1761,17 @@ describe("exchangeStats (#69)", () => {
       regex: 0,
       creates: 0,
     });
+  });
+
+  test("treats a confirmed row as neither applied nor rejected", () => {
+    const stats = exchangeStats([
+      row({ outcome: "confirmed", kind: "exchange", toolCalls: 1 }),
+      row({ outcome: "ok", kind: "verification", exchange: null }),
+    ]);
+    expect(stats.turns).toBe(1);
+    expect(stats.applied).toBe(0);
+    expect(stats.rejected).toBe(0);
+    expect(stats.toolCalls).toBe(1);
   });
 
   test("defaults a row's payloads and tool calls to zero when absent", () => {
@@ -8588,6 +8600,20 @@ describe("compact protocol (#111/#119)", () => {
     expect(prompt).toContain('The pinned selection uses mode "create"');
   });
 
+  test("the compact modified prompt is concise and file-absolute", () => {
+    const prompt = buildCompactModifiedPrompt(
+      "make the answer test pass",
+      "select answer in src/helper.ts resolve value",
+      "export function answer(): number {\n  return 2;\n}",
+      7,
+    );
+    expect(prompt).toContain("# modified text");
+    expect(prompt).toContain("7 | export function answer(): number {");
+    expect(prompt).toContain("8 |   return 2;");
+    expect(prompt).toContain("Reply `Great! I resolve this problem!`");
+    expect(prompt).not.toContain("Examples:");
+  });
+
   test("the fresh edit prompt defaults to the JSON form", () => {
     const addressJson = '{"path":"src/a.ts","symbol":"make","kind":"function"}';
     const symbolSource = "export function make(): number {\n  return 1;\n}\n";
@@ -8735,6 +8761,7 @@ describe("compact protocol (#111/#119)", () => {
     const provider = new ScriptedProvider([
       compactSelect("answer", "src/helper.ts", "value"),
       compactReply(answerEditor("return 2;", { kind: "snippet", value: "return 1;" })),
+      "Great! I resolve this problem!",
     ]);
     const result = await runLoop({
       cwd: dir,
@@ -8745,8 +8772,13 @@ describe("compact protocol (#111/#119)", () => {
       testCommand: ["bun", "test"],
     });
     expect(result.ok).toBe(true);
-    expect(provider.calls).toHaveLength(2);
-    expect(result.records.map((record) => record.outcome)).toEqual(["selected", "applied", "ok"]);
+    expect(provider.calls).toHaveLength(3);
+    expect(result.records.map((record) => record.outcome)).toEqual([
+      "selected",
+      "applied",
+      "ok",
+      "confirmed",
+    ]);
     const details = provider.calls[1]?.at(-1)?.content ?? "";
     expect(details).toContain("# details");
     expect(details).toContain("1 | export function answer(): number {");
@@ -8766,6 +8798,7 @@ describe("compact protocol (#111/#119)", () => {
         ),
       ),
       compactReply(answerEditor("return 2;", { kind: "snippet", value: "return 1;" })),
+      "Great! I resolve this problem!",
     ]);
     const result = await runLoop({
       cwd: dir,
@@ -8776,13 +8809,14 @@ describe("compact protocol (#111/#119)", () => {
       testCommand: ["bun", "test"],
     });
     expect(result.ok).toBe(true);
-    expect(provider.calls).toHaveLength(3);
+    expect(provider.calls).toHaveLength(4);
     expect(result.records.map((record) => record.outcome)).toEqual([
       "selected",
       "applied",
       "tests",
       "applied",
       "ok",
+      "confirmed",
     ]);
     const createPrompt = provider.calls[1]?.at(-1)?.content ?? "";
     expect(createPrompt).toContain("# Symbol index");
@@ -8795,6 +8829,7 @@ describe("compact protocol (#111/#119)", () => {
     const dir = fixtureDir();
     const provider = new ScriptedProvider([
       compactReply(answerEditor("return 2;", { kind: "snippet", value: "return 1;" })),
+      "Great! I resolve this problem!",
     ]);
     const result = await runLoop({
       cwd: dir,
@@ -8805,8 +8840,133 @@ describe("compact protocol (#111/#119)", () => {
       testCommand: ["bun", "test"],
     });
     expect(result.ok).toBe(true);
-    expect(provider.calls).toHaveLength(1);
-    expect(result.records.map((record) => record.outcome)).toEqual(["selected", "applied", "ok"]);
+    expect(provider.calls).toHaveLength(2);
+    expect(result.records.map((record) => record.outcome)).toEqual([
+      "selected",
+      "applied",
+      "ok",
+      "confirmed",
+    ]);
+    expect(helperSource(dir)).toContain("return 2;");
+  }, 30000);
+
+  test("under compact a verified edit sends # modified text and a Great reply confirms", async () => {
+    const dir = fixtureDir();
+    const provider = new ScriptedProvider([
+      compactSelect("answer", "src/helper.ts", "value"),
+      compactReply(answerEditor("return 2;", { kind: "snippet", value: "return 1;" })),
+      "Great! I resolve this problem!",
+    ]);
+    const result = await runLoop({
+      cwd: dir,
+      issue: "make the answer test pass",
+      provider,
+      protocolFormat: "compact",
+      checkCommand: TSC,
+      testCommand: ["bun", "test"],
+    });
+    expect(result.ok).toBe(true);
+    expect(provider.calls).toHaveLength(3);
+    expect(result.records.map((record) => record.outcome)).toEqual([
+      "selected",
+      "applied",
+      "ok",
+      "confirmed",
+    ]);
+    const modified = provider.calls[2]?.at(-1)?.content ?? "";
+    expect(modified).toContain("# modified text");
+    expect(modified).toContain("2 |   return 2;");
+    expect(helperSource(dir)).toContain("return 2;");
+  }, 30000);
+
+  test("under compact a confirmation editor continues without a duplicate provider call", async () => {
+    const dir = fixtureDir();
+    const provider = new ScriptedProvider([
+      compactSelect("answer", "src/helper.ts", "value"),
+      compactReply(answerEditor("return 2;", { kind: "snippet", value: "return 1;" })),
+      compactReply(
+        answerEditor(
+          "export function answer(): number {\n  const value = 2;\n  return value;\n}",
+          null,
+        ),
+      ),
+      "Great! I resolve this problem!",
+    ]);
+    const result = await runLoop({
+      cwd: dir,
+      issue: "make the answer test pass",
+      provider,
+      protocolFormat: "compact",
+      checkCommand: TSC,
+      testCommand: ["bun", "test"],
+    });
+    expect(result.ok).toBe(true);
+    // select, first edit, confirmation editor, final confirmation: the
+    // prefetched editor is never a provider call of its own.
+    expect(provider.calls).toHaveLength(4);
+    expect(result.records.map((record) => record.outcome)).toEqual([
+      "selected",
+      "applied",
+      "ok",
+      "confirmed",
+      "applied",
+      "ok",
+      "confirmed",
+    ]);
+    expect(provider.calls[2]?.at(-1)?.content).toContain("# modified text");
+    expect(provider.calls[3]?.at(-1)?.content).toContain("# modified text");
+    expect(helperSource(dir)).toContain("const value = 2;");
+  }, 30000);
+
+  test("under compact a prose confirmation ends the verified run", async () => {
+    const dir = fixtureDir();
+    const provider = new ScriptedProvider([
+      compactSelect("answer", "src/helper.ts", "value"),
+      compactReply(answerEditor("return 2;", { kind: "snippet", value: "return 1;" })),
+      "Done.",
+    ]);
+    const result = await runLoop({
+      cwd: dir,
+      issue: "make the answer test pass",
+      provider,
+      protocolFormat: "compact",
+      checkCommand: TSC,
+      testCommand: ["bun", "test"],
+    });
+    expect(result.ok).toBe(true);
+    expect(provider.calls).toHaveLength(3);
+    expect(result.records.map((record) => record.outcome)).toEqual([
+      "selected",
+      "applied",
+      "ok",
+      "confirmed",
+    ]);
+    expect(helperSource(dir)).toContain("return 2;");
+  }, 30000);
+
+  test("under compact a malformed confirmation ends the verified run", async () => {
+    const dir = fixtureDir();
+    const provider = new ScriptedProvider([
+      compactSelect("answer", "src/helper.ts", "value"),
+      compactReply(answerEditor("return 2;", { kind: "snippet", value: "return 1;" })),
+      "select {",
+    ]);
+    const result = await runLoop({
+      cwd: dir,
+      issue: "make the answer test pass",
+      provider,
+      protocolFormat: "compact",
+      checkCommand: TSC,
+      testCommand: ["bun", "test"],
+    });
+    expect(result.ok).toBe(true);
+    expect(provider.calls).toHaveLength(3);
+    expect(result.records.map((record) => record.outcome)).toEqual([
+      "selected",
+      "applied",
+      "ok",
+      "confirmed",
+    ]);
     expect(helperSource(dir)).toContain("return 2;");
   }, 30000);
 

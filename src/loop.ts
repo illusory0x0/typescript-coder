@@ -384,6 +384,20 @@ export function buildCompactCreatePrompt(
   return appendCompactSpecFiles(prompt, specFiles);
 }
 
+// Compact confirmation turn (#B3): the verified declaration, then the one-line
+// success offer. Deliberately concise — no few-shot examples here.
+export function buildCompactModifiedPrompt(
+  issue: string,
+  indexText: string,
+  symbolSource: string,
+  startLine: number,
+  specFiles: readonly SourceFile[] = [],
+): string {
+  const numbered = numberLinesFrom(symbolSource, startLine);
+  const prompt = `${compactGoal(issue, indexText)}\n# modified text\n\n\`\`\`text\n${numbered}\n\`\`\`\n\nReply \`Great! I resolve this problem!\` if the goal is met; otherwise return one or more \`select … end\` edit clauses.\n`;
+  return appendCompactSpecFiles(prompt, specFiles);
+}
+
 // The optional `(line,column)` selector offered alongside `matcher` (#72).
 export const RANGE_SELECTOR_NOTE =
   'Optionally locate the span by its 1-based inclusive "range" ({line, column, endLine, endColumn}) copied from the numbered current-source lines; when both are sent "range" takes precedence over "matcher".';
@@ -1759,6 +1773,9 @@ export type ExchangeOutcome =
   | "self-check"
   // A compact viewer clause that located candidates and wrote nothing (#111).
   | "viewer"
+  // A compact `# modified text` confirmation reply (#B3): the verified edit
+  // stands; the row is neither an apply nor a rejection.
+  | "confirmed"
   | "protocol"
   | "address"
   | "echo"
@@ -2424,6 +2441,9 @@ export function exchangeStats(records: readonly LoopRecord[]): ExchangeStats {
       stats.selfChecks += 1;
     } else if (record.outcome === "viewer") {
       // A compact viewer locate turn (#111): neither applied nor a rejection.
+    } else if (record.outcome === "confirmed") {
+      // A compact `# modified text` confirmation (#B3): the verified apply
+      // stands, so this row is neither applied nor rejected.
     } else {
       stats.rejected += 1;
     }
@@ -2726,6 +2746,7 @@ const DIGEST_NON_FAILURES: ReadonlySet<AttemptOutcome> = new Set<AttemptOutcome>
   "stopped",
   "self-check",
   "viewer",
+  "confirmed",
 ]);
 
 /**
@@ -6965,6 +6986,98 @@ export async function runLoop(options: LoopOptions): Promise<LoopResult> {
             break;
           }
           return await terminate("edit-exhausted", null);
+        }
+        // Compact confirmation (#B3): a verified edit gets one `# modified
+        // text` turn. An editor clause continues the exchange loop; anything
+        // else (including prose/malformed/viewer) confirms success.
+        if (protocolFormat === "compact" && !targetsMode) {
+          const modifiedLocator = compactAppliedRegions[0]?.locator ?? pinnedTarget.locator;
+          const modifiedPath = modifiedLocator.path;
+          const modifiedSource = readFileIfExists(join(cwd, modifiedPath));
+          let modifiedText = "";
+          let modifiedStartLine = 1;
+          if (modifiedSource !== null) {
+            const modifiedEntry = resolveCurrentEntry(
+              modifiedSource,
+              modifiedPath,
+              modifiedLocator,
+              null,
+            );
+            if (modifiedEntry.ok) {
+              const modifier = precedingExportModifier(modifiedSource, modifiedEntry.entry);
+              const declarationStart =
+                modifier === null
+                  ? modifiedEntry.entry.node.start
+                  : modifiedEntry.entry.node.start - modifier.length;
+              modifiedText = modifiedSource.slice(declarationStart, modifiedEntry.entry.node.end);
+              modifiedStartLine = modifiedSource.slice(0, declarationStart).split("\n").length;
+            } else {
+              modifiedText = truncateSource(modifiedSource);
+            }
+          }
+          const modifiedPrompt = buildCompactModifiedPrompt(
+            options.issue,
+            compactIndexText,
+            modifiedText,
+            modifiedStartLine,
+          );
+          let confirmation: ChatResponse;
+          try {
+            confirmation = await options.provider.chat(
+              [
+                systemMessage,
+                roundIssueMessage,
+                { role: "assistant", content: response.content ?? "" },
+                { role: "user", content: modifiedPrompt },
+              ],
+              undefined,
+              exchangeOptions,
+            );
+          } catch {
+            // The edit is already verified; a confirmation transport failure
+            // must not turn the run into a failure.
+            return success(newSource);
+          }
+          consumedTokens += tokensFromResponse(confirmation);
+          addTokens(loopTokensFromResponse(confirmation));
+          if (consumedTokens > tokenBudget) {
+            // The confirmation is advisory and the verification already passed:
+            // an over-budget confirmation still reports the verified success.
+            return success(newSource);
+          }
+          records.push(
+            recordRow({
+              row: records.length + 1,
+              iteration,
+              kind: "exchange",
+              exchange,
+              locator: modifiedLocator,
+              replacement: null,
+              diagnostics: null,
+              outcome: "confirmed",
+              finishReason: confirmation.finishReason,
+              toolCalls: confirmation.toolCalls.length,
+            }),
+          );
+          let confirmationSelections: CompactSelection[] = [];
+          try {
+            confirmationSelections = parseSelection(stripCodeFences(confirmation.content ?? ""));
+          } catch (error) {
+            if (!(error instanceof SelectionSyntaxError)) {
+              throw error;
+            }
+            return success(newSource);
+          }
+          const continues = confirmationSelections.some(
+            (selection) => selection.replacement !== null,
+          );
+          if (continues && exchange < MAX_EDIT_EXCHANGES) {
+            prefetchedReply = confirmation;
+            initialContentPrompt = modifiedPrompt;
+            continue;
+          }
+          // No room for another exchange: keep the verified state and end.
+          return success(newSource);
         }
         return success(newSource);
       }
