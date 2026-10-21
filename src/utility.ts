@@ -476,6 +476,45 @@ export interface TolerantIndex {
   skipped: SkippedFile[];
 }
 
+/**
+ * The TypeScript symbol spaces a declaration entry occupies. The binder keeps
+ * a class/enum's value and type bindings as two `Symbol`s with the same
+ * declaration node, collapsed into one index entry, so the entry's
+ * `symbol.space` names only one side. The declaration kind is authoritative.
+ */
+export function declarationSpaces(entry: IndexEntry): readonly SymbolSpace[] {
+  if (!("kind" in entry.node)) {
+    return [entry.symbol.space];
+  }
+  switch ((entry.node as { kind: string }).kind) {
+    case "ClassDeclaration":
+    case "EnumDeclaration":
+      return ["value", "type"];
+    case "InterfaceDeclaration":
+    case "TypeAliasDeclaration":
+      return ["type"];
+    case "NamespaceDeclaration":
+      return ["namespace"];
+    case "FunctionDeclaration":
+    case "MethodDeclaration":
+    case "ObjectMethod":
+    case "VariableDeclarator":
+    case "VariableStatement":
+    case "PropertyDeclaration":
+    case "ImportDeclaration":
+    case "ImportEqualsDeclaration":
+    case "Identifier":
+      return ["value"];
+    default:
+      return [entry.symbol.space];
+  }
+}
+
+/** True when `entry` is declared in `space`; a `null` space accepts any space. */
+export function entryInSpace(entry: IndexEntry, space: SymbolSpace | null): boolean {
+  return space === null || declarationSpaces(entry).includes(space);
+}
+
 export class SymbolIndex {
   readonly entries: IndexEntry[];
 
@@ -483,12 +522,19 @@ export class SymbolIndex {
     this.entries = entries;
   }
 
-  lookup(locator: Locator): IndexEntry[] {
+  /**
+   * Exact path/name/declaration-kind lookup. An empty `kind` is the compact
+   * protocol's wildcard: any declaration kind at that path and name. An
+   * optional `space` filters by TypeScript symbol space (`resolve value|type|
+   * namespace`); `null` accepts every space.
+   */
+  lookup(locator: Locator, space: SymbolSpace | null = null): IndexEntry[] {
     return this.entries.filter(
       (entry) =>
         entry.locator.path === locator.path &&
         entry.locator.name === locator.name &&
-        entry.locator.kind === locator.kind,
+        (locator.kind === "" || entry.locator.kind === locator.kind) &&
+        entryInSpace(entry, space),
     );
   }
 

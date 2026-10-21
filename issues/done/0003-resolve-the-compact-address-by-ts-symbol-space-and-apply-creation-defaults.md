@@ -1,7 +1,7 @@
 ---
 id: 3
 title: "Resolve the compact address by TS symbol space and apply creation defaults"
-status: todo
+status: done
 priority: medium
 milestone: null
 parent: 1
@@ -86,3 +86,5 @@ space, the space miss, and the four create forms.
   new symbol" and "default create let binding" without breaking the shipped
   complete-declaration create replies.
 - Non-goal: changing the JSON create mode or the symbol-index context format.
+- Implementation complete; focused verification passed: utility+selection 98 pass, compact+cascade 68 pass, loop address 7 pass, just typecheck, just accept 5 pass. Full just test was interrupted twice by environment/server restarts before completion, so the full-suite criterion is unconfirmed and the issue stays in review.
+- Full verification completed with `bun test --max-concurrency=1`: 1085 pass, 0 fail (226.9s). The earlier cancellations were environment concurrency/memory-related, not test failures.

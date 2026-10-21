@@ -13,8 +13,10 @@
  */
 import { resolveCascade, resolveCascadeViewer } from "./cascade";
 import type { CascadeCause, SelectionStage } from "./cascade";
+import { Parser } from "./parser";
+import type { Program, Statement } from "./parser";
 import type { Selection } from "./selection";
-import type { IndexEntry, Locator } from "./utility";
+import type { IndexEntry, Locator, SymbolSpace } from "./utility";
 
 /** #110 `MatcherKind`, mirrored to avoid a value-level import cycle with loop. */
 export type CompactMatcherKind = "snippet" | "regex";
@@ -31,6 +33,7 @@ export interface CompactDeps {
     source: string,
     path: string,
     locator: Locator,
+    space: SymbolSpace | null,
   ) => { ok: true; entry: IndexEntry } | { ok: false; diagnostics: string; undeclared: boolean };
 }
 
@@ -148,6 +151,53 @@ function occurrenceLines(source: string, start: number, end: number): Occurrence
   return lines;
 }
 
+// A create fence is appended verbatim when it already carries complete
+// top-level declarations; any other body is wrapped by the clause's symbol
+// space (`human/edit.md` creation defaults).
+function isDeclarationStatement(statement: Statement): boolean {
+  switch (statement.kind) {
+    case "FunctionDeclaration":
+    case "ClassDeclaration":
+    case "VariableStatement":
+    case "InterfaceDeclaration":
+    case "TypeAliasDeclaration":
+    case "EnumDeclaration":
+    case "NamespaceDeclaration":
+      return true;
+    case "ExportNamedDeclaration":
+      return statement.declaration !== null && isDeclarationStatement(statement.declaration);
+    case "ExportDefaultDeclaration":
+      return (
+        statement.declaration.kind === "FunctionDeclaration" ||
+        statement.declaration.kind === "ClassDeclaration"
+      );
+    default:
+      return false;
+  }
+}
+
+function isCompleteDeclaration(body: string): boolean {
+  let program: Program;
+  try {
+    program = new Parser(body).parseProgram();
+  } catch {
+    return false;
+  }
+  return program.body.length > 0 && program.body.every(isDeclarationStatement);
+}
+
+function wrapCreateBody(name: string, space: SymbolSpace | null, body: string): string {
+  switch (space) {
+    case "type":
+      return `type ${name} = ${body};`;
+    case "namespace":
+      return `namespace ${name} {\n${body}\n}`;
+    default:
+      // No `resolve` defaults to a `let` binding; `value` uses the same form.
+      return `let ${name} = ${body};`;
+  }
+}
+
 /**
  * Resolve a parsed compact reply (`docs/edit-protocol.md` §3) into editor
  * regions, viewer occurrences, and typed failures. Each clause is resolved
@@ -170,14 +220,14 @@ export function resolveCompactReply(
     }
     const path = selection.locator.path;
     const source = deps.sourceFor(path);
-    const address = deps.resolveEntry(source, path, selection.locator);
+    const address = deps.resolveEntry(source, path, selection.locator, selection.space);
     if (!address.ok) {
       // Implicit create (compact §9): an absent name edited by a
       // whole-declaration editor — `select … replace with <fence> end` with a
       // non-empty body and no `match`/`pick` — appends the fence body as a new
       // declaration, creating the file and its parent dirs if absent. Every
-      // other miss (a matcher/pick, an empty body, or a viewer) keeps the
-      // address failure.
+      // other miss (a matcher/pick, an empty body, a space miss, or a viewer)
+      // keeps the address failure.
       const replacement = selection.replacement;
       const createsDeclaration =
         address.undeclared &&
@@ -186,7 +236,10 @@ export function resolveCompactReply(
         selection.pick === null &&
         replacement.trim() !== "";
       if (createsDeclaration) {
-        const body = replacement.trim();
+        const trimmed = replacement.trim();
+        const body = isCompleteDeclaration(trimmed)
+          ? trimmed
+          : wrapCreateBody(selection.locator.name, selection.space, trimmed);
         regions.push({
           index,
           path,

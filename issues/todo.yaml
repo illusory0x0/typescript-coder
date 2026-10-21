@@ -2,14 +2,6 @@
 # rewrites it; `add` appends; other writes keep it. `check` enforces it.
 # A dep, and every child of an umbrella, must be listed before its dependent.
 
-- id: 3
-  title: "Resolve the compact address by TS symbol space and apply creation defaults"
-  status: todo
-  priority: medium
-  milestone: null
-  parent: 1
-  deps: [2]
-  file: 0003-resolve-the-compact-address-by-ts-symbol-space-and-apply-creation-defaults.md
 - id: 4
   title: "Render viewer details as a numbered declaration block with match markers"
   status: todo

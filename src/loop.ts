@@ -17,7 +17,7 @@ import type { CompactFailure, CompactRegion, CompactResolution, CompactViewer } 
 import { formatSource } from "./editor";
 import { LexError } from "./lexer";
 import { ParseError, Parser } from "./parser";
-import { buildIndexTolerant } from "./utility";
+import { buildIndexTolerant, declarationSpaces } from "./utility";
 import { buildSignatureViewFromEntry } from "./scroll";
 import { checkTool, testTool } from "./tools";
 import { usageFromRaw } from "./replay-format";
@@ -38,6 +38,7 @@ import type {
   SkippedFile,
   SourceFile,
   SymbolIndex,
+  SymbolSpace,
   TolerantIndex,
 } from "./utility";
 
@@ -3129,15 +3130,21 @@ function candidateLines(
 }
 
 // Address diagnostics name where the symbol actually exists (path + kind +
-// position) and, for a same-path kind mismatch, say which kind to use.
+// position) and, for a same-path kind mismatch, say which kind to use. A
+// `resolve` space mismatch names the spaces the name is actually declared in
+// and never suggests another path's candidate as a fallback.
 function addressMissDiagnostics(
   locator: Locator,
   byName: readonly IndexEntry[],
   sourceByPath: ReadonlyMap<string, string>,
+  space: SymbolSpace | null = null,
 ): string {
+  const spaceSuffix = space === null ? "" : ` in the ${space} space`;
   const lines = [
     "stage: address",
-    `no symbol with kind ${JSON.stringify(locator.kind)} named ${JSON.stringify(locator.name)} in ${JSON.stringify(locator.path)}`,
+    locator.kind === ""
+      ? `no symbol named ${JSON.stringify(locator.name)} in ${JSON.stringify(locator.path)}${spaceSuffix}`
+      : `no symbol with kind ${JSON.stringify(locator.kind)} named ${JSON.stringify(locator.name)} in ${JSON.stringify(locator.path)}${spaceSuffix}`,
   ];
   if (byName.length === 0) {
     lines.push(
@@ -3159,6 +3166,20 @@ function addressMissDiagnostics(
       `in ${JSON.stringify(locator.path)} the name exists as ${kinds.map((kind) => JSON.stringify(kind)).join(", ")}; change "kind" to match`,
     );
   }
+  if (space !== null) {
+    const samePath = byName.filter((entry) => entry.locator.path === locator.path);
+    const samePathSpaces = [...new Set(samePath.flatMap((entry) => declarationSpaces(entry)))];
+    if (samePathSpaces.length > 0 && !samePathSpaces.includes(space)) {
+      lines.push(
+        `in ${JSON.stringify(locator.path)} the name is declared in the ${samePathSpaces.map((candidate) => JSON.stringify(candidate)).join(", ")} space${samePathSpaces.length === 1 ? "" : "s"}; change "resolve" to match`,
+      );
+    } else if (samePathSpaces.length === 0) {
+      const spaces = [...new Set(byName.flatMap((entry) => declarationSpaces(entry)))];
+      lines.push(
+        `the name ${JSON.stringify(locator.name)} is declared in the ${spaces.map((candidate) => JSON.stringify(candidate)).join(", ")} space${spaces.length === 1 ? "" : "s"}; the requested ${JSON.stringify(space)} space does not match this path`,
+      );
+    }
+  }
   return lines.join("\n");
 }
 
@@ -3166,10 +3187,11 @@ function addressAmbiguousDiagnostics(
   locator: Locator,
   matches: readonly IndexEntry[],
   sourceByPath: ReadonlyMap<string, string>,
+  space: SymbolSpace | null = null,
 ): string {
   return [
     "stage: address",
-    `the address ${addressJson(locator)} matches ${matches.length} declarations; the harness never picks one silently`,
+    `the address ${addressJson(locator)}${space === null ? "" : ` in the ${space} space`} matches ${matches.length} declarations; the harness never picks one silently`,
     ...candidateLines(matches, sourceByPath),
     "correct the address (path/symbol/kind) so it matches exactly one declaration",
   ].join("\n");
@@ -3180,30 +3202,34 @@ type CurrentEntryResolution =
   | { ok: false; diagnostics: string; undeclared: boolean };
 
 // Strict-AND resolution of one locator against the current source that would be
-// spliced: no silent first-match pick, no kind coercion, no auto-append.
+// spliced: no silent first-match pick, no kind coercion, no auto-append. An
+// empty locator kind is the compact wildcard (path + name only); `space` is the
+// compact `resolve value|type|namespace` filter and is `null` on the JSON path.
 function resolveCurrentEntry(
   sourceBefore: string,
   target: string,
   locator: Locator,
+  space: SymbolSpace | null = null,
 ): CurrentEntryResolution {
   const currentBuild = buildIndexTolerant([{ path: target, source: sourceBefore }]);
-  const matches = currentBuild.index.lookup(locator);
+  const matches = currentBuild.index.lookup(locator, space);
   const sources = new Map([[target, sourceBefore]]);
   if (matches.length === 0) {
     // `undeclared` (#65): the name is absent under every kind, so the
     // diagnostics suggest mode "create" — the retry lead keeps that add path
-    // open instead of demanding an impossible re-pin.
+    // open instead of demanding an impossible re-pin. A name declared only in
+    // another symbol space is not undeclared: a `resolve` miss must not create.
     const byName = currentBuild.index.byName(locator.name);
     return {
       ok: false,
-      diagnostics: addressMissDiagnostics(locator, byName, sources),
+      diagnostics: addressMissDiagnostics(locator, byName, sources, space),
       undeclared: byName.length === 0,
     };
   }
   if (matches.length > 1) {
     return {
       ok: false,
-      diagnostics: addressAmbiguousDiagnostics(locator, matches, sources),
+      diagnostics: addressAmbiguousDiagnostics(locator, matches, sources, space),
       undeclared: false,
     };
   }
@@ -3212,7 +3238,7 @@ function resolveCurrentEntry(
     // Unreachable: matches.length is exactly one here.
     return {
       ok: false,
-      diagnostics: addressMissDiagnostics(locator, [], sources),
+      diagnostics: addressMissDiagnostics(locator, [], sources, space),
       undeclared: true,
     };
   }
@@ -5900,7 +5926,8 @@ export async function runLoop(options: LoopOptions): Promise<LoopResult> {
             compactSources.set(path, source);
             return source;
           },
-          resolveEntry: (source, path, locator) => resolveCurrentEntry(source, path, locator),
+          resolveEntry: (source, path, locator, space) =>
+            resolveCurrentEntry(source, path, locator, space),
         });
         return { selections, resolution };
       };

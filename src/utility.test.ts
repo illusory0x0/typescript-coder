@@ -12,7 +12,14 @@ import type {
   Program,
   Statement,
 } from "./parser";
-import { Binder, buildIndex, buildIndexTolerant, findDefinition, resolve } from "./utility";
+import {
+  Binder,
+  buildIndex,
+  buildIndexTolerant,
+  declarationSpaces,
+  findDefinition,
+  resolve,
+} from "./utility";
 import type { Scope, SourceFile, Symbol, SymbolIndex, SymbolSpace } from "./utility";
 
 function bind(source: string): { program: Program; binder: Binder } {
@@ -308,6 +315,56 @@ test("class and enum declarations produce a single index entry each", () => {
   const index = buildIndex([{ path, source }]);
   expect(index.lookup({ path, name: "Widget", kind: "class" })).toHaveLength(1);
   expect(index.lookup({ path, name: "Color", kind: "enum" })).toHaveLength(1);
+});
+
+test("an empty lookup kind is a path-and-name wildcard", () => {
+  const path = "src/wildcard.ts";
+  const source = "export function answer(): number {\n  return 1;\n}\n";
+  const index = buildIndex([{ path, source }]);
+  expect(index.lookup({ path, name: "answer", kind: "" })).toHaveLength(1);
+  expect(index.lookup({ path, name: "missing", kind: "" })).toHaveLength(0);
+});
+
+test("lookup filters declarations by TypeScript symbol space", () => {
+  const path = "src/spaces.ts";
+  const source = [
+    "export class Widget {}",
+    "export enum Color { Red }",
+    "export interface Shape {}",
+    "export type Alias = number;",
+    "export namespace Space {}",
+    "export function work(): number {",
+    "  return 1;",
+    "}",
+    "export const constant = 1;",
+    "export let mutable = 2;",
+  ].join("\n");
+  const index = buildIndex([{ path, source }]);
+  const spacesOf = (name: string): string[] => {
+    const entry = index.lookup({ path, name, kind: "" })[0];
+    if (entry === undefined) {
+      throw new Error(`missing entry for ${name}`);
+    }
+    return [...declarationSpaces(entry)].sort();
+  };
+  expect(spacesOf("Widget")).toEqual(["type", "value"]);
+  expect(spacesOf("Color")).toEqual(["type", "value"]);
+  expect(spacesOf("Shape")).toEqual(["type"]);
+  expect(spacesOf("Alias")).toEqual(["type"]);
+  expect(spacesOf("Space")).toEqual(["namespace"]);
+  expect(spacesOf("work")).toEqual(["value"]);
+  expect(spacesOf("constant")).toEqual(["value"]);
+  expect(spacesOf("mutable")).toEqual(["value"]);
+
+  expect(index.lookup({ path, name: "Widget", kind: "" }, "value")).toHaveLength(1);
+  expect(index.lookup({ path, name: "Widget", kind: "" }, "type")).toHaveLength(1);
+  expect(index.lookup({ path, name: "Widget", kind: "" }, "namespace")).toHaveLength(0);
+  expect(index.lookup({ path, name: "Shape", kind: "" }, "value")).toHaveLength(0);
+  expect(index.lookup({ path, name: "Shape", kind: "" }, "type")).toHaveLength(1);
+  expect(index.lookup({ path, name: "Space", kind: "" }, "namespace")).toHaveLength(1);
+  expect(index.lookup({ path, name: "Space", kind: "" }, "value")).toHaveLength(0);
+  expect(index.lookup({ path, name: "work", kind: "" }, "value")).toHaveLength(1);
+  expect(index.lookup({ path, name: "work", kind: "" }, "type")).toHaveLength(0);
 });
 
 test("imported names are excluded from the index while real declarations remain", () => {

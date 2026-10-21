@@ -8733,6 +8733,65 @@ describe("compact protocol (#111/#119)", () => {
     expect(helperSource(dir)).toContain("return 2;");
   }, 30000);
 
+  test("under compact a no-kind resolve value viewer addresses the function", async () => {
+    const dir = fixtureDir();
+    const provider = new ScriptedProvider([
+      selectionResponse(),
+      // No declaration kind, explicit value space: the path + name + space
+      // resolve the exported function exactly once.
+      "select answer in src/helper.ts resolve value\nend",
+      compactReply(answerEditor("return 2;", { kind: "snippet", value: "return 1;" })),
+    ]);
+    const result = await runLoop({
+      cwd: dir,
+      issue: "make the answer test pass",
+      provider,
+      protocolFormat: "compact",
+      checkCommand: TSC,
+      testCommand: ["bun", "test"],
+    });
+    expect(result.ok).toBe(true);
+    const viewer = result.records.find((record) => record.outcome === "viewer");
+    expect(viewer).toBeDefined();
+    expect(viewer?.diagnostics).toContain("Located occurrences");
+    expect(helperSource(dir)).toContain("return 2;");
+  }, 30000);
+
+  test("under compact a no-kind name in two spaces is an ambiguous address", async () => {
+    const dir = fixtureDir();
+    writeFileSync(
+      join(dir, "src", "dual.ts"),
+      "export interface Dual {}\nexport const Dual = 1;\n",
+    );
+    const provider = new ScriptedProvider([
+      selectionResponse(),
+      compactReply({
+        locator: { path: "src/dual.ts", name: "Dual", kind: "" },
+        space: null,
+        matcher: null,
+        pick: null,
+        replacement: "42",
+      }),
+      compactReply(answerEditor("return 2;", { kind: "snippet", value: "return 1;" })),
+    ]);
+    const result = await runLoop({
+      cwd: dir,
+      issue: "make the answer test pass",
+      provider,
+      protocolFormat: "compact",
+      checkCommand: TSC,
+      testCommand: ["bun", "test"],
+    });
+    expect(result.ok).toBe(true);
+    const rejected = result.records.find(
+      (record) => record.kind === "exchange" && record.outcome === "address",
+    );
+    expect(rejected).toBeDefined();
+    expect(rejected?.diagnostics).toContain("matches 2 declarations");
+    expect(rejected?.diagnostics).toContain("never picks one silently");
+    expect(readFileSync(join(dir, "src", "dual.ts"), "utf8")).not.toContain("42");
+  }, 30000);
+
   test("under compact a malformed regex is classified as regex-invalid at the matcher stage", async () => {
     const dir = fixtureDir();
     const provider = new ScriptedProvider([
@@ -8897,10 +8956,11 @@ describe("compact protocol (#111/#119)", () => {
     symbol: string,
     kind: string,
     body: string,
+    space: CompactSelection["space"] = null,
   ): CompactSelection {
     return {
       locator: { path, name: symbol, kind },
-      space: null,
+      space,
       matcher: null,
       pick: null,
       replacement: body,
@@ -8971,20 +9031,14 @@ describe("compact protocol (#111/#119)", () => {
     expect(helperSource(dir)).toContain("return 2;");
   }, 30000);
 
-  test("under compact a no-kind clause whose name exists is not a create", async () => {
+  test("under compact a resolve space miss names the spaces and does not create", async () => {
     const dir = fixtureDir();
     const provider = new ScriptedProvider([
       selectionResponse(),
       compactReply(
-        // `answer` exists as a function; a no-kind locator does not match it,
-        // but the name is not undeclared, so this is an address failure, not a
-        // create.
-        createEditor(
-          "src/helper.ts",
-          "answer",
-          "",
-          "export function answer(): number {\n  return 2;\n}",
-        ),
+        // `answer` is a value-space function; `resolve type` must not fall back
+        // to the value space, and the name is not undeclared, so no create.
+        createEditor("src/helper.ts", "answer", "function", "42", "type"),
       ),
       compactReply(answerEditor("return 2;", { kind: "snippet", value: "return 1;" })),
     ]);
@@ -9001,8 +9055,32 @@ describe("compact protocol (#111/#119)", () => {
       (record) => record.kind === "exchange" && record.outcome === "address",
     );
     expect(rejected).toBeDefined();
-    // The undeclared name is not reported: the name exists under a kind.
     expect(rejected?.diagnostics).toContain("stage: address");
+    expect(rejected?.diagnostics).toContain(
+      'the name is declared in the "value" space; change "resolve" to match',
+    );
+    expect(helperSource(dir)).toContain("return 2;");
+    expect(helperSource(dir)).not.toContain("type answer");
+  }, 30000);
+
+  test("under compact a no-resolve body creates a let binding in a new parent directory", async () => {
+    const dir = fixtureDir();
+    const provider = new ScriptedProvider([
+      selectionResponse(),
+      compactReply(createEditor("src/deep/new.ts", "extra", "", "42")),
+      compactReply(answerEditor("return 2;", { kind: "snippet", value: "return 1;" })),
+    ]);
+    const result = await runLoop({
+      cwd: dir,
+      issue: "add an extra declaration",
+      provider,
+      protocolFormat: "compact",
+      checkCommand: TSC,
+      testCommand: ["bun", "test"],
+    });
+    expect(result.ok).toBe(true);
+    const created = readFileSync(join(dir, "src", "deep", "new.ts"), "utf8");
+    expect(created).toBe("let extra = 42;\n");
   }, 30000);
 
   test("under compact a create that duplicates an existing declaration is rejected", async () => {
