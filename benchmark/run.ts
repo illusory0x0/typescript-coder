@@ -50,7 +50,7 @@ interface CliArgs {
   tokenBudget: number | null;
   effort: ReasoningEffort | null;
   multiPayload: boolean;
-  /** Edit protocol (#119) forwarded to the tc side; `json` is the default. */
+  /** Edit protocol (#119) forwarded to the tc side; `edit-dsl` is the default. */
   protocolFormat: ProtocolFormat;
   help: boolean;
 }
@@ -129,7 +129,7 @@ export interface RecordExchangeStats {
   /** Matcher-kind adoption across the run's payloads (#110). */
   readonly snippet: number;
   readonly regex: number;
-  /** Compact implicit-create clauses the run's replies carried (#111). */
+  /** Edit-dsl implicit-create clauses the run's replies carried (#111). */
   readonly creates: number;
 }
 
@@ -227,7 +227,7 @@ export interface AggregateRow {
   stages: { wholeSymbol: number; match: number; pick: number };
   /** Matcher-kind adoption summed over the selected runs (#110). */
   matcherKinds: { snippet: number; regex: number };
-  /** Compact implicit-create clauses summed over the selected runs (#111). */
+  /** Edit-dsl implicit-create clauses summed over the selected runs (#111). */
   creates: number;
 }
 
@@ -251,7 +251,7 @@ export interface Report {
   effort: ReasoningEffort | null;
   /** Opt-in multi-payload exchanges (#69): whether the tc side batched edits. */
   multiPayload: boolean;
-  /** Edit protocol (#119) the tc side used; `json` is the default. */
+  /** Edit protocol (#119) the tc side used; `edit-dsl` is the default. */
   protocolFormat: ProtocolFormat;
   /** Token budget forwarded to the tc side; null means `DEFAULT_TOKEN_BUDGET`. */
   tokenBudget: number | null;
@@ -277,7 +277,7 @@ interface RunContext {
   readonly tokenBudget: number | null;
   /** Opt-in multi-payload exchanges (#69) forwarded to the tc side; off by default. */
   readonly multiPayload: boolean;
-  /** Edit protocol (#119) forwarded to the tc side; `json` is the default. */
+  /** Edit protocol (#119) forwarded to the tc side; `edit-dsl` is the default. */
   readonly protocolFormat: ProtocolFormat;
 }
 
@@ -419,9 +419,10 @@ Options:
                                              tc side: a modify reply may batch path-independent
                                              edits in one {"payloads": [...]} object
                                              (default: off, one flat payload per exchange)
-  --protocol-format <json|compact>           edit protocol for the tc side (default: compact);
-                                             json keeps the flat JSON payload; compact
-                                             requires the 'select … end' syntax (#119)
+  --protocol-format <json|edit-dsl>          edit protocol for the tc side (default: edit-dsl);
+                                             json keeps the flat JSON payload; edit-dsl
+                                             requires the 'select … end' syntax (#119);
+                                             compact is a deprecated alias for edit-dsl
   --help, -h                                 print this help and exit
 `);
 }
@@ -467,8 +468,13 @@ function parseEffort(value: string): ReasoningEffort {
 }
 
 function parseProtocolFormat(value: string): ProtocolFormat {
-  if (value === "json" || value === "compact") {
+  if (value === "json" || value === "edit-dsl") {
     return value;
+  }
+  // `compact` is the deprecated input alias for `edit-dsl`; normalize it so
+  // reports and recorded bundles only ever carry `edit-dsl`.
+  if (value === "compact") {
+    return "edit-dsl";
   }
   failUsage(`invalid --protocol-format value: ${value}`);
 }
@@ -504,7 +510,7 @@ export function parseArgs(argv: string[]): CliArgs {
     tokenBudget: null,
     effort: null,
     multiPayload: false,
-    protocolFormat: "compact",
+    protocolFormat: "edit-dsl",
     help: false,
   };
   for (let index = 0; index < argv.length; index += 1) {
@@ -1494,7 +1500,7 @@ export function aggregateRuns(
     }),
     { snippet: 0, regex: 0 },
   );
-  // Compact implicit-create clauses (#111), summed over the selected runs.
+  // Edit-dsl implicit-create clauses (#111), summed over the selected runs.
   const creates = selected.reduce((sum, run) => sum + (run.exchangeStats?.creates ?? 0), 0);
   return {
     task,
@@ -1843,7 +1849,7 @@ export function writeMarkdownReport(mdPath: string, report: Report): void {
     );
   }
   lines.push("");
-  // #111: compact implicit-create clauses the replies carried.
+  // #111: edit-dsl implicit-create clauses the replies carried.
   lines.push("Implicit creates (#111):", "");
   lines.push("| Task | Side | creates |", "| --- | --- | ---: |");
   for (const row of aggregates.byTaskSide) {

@@ -330,12 +330,12 @@ const TEST_PROPAGATION_RECOVER_EDIT = editResponse("return 3;", "return 2;");
 const GOOD_EDIT = editResponse("return 1;", "return 2;");
 const TEST_ISSUE = "make the failing test pass";
 
-// A compact select-first viewer (`resolve value`, no `replace`) and a
+// An edit-dsl select-first viewer (`resolve value`, no `replace`) and a
 // `match` + whole-line `pick 2` editor with a six-tick fence, mirroring the §8
 // examples the model sees. Multi-line replies are assembled from arrays for
 // readability.
-const COMPACT_VIEWER = ["select answer in src/helper.ts resolve value", "end"].join("\n");
-const COMPACT_PICK_EDIT = [
+const EDIT_DSL_VIEWER = ["select answer in src/helper.ts resolve value", "end"].join("\n");
+const EDIT_DSL_PICK_EDIT = [
   "select answer in src/helper.ts resolve value",
   "match `return 1;`",
   "pick 2",
@@ -345,7 +345,7 @@ const COMPACT_PICK_EDIT = [
   "``````",
   "end",
 ].join("\n");
-const COMPACT_CONFIRMATION = "Great! I resolve this problem!";
+const EDIT_DSL_CONFIRMATION = "Great! I resolve this problem!";
 
 export const scenarios: Scenario[] = [
   {
@@ -364,12 +364,12 @@ export const scenarios: Scenario[] = [
     ],
   },
   {
-    id: "compact-viewer-edit",
-    title: "compact select viewer opens details then an edit lands",
+    id: "edit-dsl-viewer-edit",
+    title: "edit-dsl select viewer opens details then an edit lands",
     fixture: "fix-answer",
     issue: TEST_ISSUE,
-    protocolFormat: "compact",
-    responses: [COMPACT_VIEWER, COMPACT_PICK_EDIT, COMPACT_CONFIRMATION],
+    protocolFormat: "edit-dsl",
+    responses: [EDIT_DSL_VIEWER, EDIT_DSL_PICK_EDIT, EDIT_DSL_CONFIRMATION],
     assertions: [
       hasOk(true),
       hasRecords(4),

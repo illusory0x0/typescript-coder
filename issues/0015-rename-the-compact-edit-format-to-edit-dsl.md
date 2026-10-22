@@ -1,7 +1,7 @@
 ---
 id: 15
 title: "Rename the compact edit format to edit-dsl"
-status: todo
+status: review
 priority: medium
 milestone: null
 parent: null
@@ -48,3 +48,4 @@ The `grep` output is limited to the legacy-alias implementation, deprecation com
 - `human/` is read-only and contains no occurrence of the term.
 - Do not rewrite `issues/done/` titles or bodies; they record history under the old name.
 - No prompt-text change: `buildSystemPrompt` content and the model-facing `select … end` instructions stay byte-identical.
+- Resolved and verified on 2026-10-22. Renamed the format end to end (src/compact.ts -> src/edit-dsl.ts, EditDsl*/editDsl* identifiers, ProtocolFormat = "json" | "edit-dsl", edit-dsl default) with an input-only deprecated compact alias for the CLI and replay parser; new bundles write edit-dsl. Checks: just typecheck clean; just test 1153 pass / 0 fail; just accept --all 7/7 (edit-dsl-viewer-edit green); legacy tmp/replay-compact/json-parser bundle replays result: ok. Deliberate residuals: (1) English-adjective "compact" in frozen prompt/tool text (loop.ts truncation correction, tools.ts view_symbol description) left byte-identical per user decision; (2) historical baseline files and consumption.md ledger rows untouched. Incidental: acceptance self-host was already failing at HEAD because its prepare omitted package.json; added the same copy that src/cli.test.ts already uses, since just accept --all is part of this verification.

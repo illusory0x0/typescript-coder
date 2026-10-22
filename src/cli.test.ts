@@ -21,7 +21,7 @@ const repoRoot = new URL("..", import.meta.url).pathname;
 const nestedSmoke = existsSync(join(repoRoot, ".nested-smoke"));
 const tempDirs: string[] = [];
 
-// The runMain tests script JSON responses; the production default is compact,
+// The runMain tests script JSON responses; the production default is edit-dsl,
 // so select JSON explicitly unless a case overrides it.
 function runMain(options: Parameters<typeof runMainBase>[0]) {
   return runMainBase({ protocolFormat: "json", ...options });
@@ -48,7 +48,7 @@ describe("parseArgs", () => {
     help: false,
     model: "deepseek-v4.1-flash",
     multiPayload: false,
-    protocolFormat: "compact" as const,
+    protocolFormat: "edit-dsl" as const,
     targets: null,
     format: "text" as const,
     tokenBudget: null,
@@ -82,22 +82,27 @@ describe("parseArgs", () => {
     expect(parseArgs(["--model", "qwen"]).multiPayload).toBe(false);
   });
 
-  test("reads --protocol-format json|compact, defaulting to compact (#119)", () => {
-    expect(parseArgs([]).protocolFormat).toBe("compact");
-    expect(parseArgs(["--protocol-format", "compact"]).protocolFormat).toBe("compact");
-    expect(parseArgs(["--protocol-format=compact"]).protocolFormat).toBe("compact");
+  test("reads --protocol-format json|edit-dsl, defaulting to edit-dsl (#119)", () => {
+    expect(parseArgs([]).protocolFormat).toBe("edit-dsl");
+    expect(parseArgs(["--protocol-format", "edit-dsl"]).protocolFormat).toBe("edit-dsl");
+    expect(parseArgs(["--protocol-format=edit-dsl"]).protocolFormat).toBe("edit-dsl");
     expect(parseArgs(["--protocol-format", "json"]).protocolFormat).toBe("json");
     expect(parseArgs(["--protocol-format=json"]).protocolFormat).toBe("json");
-    expect(parseArgs(["--protocol-format", "compact", "--model", "qwen"])).toEqual({
+    expect(parseArgs(["--protocol-format", "edit-dsl", "--model", "qwen"])).toEqual({
       ...DEFAULTS,
-      protocolFormat: "compact",
+      protocolFormat: "edit-dsl",
       model: "qwen",
     });
   });
 
+  test("normalizes the deprecated `compact` alias to edit-dsl (#15)", () => {
+    expect(parseArgs(["--protocol-format", "compact"]).protocolFormat).toBe("edit-dsl");
+    expect(parseArgs(["--protocol-format=compact"]).protocolFormat).toBe("edit-dsl");
+  });
+
   test("throws on an unknown --protocol-format value (#119)", () => {
     expect(() => parseArgs(["--protocol-format", "yaml"])).toThrow(
-      '--protocol-format must be "json" or "compact"',
+      '--protocol-format must be "json" or "edit-dsl"',
     );
     expect(() => parseArgs(["--protocol-format="])).toThrow("--protocol-format requires a value");
   });
@@ -273,8 +278,10 @@ describe("helpText", () => {
     expect(text).toContain("--test <cmd>");
     expect(text).toContain("--cwd <dir>");
     expect(text).toContain("--timeout <ms>");
-    expect(text).toContain("--protocol-format <json|compact>");
-    expect(text).toContain("edit protocol (default: compact)");
+    expect(text).toContain("--protocol-format <json|edit-dsl>");
+    expect(text).toContain("edit protocol (default: edit-dsl)");
+    expect(text).toContain("`compact` is a");
+    expect(text).toContain("deprecated alias for edit-dsl");
     expect(text).toContain("--targets <file>");
     expect(text).toContain("typescript-coder-result@1");
   });

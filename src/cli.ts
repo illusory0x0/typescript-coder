@@ -7,7 +7,7 @@ export interface CliOptions {
   model: string;
   /** Opt-in multi-payload exchanges (#69); default off. */
   multiPayload: boolean;
-  /** Edit protocol format (#119): `json` (default) or the compact syntax. */
+  /** Edit protocol format (#119): `json` or the `edit-dsl` syntax (default). */
   protocolFormat: ProtocolFormat;
   /** Explicit addresses to edit (#81); null = the default discovery path. */
   targets: Locator[] | null;
@@ -152,7 +152,7 @@ export function parseArgs(argv: string[]): CliOptions {
   let help = false;
   let model = DEFAULT_MODEL;
   let multiPayload = false;
-  let protocolFormat: ProtocolFormat = "compact";
+  let protocolFormat: ProtocolFormat = "edit-dsl";
   let targets: Locator[] | null = null;
   let format: "text" | "json" = "text";
   let tokenBudget: number | null = null;
@@ -175,12 +175,14 @@ export function parseArgs(argv: string[]): CliOptions {
     }
     if (arg === "--protocol-format" || arg.startsWith("--protocol-format=")) {
       const { value, next } = flagValue(argv, index, "--protocol-format");
-      if (value !== "json" && value !== "compact") {
+      if (value !== "json" && value !== "edit-dsl" && value !== "compact") {
         throw new Error(
-          `--protocol-format must be "json" or "compact" (got ${JSON.stringify(value)})`,
+          `--protocol-format must be "json" or "edit-dsl" (got ${JSON.stringify(value)})`,
         );
       }
-      protocolFormat = value;
+      // `compact` is the deprecated input alias for `edit-dsl`; output and
+      // internals only use `edit-dsl`.
+      protocolFormat = value === "compact" ? "edit-dsl" : value;
       index = next;
       continue;
     }
@@ -257,8 +259,8 @@ export function helpText(): string {
     "typescript-coder — read an issue on stdin and apply a verified LLM edit",
     "",
     "Usage:",
-    "  tc [--model <id>] [--format <text|json>] [--protocol-format <json|compact>] [--token-budget <n>] [--multi-payload] [--targets <file>] < issue.txt",
-    "  bun run src/main.ts [--model <id>] [--format <text|json>] [--protocol-format <json|compact>] [--token-budget <n>] [--multi-payload] [--targets <file>] < issue.txt",
+    "  tc [--model <id>] [--format <text|json>] [--protocol-format <json|edit-dsl>] [--token-budget <n>] [--multi-payload] [--targets <file>] < issue.txt",
+    "  bun run src/main.ts [--model <id>] [--format <text|json>] [--protocol-format <json|edit-dsl>] [--token-budget <n>] [--multi-payload] [--targets <file>] < issue.txt",
     "",
     "Options:",
     "  --model <id>       model id for the OpenAI-compatible provider (default: deepseek-v4.1-flash)",
@@ -277,10 +279,11 @@ export function helpText(): string {
     "  --multi-payload    opt in to multi-payload exchanges (#69): a modify reply may",
     '                     batch path-independent edits in one {"payloads": [...]} object',
     "                     (default: off, one flat payload per exchange)",
-    "  --protocol-format <json|compact>",
-    "                     edit protocol (default: compact); json keeps the flat",
-    "                     JSON payload, compact requires the `select … end` syntax",
-    "                     (#119; explicit-targets mode stays json)",
+    "  --protocol-format <json|edit-dsl>",
+    "                     edit protocol (default: edit-dsl); json keeps the flat",
+    "                     JSON payload, edit-dsl requires the `select … end` syntax",
+    "                     (#119; explicit-targets mode stays json); `compact` is a",
+    "                     deprecated alias for edit-dsl",
     "  --targets <file>   edit an explicit address list from a JSON file (#81); the",
     '                     file is an array or {"targets": [...]} of {"path","symbol",',
     '                     "kind"} entries; each file is edited once per exchange and',

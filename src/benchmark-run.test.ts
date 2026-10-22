@@ -240,7 +240,7 @@ describe("rendered report (#89)", () => {
           "| Task | Side | whole-symbol | match | pick | snippet | regex |",
         );
         expect(markdown).toContain("| Side | whole-symbol | match | pick | snippet | regex |");
-        // #111: compact implicit-create clauses surface alongside.
+        // #111: edit-dsl implicit-create clauses surface alongside.
         expect(markdown).toContain("Implicit creates (#111):");
       } finally {
         rmSync(dir, { recursive: true, force: true });
@@ -413,12 +413,13 @@ describe("oc model override (--oc-model)", () => {
 });
 
 describe("edit protocol override (--protocol-format) (#119)", () => {
-  test.skipIf(!runModulePresent)("parses --protocol-format and defaults to compact", async () => {
+  test.skipIf(!runModulePresent)("parses --protocol-format and defaults to edit-dsl", async () => {
     const { parseArgs } = await loadRunModule();
-    expect(parseArgs([]).protocolFormat).toBe("compact");
-    expect(parseArgs(["--multi-payload"]).protocolFormat).toBe("compact");
-    expect(parseArgs(["--protocol-format", "compact"]).protocolFormat).toBe("compact");
+    expect(parseArgs([]).protocolFormat).toBe("edit-dsl");
+    expect(parseArgs(["--multi-payload"]).protocolFormat).toBe("edit-dsl");
+    expect(parseArgs(["--protocol-format", "edit-dsl"]).protocolFormat).toBe("edit-dsl");
     expect(parseArgs(["--protocol-format", "json"]).protocolFormat).toBe("json");
+    expect(parseArgs(["--protocol-format", "compact"]).protocolFormat).toBe("edit-dsl");
   });
 
   test.skipIf(!runModulePresent)("the report renders the selected protocol format", async () => {
@@ -438,7 +439,7 @@ describe("edit protocol override (--protocol-format) (#119)", () => {
       ocModel: null,
       effort: null,
       multiPayload: false,
-      protocolFormat: "compact",
+      protocolFormat: "edit-dsl",
       tokenBudget: null,
       bunVersion: "1.0.0",
       opencodeVersion: null,
@@ -461,9 +462,9 @@ describe("edit protocol override (--protocol-format) (#119)", () => {
     };
     const dir = mkdtempSync(join(tmpdir(), "run-protocol-format-"));
     try {
-      const md = join(dir, "compact.md");
+      const md = join(dir, "edit-dsl.md");
       writeMarkdownReport(md, report);
-      expect(readFileSync(md, "utf8")).toContain("- protocol-format: compact (#119)");
+      expect(readFileSync(md, "utf8")).toContain("- protocol-format: edit-dsl (#119)");
     } finally {
       rmSync(dir, { recursive: true, force: true });
     }

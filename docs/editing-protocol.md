@@ -8,9 +8,9 @@ that payload: what the model may send, how each field resolves, and the checks
 that run before a byte reaches disk. The Edit → Verify loop around it is
 [`agent-loop.md`](agent-loop.md).
 
-Two reply formats exist, selected by `--protocol-format` (default `compact`):
+Two reply formats exist, selected by `--protocol-format` (default `edit-dsl`):
 
-- **compact**: the default. One or more `select … end` clauses, on the same
+- **edit-dsl**: the default. One or more `select … end` clauses, on the same
   resolver but with richer locators (regex, multi-range `pick`) and atomic
   multi-clause replies. A JSON edit payload in this mode is a protocol
   rejection.
@@ -19,7 +19,7 @@ Two reply formats exist, selected by `--protocol-format` (default `compact`):
 
 Implementation: `parseEditResponse` and `resolveEditRange` in `src/loop.ts`, the
 clause grammar in `src/selection.ts`, the cascade in `src/cascade.ts`, the reply
-resolver in `src/compact.ts`, structural/regex matching in `src/matcher.ts`, the
+resolver in `src/edit-dsl.ts`, structural/regex matching in `src/matcher.ts`, the
 splice and format gate in `src/editor.ts`.
 
 ## 1. The json payload
@@ -65,10 +65,10 @@ echoes the pinned address; every later payload names its own declaration, which
 must resolve uniquely in its file's current source. Batches are `modify`-only,
 the wrapper admits no key but `payloads`, and a batch is **atomic**: if any
 payload fails its guards or two same-file regions overlap, nothing is written
-and every failing payload is named. The compact format does not use this
+and every failing payload is named. The edit-dsl format does not use this
 wrapper; it batches by sending more clauses.
 
-## 2. The compact clause
+## 2. The edit-dsl clause
 
 ```text
 select [kind] <symbol> in <path> [ resolve (value|type|namespace) ] [ match (<snippet> | /regex/) ] [ [ pick <range-or-set> ] replace with <fence> ] end
@@ -115,7 +115,7 @@ A clause that stops before `replace` is a **viewer**: it locates and writes
 nothing (§4). A clause that stops after `pick` is not a viewer; `pick` requires
 `replace`.
 
-**Select first.** The first compact reply is exactly one clause. The harness
+**Select first.** The first edit-dsl reply is exactly one clause. The harness
 renders its symbol index as top-level `select <name> in <path> [resolve <space>]`
 lines. A viewer (no `replace`) pins the declaration and the harness answers with
 a `# details` prompt: the goal, the symbol index, and the declaration source
@@ -181,7 +181,7 @@ real position.
 Both formats reduce to the same narrowing, one stage at a time.
 
 1. **Address.** `select` (or the json `path`/`symbol`/`kind`) must land on
-   exactly one declaration. In compact, the optional `resolve
+   exactly one declaration. In edit-dsl, the optional `resolve
    value|type|namespace` filters the index to that TypeScript symbol space; an
    omitted space accepts every space, and an empty `kind` is a path + name
    wildcard. A `class` or `enum` occupies both the value and type spaces (its
@@ -189,7 +189,7 @@ Both formats reduce to the same narrowing, one stage at a time.
    an interface or type alias occupies type, and a namespace declaration
    occupies the namespace space. A space miss names the available spaces and
    never falls back to another one; the json path passes no space. Re-pinning is
-   expressed, in compact, by naming a different declaration in the clause's own
+   expressed, in edit-dsl, by naming a different declaration in the clause's own
    `select`; the new address faces the same unique-resolution rule against the
    current source.
 2. **Match.** The locator matches _inside_ the declaration's span only.
@@ -210,7 +210,7 @@ Both formats reduce to the same narrowing, one stage at a time.
    contains the point, while a line or range keeps candidates contained in the
    picked range. Without a `match`, the pick is not a filter: each resolved text
    span (whole line, one character, or the written range) is a target. The
-   compact resolver expands a pick-only `{a, b, …}` into one single-range region
+   edit-dsl resolver expands a pick-only `{a, b, …}` into one single-range region
    per selecter, all carrying the same fence replacement; resolution is
    all-or-none for the clause, and overlapping resolved spans fail at the range
    stage.
@@ -246,7 +246,7 @@ These guards run before any gate:
 
 ## 4. Viewers
 
-A compact clause with no `replace` writes nothing and reports the declaration as
+An edit-dsl clause with no `replace` writes nothing and reports the declaration as
 the next prompt's `# details` block: the source is numbered with its
 file-absolute lines. A `match` viewer reports its candidate positions; the
 declaration block itself may be unmarked in this select-first pass. A bare
@@ -268,19 +268,19 @@ optionally with a `pick` to narrow it.
 Every rejection carries a `stage:` tag and costs one exchange. Both formats share
 the vocabulary so metrics compare.
 
-| Stage                  | Cause                                                                                             |
-| ---------------------- | ------------------------------------------------------------------------------------------------- |
-| `syntax`               | Compact only: the reply does not parse as `select … end`.                                         |
-| `protocol`             | The json object is malformed, carries an unexpected key, or a JSON payload arrives under compact. |
-| `echo` / `address`     | The address does not echo the pinned selection, or does not resolve uniquely.                     |
-| `matcher`              | `matcher-unparseable`, `matcher-not-found`, `matcher-ambiguous`, or `regex-invalid`.              |
-| `range`                | A `range`/`pick` that is out of bounds, empty, inverted, or outside the declaration.              |
-| `no-op`                | The replacement equals the text it replaces.                                                      |
-| `repeat` / `duplicate` | A byte-identical resubmission; a duplicate top-level declaration.                                 |
-| `gate`                 | The file parsed before and does not parse after.                                                  |
-| `format`               | oxfmt rejected the result, or the formatted source equals the pre-edit source.                    |
+| Stage                  | Cause                                                                                              |
+| ---------------------- | -------------------------------------------------------------------------------------------------- |
+| `syntax`               | Edit-dsl only: the reply does not parse as `select … end`.                                         |
+| `protocol`             | The json object is malformed, carries an unexpected key, or a JSON payload arrives under edit-dsl. |
+| `echo` / `address`     | The address does not echo the pinned selection, or does not resolve uniquely.                      |
+| `matcher`              | `matcher-unparseable`, `matcher-not-found`, `matcher-ambiguous`, or `regex-invalid`.               |
+| `range`                | A `range`/`pick` that is out of bounds, empty, inverted, or outside the declaration.               |
+| `no-op`                | The replacement equals the text it replaces.                                                       |
+| `repeat` / `duplicate` | A byte-identical resubmission; a duplicate top-level declaration.                                  |
+| `gate`                 | The file parsed before and does not parse after.                                                   |
+| `format`               | oxfmt rejected the result, or the formatted source equals the pre-edit source.                     |
 
-When a compact clause fails, its diagnostic names the clause, its position in
+When an edit-dsl clause fails, its diagnostic names the clause, its position in
 the reply (`clause N of M`), its locator and path, and states that the whole
 reply was discarded, so the model must resend the full corrected reply.
 
@@ -300,7 +300,7 @@ The formats differ in what a batch means:
   the end so earlier offsets stay valid, and if any guard fails the whole
   exchange is discarded. Overlapping same-file regions discard the exchange and
   name both regions.
-- **Compact replies are atomic across the whole reply.** Every clause resolves
+- **Edit-dsl replies are atomic across the whole reply.** Every clause resolves
   against its file's current source; if any clause fails resolution, or the
   apply pipeline reports any guard/overlap failure, the whole reply is discarded
   and nothing is written — no file, including creates. Only a reply with no
@@ -314,7 +314,7 @@ to verification. A failed verification does **not** roll back: the attempted
 state stays on disk and its diagnostics open the next round (see
 `agent-loop.md`).
 
-**Implicit create (compact only).** Any editor clause (a non-empty `replace`)
+**Implicit create (edit-dsl only).** Any editor clause (a non-empty `replace`)
 whose symbol is absent, or is declared only in another symbol space, appends the
 fence body as a new top-level declaration, creating the file and its parent
 directories as needed, spliced at the file's current end behind a separating
@@ -341,10 +341,10 @@ The fence body is validated before it is appended:
 A name declared in the requested space (including a kind miss), an ambiguous
 name, an empty fence, and a viewer keep the address failure and create nothing.
 The json path creates only through a `create` selection and deletes only through
-a `delete` selection; the compact path creates implicitly and deletes with an
+a `delete` selection; the edit-dsl path creates implicitly and deletes with an
 empty fence.
 
-**Compact confirmation.** When a compact edit passes verification, the harness
+**Edit-dsl confirmation.** When an edit-dsl edit passes verification, the harness
 sends one `# modified text` prompt containing the goal, the symbol index, and
 the edited declaration with file-absolute line numbers. A reply that parses as
 at least one editor clause (a clause with `replace`) continues the exchange loop
@@ -361,10 +361,10 @@ A rejection is never a give-up; it is a retry with better information. The next
 prompt carries the stage-tagged diagnostic, and from the second consecutive
 rejection of the same cause, an escalation. The format-specific corrections are:
 
-- Under compact, a `protocol` rejection re-teaches the `select … end` form.
+- Under edit-dsl, a `protocol` rejection re-teaches the `select … end` form.
   Restating the JSON edit rule would drive the model back to the payload this
   mode rejects.
-- Compact edit retries and round continuations keep the select-first shape:
+- Edit-dsl edit retries and round continuations keep the select-first shape:
   `# Goal`, the select-line `# Symbol index`, and `# details` with the numbered
   current declaration. They never carry the JSON `Pinned selection` block.
   A rejected selection retry or selection continuation asks for exactly one
@@ -405,7 +405,7 @@ function resolveCascade(source: string, entry: IndexEntry, s: Selection) {
   if (s.matcher === null) {
     if (s.pick !== null) {
       // Pick-only primitive: one selecter resolves to one text span. The
-      // compact resolver expands a multi-range pick into one such clause per
+      // edit-dsl resolver expands a multi-range pick into one such clause per
       // selecter (all-or-none, overlap-checked).
       const ranges = resolvePickSpans(source, entry, s.pick);
       if (!ranges.ok || ranges.spans.length !== 1) return fail("range-invalid");
@@ -462,7 +462,7 @@ function gate(source: string, spliced: string): Stage | null {
 
 ### What the skeleton leaves out
 
-- **Per-file application policy.** The compact reply's document-order,
+- **Per-file application policy.** The edit-dsl reply's document-order,
   independently-guarded splice with an offset delta, versus the json batch's
   all-or-nothing splice (§6).
 - **Wrapper priority.** A snippet is tried as a statement, a class member, an
@@ -470,7 +470,7 @@ function gate(source: string, spliced: string): Stage | null {
   wins and later ones are not tried (§3).
 - **Implicit create.** The absent-symbol append, parent-directory creation, and
   its separating newline (§6).
-- **Pick-only multi-range expansion.** The compact resolver maps a `{a, b, …}`
+- **Pick-only multi-range expansion.** The edit-dsl resolver maps a `{a, b, …}`
   set to one single-range region per selecter, rejecting the clause on any
   range failure or overlap (§3).
 - **Metric rows.** The per-clause `stage`, `matcherKind`, and `selector` fields

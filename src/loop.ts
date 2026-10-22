@@ -16,15 +16,15 @@ import {
   serializeSelections,
   SelectionSyntaxError,
 } from "./selection";
-import type { Selection as CompactSelection } from "./selection";
+import type { Selection as EditDslSelection } from "./selection";
 import {
   duplicateDeclarationNote,
   markedViewerLines,
   markerGutter,
   renderViewerFeedback,
-  resolveCompactReply,
-} from "./compact";
-import type { CompactFailure, CompactRegion, CompactResolution, CompactViewer } from "./compact";
+  resolveEditDslReply,
+} from "./edit-dsl";
+import type { EditDslFailure, EditDslRegion, EditDslResolution, EditDslViewer } from "./edit-dsl";
 import { formatSource } from "./editor";
 import { LexError } from "./lexer";
 import { ParseError, Parser } from "./parser";
@@ -174,11 +174,11 @@ export function buildContextYaml(files: SourceFile[], build?: TolerantIndex): st
   return `${lines.join("\n")}\n`;
 }
 
-// Compact select-first index: one `select <name> in <path>` line per top-level
+// EditDsl select-first index: one `select <name> in <path>` line per top-level
 // declaration, deduped by path+name, with a `resolve` space only when the
 // declaration occupies exactly one space (class/enum dual-space entries omit it).
 // Capped like the YAML context; a truncation note is a plain comment line.
-export function buildCompactSymbolIndex(index: SymbolIndex): string {
+export function buildEditDslSymbolIndex(index: SymbolIndex): string {
   const seen = new Set<string>();
   const lines: string[] = [];
   let truncated = false;
@@ -211,33 +211,33 @@ export function buildCompactSymbolIndex(index: SymbolIndex): string {
 const MULTI_PAYLOAD_SYSTEM_PARAGRAPH =
   'The multi-payload protocol is enabled: one edit reply may instead carry several edits as {"payloads": [{"path": ..., "symbol": ..., "kind": ..., "matcher": ..., "replacement": ...}, ...]} — different files and/or several non-overlapping regions of one file. The first entry echoes the pinned selection exactly, and every other entry names its own declaration (it must resolve uniquely in its file). Same-file entries must address non-overlapping regions; overlapping regions reject the exchange. The exchange applies atomically: if any entry fails its own guard or two same-file entries overlap, nothing is written and the exchange is rejected naming every failing entry\'s cause. A single edit may still be sent as one flat object, and "create"/"delete" selections never batch.';
 
-// #119 compact protocol (`--protocol-format=compact`, formerly the #117 forced
+// #119 edit-dsl protocol (`--protocol-format=edit-dsl`, formerly the #117 forced
 // mode): the system prompt teaches `select … end` clauses in place of the JSON
 // edit rule, and the pick turn itself is a single select clause. The `json`
 // format never uses these paragraphs.
-const COMPACT_SELECT_SYSTEM_PARAGRAPH =
+const EDIT_DSL_SELECT_SYSTEM_PARAGRAPH =
   "First you will be asked to select the target. Reply with ONLY one `select <symbol> in <path> [ resolve <value|type|namespace> ] end` clause naming one symbol-index entry; the clause is a viewer unless it carries `replace`, and a viewer leads to a `# details` prompt before the edit. Keep the reply to that one clause with no prose and no JSON.";
-const COMPACT_EDIT_SYSTEM_PARAGRAPH =
+const EDIT_DSL_EDIT_SYSTEM_PARAGRAPH =
   "Then you will be asked to edit the selected symbol. Reply with ONLY one or more `select … end` clauses: `select <symbol> in <path> [ resolve <value|type|namespace> ] [ match (<snippet> | /regex/) ] [ [ pick <range> ] replace with <fence> ] end` (an optional declaration `kind` may precede the symbol). Clauses apply in document order and independently; a clause that stops before `replace` is a viewer that locates and writes nothing unless it contains `pick`; `pick` requires `replace` and is not a viewer form. `resolve value`, `resolve type`, or `resolve namespace` selects the TypeScript symbol space when the same name is declared in more than one, and a space miss names the available spaces instead of falling back. `match` locates a span inside the named declaration (narrow a tie with `pick <range>`, whose coordinates are the 1-based file-absolute positions of the numbered current-source block); a viewer renders the numbered declaration with `⁉️` on the matched lines. `replace with <fence>` rewrites the target, and the fence opens with 6 or more backticks and closes with the same run. A bare `select … replace with … end` with no `match` rewrites the whole declaration; an empty fence deletes it. Keep the same declaration kind and name unless the task requires otherwise. No markdown fences around the reply and no explanations, and no JSON edit payload — it is rejected.";
-const COMPACT_CREATE_DELETE_SYSTEM_PARAGRAPH =
+const EDIT_DSL_CREATE_DELETE_SYSTEM_PARAGRAPH =
   'A "create" selection asks for the COMPLETE declaration in the fence, which opens with 6 or more backticks; the harness appends it to the target file as a new top-level declaration, creating the file and any parent directories when needed. A complete top-level declaration is appended verbatim; otherwise the clause\'s `resolve` picks the wrapper: no `resolve` or `resolve value` wraps the body as `let <symbol> = <body>;`, `resolve type` as `type <symbol> = <body>;`, and `resolve namespace` as a `namespace <symbol> { … }` block. A "delete" selection carries no clause: the harness removes the declaration. To remove only part of a declaration, use `match` with an empty fence. The syntax gate discards any clause that leaves the file unparseable and writes nothing; the clauses that resolve apply independently.';
-const COMPACT_ROUNDS_SYSTEM_PARAGRAPH =
+const EDIT_DSL_ROUNDS_SYSTEM_PARAGRAPH =
   "A round allows at most 3 exchanges: picking the target, writing the edit, and re-asking after a rejected edit share that budget. When an edit verifies, the run is done; when verification fails, the next round shows the current source and the failing diagnostics, and it may either revise the pinned declaration or re-pin to a different declaration in the same file by naming it in the clause's own `select` (the new address must resolve uniquely in the current source). A round that exhausts its 3 exchanges without a valid edit continues through a continuation prompt: reply `STOP` to end the run, or return a corrected edit (or, when no target is pinned, a corrected selection) to open a fresh round with a new 3-exchange budget; the run is capped at 32 rounds, after which it ends with the failure summary.";
 
-// #119: the protocol failure a compact round returns when the reply is not
-// a `select … end` clause. A JSON edit payload never matches the compact grammar,
+// #119: the protocol failure an edit-dsl round returns when the reply is not
+// a `select … end` clause. A JSON edit payload never matches the edit-dsl grammar,
 // so it is rejected here too.
-export const COMPACT_FORCE_DIAGNOSTICS =
+export const EDIT_DSL_FORCE_DIAGNOSTICS =
   "stage: protocol\nthe reply must be one or more `select … end` clauses; a JSON edit payload is not accepted in this mode";
 
-// #117/#119: under the compact protocol a `protocol` rejection means the reply
+// #117/#119: under the edit-dsl protocol a `protocol` rejection means the reply
 // was not `select … end` (usually a JSON edit payload). The retry must re-teach
-// the compact form; the JSON-flavored #56 correction would drive the model
+// the edit-dsl form; the JSON-flavored #56 correction would drive the model
 // straight back to the payload this mode rejects (the observed rep1
 // `address ↔ protocol` loop).
-const COMPACT_PROTOCOL_CORRECTION =
+const EDIT_DSL_PROTOCOL_CORRECTION =
   "Reply with one or more `select … end` clauses as the entire response (`select <symbol> in <path> [ resolve <value|type|namespace> ] [ match (<snippet> | /regex/) ] [ [ pick <range> ] replace with <fence> ] end`, where the fence opens with 6 or more backticks; a `pick` requires `replace`); a JSON edit payload is not accepted in this mode.";
-const COMPACT_PROTOCOL_ESCALATION =
+const EDIT_DSL_PROTOCOL_ESCALATION =
   "This attempt MUST reply with only `select … end` clauses — one or more, with no prose, no markdown fences, and no JSON edit payload.";
 
 export function buildSystemPrompt(multiPayload = false, format: ProtocolFormat = "json"): string {
@@ -253,13 +253,13 @@ export function buildSystemPrompt(multiPayload = false, format: ProtocolFormat =
     "A round allows at most 3 exchanges: picking the target, writing the edit, and re-asking after a rejected edit share that budget. When an edit verifies, the run is done; when verification fails, the next round shows the current source and the failing diagnostics, and it may either revise the pinned declaration or re-pin to a different declaration in the same file by returning that declaration's own {path, symbol, kind} (the new address must resolve uniquely in the current source). A round that exhausts its 3 exchanges without a valid edit continues through a continuation prompt: reply `STOP` to end the run, or return a corrected edit (or, when no target is pinned, a corrected selection) to open a fresh round with a new 3-exchange budget; the run is capped at 32 rounds, after which it ends with the failure summary.",
     "",
   ];
-  // #119 the compact format teaches the select-first turn and the compact edit
+  // #119 the edit-dsl format teaches the select-first turn and the edit-dsl edit
   // rule in place of the JSON rule; the json format never uses these paragraphs.
-  if (format === "compact") {
-    lines[2] = COMPACT_SELECT_SYSTEM_PARAGRAPH;
-    lines[4] = COMPACT_EDIT_SYSTEM_PARAGRAPH;
-    lines[6] = COMPACT_CREATE_DELETE_SYSTEM_PARAGRAPH;
-    lines[8] = COMPACT_ROUNDS_SYSTEM_PARAGRAPH;
+  if (format === "edit-dsl") {
+    lines[2] = EDIT_DSL_SELECT_SYSTEM_PARAGRAPH;
+    lines[4] = EDIT_DSL_EDIT_SYSTEM_PARAGRAPH;
+    lines[6] = EDIT_DSL_CREATE_DELETE_SYSTEM_PARAGRAPH;
+    lines[8] = EDIT_DSL_ROUNDS_SYSTEM_PARAGRAPH;
   }
   if (multiPayload) {
     lines.splice(lines.length - 1, 0, MULTI_PAYLOAD_SYSTEM_PARAGRAPH, "");
@@ -361,19 +361,19 @@ export function numberedSourceRange(source: string, start: number, end: number):
   return numberLinesFrom(source.slice(safeStart, safeEnd), startLine);
 }
 
-function compactGoal(issue: string, indexText: string): string {
+function editDslGoal(issue: string, indexText: string): string {
   return `# Goal\n\n${issue}\n\n# Symbol index\n\n${indexText}\n`;
 }
 
-// The Goal/index/details block shared by the compact retry and decision turns
+// The Goal/index/details block shared by the edit-dsl retry and decision turns
 // (#B4/#9). `preRenderedSource` keeps the repair-context shrink's partial,
 // original-line-numbered view; otherwise `startLine` anchors the numbering.
-function compactContextBlock(
+function editDslContextBlock(
   context: { issue: string; indexText: string; startLine?: number },
   currentSource: string,
   preRenderedSource: string | undefined,
 ): string {
-  const compactNumbered =
+  const editDslNumbered =
     preRenderedSource ?? numberLinesFrom(currentSource, context.startLine ?? 1);
   return `# Goal
 
@@ -386,30 +386,30 @@ ${context.indexText}
 # details
 
 \`\`\`text
-${compactNumbered}
+${editDslNumbered}
 \`\`\``;
 }
 
-function appendCompactSpecFiles(prompt: string, specFiles: readonly SourceFile[]): string {
+function appendEditDslSpecFiles(prompt: string, specFiles: readonly SourceFile[]): string {
   if (specFiles.length === 0) {
     return prompt;
   }
   return `${prompt}\n${buildSpecSection(specFiles)}\n`;
 }
 
-export function buildCompactUserPrompt(
+export function buildEditDslUserPrompt(
   issue: string,
   indexText: string,
   specFiles: readonly SourceFile[] = [],
 ): string {
-  return appendCompactSpecFiles(compactGoal(issue, indexText), specFiles);
+  return appendEditDslSpecFiles(editDslGoal(issue, indexText), specFiles);
 }
 
 // The first-turn content prompt pins the selected declaration. A match viewer
 // additionally passes the file-absolute lines its spans intersect, so the
 // `# details` block marks them exactly like the edit-phase viewer feedback; a
 // bare select viewer passes null and keeps the unmarked rendering.
-export function buildCompactDetailsPrompt(
+export function buildEditDslDetailsPrompt(
   issue: string,
   indexText: string,
   symbolSource: string,
@@ -420,23 +420,23 @@ export function buildCompactDetailsPrompt(
 ): string {
   const numbered = numberLinesFrom(symbolSource, startLine, markedLines);
   const note = duplicateNote === null ? "" : `\n${duplicateNote}\n`;
-  const prompt = `${compactGoal(issue, indexText)}\n# details\n\n\`\`\`text\n${numbered}\n\`\`\`\n${note}\n${compactInstruction()}\n`;
-  return appendCompactSpecFiles(prompt, specFiles);
+  const prompt = `${editDslGoal(issue, indexText)}\n# details\n\n\`\`\`text\n${numbered}\n\`\`\`\n${note}\n${editDslInstruction()}\n`;
+  return appendEditDslSpecFiles(prompt, specFiles);
 }
 
-export function buildCompactCreatePrompt(
+export function buildEditDslCreatePrompt(
   issue: string,
   indexText: string,
   path: string,
   specFiles: readonly SourceFile[] = [],
 ): string {
-  const prompt = `${compactGoal(issue, indexText)}\nTarget file:\n\n\`\`\`\n${path}\n\`\`\`\n\n${compactCreateInstruction()}\n`;
-  return appendCompactSpecFiles(prompt, specFiles);
+  const prompt = `${editDslGoal(issue, indexText)}\nTarget file:\n\n\`\`\`\n${path}\n\`\`\`\n\n${editDslCreateInstruction()}\n`;
+  return appendEditDslSpecFiles(prompt, specFiles);
 }
 
-// Compact confirmation turn (#B3): the verified declaration, then the one-line
+// EditDsl confirmation turn (#B3): the verified declaration, then the one-line
 // success offer. Deliberately concise — no few-shot examples here.
-export function buildCompactModifiedPrompt(
+export function buildEditDslModifiedPrompt(
   issue: string,
   indexText: string,
   symbolSource: string,
@@ -444,8 +444,8 @@ export function buildCompactModifiedPrompt(
   specFiles: readonly SourceFile[] = [],
 ): string {
   const numbered = numberLinesFrom(symbolSource, startLine);
-  const prompt = `${compactGoal(issue, indexText)}\n# modified text\n\n\`\`\`text\n${numbered}\n\`\`\`\n\nReply \`Great! I resolve this problem!\` if the goal is met; otherwise return one or more \`select … end\` edit clauses.\n`;
-  return appendCompactSpecFiles(prompt, specFiles);
+  const prompt = `${editDslGoal(issue, indexText)}\n# modified text\n\n\`\`\`text\n${numbered}\n\`\`\`\n\nReply \`Great! I resolve this problem!\` if the goal is met; otherwise return one or more \`select … end\` edit clauses.\n`;
+  return appendEditDslSpecFiles(prompt, specFiles);
 }
 
 // The optional `(line,column)` selector offered alongside `matcher` (#72).
@@ -459,14 +459,14 @@ export const SELF_CHECK_OFFER =
   'Before editing, you may make at most one bounded self-verification request this round: reply with exactly {"request":"read"} (the pinned file\'s current source), {"request":"check"} (run the task\'s check command), or {"request":"test"} (run the task\'s test command); the harness runs it and returns a bounded result, then asks again.';
 
 // #111: the few-shot examples the fresh edit and modify-retry prompts carry
-// under the compact protocol (`--protocol-format=compact`). They show the §8
+// under the edit-dsl protocol (`--protocol-format=edit-dsl`). They show the §8
 // forms of `docs/edit-protocol.md` — a `resolve value` viewer, a bare
 // declaration replace, a `match` + `pick` edit, a `match` + `replace` rewrite,
 // a create (#117), and a viewer-then-editor multi-clause reply (#117) — built
 // with `serializeSelections` so the grammar stays the single source of truth.
 // Each form is labelled so the examples are unambiguously separate. The block
 // never appears under the `json` format.
-const COMPACT_EXAMPLE_FORMS: { label: string; selections: CompactSelection[] }[] = [
+const EDIT_DSL_EXAMPLE_FORMS: { label: string; selections: EditDslSelection[] }[] = [
   {
     label: "1. Viewer: locates a matched span with `resolve value` and writes nothing.",
     selections: [
@@ -552,20 +552,20 @@ const COMPACT_EXAMPLE_FORMS: { label: string; selections: CompactSelection[] }[]
 
 // Render the labelled forms with the grammar's own serializer, one blank line
 // apart so the examples read as separate replies.
-function renderCompactExamples(): string {
-  return COMPACT_EXAMPLE_FORMS.map(
+function renderEditDslExamples(): string {
+  return EDIT_DSL_EXAMPLE_FORMS.map(
     (form) => `${form.label}\n\n${serializeSelections(form.selections)}`,
   ).join("\n\n");
 }
 
 /**
- * The compact edit instruction (#111): replaces the JSON instruction in the
- * fresh edit prompt and the modify retry prompt under the compact format. It
+ * The edit-dsl edit instruction (#111): replaces the JSON instruction in the
+ * fresh edit prompt and the modify retry prompt under the edit-dsl format. It
  * states the reply shape, the document-order/independent application, and the
  * viewer semantics, then shows the §8 examples (#117 adds the create and the
  * viewer-then-editor forms).
  */
-function compactInstruction(): string {
+function editDslInstruction(): string {
   return [
     "A reply is one or more `select … end` clauses (see the examples below), with no markdown fences around the reply and no explanations. Clauses apply in document order and independently; a clause that stops before `replace` is a viewer that writes nothing unless it contains `pick`; `pick` requires `replace` and is not a viewer form.",
     "",
@@ -576,20 +576,20 @@ function compactInstruction(): string {
     "Examples:",
     "",
     "```````",
-    renderCompactExamples(),
+    renderEditDslExamples(),
     "```````",
   ].join("\n");
 }
 
 /**
- * The compact create instruction (#111): the create-mode counterpart of
- * `compactInstruction()`. It teaches that a whole-declaration
+ * The edit-dsl create instruction (#111): the create-mode counterpart of
+ * `editDslInstruction()`. It teaches that a whole-declaration
  * `select … replace with <fence> end` clause becomes an *append* when the
  * symbol — or the whole file — is absent, and that such a create clause takes
  * neither `match` nor `pick`. A complete declaration is appended verbatim; any
  * other body is wrapped by the clause's `resolve` space (`let` by default).
  */
-function compactCreateInstruction(): string {
+function editDslCreateInstruction(): string {
   return [
     'The pinned selection uses mode "create", so reply with a create clause. A whole-declaration `select <symbol> in <path> [ resolve <value|type|namespace> ] replace with <fence> end` clause with a non-empty fence creates the declaration, where the fence opens with 6 or more backticks: when the symbol — or the whole file — is absent the harness appends the COMPLETE declaration in the fence as a new top-level declaration, creating the file and its parent directories if needed.',
     "",
@@ -597,7 +597,7 @@ function compactCreateInstruction(): string {
     "",
     "A create clause does not take `match` or `pick`. The replacement must keep the file parseable.",
     "",
-    compactInstruction(),
+    editDslInstruction(),
   ].join("\n");
 }
 
@@ -608,12 +608,12 @@ export function buildEditPrompt(
   format: ProtocolFormat = "json",
 ): string {
   const numbered = numberedSourceBlock(symbolSource);
-  // #111: under the compact format the JSON instruction is replaced with the
+  // #111: under the edit-dsl format the JSON instruction is replaced with the
   // clause instruction and its few-shot examples. Under `json` this is exactly
   // the pre-#111 string.
   const instruction =
-    format === "compact"
-      ? compactInstruction()
+    format === "edit-dsl"
+      ? editDslInstruction()
       : multiPayload
         ? `Output ONE flat JSON object {"path": ..., "symbol": ..., "kind": ..., "matcher": ..., "replacement": ...} for the pinned symbol, or a multi-payload object {"payloads": [ ... ]} that batches edits — different files and/or several non-overlapping regions of one file — with no markdown fences and no explanations.
 
@@ -682,8 +682,8 @@ export function buildCreatePrompt(
   format: ProtocolFormat = "json",
 ): string {
   const instruction =
-    format === "compact"
-      ? compactCreateInstruction()
+    format === "edit-dsl"
+      ? editDslCreateInstruction()
       : `The pinned selection uses mode "create". Output ONE flat JSON object {"path": ..., "symbol": ..., "kind": ..., "replacement": ...} with no markdown fences and no explanations: echo the pinned address {path, symbol, kind}, put the COMPLETE declaration in "replacement", and omit "matcher" and "range". The target file may not exist yet; the declaration is appended to it. The replacement must keep the file parseable.`;
   return `${instruction}
 
@@ -787,16 +787,16 @@ export interface RetryPromptInput {
    */
   multiPayload?: boolean;
   /**
-   * Edit protocol format (#119): `compact` renders the `select … end` clause
+   * Edit protocol format (#119): `edit-dsl` renders the `select … end` clause
    * instruction; `json` (default) keeps the JSON templates.
    */
   protocolFormat?: ProtocolFormat;
   /**
-   * Compact retry context (#B4): Goal + symbol index for the compact prompt
+   * EditDsl retry context (#B4): Goal + symbol index for the edit-dsl prompt
    * shape, plus the file-absolute start line of `currentSource`. Absent keeps
    * the JSON prompt byte-identical.
    */
-  compactContext?: { issue: string; indexText: string; startLine?: number };
+  editDslContext?: { issue: string; indexText: string; startLine?: number };
   /**
    * Bounded self-verification result (#73), appended after the Diagnostics
    * block as a `Self-check result:` section. Rendered only on the prompt that
@@ -851,12 +851,12 @@ const DECISION_INSTRUCTION =
   "This is a decision turn: reply with a short re-approach statement — name what you will change (the cause) and where — instead of another edit payload. Reply exactly `STOP` to end the run now, but only if the failing set cannot be resolved. Do not send a JSON edit payload on this turn.";
 
 /**
- * Compact decision-only instruction (#75/#9): the select-first counterpart of
+ * EditDsl decision-only instruction (#75/#9): the select-first counterpart of
  * `DECISION_INSTRUCTION`. It keeps the decision framing and STOP semantics but
  * names the clause reply shape instead of a JSON payload, so no bare JSON edit
- * teaching leaks into a compact turn.
+ * teaching leaks into an edit-dsl turn.
  */
-const DECISION_INSTRUCTION_COMPACT =
+const DECISION_INSTRUCTION_EDIT_DSL =
   "This is a decision turn: reply with a short re-approach statement — name what you will change (the cause) and where — instead of another edit clause. Reply exactly `STOP` to end the run now, but only if the failing set cannot be resolved. Do not send an edit clause on this turn.";
 
 /** Bound on the carried re-approach statement (#75); clamped like the digest states. */
@@ -882,12 +882,12 @@ function isEditPayloadReply(
       parseEditResponse(content);
       return true;
     } catch {
-      // Fall through to the compact form under the compact format.
+      // Fall through to the edit-dsl form under the edit-dsl format.
     }
   }
-  // #111: under the compact format a reply of `select … end` clauses is also a
+  // #111: under the edit-dsl format a reply of `select … end` clauses is also a
   // real attempt (an editor or a viewer locate turn).
-  if (format === "compact") {
+  if (format === "edit-dsl") {
     try {
       return parseSelection(content).length > 0;
     } catch {
@@ -943,16 +943,16 @@ export function buildRetryPrompt(input: RetryPromptInput): string {
       ? ""
       : `Edit exchange ${exchangeNumber} of ${maxExchanges} ${label}. ${remaining} exchange(s) remain in this iteration. `;
   const modifyInstruction =
-    input.protocolFormat === "compact"
-      ? `${modifyLead} ${status}${compactInstruction()}`
+    input.protocolFormat === "edit-dsl"
+      ? `${modifyLead} ${status}${editDslInstruction()}`
       : input.multiPayload === true
         ? multiModifyInstruction(modifyLead, status, repin, modifierNote)
         : repin
           ? `${modifyLead} ${status}Output ONLY one flat JSON object {"path": ..., "symbol": ..., "kind": ..., "matcher": ..., "replacement": ...}: return the full address of the declaration you are fixing — either the pinned selection or a different declaration in the same file to re-pin and edit it (it must resolve uniquely in the current source). "matcher" is optional: a snippet copied from the current source, or omit it for a whole-symbol rewrite; "replacement" replaces the matched range (empty removes it). ${RANGE_SELECTOR_NOTE} ${modifierNote} No markdown fences and no explanations.`
           : `${modifyLead} ${status}Output ONLY one flat JSON object {"path": ..., "symbol": ..., "kind": ..., "matcher": ..., "replacement": ...}: echo the pinned selection in the address. "matcher" is optional: a snippet copied from the current source, or omit it for a whole-symbol rewrite; "replacement" replaces the matched range (empty removes it). ${RANGE_SELECTOR_NOTE} ${modifierNote} No markdown fences and no explanations.`;
   const createInstruction =
-    input.protocolFormat === "compact"
-      ? `${createLead} ${status}${compactCreateInstruction()}`
+    input.protocolFormat === "edit-dsl"
+      ? `${createLead} ${status}${editDslCreateInstruction()}`
       : `${createLead} ${status}Output ONLY one flat JSON object {"path": ..., "symbol": ..., "kind": ..., "replacement": ...}: echo the pinned selection in the address, put the COMPLETE corrected declaration in "replacement", and omit "matcher" and "range". No markdown fences and no explanations.`;
   const instruction = mode === "modify" ? modifyInstruction : createInstruction;
   const header =
@@ -979,15 +979,15 @@ export function buildRetryPrompt(input: RetryPromptInput): string {
   // template (instruction, self-check offer, pinned selection, current source)
   // and keeps the sharpened header plus the failing diagnostics and history.
   if (stalled !== undefined && isDecisionAsk(stalled)) {
-    // Compact decision-only turn (#9): keep the decision framing and STOP
+    // EditDsl decision-only turn (#9): keep the decision framing and STOP
     // semantics but render the Goal/index/details context and the clause shape.
     // The JSON decision turn below stays byte-identical.
-    if (input.protocolFormat === "compact" && input.compactContext !== undefined) {
+    if (input.protocolFormat === "edit-dsl" && input.editDslContext !== undefined) {
       return `${header}
 
-${compactContextBlock(input.compactContext, currentSource, input.preRenderedSource)}
+${editDslContextBlock(input.editDslContext, currentSource, input.preRenderedSource)}
 
-${DECISION_INSTRUCTION_COMPACT}
+${DECISION_INSTRUCTION_EDIT_DSL}
 
 Diagnostics:
 
@@ -998,12 +998,12 @@ ${failureHistorySection}${digestSection}`;
     }
     return `${header}\n\n${DECISION_INSTRUCTION}\n\nDiagnostics:\n\n\`\`\`\n${diagnostics}\n\`\`\`\n${failureHistorySection}${digestSection}`;
   }
-  // Compact retry/continuation (#B4): Goal + select-line symbol index + the
-  // declaration details, with no JSON pinned-selection block. The compact
+  // EditDsl retry/continuation (#B4): Goal + select-line symbol index + the
+  // declaration details, with no JSON pinned-selection block. The edit-dsl
   // instruction already carries the clause rules, including create mode.
   // The self-check offer is JSON-only and is deliberately absent here (#9).
-  if (input.protocolFormat === "compact" && input.compactContext !== undefined) {
-    return `${header === "" ? "" : `${header}\n\n`}${compactContextBlock(input.compactContext, currentSource, input.preRenderedSource)}
+  if (input.protocolFormat === "edit-dsl" && input.editDslContext !== undefined) {
+    return `${header === "" ? "" : `${header}\n\n`}${editDslContextBlock(input.editDslContext, currentSource, input.preRenderedSource)}
 
 Diagnostics:
 
@@ -1069,8 +1069,8 @@ export interface ContinuationPromptInput {
   multiPayload?: boolean;
   /** Edit protocol format (#119); forwarded to the retry prompt. */
   protocolFormat?: ProtocolFormat;
-  /** Compact Goal/index context (#B4); forwarded to the retry prompt. */
-  compactContext?: { issue: string; indexText: string; startLine?: number };
+  /** EditDsl Goal/index context (#B4); forwarded to the retry prompt. */
+  editDslContext?: { issue: string; indexText: string; startLine?: number };
 }
 
 /**
@@ -1096,7 +1096,7 @@ export function buildContinuationPrompt(input: ContinuationPromptInput): string 
     failureHistory: input.failureHistory,
     multiPayload: input.multiPayload,
     protocolFormat: input.protocolFormat,
-    compactContext: input.compactContext,
+    editDslContext: input.editDslContext,
   });
 }
 
@@ -1149,13 +1149,13 @@ export function buildSelectionRetryPrompt(diagnostics: string): string {
   return `The previous selection was rejected. ${selectionRetryBody(diagnostics)}`;
 }
 
-/** Compact selection retry (#B4): Goal + symbol index, then the rejection. */
-export function buildCompactSelectionRetryPrompt(
+/** EditDsl selection retry (#B4): Goal + symbol index, then the rejection. */
+export function buildEditDslSelectionRetryPrompt(
   issue: string,
   indexText: string,
   diagnostics: string,
 ): string {
-  return `${compactGoal(issue, indexText)}
+  return `${editDslGoal(issue, indexText)}
 The previous selection was rejected.
 
 Diagnostics:
@@ -1192,8 +1192,8 @@ export function buildSelectionContinuationPrompt(input: {
 ${selectionRetryBody(input.diagnostics)}${failureHistorySection}${digestSection}`;
 }
 
-/** Compact selection continuation (#B4): STOP or one select clause, same shape. */
-export function buildCompactSelectionContinuationPrompt(input: {
+/** EditDsl selection continuation (#B4): STOP or one select clause, same shape. */
+export function buildEditDslSelectionContinuationPrompt(input: {
   round: number;
   maxRounds: number;
   issue: string;
@@ -1210,7 +1210,7 @@ export function buildCompactSelectionContinuationPrompt(input: {
       : `\n${input.failureHistory}\n`;
   return `Round ${input.round} of ${input.maxRounds} exhausted its ${MAX_EDIT_EXCHANGES}-exchange selection budget without a valid selection. Reply STOP to end the run, or return one \`select … end\` clause naming a symbol-index entry.
 
-${compactGoal(input.issue, input.indexText)}
+${editDslGoal(input.issue, input.indexText)}
 Diagnostics:
 
 \`\`\`
@@ -1257,7 +1257,7 @@ export type EditSelector = "range" | "matcher" | "whole-symbol";
 /**
  * The form of matcher a `match`-stage edit used (#110): a structural snippet
  * copied from the source, or a `/regex/` locator. Regex only arises on the
- * compact cascade path (#111); the JSON path sends snippets only.
+ * edit-dsl cascade path (#111); the JSON path sends snippets only.
  */
 export type MatcherKind = "snippet" | "regex";
 
@@ -1274,7 +1274,7 @@ export function selectorOf(payload: EditPayload): EditSelector {
 
 /**
  * The #101 selector vocabulary for a resolved cascade stage (#111), so a
- * compact clause's selector metric reads the same as the JSON path's:
+ * edit-dsl clause's selector metric reads the same as the JSON path's:
  * `pick`→`range`, `match`→`matcher`, `whole-symbol`→`whole-symbol`.
  */
 export function selectorFromStage(stage: SelectionStage): EditSelector {
@@ -1302,7 +1302,7 @@ export function stageOf(payload: EditPayload): SelectionStage {
  * The matcher form an edit used (#110), or `null` when no matcher resolved it:
  * `"snippet"` when the payload's `matcher` is the resolving locator (stage
  * `"match"`), else `null` (a range/whole-symbol edit names no matcher; `regex`
- * arrives with the compact cascade, #111).
+ * arrives with the edit-dsl cascade, #111).
  */
 export function matcherKindOf(payload: EditPayload): MatcherKind | null {
   return stageOf(payload) === "match" ? "snippet" : null;
@@ -1895,9 +1895,9 @@ export interface LoopOptions {
    */
   multiPayload?: boolean;
   /**
-   * Edit protocol format (#119): `compact` (default) makes the `select … end`
+   * Edit protocol format (#119): `edit-dsl` (default) makes the `select … end`
    * syntax the required reply form and the first turn a select clause; `json`
-   * keeps the flat JSON payload. Absent is `compact`. Explicit-targets mode
+   * keeps the flat JSON payload. Absent is `edit-dsl`. Explicit-targets mode
    * (#81) is JSON-only.
    */
   protocolFormat?: ProtocolFormat;
@@ -1917,9 +1917,9 @@ export type ExchangeOutcome =
   | "stopped"
   // A repair exchange that carried one bounded self-verification request (#73).
   | "self-check"
-  // A compact viewer clause that located candidates and wrote nothing (#111).
+  // An edit-dsl viewer clause that located candidates and wrote nothing (#111).
   | "viewer"
-  // A compact `# modified text` confirmation reply (#B3): the verified edit
+  // An edit-dsl `# modified text` confirmation reply (#B3): the verified edit
   // stands; the row is neither an apply nor a rejection.
   | "confirmed"
   | "protocol"
@@ -1940,7 +1940,7 @@ export type VerificationOutcome = "ok" | "tsc" | "tests" | "gate" | "format" | "
 
 export type AttemptOutcome = ExchangeOutcome | VerificationOutcome;
 
-/** Matcher-check failures, produced by `spliceEntryEdit` (#56), plus the compact cascade's `regex-invalid` (#109/#111). */
+/** Matcher-check failures, produced by `spliceEntryEdit` (#56), plus the edit-dsl cascade's `regex-invalid` (#109/#111). */
 type MatcherCause =
   | "matcher-unparseable"
   | "matcher-not-found"
@@ -2058,11 +2058,11 @@ function matcherRangeHint(): string {
 // The edit protocol format (#119), replacing the #111/#117 opt-in env var.
 // `json` (default) is the shipped flat
 // `{path, symbol, kind, matcher, replacement}` payload and keeps every prompt and
-// code path byte-identical to the pre-compact protocol. `compact` makes the
+// code path byte-identical to the pre-edit-dsl protocol. `edit-dsl` makes the
 // `select … end` syntax (`docs/edit-protocol.md`) the required reply form: the
-// system prompt teaches it, compact is parsed first, and a JSON edit payload is
+// system prompt teaches it, edit-dsl is parsed first, and a JSON edit payload is
 // rejected as a protocol violation. Explicit-targets mode (#81) stays JSON.
-export type ProtocolFormat = "json" | "compact";
+export type ProtocolFormat = "json" | "edit-dsl";
 
 // Repair-context shrink is opt-in: after a create fails verification the loop
 // enters create→repair mode and re-sends the whole target file on every repair
@@ -2240,7 +2240,7 @@ export interface RejectionLeadContext {
   /** The rejected address names a declaration the current source lacks (#65). */
   undeclaredName?: string;
   /**
-   * The edit protocol the run uses (#117/#119): a compact run re-teaches the
+   * The edit protocol the run uses (#117/#119): an edit-dsl run re-teaches the
    * `select … end` form on a `protocol` rejection instead of the JSON payload
    * the mode rejects. Defaults to `json`.
    */
@@ -2306,11 +2306,11 @@ export function rejectionPolicy(
         escalation: DUPLICATE_ESCALATION,
       };
     case "protocol":
-      return format === "compact"
+      return format === "edit-dsl"
         ? {
             action: "retry",
-            correction: COMPACT_PROTOCOL_CORRECTION,
-            escalation: COMPACT_PROTOCOL_ESCALATION,
+            correction: EDIT_DSL_PROTOCOL_CORRECTION,
+            escalation: EDIT_DSL_PROTOCOL_ESCALATION,
           }
         : {
             action: "retry",
@@ -2468,9 +2468,9 @@ export interface LoopRecord {
    */
   matcherKinds?: (MatcherKind | null)[];
   /**
-   * Compact implicit-create clauses the reply carried (#111): create clauses
+   * EditDsl implicit-create clauses the reply carried (#111): create clauses
    * resolve at the `whole-symbol` stage, so this is a subset of `stages`.
-   * Omitted when the exchange was not a compact reply.
+   * Omitted when the exchange was not an edit-dsl reply.
    */
   creates?: number;
   /** Verification rows: failure signature (tsc diagnostics + failing tests) observation (#36). */
@@ -2516,7 +2516,7 @@ export interface ExchangeStats {
   snippet: number;
   /** Applied/parsed payloads whose matcher was a `/regex/` (#110). */
   regex: number;
-  /** Compact implicit-create clauses carried per reply (#111). */
+  /** EditDsl implicit-create clauses carried per reply (#111). */
   creates: number;
 }
 
@@ -2586,9 +2586,9 @@ export function exchangeStats(records: readonly LoopRecord[]): ExchangeStats {
     } else if (record.outcome === "self-check") {
       stats.selfChecks += 1;
     } else if (record.outcome === "viewer") {
-      // A compact viewer locate turn (#111): neither applied nor a rejection.
+      // An edit-dsl viewer locate turn (#111): neither applied nor a rejection.
     } else if (record.outcome === "confirmed") {
-      // A compact `# modified text` confirmation (#B3): the verified apply
+      // An edit-dsl `# modified text` confirmation (#B3): the verified apply
       // stands, so this row is neither applied nor rejected.
     } else {
       stats.rejected += 1;
@@ -2792,7 +2792,7 @@ function recordRow(input: {
   stages?: SelectionStage[];
   /** Matcher kinds (#110); parallel to `stages`; omitted when none. */
   matcherKinds?: (MatcherKind | null)[];
-  /** Compact implicit-create clauses the reply carried (#111); omitted when none. */
+  /** EditDsl implicit-create clauses the reply carried (#111); omitted when none. */
   creates?: number;
   /** Exact replacement size when it differs from `replacement.length` (batch sum, #69). */
   replacementChars?: number;
@@ -3474,8 +3474,8 @@ type CurrentEntryResolution =
 
 // Strict-AND resolution of one locator against the current source that would be
 // spliced: no silent first-match pick, no kind coercion, no auto-append. An
-// empty locator kind is the compact wildcard (path + name only); `space` is the
-// compact `resolve value|type|namespace` filter and is `null` on the JSON path.
+// empty locator kind is the edit-dsl wildcard (path + name only); `space` is the
+// edit-dsl `resolve value|type|namespace` filter and is `null` on the JSON path.
 function resolveCurrentEntry(
   sourceBefore: string,
   target: string,
@@ -3762,7 +3762,7 @@ function resolveEntrySplice(
   }
   // A whole-declaration empty fence deletes the declaration (#14): include the
   // leading `export`/`export default` modifier so the deletion does not leave a
-  // dangling keyword behind. The compact protocol documents this as the delete
+  // dangling keyword behind. The edit-dsl protocol documents this as the delete
   // form, and a duplicate is repaired by deleting the indexed copy this way.
   if (matcher === null && range === null && text.trim() === "" && modifier !== null) {
     start = entry.node.start - modifier.length;
@@ -3888,11 +3888,11 @@ function multiPayloadDiagnostics(
   ].join("\n");
 }
 
-// One failing clause inside a compact reply (#111): names the clause position
-// and its own staged diagnostics. Compact replies are atomic across the whole
+// One failing clause inside an edit-dsl reply (#111): names the clause position
+// and its own staged diagnostics. EditDsl replies are atomic across the whole
 // reply (§6), so the header says every clause is discarded and nothing is
 // written.
-function compactClauseDiagnostics(
+function editDslClauseDiagnostics(
   index: number,
   total: number,
   path: string,
@@ -3900,31 +3900,31 @@ function compactClauseDiagnostics(
   diagnostics: string,
 ): string {
   return [
-    "stage: compact",
-    `clause ${index} of ${total} (${addressJson(locator)} in ${JSON.stringify(path)}) failed; the whole compact reply is discarded and nothing is written`,
+    "stage: edit-dsl",
+    `clause ${index} of ${total} (${addressJson(locator)} in ${JSON.stringify(path)}) failed; the whole edit-dsl reply is discarded and nothing is written`,
     diagnostics,
   ].join("\n");
 }
 
-// Overlap rejection on the compact path (#111): both clauses are named, and the
-// whole reply is discarded because compact replies are atomic.
-function compactOverlapDiagnostics(
+// Overlap rejection on the edit-dsl path (#111): both clauses are named, and the
+// whole reply is discarded because edit-dsl replies are atomic.
+function editDslOverlapDiagnostics(
   total: number,
   path: string,
   earlier: ResolvedRegion,
   later: ResolvedRegion,
 ): string {
   return [
-    "stage: compact",
-    `clause ${earlier.index + 1} and clause ${later.index + 1} of ${total} both edit ${JSON.stringify(path)} but their regions overlap (offsets ${earlier.start}..${earlier.end} and ${later.start}..${later.end}); the whole compact reply is discarded and nothing is written`,
+    "stage: edit-dsl",
+    `clause ${earlier.index + 1} and clause ${later.index + 1} of ${total} both edit ${JSON.stringify(path)} but their regions overlap (offsets ${earlier.start}..${earlier.end} and ${later.start}..${later.end}); the whole edit-dsl reply is discarded and nothing is written`,
     `clause ${earlier.index + 1} (${addressJson(earlier.locator)}) and clause ${later.index + 1} (${addressJson(later.locator)}) must address non-overlapping regions, or be split across replies`,
   ].join("\n");
 }
 
-// Bridge a resolved compact editor clause into the shared `ResolvedRegion`
-// shape; the compact path already carries the cascade stage and matcher kind
+// Bridge a resolved edit-dsl editor clause into the shared `ResolvedRegion`
+// shape; the edit-dsl path already carries the cascade stage and matcher kind
 // (#110), so no reclassification is needed.
-function compactRegionToResolved(region: CompactRegion): ResolvedRegion {
+function editDslRegionToResolved(region: EditDslRegion): ResolvedRegion {
   return {
     index: region.index,
     path: region.path,
@@ -3956,7 +3956,7 @@ interface ResolvedRegion {
   stage: SelectionStage;
   /** The matcher form that resolved it (#110), or null. */
   matcherKind: MatcherKind | null;
-  /** True for a compact implicit create (a new whole declaration). */
+  /** True for an edit-dsl implicit create (a new whole declaration). */
   create: boolean;
 }
 
@@ -3992,10 +3992,10 @@ type RegionOverlapNote = (path: string, earlier: ResolvedRegion, later: Resolved
 /**
  * Apply already-resolved regions, one pass per file: overlap rejection, the
  * prev-broken/gate/duplicate/format/no-op guards, and the final formatted write.
- * Used by both the JSON batch path (#69/#78) and compact replies (#111). A
+ * Used by both the JSON batch path (#69/#78) and edit-dsl replies (#111). A
  * per-file failure is reported through `noteFailure` for every region in that
  * file (the whole file is discarded) and the file is skipped; other files still
- * produce writes here. The compact caller then treats any reported failure as
+ * produce writes here. The edit-dsl caller then treats any reported failure as
  * whole-reply atomic and discards every returned write.
  */
 async function applyResolvedRegions(input: {
@@ -4578,10 +4578,10 @@ function currentSourceForPrompt(
   return currentSource;
 }
 
-// File-absolute start line for a compact retry's `# details` block. Create
+// File-absolute start line for an edit-dsl retry's `# details` block. Create
 // mode and whole-file repair views start at line 1; a pinned declaration slice
 // starts at its declaration's line.
-function compactPromptStartLine(
+function editDslPromptStartLine(
   mode: "modify" | "create",
   targetPath: string,
   locator: Locator,
@@ -5123,12 +5123,12 @@ export async function runLoop(options: LoopOptions): Promise<LoopResult> {
   // so it overrides the flag to keep the batch/pick path byte-identical.
   const protocolFormat: ProtocolFormat = targetsMode
     ? "json"
-    : (options.protocolFormat ?? "compact");
-  // #119: compact is only required outside explicit-targets mode.
-  const compactRequired = protocolFormat === "compact" && !targetsMode;
-  // B1: the compact symbol index is a select-line list, not YAML. Build it only
-  // for the compact path so the explicit-json prompts stay byte-identical.
-  const compactIndexText = compactRequired ? buildCompactSymbolIndex(index) : "";
+    : (options.protocolFormat ?? "edit-dsl");
+  // #119: edit-dsl is only required outside explicit-targets mode.
+  const editDslRequired = protocolFormat === "edit-dsl" && !targetsMode;
+  // B1: the edit-dsl symbol index is a select-line list, not YAML. Build it only
+  // for the edit-dsl path so the explicit-json prompts stay byte-identical.
+  const editDslIndexText = editDslRequired ? buildEditDslSymbolIndex(index) : "";
   // Pending targets (not yet applied), applied targets, and targets that never
   // resolved to a unique modify-able declaration.
   const targetQueue: Locator[] = [...targets];
@@ -5139,8 +5139,8 @@ export async function runLoop(options: LoopOptions): Promise<LoopResult> {
   };
   const issueMessage: ChatMessage = {
     role: "user",
-    content: compactRequired
-      ? buildCompactUserPrompt(options.issue, compactIndexText, specFiles)
+    content: editDslRequired
+      ? buildEditDslUserPrompt(options.issue, editDslIndexText, specFiles)
       : buildUserPrompt(options.issue, contextYaml, specFiles),
   };
   // Lean issue message (#49): same issue text and project context without the
@@ -5149,8 +5149,8 @@ export async function runLoop(options: LoopOptions): Promise<LoopResult> {
   // diagnostics and the current source; all other rounds keep the full message.
   const leanIssueMessage: ChatMessage = {
     role: "user",
-    content: compactRequired
-      ? buildCompactUserPrompt(options.issue, compactIndexText, [])
+    content: editDslRequired
+      ? buildEditDslUserPrompt(options.issue, editDslIndexText, [])
       : buildUserPrompt(options.issue, contextYaml, []),
   };
   // Round 1 (and selection-continuation rounds, which carry no verification
@@ -5174,13 +5174,13 @@ export async function runLoop(options: LoopOptions): Promise<LoopResult> {
   // for the run; later exchanges revise content only and must echo the address.
   let pinned: { mode: SelectionMode; locator: Locator } | null = null;
   let pinnedAddressJson = "";
-  // Compact select-first: the model's own `select … end` reply is the
+  // EditDsl select-first: the model's own `select … end` reply is the
   // assistant turn shown in the content exchange (JSON keeps the canonical pin).
   let pinnedAssistantContent: string | null = null;
-  // A first-turn compact editor already carries its `replace`; its reply is
+  // A first-turn edit-dsl editor already carries its `replace`; its reply is
   // applied in the content branch without a second provider call.
   let prefetchedReply: ChatResponse | null = null;
-  // #8: a compact confirmation editor that arrives on the round's last normal
+  // #8: an edit-dsl confirmation editor that arrives on the round's last normal
   // exchange has no in-round slot. Its already-counted reply is carried into a
   // fresh round and applied as that round's first exchange (no second provider
   // call), paired with the `# modified text` prompt it answered.
@@ -5194,7 +5194,7 @@ export async function runLoop(options: LoopOptions): Promise<LoopResult> {
   let repair = false;
   // Verification diagnostics that opened the current Run iteration.
   let pendingDiagnostics: string | null = null;
-  // #111: a mixed compact reply's viewer occurrences, carried into the next
+  // #111: a mixed edit-dsl reply's viewer occurrences, carried into the next
   // prompt's diagnostics when the editors applied but verification later fails.
   let carriedViewerFeedback: string | null = null;
   // Stage of the verification failure that opened the current Run iteration
@@ -5519,12 +5519,12 @@ export async function runLoop(options: LoopOptions): Promise<LoopResult> {
       const failurePattern = detectFailurePattern(records);
       const failureHistory = renderFailureHistoryNote(failurePattern);
       if (pendingContinuation.pick) {
-        continuationPrompt = compactRequired
-          ? buildCompactSelectionContinuationPrompt({
+        continuationPrompt = editDslRequired
+          ? buildEditDslSelectionContinuationPrompt({
               round: pendingContinuation.round,
               maxRounds: MAX_RUN_ITERATIONS,
               issue: options.issue,
-              indexText: compactIndexText,
+              indexText: editDslIndexText,
               diagnostics: pendingContinuation.diagnostics,
               digest: digestText(),
               failureHistory,
@@ -5583,11 +5583,11 @@ export async function runLoop(options: LoopOptions): Promise<LoopResult> {
           stalled: stalledInfo,
           multiPayload: multiPayload,
           protocolFormat,
-          compactContext: compactRequired
+          editDslContext: editDslRequired
             ? {
                 issue: options.issue,
-                indexText: compactIndexText,
-                startLine: compactPromptStartLine(
+                indexText: editDslIndexText,
+                startLine: editDslPromptStartLine(
                   continuedTarget.mode === "create" ? "create" : "modify",
                   target,
                   continuedTarget.locator,
@@ -5671,21 +5671,21 @@ export async function runLoop(options: LoopOptions): Promise<LoopResult> {
         let resolution: SelectionResolution | null = null;
         let diagnostic: string | null = null;
         let selectionStage: "protocol" | "address" = "protocol";
-        // Compact select-first (#B1): the pick reply is one `select … end`
+        // EditDsl select-first (#B1): the pick reply is one `select … end`
         // clause. It pins modify when the address resolves, create when the name
         // or space is missing, and an editor clause prefetches its own reply for
         // the content exchange.
-        let compactPick: {
-          selection: CompactSelection;
+        let editDslPick: {
+          selection: EditDslSelection;
           mode: "modify" | "create";
           entry: IndexEntry | null;
           source: string;
         } | null = null;
-        if (compactRequired) {
+        if (editDslRequired) {
           try {
             const parsed = parseSelection(stripCodeFences(response.content ?? ""));
             if (parsed.length !== 1) {
-              diagnostic = `stage: protocol\nthe first compact reply must be exactly one \`select … end\` clause; found ${parsed.length}`;
+              diagnostic = `stage: protocol\nthe first edit-dsl reply must be exactly one \`select … end\` clause; found ${parsed.length}`;
             } else {
               const selected = parsed[0];
               if (selected !== undefined) {
@@ -5698,14 +5698,14 @@ export async function runLoop(options: LoopOptions): Promise<LoopResult> {
                   selected.space,
                 );
                 if (resolved.ok) {
-                  compactPick = {
+                  editDslPick = {
                     selection: selected,
                     mode: "modify",
                     entry: resolved.entry,
                     source: pickSource,
                   };
                 } else if (resolved.undeclared || resolved.spaceMiss) {
-                  compactPick = {
+                  editDslPick = {
                     selection: selected,
                     mode: "create",
                     entry: null,
@@ -5721,7 +5721,7 @@ export async function runLoop(options: LoopOptions): Promise<LoopResult> {
             if (!(error instanceof SelectionSyntaxError)) {
               throw error;
             }
-            diagnostic = COMPACT_FORCE_DIAGNOSTICS;
+            diagnostic = EDIT_DSL_FORCE_DIAGNOSTICS;
           }
         } else {
           try {
@@ -5772,21 +5772,21 @@ export async function runLoop(options: LoopOptions): Promise<LoopResult> {
           messages.push({ role: "assistant", content: response.content ?? "" });
           messages.push({
             role: "user",
-            content: compactRequired
-              ? buildCompactSelectionRetryPrompt(options.issue, compactIndexText, diagnostic)
+            content: editDslRequired
+              ? buildEditDslSelectionRetryPrompt(options.issue, editDslIndexText, diagnostic)
               : buildSelectionRetryPrompt(diagnostic),
           });
           continue;
         }
-        if (compactRequired) {
-          if (compactPick === null) {
-            // Unreachable: a compact success sets `compactPick`.
+        if (editDslRequired) {
+          if (editDslPick === null) {
+            // Unreachable: an edit-dsl success sets `editDslPick`.
             return await terminate(
               "edit-exhausted",
               exhaustedDiagnostics(iterationOpenedBy, diagnostic),
             );
           }
-          const { selection, mode, entry, source: pickSource } = compactPick;
+          const { selection, mode, entry, source: pickSource } = editDslPick;
           pinned = { mode, locator: selection.locator };
           pinnedAddressJson = pinJson(pinned);
           pinnedAssistantContent = (response.content ?? "").trim();
@@ -5811,12 +5811,12 @@ export async function runLoop(options: LoopOptions): Promise<LoopResult> {
             const declarationStart =
               modifier === null ? entry.node.start : entry.node.start - modifier.length;
             const startLine = pickSource.slice(0, declarationStart).split("\n").length;
-            // A match viewer's spans are already resolved by the same compact
+            // A match viewer's spans are already resolved by the same edit-dsl
             // cascade the edit-phase feedback uses; mark their file-absolute
             // lines in `# details` (a bare viewer marks nothing).
             let markedLines: ReadonlySet<number> | null = null;
             if (selection.matcher !== null) {
-              const viewerResolution = resolveCompactReply([selection], {
+              const viewerResolution = resolveEditDslReply([selection], {
                 sourceFor: () => pickSource,
                 resolveEntry: (source, path, locator, space) =>
                   resolveCurrentEntry(source, path, locator, space),
@@ -5829,9 +5829,9 @@ export async function runLoop(options: LoopOptions): Promise<LoopResult> {
                 }
               }
             }
-            initialContentPrompt = buildCompactDetailsPrompt(
+            initialContentPrompt = buildEditDslDetailsPrompt(
               options.issue,
-              compactIndexText,
+              editDslIndexText,
               pickSource.slice(declarationStart, entry.node.end),
               specFiles,
               startLine,
@@ -5839,9 +5839,9 @@ export async function runLoop(options: LoopOptions): Promise<LoopResult> {
               duplicateDeclarationNote(selection.locator.path, pickSource, entry),
             );
           } else {
-            initialContentPrompt = buildCompactCreatePrompt(
+            initialContentPrompt = buildEditDslCreatePrompt(
               options.issue,
-              compactIndexText,
+              editDslIndexText,
               selection.locator.path,
               specFiles,
             );
@@ -6029,11 +6029,11 @@ export async function runLoop(options: LoopOptions): Promise<LoopResult> {
           multiPayload: multiPayload,
           protocolFormat,
           selfCheck: selfCheck ?? undefined,
-          compactContext: compactRequired
+          editDslContext: editDslRequired
             ? {
                 issue: options.issue,
-                indexText: compactIndexText,
-                startLine: compactPromptStartLine(
+                indexText: editDslIndexText,
+                startLine: editDslPromptStartLine(
                   pinnedTarget.mode === "create" ? "create" : "modify",
                   target,
                   pinnedTarget.locator,
@@ -6051,7 +6051,7 @@ export async function runLoop(options: LoopOptions): Promise<LoopResult> {
         {
           role: "assistant",
           content:
-            protocolFormat === "compact"
+            protocolFormat === "edit-dsl"
               ? (pinnedAssistantContent ?? pinnedAddressJson)
               : pinnedAddressJson,
         },
@@ -6059,7 +6059,7 @@ export async function runLoop(options: LoopOptions): Promise<LoopResult> {
       ];
       let response: ChatResponse;
       if (prefetchedReply !== null) {
-        // A first-turn compact editor: its select reply already carries the
+        // A first-turn edit-dsl editor: its select reply already carries the
         // replacement, so apply it here without a second provider call (its
         // tokens were counted on the pick exchange).
         response = prefetchedReply;
@@ -6285,34 +6285,34 @@ export async function runLoop(options: LoopOptions): Promise<LoopResult> {
       // current source does not declare, so the retry lead keeps the add path
       // open instead of demanding a re-pin that cannot resolve.
       let addressUndeclaredName: string | null = null;
-      // #119: the compact reply state. Under the compact protocol it is parsed
+      // #119: the edit-dsl reply state. Under the edit-dsl protocol it is parsed
       // first and is the required form.
-      let compactReply = false;
-      let compactSelections: CompactSelection[] = [];
-      let compactResolution: CompactResolution | null = null;
+      let editDslReply = false;
+      let editDslSelections: EditDslSelection[] = [];
+      let editDslResolution: EditDslResolution | null = null;
       // Parse `select … end` clauses and resolve them against each file's current
       // source. Returns null when the reply carries no clause; a
       // `SelectionSyntaxError` propagates to the caller.
-      const parseCompact = (): {
-        selections: CompactSelection[];
-        resolution: CompactResolution;
+      const parseEditDsl = (): {
+        selections: EditDslSelection[];
+        resolution: EditDslResolution;
       } | null => {
         const selections = parseSelection(stripCodeFences(content));
         if (selections.length === 0) {
           return null;
         }
-        const compactSources = new Map<string, string>();
-        const resolution = resolveCompactReply(selections, {
+        const editDslSources = new Map<string, string>();
+        const resolution = resolveEditDslReply(selections, {
           sourceFor: (path) => {
             if (path === target) {
               return sourceBefore;
             }
-            const cached = compactSources.get(path);
+            const cached = editDslSources.get(path);
             if (cached !== undefined) {
               return cached;
             }
             const source = readFileIfExists(join(cwd, path)) ?? "";
-            compactSources.set(path, source);
+            editDslSources.set(path, source);
             return source;
           },
           resolveEntry: (source, path, locator, space) =>
@@ -6320,23 +6320,23 @@ export async function runLoop(options: LoopOptions): Promise<LoopResult> {
         });
         return { selections, resolution };
       };
-      // #119: under the compact protocol the compact syntax is the required
+      // #119: under the edit-dsl protocol the edit-dsl syntax is the required
       // reply form, so it is parsed first and a JSON edit payload (which never
-      // matches the compact grammar) is rejected as a protocol failure.
+      // matches the edit-dsl grammar) is rejected as a protocol failure.
       // Explicit-targets mode (#81) stays JSON, and this path is not combined
       // with it.
-      const compactRequiredReply = protocolFormat === "compact" && !targetsMode;
+      const editDslRequiredReply = protocolFormat === "edit-dsl" && !targetsMode;
       if (failure !== null) {
         // Refused self-check request: no payload to parse.
-      } else if (compactRequiredReply) {
+      } else if (editDslRequiredReply) {
         try {
-          const parsed = parseCompact();
+          const parsed = parseEditDsl();
           if (parsed === null) {
-            failure = COMPACT_FORCE_DIAGNOSTICS;
+            failure = EDIT_DSL_FORCE_DIAGNOSTICS;
           } else {
-            compactReply = true;
-            compactSelections = parsed.selections;
-            compactResolution = parsed.resolution;
+            editDslReply = true;
+            editDslSelections = parsed.selections;
+            editDslResolution = parsed.resolution;
             failure = null;
             failureCause = null;
             failureStage = "protocol";
@@ -6345,7 +6345,7 @@ export async function runLoop(options: LoopOptions): Promise<LoopResult> {
           if (!(error instanceof SelectionSyntaxError)) {
             throw error;
           }
-          failure = COMPACT_FORCE_DIAGNOSTICS;
+          failure = EDIT_DSL_FORCE_DIAGNOSTICS;
         }
       } else if (multiPayload) {
         const parsed = parseEditResponseList(content);
@@ -6718,23 +6718,23 @@ export async function runLoop(options: LoopOptions): Promise<LoopResult> {
           }
         }
       }
-      // #111 compact application: resolve the parsed clauses into regions,
+      // #111 edit-dsl application: resolve the parsed clauses into regions,
       // viewers, and typed failures, then apply the resolved editor clauses
       // atomically across the whole reply (§6): any resolution failure or
       // apply failure discards every region, including creates and files that
       // passed their own guards. Viewers surface their occurrences as the next
       // prompt's feedback and write nothing.
-      let compactApplied = false;
-      let compactAppliedRegions: ResolvedRegion[] = [];
-      let compactCreates = 0;
-      let compactViewerFeedback: string | null = null;
-      if (failure === null && compactReply && compactResolution !== null) {
-        const totalClauses = compactSelections.length;
+      let editDslApplied = false;
+      let editDslAppliedRegions: ResolvedRegion[] = [];
+      let editDslCreates = 0;
+      let editDslViewerFeedback: string | null = null;
+      if (failure === null && editDslReply && editDslResolution !== null) {
+        const totalClauses = editDslSelections.length;
         const blocks: string[] = [];
-        let firstCompactStage: EditFailureStage | null = null;
-        let firstCompactCause: MatcherCause | undefined;
-        let firstCompactUndeclared: string | null = null;
-        const noteCompactFailure = (
+        let firstEditDslStage: EditFailureStage | null = null;
+        let firstEditDslCause: MatcherCause | undefined;
+        let firstEditDslUndeclared: string | null = null;
+        const noteEditDslFailure = (
           failureIndex: number,
           failurePath: string,
           locator: Locator,
@@ -6742,13 +6742,13 @@ export async function runLoop(options: LoopOptions): Promise<LoopResult> {
           diagnostics: string,
           origin: { matcherCause?: MatcherCause; undeclaredName?: string | null } = {},
         ): void => {
-          if (firstCompactStage === null) {
-            firstCompactStage = stage;
-            firstCompactCause = origin.matcherCause;
-            firstCompactUndeclared = origin.undeclaredName ?? null;
+          if (firstEditDslStage === null) {
+            firstEditDslStage = stage;
+            firstEditDslCause = origin.matcherCause;
+            firstEditDslUndeclared = origin.undeclaredName ?? null;
           }
           blocks.push(
-            compactClauseDiagnostics(
+            editDslClauseDiagnostics(
               failureIndex + 1,
               totalClauses,
               failurePath,
@@ -6757,8 +6757,8 @@ export async function runLoop(options: LoopOptions): Promise<LoopResult> {
             ),
           );
         };
-        for (const clauseFailure of compactResolution.failures) {
-          noteCompactFailure(
+        for (const clauseFailure of editDslResolution.failures) {
+          noteEditDslFailure(
             clauseFailure.index,
             clauseFailure.path,
             clauseFailure.locator,
@@ -6775,16 +6775,16 @@ export async function runLoop(options: LoopOptions): Promise<LoopResult> {
             },
           );
         }
-        const regions = compactResolution.regions.map(compactRegionToResolved);
+        const regions = editDslResolution.regions.map(editDslRegionToResolved);
         // #111: count the create clauses the reply resolved, applied or not, so
         // the stage/metrics instrumentation records create-form adoption.
-        compactCreates = compactResolution.regions.filter((region) => region.create).length;
+        editDslCreates = editDslResolution.regions.filter((region) => region.create).length;
         // Whole-reply atomicity (§6): resolution failures discard every
         // resolved region, and any apply failure discards every returned write
         // (including files that passed). Nothing is written until both sets are
         // clean.
         let writes: { path: string; source: string }[] = [];
-        if (compactResolution.failures.length === 0) {
+        if (editDslResolution.failures.length === 0) {
           writes = await applyResolvedRegions({
             regions,
             fileSourceOf: (path) =>
@@ -6792,7 +6792,7 @@ export async function runLoop(options: LoopOptions): Promise<LoopResult> {
             target,
             prevCheck,
             noteFailure: (note) => {
-              noteCompactFailure(
+              noteEditDslFailure(
                 note.region.index,
                 note.path,
                 note.region.locator,
@@ -6803,39 +6803,39 @@ export async function runLoop(options: LoopOptions): Promise<LoopResult> {
             },
             noteOverlap: (path, earlier, later) => {
               failureCause = "multi-duplicate";
-              if (firstCompactStage === null) {
-                firstCompactStage = "protocol";
+              if (firstEditDslStage === null) {
+                firstEditDslStage = "protocol";
               }
-              blocks.push(compactOverlapDiagnostics(totalClauses, path, earlier, later));
+              blocks.push(editDslOverlapDiagnostics(totalClauses, path, earlier, later));
             },
           });
         }
         if (blocks.length > 0) {
-          // The whole compact reply is discarded: no file write, no create.
+          // The whole edit-dsl reply is discarded: no file write, no create.
           failure = blocks.join("\n\n");
-          if (firstCompactStage !== null) {
-            failureStage = firstCompactStage;
+          if (firstEditDslStage !== null) {
+            failureStage = firstEditDslStage;
           }
-          matcherCause = firstCompactCause;
-          addressUndeclaredName = firstCompactUndeclared;
+          matcherCause = firstEditDslCause;
+          addressUndeclaredName = firstEditDslUndeclared;
         } else if (regions.length > 0) {
-          compactApplied = true;
-          compactAppliedRegions = regions;
+          editDslApplied = true;
+          editDslAppliedRegions = regions;
           batchWrites.push(...writes);
           newSource = writes[0]?.source ?? null;
         }
-        if (compactResolution.viewers.length > 0) {
-          compactViewerFeedback = renderViewerFeedback(compactResolution.viewers);
+        if (editDslResolution.viewers.length > 0) {
+          editDslViewerFeedback = renderViewerFeedback(editDslResolution.viewers);
         }
       }
       // A viewer locate turn (#111): a reply that carried only viewers writes
       // nothing and is not an edit failure; its occurrences ride the next
       // prompt. A mixed reply carries viewer results alongside the diagnostics;
       // its editors apply only when the whole reply is clean.
-      if (compactViewerFeedback !== null) {
+      if (editDslViewerFeedback !== null) {
         if (failure !== null) {
-          failure = `${failure}\n\n${compactViewerFeedback}`;
-        } else if (!compactApplied) {
+          failure = `${failure}\n\n${editDslViewerFeedback}`;
+        } else if (!editDslApplied) {
           records.push(
             recordRow({
               row: records.length + 1,
@@ -6844,14 +6844,14 @@ export async function runLoop(options: LoopOptions): Promise<LoopResult> {
               exchange,
               locator: pinnedTarget.locator,
               replacement: null,
-              diagnostics: compactViewerFeedback,
+              diagnostics: editDslViewerFeedback,
               outcome: "viewer",
               finishReason: response.finishReason,
-              payloads: compactSelections.length,
+              payloads: editDslSelections.length,
               toolCalls: response.toolCalls.length,
             }),
           );
-          lastDiagnostics = compactViewerFeedback;
+          lastDiagnostics = editDslViewerFeedback;
           lastFailure = "edit";
           if (exchange === MAX_EDIT_EXCHANGES) {
             if (iteration >= MAX_RUN_ITERATIONS) {
@@ -6866,7 +6866,7 @@ export async function runLoop(options: LoopOptions): Promise<LoopResult> {
           }
           continue;
         } else {
-          carriedViewerFeedback = compactViewerFeedback;
+          carriedViewerFeedback = editDslViewerFeedback;
         }
       }
       // Syntax gate (highest-priority invariant): prev parses ⇒ after must parse.
@@ -6904,7 +6904,7 @@ export async function runLoop(options: LoopOptions): Promise<LoopResult> {
       // span's copied leading indentation) formats back to the current source.
       // Rejected with the byte-exact no-op's stage and diagnostics: no write,
       // no verification, same cause and retry policy.
-      if (batch === null && !compactApplied && failure === null && newSource !== null) {
+      if (batch === null && !editDslApplied && failure === null && newSource !== null) {
         if (await sameAfterFormatting(target, sourceBefore, newSource)) {
           failure = NOOP_DIAGNOSTICS;
           failureStage = "no-op";
@@ -6926,8 +6926,8 @@ export async function runLoop(options: LoopOptions): Promise<LoopResult> {
             outcome: failureStage,
             finishReason: response.finishReason,
             cause,
-            payloads: compactReply
-              ? compactSelections.length
+            payloads: editDslReply
+              ? editDslSelections.length
               : batch !== null
                 ? batch.length
                 : payload !== null
@@ -6938,21 +6938,21 @@ export async function runLoop(options: LoopOptions): Promise<LoopResult> {
             // #101: a batch rejected at parse time keeps `batch` null but still
             // carries the entries that parsed; classify those so every entry is
             // counted (the `payloads` field already counts `batchCarried`).
-            // #111: a compact reply records the cascade's own stages/kinds for
+            // #111: an edit-dsl reply records the cascade's own stages/kinds for
             // the clauses that actually applied (#110), not the resolved set.
-            selectors: compactReply
-              ? compactAppliedRegions.map((region) => selectorFromStage(region.stage))
+            selectors: editDslReply
+              ? editDslAppliedRegions.map((region) => selectorFromStage(region.stage))
               : (selectorsOf(payload, batch) ??
                 (batchCarried.length > 0 ? batchCarried.map(selectorOf) : undefined)),
-            stages: compactReply
-              ? compactAppliedRegions.map((region) => region.stage)
+            stages: editDslReply
+              ? editDslAppliedRegions.map((region) => region.stage)
               : (stagesOf(payload, batch) ??
                 (batchCarried.length > 0 ? batchCarried.map(stageOf) : undefined)),
-            matcherKinds: compactReply
-              ? compactAppliedRegions.map((region) => region.matcherKind)
+            matcherKinds: editDslReply
+              ? editDslAppliedRegions.map((region) => region.matcherKind)
               : (matcherKindsOf(payload, batch) ??
                 (batchCarried.length > 0 ? batchCarried.map(matcherKindOf) : undefined)),
-            creates: compactReply ? compactCreates : undefined,
+            creates: editDslReply ? editDslCreates : undefined,
           }),
         );
         // Resubmission guard (#48): remember every modify-mode payload with its
@@ -6994,7 +6994,7 @@ export async function runLoop(options: LoopOptions): Promise<LoopResult> {
         }
         continue;
       }
-      if (batch !== null || compactApplied) {
+      if (batch !== null || editDslApplied) {
         // Atomic apply (#69/#111): every payload/clause passed its own guard
         // above, so the prepared sources are written together; a single failure
         // wrote nothing.
@@ -7038,8 +7038,8 @@ export async function runLoop(options: LoopOptions): Promise<LoopResult> {
           diagnostics: null,
           outcome: "applied",
           finishReason: response.finishReason,
-          payloads: compactReply
-            ? compactSelections.length
+          payloads: editDslReply
+            ? editDslSelections.length
             : batch !== null
               ? batch.length
               : payload !== null
@@ -7048,16 +7048,16 @@ export async function runLoop(options: LoopOptions): Promise<LoopResult> {
           toolCalls: response.toolCalls.length,
           replacementChars: batchReplacementChars ?? undefined,
           appliedLocators: targetsMode ? coveredTargets : undefined,
-          selectors: compactReply
-            ? compactAppliedRegions.map((region) => selectorFromStage(region.stage))
+          selectors: editDslReply
+            ? editDslAppliedRegions.map((region) => selectorFromStage(region.stage))
             : selectorsOf(payload, batch),
-          stages: compactReply
-            ? compactAppliedRegions.map((region) => region.stage)
+          stages: editDslReply
+            ? editDslAppliedRegions.map((region) => region.stage)
             : stagesOf(payload, batch),
-          matcherKinds: compactReply
-            ? compactAppliedRegions.map((region) => region.matcherKind)
+          matcherKinds: editDslReply
+            ? editDslAppliedRegions.map((region) => region.matcherKind)
             : matcherKindsOf(payload, batch),
-          creates: compactReply ? compactCreates : undefined,
+          creates: editDslReply ? editDslCreates : undefined,
         }),
       );
       // Same-file sequencing (#81): a path-independent batch covers at most one
@@ -7095,11 +7095,11 @@ export async function runLoop(options: LoopOptions): Promise<LoopResult> {
           }
           return await terminate("edit-exhausted", null);
         }
-        // Compact confirmation (#B3): a verified edit gets one `# modified
+        // EditDsl confirmation (#B3): a verified edit gets one `# modified
         // text` turn. An editor clause continues the exchange loop; anything
         // else (including prose/malformed/viewer) confirms success.
-        if (protocolFormat === "compact" && !targetsMode) {
-          const modifiedLocator = compactAppliedRegions[0]?.locator ?? pinnedTarget.locator;
+        if (protocolFormat === "edit-dsl" && !targetsMode) {
+          const modifiedLocator = editDslAppliedRegions[0]?.locator ?? pinnedTarget.locator;
           const modifiedPath = modifiedLocator.path;
           const modifiedSource = readFileIfExists(join(cwd, modifiedPath));
           let modifiedText = "";
@@ -7123,9 +7123,9 @@ export async function runLoop(options: LoopOptions): Promise<LoopResult> {
               modifiedText = truncateSource(modifiedSource);
             }
           }
-          const modifiedPrompt = buildCompactModifiedPrompt(
+          const modifiedPrompt = buildEditDslModifiedPrompt(
             options.issue,
-            compactIndexText,
+            editDslIndexText,
             modifiedText,
             modifiedStartLine,
           );
@@ -7167,7 +7167,7 @@ export async function runLoop(options: LoopOptions): Promise<LoopResult> {
               toolCalls: confirmation.toolCalls.length,
             }),
           );
-          let confirmationSelections: CompactSelection[] = [];
+          let confirmationSelections: EditDslSelection[] = [];
           try {
             confirmationSelections = parseSelection(stripCodeFences(confirmation.content ?? ""));
           } catch (error) {
@@ -7231,7 +7231,7 @@ export async function runLoop(options: LoopOptions): Promise<LoopResult> {
           signature,
         }),
       );
-      // #111: a mixed compact reply's viewer occurrences ride into the next
+      // #111: a mixed edit-dsl reply's viewer occurrences ride into the next
       // round's prompt alongside the verification failure.
       pendingDiagnostics =
         carriedViewerFeedback !== null ? `${carriedViewerFeedback}\n\n${diagnostics}` : diagnostics;

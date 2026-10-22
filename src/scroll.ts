@@ -35,16 +35,16 @@ interface SignatureOptions {
   optional?: boolean;
 }
 
-function compact(text: string): string {
+function condense(text: string): string {
   return text.replace(/\s+/g, " ").trim();
 }
 
 function textOf(source: string, node: Node): string {
-  return compact(source.slice(node.start, node.end));
+  return condense(source.slice(node.start, node.end));
 }
 
 function firstLine(text: string): string {
-  return compact(text.split("\n")[0] ?? "");
+  return condense(text.split("\n")[0] ?? "");
 }
 
 function resolveEntry(source: string, locator: Locator, fileName: string): IndexEntry {
@@ -65,7 +65,7 @@ function renderTypeParameters(parameters: TypeParameter[] | null, source: string
 
 function renderParameter(parameter: Parameter, source: string): string {
   const end = parameter.initializer === null ? parameter.end : parameter.initializer.start;
-  return compact(source.slice(parameter.start, end)).replace(/\s*=\s*$/, "");
+  return condense(source.slice(parameter.start, end)).replace(/\s*=\s*$/, "");
 }
 
 function renderParameters(parameters: Parameter[], source: string): string {

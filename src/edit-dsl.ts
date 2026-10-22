@@ -1,12 +1,12 @@
 /**
- * The compact-reply resolver (#111) for the selection syntax
+ * The edit-dsl-reply resolver (#111) for the selection syntax
  * (`docs/edit-protocol.md`). It turns a parsed `Selection[]` into the edit
  * regions the loop applies, the candidate occurrences a **viewer** returns, and
  * the typed failures each clause produced — keeping the cascade's stage
- * vocabulary (#110) so both the JSON and compact paths record the same metric.
+ * vocabulary (#110) so both the JSON and edit-dsl paths record the same metric.
  *
- * This module is reached under the compact edit protocol
- * (`--protocol-format=compact`); the loop parses `select … end` clauses first
+ * This module is reached under the edit-dsl edit protocol
+ * (`--protocol-format=edit-dsl`); the loop parses `select … end` clauses first
  * and a JSON edit payload is rejected. The address stage is delegated to the
  * loop's `resolveCurrentEntry` so the echo/kind rules stay identical on both
  * paths.
@@ -21,13 +21,13 @@ import type { IndexEntry, Locator, SymbolSpace } from "./utility";
 import { duplicateDeclarations } from "./utility";
 
 /** #110 `MatcherKind`, mirrored to avoid a value-level import cycle with loop. */
-export type CompactMatcherKind = "snippet" | "regex";
+export type EditDslMatcherKind = "snippet" | "regex";
 
-/** The stage a compact clause failed at, mapped to the loop's failure stages. */
-export type CompactFailureStage = "address" | "matcher" | "range" | "no-op" | "duplicate";
+/** The stage an edit-dsl clause failed at, mapped to the loop's failure stages. */
+export type EditDslFailureStage = "address" | "matcher" | "range" | "no-op" | "duplicate";
 
 /** Callbacks the loop supplies: address resolution (echo/kind rules) and file reads. */
-export interface CompactDeps {
+export interface EditDslDeps {
   /** The current source of `path` (the pinned file's in-memory source, else disk). */
   sourceFor: (path: string) => string;
   /** Strict-AND address resolution, the loop's `resolveCurrentEntry`. */
@@ -41,8 +41,8 @@ export interface CompactDeps {
     | { ok: false; diagnostics: string; undeclared: boolean; spaceMiss?: boolean };
 }
 
-/** One compact **editor** clause resolved to its half-open splice. */
-export interface CompactRegion {
+/** One edit-dsl **editor** clause resolved to its half-open splice. */
+export interface EditDslRegion {
   /** Clause position in the reply (0-based), for diagnostics. */
   index: number;
   path: string;
@@ -55,11 +55,11 @@ export interface CompactRegion {
   /** The finest cascade stage that resolved the target (#110). */
   stage: SelectionStage;
   /** The matcher form that resolved it, or `null` for a whole-declaration edit. */
-  matcherKind: CompactMatcherKind | null;
+  matcherKind: EditDslMatcherKind | null;
   /**
    * True when the clause is an implicit create: a whole-declaration editor
    * whose symbol is absent, so its fence body is appended as a new declaration
-   * (`docs/edit-protocol.md` §9). Only the compact path ever sets this.
+   * (`docs/edit-protocol.md` §9). Only the edit-dsl path ever sets this.
    */
   create: boolean;
 }
@@ -71,7 +71,7 @@ export interface OccurrenceLine {
 }
 
 /** One candidate occurrence a viewer returned (`docs/edit-protocol.md` §4). */
-export interface CompactOccurrence {
+export interface EditDslOccurrence {
   start: number;
   end: number;
   /** File-absolute 1-based position. */
@@ -82,7 +82,7 @@ export interface CompactOccurrence {
 }
 
 /** One **viewer** clause and the occurrences it resolved to. */
-export interface CompactViewer {
+export interface EditDslViewer {
   index: number;
   path: string;
   locator: Locator;
@@ -100,31 +100,31 @@ export interface CompactViewer {
   duplicates: OccurrenceLine[][];
   /** The #14 duplicate note naming every location and the delete repair, or null. */
   duplicateNote: string | null;
-  occurrences: CompactOccurrence[];
+  occurrences: EditDslOccurrence[];
 }
 
 /** One clause that could not resolve, carrying its typed cause. */
-export interface CompactFailure {
+export interface EditDslFailure {
   index: number;
   path: string;
   locator: Locator;
-  stage: CompactFailureStage;
+  stage: EditDslFailureStage;
   /** The cascade cause (`null` for an address failure owned by `resolveCurrentEntry`). */
   cause: CascadeCause | null;
   diagnostics: string;
   undeclaredName: string | null;
 }
 
-export interface CompactResolution {
-  regions: CompactRegion[];
-  viewers: CompactViewer[];
-  failures: CompactFailure[];
+export interface EditDslResolution {
+  regions: EditDslRegion[];
+  viewers: EditDslViewer[];
+  failures: EditDslFailure[];
 }
 
 // One cascade cause maps to the loop's rejection stage. Everything matcher-like
 // (including `regex-invalid`, #109) is the `matcher` stage; the loop's
 // classifier reads the cause to pick the exact `RejectionCause`.
-function stageForCause(cause: CascadeCause): CompactFailureStage {
+function stageForCause(cause: CascadeCause): EditDslFailureStage {
   switch (cause) {
     case "range-invalid":
       return "range";
@@ -384,7 +384,7 @@ function createConflictDiagnostics(
 ): string {
   return [
     "stage: duplicate",
-    `clause ${earlierIndex + 1} and clause ${index + 1} both create the same top-level ${declaration.kind} ${JSON.stringify(declaration.name)} in ${JSON.stringify(path)}; the whole compact reply is discarded and nothing is written`,
+    `clause ${earlierIndex + 1} and clause ${index + 1} both create the same top-level ${declaration.kind} ${JSON.stringify(declaration.name)} in ${JSON.stringify(path)}; the whole edit-dsl reply is discarded and nothing is written`,
     `declare ${JSON.stringify(declaration.name)} once per reply, or replace the existing declaration instead of adding another copy`,
   ].join("\n");
 }
@@ -407,19 +407,19 @@ function pickOverlapDiagnostics(selection: Selection): string {
 }
 
 /**
- * Resolve a parsed compact reply (`docs/edit-protocol.md` §3) into editor
+ * Resolve a parsed edit-dsl reply (`docs/edit-protocol.md` §3) into editor
  * regions, viewer occurrences, and typed failures. Each clause is resolved
  * independently against its own file's current source; the loop applies the
  * whole reply atomically (§6): any failing clause discards every resolved
  * region, and no file is written.
  */
-export function resolveCompactReply(
+export function resolveEditDslReply(
   selections: readonly Selection[],
-  deps: CompactDeps,
-): CompactResolution {
-  const regions: CompactRegion[] = [];
-  const viewers: CompactViewer[] = [];
-  const failures: CompactFailure[] = [];
+  deps: EditDslDeps,
+): EditDslResolution {
+  const regions: EditDslRegion[] = [];
+  const viewers: EditDslViewer[] = [];
+  const failures: EditDslFailure[] = [];
   // #13: the creates a reply has already queued, keyed by file and the
   // declaration the fence body actually adds. Every create appends at the same
   // pre-reply offset, so the shared overlap pass cannot see two creates of the
@@ -435,7 +435,7 @@ export function resolveCompactReply(
     const source = deps.sourceFor(path);
     const address = deps.resolveEntry(source, path, selection.locator, selection.space);
     if (!address.ok) {
-      // Implicit create (compact §6): any editor clause (non-empty `replace`)
+      // Implicit create (edit-dsl §6): any editor clause (non-empty `replace`)
       // whose symbol is absent, or exists only in another symbol space, appends
       // its fence as a new declaration, creating the file and its parent dirs
       // if absent. `match`/`pick` do not change creation; viewers never create.
@@ -663,7 +663,7 @@ export function markerGutter(marked: boolean): string {
  * The file-absolute lines a viewer's matched spans intersect. A bare viewer's
  * only occurrence is the declaration itself, so it marks nothing.
  */
-export function markedViewerLines(viewer: CompactViewer): Set<number> {
+export function markedViewerLines(viewer: EditDslViewer): Set<number> {
   const marked = new Set<number>();
   if (viewer.stage === "whole-symbol") {
     return marked;
@@ -684,7 +684,7 @@ export function markedViewerLines(viewer: CompactViewer): Set<number> {
  * turn that resolved at least one viewer but wrote nothing carries this text so
  * the model can add `pick` or a `replace`.
  */
-export function renderViewerFeedback(viewers: readonly CompactViewer[]): string {
+export function renderViewerFeedback(viewers: readonly EditDslViewer[]): string {
   const lines = ["Located occurrences (viewer clauses write nothing):"];
   for (const viewer of viewers) {
     const { kind, name } = viewer.locator;

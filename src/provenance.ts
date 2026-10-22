@@ -214,7 +214,7 @@ export function currentInputHashes(root: string, options: CurrentInputOptions): 
     model: options.model,
     taskIssue: stableStringify(issues),
     fixture: stableStringify(fixtures),
-    systemPrompt: buildSystemPrompt(options.multiPayload, options.protocolFormat ?? "compact"),
+    systemPrompt: buildSystemPrompt(options.multiPayload, options.protocolFormat ?? "edit-dsl"),
     loopConfig: loopConfigHashInput({
       tokenBudget: options.tokenBudget ?? null,
       effort: options.effort,

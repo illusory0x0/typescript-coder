@@ -96,10 +96,10 @@ describe("currentInputHashes", () => {
       expect(multipayload.inputs.systemPrompt).not.toBe(first.inputs.systemPrompt);
       expect(multipayload.inputs.loopConfig).not.toBe(first.inputs.loopConfig);
 
-      // #119/B1: compact is the default system-prompt digest; selecting json
+      // #119/B1: edit-dsl is the default system-prompt digest; selecting json
       // changes it without changing the loop config hash.
-      const compact = currentInputHashes(root, { ...base, protocolFormat: "compact" });
-      expect(compact.inputs.systemPrompt).toBe(first.inputs.systemPrompt);
+      const editDsl = currentInputHashes(root, { ...base, protocolFormat: "edit-dsl" });
+      expect(editDsl.inputs.systemPrompt).toBe(first.inputs.systemPrompt);
       const json = currentInputHashes(root, { ...base, protocolFormat: "json" });
       expect(json.inputs.systemPrompt).not.toBe(first.inputs.systemPrompt);
       expect(json.inputs.loopConfig).toBe(first.inputs.loopConfig);

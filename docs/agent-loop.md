@@ -10,7 +10,7 @@ discovery, splicing, formatting, and verification. Implementation:
 ## Shape of a run
 
 1. **Context.** The workspace's `.ts` files are discovered and parsed into a
-   symbol index. Under the default compact protocol the index is rendered as
+   symbol index. Under the default edit-dsl protocol the index is rendered as
    top-level `select <name> in <path> [resolve <space>]` lines (no signatures,
    capped); explicit `--protocol-format=json` keeps the YAML context
    (path → name/kind/signature, with a cap and a `truncated: true` flag). Test
@@ -19,7 +19,7 @@ discovery, splicing, formatting, and verification. Implementation:
    the run.
 2. **Round.** A round has a budget of **3 exchanges** shared by selecting a
    target, writing an edit, and any retries after a rejection.
-3. **Select/pick.** Under compact, the first reply is one `select … end` clause
+3. **Select/pick.** Under edit-dsl, the first reply is one `select … end` clause
    naming a symbol-index entry. A viewer (no `replace`) pins the declaration and
    the harness sends a `# details` prompt with the declaration's source numbered
    by file-absolute lines; an editor clause applies its own replacement. A
@@ -31,7 +31,7 @@ discovery, splicing, formatting, and verification. Implementation:
    verification-repair round may re-pin to a different declaration in the same
    file).
 4. **Edit.** The pinned declaration is shown with 1-based line numbers, and the
-   model replies with one edit payload. Under compact that is one or more
+   model replies with one edit payload. Under edit-dsl that is one or more
    `select … end` clauses with 6+ backtick replacement fences; under JSON it is
    an address, an optional `matcher` (snippet or 1-based `range`, the latter
    winning), and a `replacement`. The optional multi-payload protocol lets one
@@ -47,7 +47,7 @@ discovery, splicing, formatting, and verification. Implementation:
    and the task's test command, no model call involved. Pass ends the run
    successfully. A failure does not roll back: the attempted state stays on
    disk, and the diagnostics open the next round.
-7. **Confirm (compact).** After a compact edit verifies, the harness sends a
+7. **Confirm (edit-dsl).** After an edit-dsl edit verifies, the harness sends a
    `# modified text` prompt with the edited declaration. `Great! I resolve this
    problem!` (or any non-editor reply) confirms and ends; an editor clause with
    exchange room is applied and verified again. JSON has no confirmation turn.
@@ -62,7 +62,7 @@ give-up:
 
 - **Rejection retry** — the same round, with the failure class (`protocol`,
   `address`, `matcher`, `gate`, `format`, `no-op`, `repeat`, …) turned into a
-  correction sentence. The same class repeated escalates. Compact retries and
+  correction sentence. The same class repeated escalates. Edit-dsl retries and
   continuations reuse the select-first `# Goal` + `# Symbol index` + `# details`
   shape; JSON keeps its pinned-selection block.
 - **Before editing, a repair exchange may ask one bounded self-check** —
@@ -110,7 +110,7 @@ async function runLoop(options: LoopOptions): Promise<LoopResult> {
         return terminate("edit-exhausted", diagnostics);
       }
 
-      // 2. Select, if nothing is pinned yet. Compact parses one `select … end`
+      // 2. Select, if nothing is pinned yet. Edit-dsl parses one `select … end`
       //    clause (a viewer yields `# details`, an editor prefetches its edit);
       //    JSON resolves the strict {mode, path, symbol, kind} address.
       if (pinned === null) {
@@ -129,7 +129,7 @@ async function runLoop(options: LoopOptions): Promise<LoopResult> {
         diagnostics = runSelfCheck(request, options);
         continue;
       }
-      const payload = parseEdit(reply); // one payload, a batch, or compact clauses
+      const payload = parseEdit(reply); // one payload, a batch, or edit-dsl clauses
       if (!payload.ok) {
         diagnostics = payload.diagnostic;
         continue;

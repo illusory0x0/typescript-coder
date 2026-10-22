@@ -9,10 +9,11 @@ Each task has one frozen issue string (`TASK_ISSUES` in `run.ts`), used verbatim
 
 `results/consumption.md` is the canonical before/after efficiency view across the
 series (USD per success; the dated reports keep the token columns). Every row
-carries its edit protocol: the compact protocol (#119) is the measured protocol
-from the compact-era baseline onward, and the JSON-era rows (deleted by the
-cleanup commit) are a **different protocol** — not like-for-like comparable to a
-compact row.
+carries its edit protocol: the edit-dsl protocol (#119; stored as `compact` in
+bundles recorded before the #15 rename) is the measured protocol from the
+2026-10-21 compact-era baseline onward, and the JSON-era rows (deleted by the
+cleanup commit) are a **different protocol** — not like-for-like comparable to
+an edit-dsl row.
 
 ## Usage
 
@@ -112,7 +113,9 @@ reported in each row's `Notes` and never as a tuned column.
   never rotate.
 - Replay bundles (`--replay-dir`): versioned JSON (`format` =
   `typescript-coder-replay@1`) with the task issue, fixture path, the recorded
-  edit protocol (`protocolFormat`: `"json"` or `"compact"`), and the ordered
+  edit protocol (`protocolFormat`: `"json"` or `"edit-dsl"`; legacy bundles
+  recorded before the #15 rename carry `"compact"`, which reads as `"edit-dsl"`),
+  and the ordered
   chat calls (request messages, response content, finishReason, usage);
   consumed offline by the replay runner.
 - `durationMs`: model work only (the judge runs afterwards and is not counted).

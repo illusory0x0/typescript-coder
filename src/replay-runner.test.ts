@@ -3,10 +3,10 @@ import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import {
-  buildCompactDetailsPrompt,
-  buildCompactModifiedPrompt,
-  buildCompactSymbolIndex,
-  buildCompactUserPrompt,
+  buildEditDslDetailsPrompt,
+  buildEditDslModifiedPrompt,
+  buildEditDslSymbolIndex,
+  buildEditDslUserPrompt,
   buildContextYaml,
   buildEditPrompt,
   buildSystemPrompt,
@@ -128,21 +128,21 @@ function recordedCalls(fixtureDir: string): ReplayCall[] {
   ];
 }
 
-// Compact is the default protocol, so the recorded prompts are the Goal/index
-// user prompt, then the `# details` prompt after the viewer pick. The compact
+// EditDsl is the default protocol, so the recorded prompts are the Goal/index
+// user prompt, then the `# details` prompt after the viewer pick. The edit-dsl
 // edit reply is serialized by the grammar itself, mirroring what the loop
 // teaches and parses.
-function compactRecordedCalls(fixtureDir: string): ReplayCall[] {
+function editDslRecordedCalls(fixtureDir: string): ReplayCall[] {
   const files = discoverSourceFiles(fixtureDir);
-  const indexText = buildCompactSymbolIndex(buildIndexTolerant(files).index);
+  const indexText = buildEditDslSymbolIndex(buildIndexTolerant(files).index);
   const specFiles = selectSpecFiles(ISSUE, files);
   const systemMessage: ChatMessage = {
     role: "system",
-    content: buildSystemPrompt(false, "compact"),
+    content: buildSystemPrompt(false, "edit-dsl"),
   };
   const userMessage: ChatMessage = {
     role: "user",
-    content: buildCompactUserPrompt(ISSUE, indexText, specFiles),
+    content: buildEditDslUserPrompt(ISSUE, indexText, specFiles),
   };
   const initial: ChatMessage[] = [systemMessage, userMessage];
   const pick = "select answer in src/helper.ts resolve value end";
@@ -161,10 +161,10 @@ function compactRecordedCalls(fixtureDir: string): ReplayCall[] {
     { role: "assistant", content: pick },
     {
       role: "user",
-      content: buildCompactDetailsPrompt(ISSUE, indexText, declaration, specFiles, 1),
+      content: buildEditDslDetailsPrompt(ISSUE, indexText, declaration, specFiles, 1),
     },
   ];
-  // A verified compact edit gets one `# modified text` confirmation turn; prose
+  // A verified edit-dsl edit gets one `# modified text` confirmation turn; prose
   // there ends the run. The loop's confirmation prompt carries no spec-files
   // section.
   const modified = "export function answer(): number {\n  return 2;\n}";
@@ -188,7 +188,7 @@ function compactRecordedCalls(fixtureDir: string): ReplayCall[] {
         systemMessage,
         userMessage,
         { role: "assistant", content: edit },
-        { role: "user", content: buildCompactModifiedPrompt(ISSUE, indexText, modified, 1) },
+        { role: "user", content: buildEditDslModifiedPrompt(ISSUE, indexText, modified, 1) },
       ],
       content: "Great! I resolve this problem!",
       toolCalls: [],
@@ -239,11 +239,11 @@ describe("parseReplayBundle", () => {
     expect(bundle.side).toBe("tc");
   });
 
-  test("defaults a missing or unknown protocol to json and preserves compact", () => {
+  test("defaults a missing or unknown protocol to json and preserves edit-dsl", () => {
     // JSON.stringify drops the undefined field, so this is a legacy @1 bundle
     // recorded before the protocol field existed.
     const legacy = JSON.stringify({
-      ...syntheticBundle("project", [], "compact"),
+      ...syntheticBundle("project", [], "edit-dsl"),
       protocolFormat: undefined,
     });
     expect(parseReplayBundle(legacy).protocolFormat).toBe("json");
@@ -252,8 +252,16 @@ describe("parseReplayBundle", () => {
       protocolFormat: "yaml",
     });
     expect(parseReplayBundle(unknown).protocolFormat).toBe("json");
-    const compact = JSON.stringify(syntheticBundle("project", [], "compact"));
-    expect(parseReplayBundle(compact).protocolFormat).toBe("compact");
+    const editDsl = JSON.stringify(syntheticBundle("project", [], "edit-dsl"));
+    expect(parseReplayBundle(editDsl).protocolFormat).toBe("edit-dsl");
+  });
+
+  test("normalizes the legacy `compact` bundle value to edit-dsl (#15)", () => {
+    const legacy = JSON.stringify({
+      ...syntheticBundle("project", [], "edit-dsl"),
+      protocolFormat: "compact",
+    });
+    expect(parseReplayBundle(legacy).protocolFormat).toBe("edit-dsl");
   });
 });
 
@@ -318,10 +326,10 @@ describe("runReplay", () => {
     expect(summary).toContain("record 3: kind=verification outcome=ok exchange=- diagnostics=none");
   }, 60000);
 
-  test("replays a compact bundle under its recorded protocol and consumes every call", async () => {
+  test("replays an edit-dsl bundle under its recorded protocol and consumes every call", async () => {
     const { repoRoot, fixtureDir } = fixtureRepo();
     const recorder = new ReplayRecorder();
-    for (const call of compactRecordedCalls(fixtureDir)) {
+    for (const call of editDslRecordedCalls(fixtureDir)) {
       recorder.record(call.messages, {
         content: call.content,
         toolCalls: call.toolCalls,
@@ -329,22 +337,22 @@ describe("runReplay", () => {
         raw: { usage: call.usage },
       });
     }
-    const bundlePath = join(repoRoot, "compact-replay.json");
+    const bundlePath = join(repoRoot, "edit-dsl-replay.json");
     writeFileSync(
       bundlePath,
       JSON.stringify(
         recorder.bundle({
-          task: "compact",
+          task: "edit-dsl",
           rep: 1,
           model: "fake",
           issue: ISSUE,
           fixture: "project",
-          protocolFormat: "compact",
+          protocolFormat: "edit-dsl",
         }),
       ),
     );
     const bundle = parseReplayBundle(readFileSync(bundlePath, "utf8"));
-    expect(bundle.protocolFormat).toBe("compact");
+    expect(bundle.protocolFormat).toBe("edit-dsl");
     const run = await runReplay({
       bundle,
       bundlePath,

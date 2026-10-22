@@ -523,7 +523,7 @@ export class SymbolIndex {
   }
 
   /**
-   * Exact path/name/declaration-kind lookup. An empty `kind` is the compact
+   * Exact path/name/declaration-kind lookup. An empty `kind` is the edit-dsl
    * protocol's wildcard: any declaration kind at that path and name. An
    * optional `space` filters by TypeScript symbol space (`resolve value|type|
    * namespace`); `null` accepts every space.

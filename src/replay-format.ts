@@ -3,7 +3,7 @@ import type { ChatMessage, ChatResponse, ToolCall } from "../src/openai";
 export const REPLAY_BUNDLE_FORMAT = "typescript-coder-replay@1";
 
 /** The edit protocol a bundle was recorded under. */
-export type ReplayProtocolFormat = "json" | "compact";
+export type ReplayProtocolFormat = "json" | "edit-dsl";
 
 export interface ReplayCall {
   readonly messages: ChatMessage[];
@@ -19,7 +19,10 @@ export interface ReplayBundleMeta {
   readonly model: string;
   readonly issue: string;
   readonly fixture: string;
-  /** Optional for old callers; the recorder always writes json when omitted. */
+  /**
+   * Optional for old callers; the recorder writes `json` when omitted. New
+   * edit-dsl bundles pass `edit-dsl` explicitly.
+   */
   readonly protocolFormat?: ReplayProtocolFormat;
 }
 

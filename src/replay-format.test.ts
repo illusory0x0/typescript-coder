@@ -53,14 +53,14 @@ describe("ReplayRecorder", () => {
     expect(bundle.task).toBe("json-parser");
     expect(bundle.rep).toBe(2);
     expect(bundle.calls.length).toBe(1);
-    const compact = recorder.bundle({
+    const editDsl = recorder.bundle({
       task: "json-parser",
       rep: 2,
       model: "deepseek-v4.1-flash",
       issue: "issue text",
       fixture: "benchmark/fixtures/json-parser",
-      protocolFormat: "compact",
+      protocolFormat: "edit-dsl",
     });
-    expect(compact.protocolFormat).toBe("compact");
+    expect(editDsl.protocolFormat).toBe("edit-dsl");
   });
 });

@@ -125,7 +125,11 @@ function checkLedgerFile(ledgerPath: string, repoRoot: string): LedgerOutcome {
       const reps = typeof json["reps"] === "number" ? json["reps"] : 1;
       const effort = typeof json["effort"] === "string" ? json["effort"] : null;
       const multiPayload = json["multiPayload"] === true;
-      const protocolFormat = json["protocolFormat"] === "compact" ? "compact" : "json";
+      // `compact` is the deprecated legacy name for the report's edit-dsl
+      // protocol; normalize it so historical reports still hash correctly.
+      const rawProtocol = json["protocolFormat"];
+      const protocolFormat =
+        rawProtocol === "edit-dsl" || rawProtocol === "compact" ? "edit-dsl" : "json";
       const tokenBudget = typeof json["tokenBudget"] === "number" ? json["tokenBudget"] : null;
       try {
         return currentInputHashes(repoRoot, {

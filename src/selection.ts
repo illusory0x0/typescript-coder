@@ -2,7 +2,7 @@ import type { EditPayload, EditRange } from "./loop";
 import type { Locator, SymbolSpace } from "./utility";
 
 /**
- * The matcher a compact clause carries: a verbatim source `snippet` or an
+ * The matcher an edit-dsl clause carries: a verbatim source `snippet` or an
  * ECMA-262 `regex` pattern (no flags). `value` is already decoded: a `snippet`
  * has its `\`` and `\\` escapes resolved; a `regex` has `\/` decoded to `/`.
  */
@@ -55,7 +55,7 @@ const SELECTION_KINDS: ReadonlySet<string> = new Set([
 const SELECTION_SPACES: ReadonlySet<string> = new Set(["value", "type", "namespace"]);
 
 /**
- * A malformed compact selection. Carries the loop's `stage:` style diagnostic
+ * A malformed edit-dsl selection. Carries the loop's `stage:` style diagnostic
  * (`stage: syntax\n…`) and always names the offending field or clause.
  */
 export class SelectionSyntaxError extends Error {
@@ -464,7 +464,7 @@ function isClosingFence(line: string, open: number): boolean {
 }
 
 /**
- * Parse a compact reply (`docs/edit-protocol.md` §2): zero or more `select … end`
+ * Parse an edit-dsl reply (`docs/edit-protocol.md` §2): zero or more `select … end`
  * clauses. Returns one `Selection` per clause (an empty reply returns `[]`). Any malformed
  * input throws a `SelectionSyntaxError` naming the offending field; a partial
  * selection is never returned.
@@ -534,7 +534,7 @@ function renderFence(body: string): string {
   return `${ticks}\n${body}\n${ticks}`;
 }
 
-/** Render one selection back to the compact grammar (one `select … end` clause). */
+/** Render one selection back to the edit-dsl grammar (one `select … end` clause). */
 export function serializeSelection(selection: Selection): string {
   const { locator } = selection;
   let head =

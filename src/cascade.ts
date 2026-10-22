@@ -1,5 +1,5 @@
 /**
- * The selection cascade resolver (#108) for the compact edit protocol
+ * The selection cascade resolver (#108) for the edit-dsl edit protocol
  * (`docs/edit-protocol.md` §3). `select` names the declaration (already
  * resolved into `entry`); `match` locates a candidate set inside it; `pick`
  * narrows that set (a point keeps containing candidates, a line/range keeps
@@ -352,7 +352,7 @@ export function resolveCascadeViewer(
 }
 
 /**
- * Resolve one compact clause against the source that would be spliced. `entry`
+ * Resolve one edit-dsl clause against the source that would be spliced. `entry`
  * is the **already-resolved** declaration (the address stage is owned
  * elsewhere); `source` is the file's current text. Returns the half-open splice
  * span, the replacement text, and the finest stage that resolved it — or a typed

@@ -5,13 +5,13 @@ import { basename, join } from "node:path";
 import { renderFailureArtifact } from "./failure-artifact";
 import {
   buildContextYaml,
-  buildCompactCreatePrompt,
-  buildCompactDetailsPrompt,
-  buildCompactModifiedPrompt,
-  buildCompactSelectionContinuationPrompt,
-  buildCompactSelectionRetryPrompt,
-  buildCompactSymbolIndex,
-  buildCompactUserPrompt,
+  buildEditDslCreatePrompt,
+  buildEditDslDetailsPrompt,
+  buildEditDslModifiedPrompt,
+  buildEditDslSelectionContinuationPrompt,
+  buildEditDslSelectionRetryPrompt,
+  buildEditDslSymbolIndex,
+  buildEditDslUserPrompt,
   buildContinuationPrompt,
   buildCreatePrompt,
   buildEditPrompt,
@@ -78,15 +78,15 @@ import type { ChatMessage, ChatOptions, ChatResponse, ToolDefinition } from "./o
 import { ChatContextOverflowError, ChatPayloadTooLargeError } from "./openai";
 import { Parser } from "./parser";
 import { END_OF_LINE_COLUMN, serializeSelections } from "./selection";
-import type { Selection as CompactSelection } from "./selection";
+import type { Selection as EditDslSelection } from "./selection";
 import { buildIndexTolerant } from "./utility";
 import type { SourceFile } from "./utility";
 
 const tempDirs: string[] = [];
 
 // Most loop tests exercise the JSON protocol. The production default is now
-// compact (B1), so this harness selects JSON explicitly unless a test overrides
-// it; the compact/default tests call `runLoopBase` directly.
+// edit-dsl (B1), so this harness selects JSON explicitly unless a test overrides
+// it; the edit-dsl/default tests call `runLoopBase` directly.
 function runLoop(options: Parameters<typeof runLoopBase>[0]) {
   return runLoopBase({ protocolFormat: "json", ...options });
 }
@@ -1115,17 +1115,17 @@ describe("attempt digest (#57)", () => {
         "protocol",
       ),
     );
-    const compact = renderAttemptDigest(
+    const editDsl = renderAttemptDigest(
       (() => {
-        const state = createAttemptDigestState("compact");
+        const state = createAttemptDigestState("edit-dsl");
         updateAttemptDigest(state, protocolRecords);
         return state;
       })(),
     );
-    expect(compact).toContain(
+    expect(editDsl).toContain(
       "Ruled out after 3 repeats: protocol — This attempt MUST reply with only `select … end` clauses",
     );
-    expect(compact).not.toContain("exactly one flat JSON object");
+    expect(editDsl).not.toContain("exactly one flat JSON object");
     // The default json format is unchanged.
     const json = renderAttemptDigest(
       (() => {
@@ -1821,7 +1821,7 @@ describe("exchangeStats (#69)", () => {
     expect(stats.regex).toBe(0);
   });
 
-  test("sums compact implicit-create clauses per reply (#111)", () => {
+  test("sums edit-dsl implicit-create clauses per reply (#111)", () => {
     const stats = exchangeStats([
       row({ outcome: "applied", kind: "exchange", creates: 2 }),
       row({ outcome: "duplicate", kind: "exchange", creates: 1 }),
@@ -2849,11 +2849,11 @@ describe("decision-only turn (#75)", () => {
     expect(prompt).toContain("Failure history: the failing set is unchanged");
   });
 
-  test("compact decision turn carries Goal, index, and details without the JSON block", () => {
+  test("edit-dsl decision turn carries Goal, index, and details without the JSON block", () => {
     const prompt = buildRetryPrompt({
       ...stalledInput(),
-      protocolFormat: "compact",
-      compactContext: {
+      protocolFormat: "edit-dsl",
+      editDslContext: {
         issue: "make the answer test pass",
         indexText: "select answer in src/helper.ts resolve value",
         startLine: 4,
@@ -2883,7 +2883,7 @@ describe("decision-only turn (#75)", () => {
     expect(prompt).not.toContain("Do not send a JSON edit payload on this turn");
   });
 
-  test("the JSON decision turn keeps its old text without compact context", () => {
+  test("the JSON decision turn keeps its old text without edit-dsl context", () => {
     const prompt = buildRetryPrompt({
       ...stalledInput(),
       failureHistory: renderFailureHistoryNote({ kind: "unchanged", rounds: 6 }),
@@ -6342,7 +6342,7 @@ describe("runLoop", () => {
     expect(helperSource(dir)).toBe(original);
   }, 30000);
 
-  test("classifies a truncated completion as truncated and asks for a compact retry", async () => {
+  test("classifies a truncated completion as truncated and asks for an edit-dsl retry", async () => {
     const dir = fixtureDir();
     const truncated = 'function answer(): number {\n  return "cut off';
     const calls: ChatMessage[][] = [];
@@ -6616,17 +6616,17 @@ describe("runLoop", () => {
         throw new Error("expected a retryable protocol policy");
       }
       expect(json.correction).toContain("flat JSON object");
-      const compact = rejectionPolicy("protocol", "compact");
-      if (compact.action !== "retry") {
+      const editDsl = rejectionPolicy("protocol", "edit-dsl");
+      if (editDsl.action !== "retry") {
         throw new Error("expected a retryable protocol policy");
       }
-      expect(compact.correction).toContain("`select … end`");
-      expect(compact.correction).not.toContain("flat JSON object");
-      expect(compact.escalation).toContain("`select … end`");
-      expect(compact.escalation).not.toContain("flat JSON object");
+      expect(editDsl.correction).toContain("`select … end`");
+      expect(editDsl.correction).not.toContain("flat JSON object");
+      expect(editDsl.escalation).toContain("`select … end`");
+      expect(editDsl.escalation).not.toContain("flat JSON object");
       // The retry lead follows the format; json stays the default.
-      expect(rejectionLead("protocol", 1, { protocolFormat: "compact" })).toBe(compact.correction);
-      expect(rejectionLead("protocol", 2, { protocolFormat: "compact" })).toBe(compact.escalation);
+      expect(rejectionLead("protocol", 1, { protocolFormat: "edit-dsl" })).toBe(editDsl.correction);
+      expect(rejectionLead("protocol", 2, { protocolFormat: "edit-dsl" })).toBe(editDsl.escalation);
       expect(rejectionLead("protocol", 1)).toBe(json.correction);
     });
 
@@ -8501,18 +8501,18 @@ describe("explicit targets (#81)", () => {
 
 // The four §8 forms of `docs/edit-protocol.md`: a viewer, a bare declaration
 // replace, a `match` + `pick` disambiguation, and a `match` + `replace` rewrite.
-describe("compact protocol (#111/#119)", () => {
+describe("edit-dsl protocol (#111/#119)", () => {
   const TICK = "\u0060";
 
-  function compactReply(...selections: CompactSelection[]): string {
+  function editDslReply(...selections: EditDslSelection[]): string {
     return serializeSelections(selections);
   }
 
   function answerEditor(
     replacement: string | null,
-    matcher: CompactSelection["matcher"],
-    pick: CompactSelection["pick"] = null,
-  ): CompactSelection {
+    matcher: EditDslSelection["matcher"],
+    pick: EditDslSelection["pick"] = null,
+  ): EditDslSelection {
     return {
       locator: { path: "src/helper.ts", name: "answer", kind: "function" },
       space: null,
@@ -8524,13 +8524,13 @@ describe("compact protocol (#111/#119)", () => {
 
   // The select-first turn: one viewer clause naming the target. The harness
   // answers with `# details`; the next reply is the edit/create clause.
-  function compactSelect(
+  function editDslSelect(
     name: string,
     path: string,
-    space: CompactSelection["space"] = null,
+    space: EditDslSelection["space"] = null,
     kind = "",
   ): string {
-    return compactReply({
+    return editDslReply({
       locator: { path, name, kind },
       space,
       matcher: null,
@@ -8539,11 +8539,11 @@ describe("compact protocol (#111/#119)", () => {
     });
   }
 
-  test("runLoop defaults to the compact select-first protocol", async () => {
+  test("runLoop defaults to the edit-dsl select-first protocol", async () => {
     const dir = fixtureDir();
     const provider = new ScriptedProvider([
-      compactSelect("answer", "src/helper.ts", "value"),
-      compactReply(answerEditor("return 2;", { kind: "snippet", value: "return 1;" })),
+      editDslSelect("answer", "src/helper.ts", "value"),
+      editDslReply(answerEditor("return 2;", { kind: "snippet", value: "return 1;" })),
     ]);
     const result = await runLoopBase({
       cwd: dir,
@@ -8579,9 +8579,9 @@ describe("compact protocol (#111/#119)", () => {
     const firstCopy = ["export function answer(): number {", "  return 1;", "}"].join("\n");
     const address = { path: "src/helper.ts", name: "answer", kind: "function" };
     const provider = new ScriptedProvider([
-      compactSelect("answer", "src/helper.ts", "value"),
+      editDslSelect("answer", "src/helper.ts", "value"),
       // Rewriting the visible (indexed) copy with identical text is a no-op.
-      compactReply({
+      editDslReply({
         locator: address,
         space: null,
         matcher: null,
@@ -8589,7 +8589,7 @@ describe("compact protocol (#111/#119)", () => {
         replacement: firstCopy,
       }),
       // The prescribed repair: an empty fence deletes the indexed copy.
-      compactReply({
+      editDslReply({
         locator: address,
         space: null,
         matcher: null,
@@ -8621,7 +8621,7 @@ describe("compact protocol (#111/#119)", () => {
     expect(finalSource.match(/function answer/g)).toHaveLength(1);
   }, 30000);
 
-  test("the compact symbol index is select lines with one-space resolve hints", () => {
+  test("the edit-dsl symbol index is select lines with one-space resolve hints", () => {
     const files: SourceFile[] = [
       {
         path: "src/a.ts",
@@ -8639,7 +8639,7 @@ describe("compact protocol (#111/#119)", () => {
       },
     ];
     const index = buildIndexTolerant(files).index;
-    const text = buildCompactSymbolIndex(index);
+    const text = buildEditDslSymbolIndex(index);
     // A class/enum occupies both spaces, so no resolve hint is emitted.
     expect(text).toContain("select Widget in src/a.ts");
     expect(text).not.toContain("select Widget in src/a.ts resolve");
@@ -8652,22 +8652,22 @@ describe("compact protocol (#111/#119)", () => {
     expect(text).not.toContain("files:");
   });
 
-  test("the compact symbol index is capped with a plain truncation note", () => {
+  test("the edit-dsl symbol index is capped with a plain truncation note", () => {
     const declarations = Array.from(
       { length: 501 },
       (_, index) => `export const name${index} = ${index};`,
     ).join("\n");
     const index = buildIndexTolerant([{ path: "src/many.ts", source: declarations }]).index;
-    const text = buildCompactSymbolIndex(index);
+    const text = buildEditDslSymbolIndex(index);
     expect(text.split("\n")).toHaveLength(501);
     expect(text).toContain("# symbol index truncated at 500 entries");
     expect(text).toContain("select name499 in src/many.ts resolve value");
     expect(text).not.toContain("select name500 in src/many.ts");
   });
 
-  test("the compact user and details prompts carry Goal, index, and file-absolute lines", () => {
+  test("the edit-dsl user and details prompts carry Goal, index, and file-absolute lines", () => {
     const indexText = "select answer in src/helper.ts resolve value";
-    const user = buildCompactUserPrompt("make the answer test pass", indexText);
+    const user = buildEditDslUserPrompt("make the answer test pass", indexText);
     expect(user).toBe(
       ["# Goal", "", "make the answer test pass", "", "# Symbol index", "", indexText, ""].join(
         "\n",
@@ -8687,7 +8687,7 @@ describe("compact protocol (#111/#119)", () => {
       ["3 | export function answer(): number {", "4 |   return 1;", "5 | }"].join("\n"),
     );
     const symbolSource = source.slice(start, end);
-    const details = buildCompactDetailsPrompt(
+    const details = buildEditDslDetailsPrompt(
       "make the answer test pass",
       indexText,
       symbolSource,
@@ -8701,14 +8701,14 @@ describe("compact protocol (#111/#119)", () => {
     expect(details).toContain("A reply is one or more `select … end` clauses");
   });
 
-  test("the compact details prompt marks matched lines only when given marks", () => {
+  test("the edit-dsl details prompt marks matched lines only when given marks", () => {
     const indexText = "select answer in src/helper.ts resolve value";
     const source = ["export function answer(): number {", "  return 1;", "}"].join("\n");
-    const bare = buildCompactDetailsPrompt("make the answer test pass", indexText, source, [], 1);
+    const bare = buildEditDslDetailsPrompt("make the answer test pass", indexText, source, [], 1);
     expect(bare).not.toMatch(/^⁉️/m);
     expect(bare).toContain("1 | export function answer(): number {");
     expect(bare).toContain("2 |   return 1;");
-    const marked = buildCompactDetailsPrompt(
+    const marked = buildEditDslDetailsPrompt(
       "make the answer test pass",
       indexText,
       source,
@@ -8724,8 +8724,8 @@ describe("compact protocol (#111/#119)", () => {
     expect(marked).toContain(indexText);
   });
 
-  test("the compact create prompt names the target file and the create instruction", () => {
-    const prompt = buildCompactCreatePrompt(
+  test("the edit-dsl create prompt names the target file and the create instruction", () => {
+    const prompt = buildEditDslCreatePrompt(
       "add an extra declaration",
       "select extra in src/extra.ts",
       "src/extra.ts",
@@ -8737,8 +8737,8 @@ describe("compact protocol (#111/#119)", () => {
     expect(prompt).toContain('The pinned selection uses mode "create"');
   });
 
-  test("the compact modified prompt is concise and file-absolute", () => {
-    const prompt = buildCompactModifiedPrompt(
+  test("the edit-dsl modified prompt is concise and file-absolute", () => {
+    const prompt = buildEditDslModifiedPrompt(
       "make the answer test pass",
       "select answer in src/helper.ts resolve value",
       "export function answer(): number {\n  return 2;\n}",
@@ -8751,7 +8751,7 @@ describe("compact protocol (#111/#119)", () => {
     expect(prompt).not.toContain("Examples:");
   });
 
-  test("a compact retry prompt uses Goal, index, and details without the JSON block", () => {
+  test("an edit-dsl retry prompt uses Goal, index, and details without the JSON block", () => {
     const prompt = buildRetryPrompt({
       exchangeNumber: 2,
       maxExchanges: 3,
@@ -8761,8 +8761,8 @@ describe("compact protocol (#111/#119)", () => {
       diagnostics: "stage: matcher\nthe matcher was not found",
       failure: "edit",
       repin: false,
-      protocolFormat: "compact",
-      compactContext: {
+      protocolFormat: "edit-dsl",
+      editDslContext: {
         issue: "make the answer test pass",
         indexText: "select answer in src/helper.ts resolve value",
         startLine: 4,
@@ -8779,12 +8779,12 @@ describe("compact protocol (#111/#119)", () => {
     expect(prompt).not.toContain("```json");
     expect(prompt).not.toContain("Each line below is prefixed");
     expect(prompt).not.toContain("Optionally locate the span");
-    // The JSON self-check reply is not taught on a compact turn (#9).
+    // The JSON self-check reply is not taught on an edit-dsl turn (#9).
     expect(prompt).not.toContain(SELF_CHECK_OFFER);
     expect(prompt).not.toContain('{"request":"read"}');
   });
 
-  test("a compact retry keeps the JSON self-check offer out while JSON keeps it byte-identical", () => {
+  test("an edit-dsl retry keeps the JSON self-check offer out while JSON keeps it byte-identical", () => {
     const input: RetryPromptInput = {
       exchangeNumber: 2,
       maxExchanges: 3,
@@ -8795,17 +8795,17 @@ describe("compact protocol (#111/#119)", () => {
       failure: "edit",
       repin: false,
     };
-    const compact = buildRetryPrompt({
+    const editDsl = buildRetryPrompt({
       ...input,
-      protocolFormat: "compact",
-      compactContext: {
+      protocolFormat: "edit-dsl",
+      editDslContext: {
         issue: "make the answer test pass",
         indexText: "select answer in src/helper.ts resolve value",
       },
     });
-    expect(compact).toContain("A reply is one or more `select … end` clauses");
-    expect(compact).not.toContain(SELF_CHECK_OFFER);
-    expect(compact).not.toContain('{"request":"read"}');
+    expect(editDsl).toContain("A reply is one or more `select … end` clauses");
+    expect(editDsl).not.toContain(SELF_CHECK_OFFER);
+    expect(editDsl).not.toContain('{"request":"read"}');
     // The JSON retry keeps the offer and the pinned-selection block verbatim.
     const json = buildRetryPrompt(input);
     expect(json).toContain(SELF_CHECK_OFFER);
@@ -8813,8 +8813,8 @@ describe("compact protocol (#111/#119)", () => {
     expect(json).toContain("Pinned selection:");
   });
 
-  test("compact selection retry and continuation prompts use the select-first shape", () => {
-    const retry = buildCompactSelectionRetryPrompt(
+  test("edit-dsl selection retry and continuation prompts use the select-first shape", () => {
+    const retry = buildEditDslSelectionRetryPrompt(
       "make the answer test pass",
       "select answer in src/helper.ts resolve value",
       "stage: address\nthe address matches 2 declarations",
@@ -8827,7 +8827,7 @@ describe("compact protocol (#111/#119)", () => {
     expect(retry).not.toContain(SELF_CHECK_OFFER);
     expect(retry).not.toContain('{"request":"read"}');
 
-    const continuation = buildCompactSelectionContinuationPrompt({
+    const continuation = buildEditDslSelectionContinuationPrompt({
       round: 2,
       maxRounds: 32,
       issue: "make the answer test pass",
@@ -8875,7 +8875,7 @@ describe("compact protocol (#111/#119)", () => {
       "",
     ].join("\n");
     expect(buildEditPrompt(addressJson, symbolSource)).toBe(expected);
-    // The compact instruction/examples never leak into the json path.
+    // The edit-dsl instruction/examples never leak into the json path.
     expect(buildEditPrompt(addressJson, symbolSource)).not.toContain(
       "select function f in src/x.ts",
     );
@@ -8932,12 +8932,12 @@ describe("compact protocol (#111/#119)", () => {
     expect(expected).not.toContain("select function");
   });
 
-  test("with the compact format the fresh edit and retry prompts teach all four §8 forms", () => {
+  test("with the edit-dsl format the fresh edit and retry prompts teach all four §8 forms", () => {
     const edit = buildEditPrompt(
       '{"path":"src/a.ts","symbol":"make","kind":"function"}',
       "const x = 1;\n",
       false,
-      "compact",
+      "edit-dsl",
     );
     expect(edit).toContain("A reply is one or more `select … end` clauses");
     expect(edit).toContain(
@@ -8959,7 +8959,7 @@ describe("compact protocol (#111/#119)", () => {
       diagnostics: "boom",
       failure: "verification",
       repin: false,
-      protocolFormat: "compact",
+      protocolFormat: "edit-dsl",
     });
     expect(retry).toContain("A reply is one or more `select … end` clauses");
     expect(retry).toContain("select function f in src/x.ts");
@@ -8968,11 +8968,11 @@ describe("compact protocol (#111/#119)", () => {
     );
   });
 
-  test("under json a compact reply is rejected as a protocol failure", async () => {
+  test("under json an edit-dsl reply is rejected as a protocol failure", async () => {
     const dir = fixtureDir();
     const provider = new ScriptedProvider([
       selectionResponse(),
-      compactReply(answerEditor("return 2;", { kind: "snippet", value: "return 1;" })),
+      editDslReply(answerEditor("return 2;", { kind: "snippet", value: "return 1;" })),
       editResponse("return 1;", "return 2;"),
     ]);
     const result = await runLoop({
@@ -8982,25 +8982,25 @@ describe("compact protocol (#111/#119)", () => {
       checkCommand: TSC,
       testCommand: ["bun", "test"],
     });
-    // The compact form is not a payload: it is rejected, then the JSON edit lands.
+    // The edit-dsl form is not a payload: it is rejected, then the JSON edit lands.
     expect(result.ok).toBe(true);
     const rejected = result.records.find((record) => record.outcome === "protocol");
     expect(rejected?.diagnostics).toContain("stage: protocol");
     expect(helperSource(dir)).toContain("return 2;");
   }, 30000);
 
-  test("under compact a select viewer pins and the next edit applies", async () => {
+  test("under edit-dsl a select viewer pins and the next edit applies", async () => {
     const dir = fixtureDir();
     const provider = new ScriptedProvider([
-      compactSelect("answer", "src/helper.ts", "value"),
-      compactReply(answerEditor("return 2;", { kind: "snippet", value: "return 1;" })),
+      editDslSelect("answer", "src/helper.ts", "value"),
+      editDslReply(answerEditor("return 2;", { kind: "snippet", value: "return 1;" })),
       "Great! I resolve this problem!",
     ]);
     const result = await runLoop({
       cwd: dir,
       issue: "make the answer test pass",
       provider,
-      protocolFormat: "compact",
+      protocolFormat: "edit-dsl",
       checkCommand: TSC,
       testCommand: ["bun", "test"],
     });
@@ -9020,24 +9020,24 @@ describe("compact protocol (#111/#119)", () => {
     expect(helperSource(dir)).toContain("return 2;");
   }, 30000);
 
-  test("under compact a first-turn match viewer marks the matched line in # details", async () => {
+  test("under edit-dsl a first-turn match viewer marks the matched line in # details", async () => {
     const dir = fixtureDir();
     const provider = new ScriptedProvider([
-      compactReply({
+      editDslReply({
         locator: { path: "src/helper.ts", name: "answer", kind: "function" },
         space: "value",
         matcher: { kind: "snippet", value: "return 1;" },
         pick: null,
         replacement: null,
       }),
-      compactReply(answerEditor("return 2;", { kind: "snippet", value: "return 1;" })),
+      editDslReply(answerEditor("return 2;", { kind: "snippet", value: "return 1;" })),
       "Great! I resolve this problem!",
     ]);
     const result = await runLoop({
       cwd: dir,
       issue: "make the answer test pass",
       provider,
-      protocolFormat: "compact",
+      protocolFormat: "edit-dsl",
       checkCommand: TSC,
       testCommand: ["bun", "test"],
     });
@@ -9052,11 +9052,11 @@ describe("compact protocol (#111/#119)", () => {
     expect(helperSource(dir)).toContain("return 2;");
   }, 30000);
 
-  test("under compact a missing symbol select pins create and the next clause creates", async () => {
+  test("under edit-dsl a missing symbol select pins create and the next clause creates", async () => {
     const dir = fixtureDir();
     const provider = new ScriptedProvider([
-      compactSelect("extra", "src/extra.ts"),
-      compactReply(
+      editDslSelect("extra", "src/extra.ts"),
+      editDslReply(
         createEditor(
           "src/extra.ts",
           "extra",
@@ -9064,14 +9064,14 @@ describe("compact protocol (#111/#119)", () => {
           "export function extra(): number {\n  return 1;\n}",
         ),
       ),
-      compactReply(answerEditor("return 2;", { kind: "snippet", value: "return 1;" })),
+      editDslReply(answerEditor("return 2;", { kind: "snippet", value: "return 1;" })),
       "Great! I resolve this problem!",
     ]);
     const result = await runLoop({
       cwd: dir,
       issue: "add an extra declaration",
       provider,
-      protocolFormat: "compact",
+      protocolFormat: "edit-dsl",
       checkCommand: TSC,
       testCommand: ["bun", "test"],
     });
@@ -9092,17 +9092,17 @@ describe("compact protocol (#111/#119)", () => {
     expect(readFileSync(join(dir, "src", "extra.ts"), "utf8")).toContain("export function extra");
   }, 30000);
 
-  test("under compact a first-turn editor applies without a second provider call", async () => {
+  test("under edit-dsl a first-turn editor applies without a second provider call", async () => {
     const dir = fixtureDir();
     const provider = new ScriptedProvider([
-      compactReply(answerEditor("return 2;", { kind: "snippet", value: "return 1;" })),
+      editDslReply(answerEditor("return 2;", { kind: "snippet", value: "return 1;" })),
       "Great! I resolve this problem!",
     ]);
     const result = await runLoop({
       cwd: dir,
       issue: "make the answer test pass",
       provider,
-      protocolFormat: "compact",
+      protocolFormat: "edit-dsl",
       checkCommand: TSC,
       testCommand: ["bun", "test"],
     });
@@ -9117,18 +9117,18 @@ describe("compact protocol (#111/#119)", () => {
     expect(helperSource(dir)).toContain("return 2;");
   }, 30000);
 
-  test("under compact a verified edit sends # modified text and a Great reply confirms", async () => {
+  test("under edit-dsl a verified edit sends # modified text and a Great reply confirms", async () => {
     const dir = fixtureDir();
     const provider = new ScriptedProvider([
-      compactSelect("answer", "src/helper.ts", "value"),
-      compactReply(answerEditor("return 2;", { kind: "snippet", value: "return 1;" })),
+      editDslSelect("answer", "src/helper.ts", "value"),
+      editDslReply(answerEditor("return 2;", { kind: "snippet", value: "return 1;" })),
       "Great! I resolve this problem!",
     ]);
     const result = await runLoop({
       cwd: dir,
       issue: "make the answer test pass",
       provider,
-      protocolFormat: "compact",
+      protocolFormat: "edit-dsl",
       checkCommand: TSC,
       testCommand: ["bun", "test"],
     });
@@ -9146,12 +9146,12 @@ describe("compact protocol (#111/#119)", () => {
     expect(helperSource(dir)).toContain("return 2;");
   }, 30000);
 
-  test("under compact a confirmation editor continues without a duplicate provider call", async () => {
+  test("under edit-dsl a confirmation editor continues without a duplicate provider call", async () => {
     const dir = fixtureDir();
     const provider = new ScriptedProvider([
-      compactSelect("answer", "src/helper.ts", "value"),
-      compactReply(answerEditor("return 2;", { kind: "snippet", value: "return 1;" })),
-      compactReply(
+      editDslSelect("answer", "src/helper.ts", "value"),
+      editDslReply(answerEditor("return 2;", { kind: "snippet", value: "return 1;" })),
+      editDslReply(
         answerEditor(
           "export function answer(): number {\n  const value = 2;\n  return value;\n}",
           null,
@@ -9163,7 +9163,7 @@ describe("compact protocol (#111/#119)", () => {
       cwd: dir,
       issue: "make the answer test pass",
       provider,
-      protocolFormat: "compact",
+      protocolFormat: "edit-dsl",
       checkCommand: TSC,
       testCommand: ["bun", "test"],
     });
@@ -9185,16 +9185,16 @@ describe("compact protocol (#111/#119)", () => {
     expect(helperSource(dir)).toContain("const value = 2;");
   }, 30000);
 
-  test("under compact a confirmation editor after the last exchange opens a fresh round", async () => {
+  test("under edit-dsl a confirmation editor after the last exchange opens a fresh round", async () => {
     const dir = fixtureDir();
     const provider = new ScriptedProvider([
-      compactSelect("answer", "src/helper.ts", "value"),
+      editDslSelect("answer", "src/helper.ts", "value"),
       // Exchange 2: a matcher miss, rejected without ending the round.
-      compactReply(answerEditor("return 2;", { kind: "snippet", value: "return 9;" })),
+      editDslReply(answerEditor("return 2;", { kind: "snippet", value: "return 9;" })),
       // Exchange 3: the verified edit, consuming the round's last exchange.
-      compactReply(answerEditor("return 2;", { kind: "snippet", value: "return 1;" })),
+      editDslReply(answerEditor("return 2;", { kind: "snippet", value: "return 1;" })),
       // The confirmation editor is prefetched on that last exchange (#8).
-      compactReply(
+      editDslReply(
         answerEditor(
           "export function answer(): number {\n  const value = 2;\n  return value;\n}",
           null,
@@ -9207,7 +9207,7 @@ describe("compact protocol (#111/#119)", () => {
       cwd: dir,
       issue: "make the answer test pass",
       provider,
-      protocolFormat: "compact",
+      protocolFormat: "edit-dsl",
       checkCommand: TSC,
       testCommand: ["bun", "test"],
     });
@@ -9236,18 +9236,18 @@ describe("compact protocol (#111/#119)", () => {
     expect(helperSource(dir)).toContain("const value = 2;");
   }, 30000);
 
-  test("under compact a prose confirmation ends the verified run", async () => {
+  test("under edit-dsl a prose confirmation ends the verified run", async () => {
     const dir = fixtureDir();
     const provider = new ScriptedProvider([
-      compactSelect("answer", "src/helper.ts", "value"),
-      compactReply(answerEditor("return 2;", { kind: "snippet", value: "return 1;" })),
+      editDslSelect("answer", "src/helper.ts", "value"),
+      editDslReply(answerEditor("return 2;", { kind: "snippet", value: "return 1;" })),
       "Done.",
     ]);
     const result = await runLoop({
       cwd: dir,
       issue: "make the answer test pass",
       provider,
-      protocolFormat: "compact",
+      protocolFormat: "edit-dsl",
       checkCommand: TSC,
       testCommand: ["bun", "test"],
     });
@@ -9262,18 +9262,18 @@ describe("compact protocol (#111/#119)", () => {
     expect(helperSource(dir)).toContain("return 2;");
   }, 30000);
 
-  test("under compact a malformed confirmation ends the verified run", async () => {
+  test("under edit-dsl a malformed confirmation ends the verified run", async () => {
     const dir = fixtureDir();
     const provider = new ScriptedProvider([
-      compactSelect("answer", "src/helper.ts", "value"),
-      compactReply(answerEditor("return 2;", { kind: "snippet", value: "return 1;" })),
+      editDslSelect("answer", "src/helper.ts", "value"),
+      editDslReply(answerEditor("return 2;", { kind: "snippet", value: "return 1;" })),
       "select {",
     ]);
     const result = await runLoop({
       cwd: dir,
       issue: "make the answer test pass",
       provider,
-      protocolFormat: "compact",
+      protocolFormat: "edit-dsl",
       checkCommand: TSC,
       testCommand: ["bun", "test"],
     });
@@ -9288,19 +9288,19 @@ describe("compact protocol (#111/#119)", () => {
     expect(helperSource(dir)).toContain("return 2;");
   }, 30000);
 
-  test("under compact an edit rejection retry uses Goal, index, and details", async () => {
+  test("under edit-dsl an edit rejection retry uses Goal, index, and details", async () => {
     const dir = fixtureDir();
     const provider = new ScriptedProvider([
-      compactSelect("answer", "src/helper.ts", "value"),
-      compactReply(answerEditor("return 2;", { kind: "snippet", value: "return 9;" })),
-      compactReply(answerEditor("return 2;", { kind: "snippet", value: "return 1;" })),
+      editDslSelect("answer", "src/helper.ts", "value"),
+      editDslReply(answerEditor("return 2;", { kind: "snippet", value: "return 9;" })),
+      editDslReply(answerEditor("return 2;", { kind: "snippet", value: "return 1;" })),
       "Great! I resolve this problem!",
     ]);
     const result = await runLoop({
       cwd: dir,
       issue: "make the answer test pass",
       provider,
-      protocolFormat: "compact",
+      protocolFormat: "edit-dsl",
       checkCommand: TSC,
       testCommand: ["bun", "test"],
     });
@@ -9321,23 +9321,23 @@ describe("compact protocol (#111/#119)", () => {
     expect(retry).not.toContain("```json");
   }, 30000);
 
-  test("under compact a rejected selection retry asks for one select clause", async () => {
+  test("under edit-dsl a rejected selection retry asks for one select clause", async () => {
     const dir = fixtureDir();
     writeFileSync(
       join(dir, "src", "dual.ts"),
       "export interface Dual {}\nexport const Dual = 1;\n",
     );
     const provider = new ScriptedProvider([
-      compactSelect("Dual", "src/dual.ts"),
-      compactSelect("answer", "src/helper.ts", "value"),
-      compactReply(answerEditor("return 2;", { kind: "snippet", value: "return 1;" })),
+      editDslSelect("Dual", "src/dual.ts"),
+      editDslSelect("answer", "src/helper.ts", "value"),
+      editDslReply(answerEditor("return 2;", { kind: "snippet", value: "return 1;" })),
       "Great! I resolve this problem!",
     ]);
     const result = await runLoop({
       cwd: dir,
       issue: "make the answer test pass",
       provider,
-      protocolFormat: "compact",
+      protocolFormat: "edit-dsl",
       checkCommand: TSC,
       testCommand: ["bun", "test"],
     });
@@ -9350,17 +9350,17 @@ describe("compact protocol (#111/#119)", () => {
     expect(retry).not.toContain("Output ONLY a corrected selection JSON object");
   }, 30000);
 
-  test("under compact a `match` + `replace` reply applies end-to-end", async () => {
+  test("under edit-dsl a `match` + `replace` reply applies end-to-end", async () => {
     const dir = fixtureDir();
     const provider = new ScriptedProvider([
-      compactSelect("answer", "src/helper.ts", "value"),
-      compactReply(answerEditor("return 2;", { kind: "snippet", value: "return 1;" })),
+      editDslSelect("answer", "src/helper.ts", "value"),
+      editDslReply(answerEditor("return 2;", { kind: "snippet", value: "return 1;" })),
     ]);
     const result = await runLoop({
       cwd: dir,
       issue: "make the answer test pass",
       provider,
-      protocolFormat: "compact",
+      protocolFormat: "edit-dsl",
       checkCommand: TSC,
       testCommand: ["bun", "test"],
     });
@@ -9373,25 +9373,25 @@ describe("compact protocol (#111/#119)", () => {
     expect(applied?.selectors).toEqual(["matcher"]);
   }, 30000);
 
-  test("under compact a JSON reply's retry re-teaches `select … end`, not JSON (#117)", async () => {
+  test("under edit-dsl a JSON reply's retry re-teaches `select … end`, not JSON (#117)", async () => {
     const dir = fixtureDir();
     const provider = new ScriptedProvider([
-      compactSelect("answer", "src/helper.ts", "value"),
+      editDslSelect("answer", "src/helper.ts", "value"),
       editResponse("return 1;", "return 2;"),
-      compactReply(answerEditor("return 2;", { kind: "snippet", value: "return 1;" })),
+      editDslReply(answerEditor("return 2;", { kind: "snippet", value: "return 1;" })),
     ]);
     const result = await runLoop({
       cwd: dir,
       issue: "make the answer test pass",
       provider,
-      protocolFormat: "compact",
+      protocolFormat: "edit-dsl",
       checkCommand: TSC,
       testCommand: ["bun", "test"],
     });
     expect(result.ok).toBe(true);
     const rejected = result.records.find((record) => record.outcome === "protocol");
     expect(rejected?.diagnostics).toContain("stage: protocol");
-    // The retry prompt after the rejected JSON payload re-teaches the compact
+    // The retry prompt after the rejected JSON payload re-teaches the edit-dsl
     // form instead of repeating the JSON edit rule (the rep1 loop, #117).
     const retryPrompt = (provider.calls[2] ?? [])
       .map((message) => (typeof message.content === "string" ? message.content : ""))
@@ -9400,11 +9400,11 @@ describe("compact protocol (#111/#119)", () => {
     expect(retryPrompt).not.toContain("Return exactly one flat JSON object");
   }, 30000);
 
-  test("under compact a fenced reply applies end-to-end", async () => {
+  test("under edit-dsl a fenced reply applies end-to-end", async () => {
     const dir = fixtureDir();
     const provider = new ScriptedProvider([
-      compactSelect("answer", "src/helper.ts", "value"),
-      `${TICK}${TICK}${TICK}\n${compactReply(
+      editDslSelect("answer", "src/helper.ts", "value"),
+      `${TICK}${TICK}${TICK}\n${editDslReply(
         answerEditor("return 2;", { kind: "snippet", value: "return 1;" }),
       )}\n${TICK}${TICK}${TICK}`,
     ]);
@@ -9412,7 +9412,7 @@ describe("compact protocol (#111/#119)", () => {
       cwd: dir,
       issue: "make the answer test pass",
       provider,
-      protocolFormat: "compact",
+      protocolFormat: "edit-dsl",
       checkCommand: TSC,
       testCommand: ["bun", "test"],
     });
@@ -9425,17 +9425,17 @@ describe("compact protocol (#111/#119)", () => {
     expect(applied?.selectors).toEqual(["matcher"]);
   }, 30000);
 
-  test("under compact a bare declaration replace records the whole-symbol stage", async () => {
+  test("under edit-dsl a bare declaration replace records the whole-symbol stage", async () => {
     const dir = fixtureDir();
     const provider = new ScriptedProvider([
-      compactSelect("answer", "src/helper.ts", "value"),
-      compactReply(answerEditor("export function answer(): number {\n  return 2;\n}", null)),
+      editDslSelect("answer", "src/helper.ts", "value"),
+      editDslReply(answerEditor("export function answer(): number {\n  return 2;\n}", null)),
     ]);
     const result = await runLoop({
       cwd: dir,
       issue: "make the answer test pass",
       provider,
-      protocolFormat: "compact",
+      protocolFormat: "edit-dsl",
       checkCommand: TSC,
       testCommand: ["bun", "test"],
     });
@@ -9447,11 +9447,11 @@ describe("compact protocol (#111/#119)", () => {
     expect(applied?.selectors).toEqual(["whole-symbol"]);
   }, 30000);
 
-  test("under compact a `match` + `pick` reply records the pick stage", async () => {
+  test("under edit-dsl a `match` + `pick` reply records the pick stage", async () => {
     const dir = fixtureDir();
     const provider = new ScriptedProvider([
-      compactSelect("answer", "src/helper.ts", "value"),
-      compactReply(
+      editDslSelect("answer", "src/helper.ts", "value"),
+      editDslReply(
         answerEditor("return 2;", { kind: "snippet", value: "return 1;" }, [
           { line: 2, column: 3, endLine: 2, endColumn: 11 },
         ]),
@@ -9461,7 +9461,7 @@ describe("compact protocol (#111/#119)", () => {
       cwd: dir,
       issue: "make the answer test pass",
       provider,
-      protocolFormat: "compact",
+      protocolFormat: "edit-dsl",
       checkCommand: TSC,
       testCommand: ["bun", "test"],
     });
@@ -9473,19 +9473,19 @@ describe("compact protocol (#111/#119)", () => {
     expect(applied?.selectors).toEqual(["range"]);
   }, 30000);
 
-  test("under compact a viewer writes nothing and feeds its candidates into the next prompt", async () => {
+  test("under edit-dsl a viewer writes nothing and feeds its candidates into the next prompt", async () => {
     const dir = fixtureDir();
     const provider = new ScriptedProvider([
-      compactSelect("answer", "src/helper.ts", "value"),
+      editDslSelect("answer", "src/helper.ts", "value"),
       // A viewer of a matched span: no `replace`, so it locates and writes nothing.
-      compactReply(answerEditor(null, { kind: "snippet", value: "return 1;" })),
-      compactReply(answerEditor("return 2;", { kind: "snippet", value: "return 1;" })),
+      editDslReply(answerEditor(null, { kind: "snippet", value: "return 1;" })),
+      editDslReply(answerEditor("return 2;", { kind: "snippet", value: "return 1;" })),
     ]);
     const result = await runLoop({
       cwd: dir,
       issue: "make the answer test pass",
       provider,
-      protocolFormat: "compact",
+      protocolFormat: "edit-dsl",
       checkCommand: TSC,
       testCommand: ["bun", "test"],
     });
@@ -9501,20 +9501,20 @@ describe("compact protocol (#111/#119)", () => {
     expect(helperSource(dir)).toContain("return 2;");
   }, 30000);
 
-  test("under compact a no-kind resolve value viewer addresses the function", async () => {
+  test("under edit-dsl a no-kind resolve value viewer addresses the function", async () => {
     const dir = fixtureDir();
     const provider = new ScriptedProvider([
-      compactSelect("answer", "src/helper.ts", "value"),
+      editDslSelect("answer", "src/helper.ts", "value"),
       // No declaration kind, explicit value space: the path + name + space
       // resolve the exported function exactly once.
       "select answer in src/helper.ts resolve value\nend",
-      compactReply(answerEditor("return 2;", { kind: "snippet", value: "return 1;" })),
+      editDslReply(answerEditor("return 2;", { kind: "snippet", value: "return 1;" })),
     ]);
     const result = await runLoop({
       cwd: dir,
       issue: "make the answer test pass",
       provider,
-      protocolFormat: "compact",
+      protocolFormat: "edit-dsl",
       checkCommand: TSC,
       testCommand: ["bun", "test"],
     });
@@ -9525,28 +9525,28 @@ describe("compact protocol (#111/#119)", () => {
     expect(helperSource(dir)).toContain("return 2;");
   }, 30000);
 
-  test("under compact a no-kind name in two spaces is an ambiguous address", async () => {
+  test("under edit-dsl a no-kind name in two spaces is an ambiguous address", async () => {
     const dir = fixtureDir();
     writeFileSync(
       join(dir, "src", "dual.ts"),
       "export interface Dual {}\nexport const Dual = 1;\n",
     );
     const provider = new ScriptedProvider([
-      compactSelect("answer", "src/helper.ts", "value"),
-      compactReply({
+      editDslSelect("answer", "src/helper.ts", "value"),
+      editDslReply({
         locator: { path: "src/dual.ts", name: "Dual", kind: "" },
         space: null,
         matcher: null,
         pick: null,
         replacement: "42",
       }),
-      compactReply(answerEditor("return 2;", { kind: "snippet", value: "return 1;" })),
+      editDslReply(answerEditor("return 2;", { kind: "snippet", value: "return 1;" })),
     ]);
     const result = await runLoop({
       cwd: dir,
       issue: "make the answer test pass",
       provider,
-      protocolFormat: "compact",
+      protocolFormat: "edit-dsl",
       checkCommand: TSC,
       testCommand: ["bun", "test"],
     });
@@ -9560,34 +9560,34 @@ describe("compact protocol (#111/#119)", () => {
     expect(readFileSync(join(dir, "src", "dual.ts"), "utf8")).not.toContain("42");
   }, 30000);
 
-  test("under compact a malformed regex is classified as regex-invalid at the matcher stage", async () => {
+  test("under edit-dsl a malformed regex is classified as regex-invalid at the matcher stage", async () => {
     const dir = fixtureDir();
     const provider = new ScriptedProvider([
-      compactSelect("answer", "src/helper.ts", "value"),
-      compactReply(answerEditor("return 2;", { kind: "regex", value: "(" })),
-      compactReply(answerEditor("return 2;", { kind: "snippet", value: "return 1;" })),
+      editDslSelect("answer", "src/helper.ts", "value"),
+      editDslReply(answerEditor("return 2;", { kind: "regex", value: "(" })),
+      editDslReply(answerEditor("return 2;", { kind: "snippet", value: "return 1;" })),
     ]);
     const result = await runLoop({
       cwd: dir,
       issue: "make the answer test pass",
       provider,
-      protocolFormat: "compact",
+      protocolFormat: "edit-dsl",
       checkCommand: TSC,
       testCommand: ["bun", "test"],
     });
     expect(result.ok).toBe(true);
     const rejected = result.records.find((record) => record.outcome === "matcher");
     expect(rejected?.cause).toBe("regex-invalid");
-    expect(rejected?.diagnostics).toContain("stage: compact");
+    expect(rejected?.diagnostics).toContain("stage: edit-dsl");
   }, 30000);
 
-  // A compact clause over a `pair.ts` declaration, for the multi-clause atomic
+  // An edit-dsl clause over a `pair.ts` declaration, for the multi-clause atomic
   // application tests below.
   function pairEditor(
     symbol: string,
     replacement: string,
-    matcher: CompactSelection["matcher"],
-  ): CompactSelection {
+    matcher: EditDslSelection["matcher"],
+  ): EditDslSelection {
     return {
       locator: { path: "src/pair.ts", name: symbol, kind: "function" },
       space: null,
@@ -9597,21 +9597,21 @@ describe("compact protocol (#111/#119)", () => {
     };
   }
 
-  test("a compact multi-clause reply with one no-op clause writes nothing and the retry resends both", async () => {
+  test("an edit-dsl multi-clause reply with one no-op clause writes nothing and the retry resends both", async () => {
     const dir = sameFileFixtureDir();
     const original = pairSource(dir);
     let afterFailure = "";
     const provider = new ScriptedProvider(
       [
-        compactSelect("one", "src/pair.ts"),
-        compactReply(
+        editDslSelect("one", "src/pair.ts"),
+        editDslReply(
           // Clause 1 would apply `one`'s fix.
           pairEditor("one", "return 2;", { kind: "snippet", value: "return 1;" }),
           // Clause 2 changes nothing: its replacement equals the matched source.
           pairEditor("two", "return 1;", { kind: "snippet", value: "return 1;" }),
         ),
         // The whole reply failed, so the retry must carry both edits.
-        compactReply(
+        editDslReply(
           pairEditor("one", "return 2;", { kind: "snippet", value: "return 1;" }),
           pairEditor("two", "return 3;", { kind: "snippet", value: "return 1;" }),
         ),
@@ -9627,7 +9627,7 @@ describe("compact protocol (#111/#119)", () => {
       cwd: dir,
       issue: "make both declarations satisfy the pair test",
       provider,
-      protocolFormat: "compact",
+      protocolFormat: "edit-dsl",
       checkCommand: TSC,
       testCommand: ["bun", "test"],
     });
@@ -9644,24 +9644,24 @@ describe("compact protocol (#111/#119)", () => {
     expect(rejected).toBeDefined();
     expect(rejected?.diagnostics).toContain("clause 2 of 2");
     expect(rejected?.diagnostics).toContain("stage: no-op");
-    expect(rejected?.diagnostics).toContain("the whole compact reply is discarded");
+    expect(rejected?.diagnostics).toContain("the whole edit-dsl reply is discarded");
     expect(rejected?.diagnostics).not.toContain("already applied (do not resend):");
     expect(rejected?.stages).toEqual([]);
   }, 30000);
 
-  test("two overlapping compact clauses write nothing and the retry applies both", async () => {
+  test("two overlapping edit-dsl clauses write nothing and the retry applies both", async () => {
     const dir = sameFileFixtureDir();
     const original = pairSource(dir);
     let afterFailure = "";
     const provider = new ScriptedProvider(
       [
-        compactSelect("one", "src/pair.ts"),
-        compactReply(
+        editDslSelect("one", "src/pair.ts"),
+        editDslReply(
           // Both clauses resolve to the same `return 1;` span in `one`.
           pairEditor("one", "return 2;", { kind: "snippet", value: "return 1;" }),
           pairEditor("one", "return 9;", { kind: "snippet", value: "return 1;" }),
         ),
-        compactReply(
+        editDslReply(
           pairEditor("one", "return 2;", { kind: "snippet", value: "return 1;" }),
           pairEditor("two", "return 3;", { kind: "snippet", value: "return 1;" }),
         ),
@@ -9677,7 +9677,7 @@ describe("compact protocol (#111/#119)", () => {
       cwd: dir,
       issue: "make both declarations satisfy the pair test",
       provider,
-      protocolFormat: "compact",
+      protocolFormat: "edit-dsl",
       checkCommand: TSC,
       testCommand: ["bun", "test"],
     });
@@ -9692,7 +9692,7 @@ describe("compact protocol (#111/#119)", () => {
     expect(rejected?.diagnostics).toContain("overlap");
     expect(rejected?.diagnostics).toContain("clause 1");
     expect(rejected?.diagnostics).toContain("clause 2");
-    expect(rejected?.diagnostics).toContain("the whole compact reply is discarded");
+    expect(rejected?.diagnostics).toContain("the whole edit-dsl reply is discarded");
     expect(rejected?.diagnostics).toContain("nothing is written");
     expect(rejected?.diagnostics).not.toContain("earlier clause wins");
   }, 30000);
@@ -9706,8 +9706,8 @@ describe("compact protocol (#111/#119)", () => {
     let helperAfterFailure = "";
     const provider = new ScriptedProvider(
       [
-        compactSelect("JsonValue", "src/json.ts"),
-        compactReply(
+        editDslSelect("JsonValue", "src/json.ts"),
+        editDslReply(
           // The #11 shape: two creates, then the same two fences again asking
           // for the other locator kind. Every fence creates the same
           // declaration, so clauses 3 and 4 conflict with 1 and 2.
@@ -9727,7 +9727,7 @@ describe("compact protocol (#111/#119)", () => {
           ),
           createEditor("src/json.ts", "parseJson", "function", parseBody, "value"),
         ),
-        compactReply(answerEditor("return 2;", { kind: "snippet", value: "return 1;" })),
+        editDslReply(answerEditor("return 2;", { kind: "snippet", value: "return 1;" })),
         "Great! I resolve this problem!",
       ],
       (callIndex) => {
@@ -9742,7 +9742,7 @@ describe("compact protocol (#111/#119)", () => {
       cwd: dir,
       issue: "add the JSON declaration",
       provider,
-      protocolFormat: "compact",
+      protocolFormat: "edit-dsl",
       checkCommand: TSC,
       testCommand: ["bun", "test"],
     });
@@ -9761,7 +9761,7 @@ describe("compact protocol (#111/#119)", () => {
     expect(rejected?.diagnostics).toContain(
       'clause 2 and clause 4 both create the same top-level function "parseJson"',
     );
-    expect(rejected?.diagnostics).toContain("the whole compact reply is discarded");
+    expect(rejected?.diagnostics).toContain("the whole edit-dsl reply is discarded");
     expect(rejected?.diagnostics).toContain("nothing is written");
     expect(helperSource(dir)).toContain("return 2;");
   }, 30000);
@@ -9773,8 +9773,8 @@ describe("compact protocol (#111/#119)", () => {
     let helperAfterFailure = "";
     const provider = new ScriptedProvider(
       [
-        compactSelect("Alpha", "src/new.ts"),
-        compactReply(
+        editDslSelect("Alpha", "src/new.ts"),
+        editDslReply(
           // Both creates append at the empty file's offset 0..0.
           createEditor(
             "src/new.ts",
@@ -9789,7 +9789,7 @@ describe("compact protocol (#111/#119)", () => {
             "export function Beta(): number {\n  return 2;\n}",
           ),
         ),
-        compactReply(
+        editDslReply(
           createEditor(
             "src/new.ts",
             "Alpha",
@@ -9797,7 +9797,7 @@ describe("compact protocol (#111/#119)", () => {
             "export function Alpha(): number {\n  return 1;\n}",
           ),
         ),
-        compactReply(answerEditor("return 2;", { kind: "snippet", value: "return 1;" })),
+        editDslReply(answerEditor("return 2;", { kind: "snippet", value: "return 1;" })),
         "Great! I resolve this problem!",
       ],
       (callIndex) => {
@@ -9812,7 +9812,7 @@ describe("compact protocol (#111/#119)", () => {
       cwd: dir,
       issue: "add the Alpha declaration",
       provider,
-      protocolFormat: "compact",
+      protocolFormat: "edit-dsl",
       checkCommand: TSC,
       testCommand: ["bun", "test"],
     });
@@ -9825,7 +9825,7 @@ describe("compact protocol (#111/#119)", () => {
     expect(rejected?.diagnostics).toContain("0..0");
     expect(rejected?.diagnostics).toContain("clause 1");
     expect(rejected?.diagnostics).toContain("clause 2");
-    expect(rejected?.diagnostics).toContain("the whole compact reply is discarded");
+    expect(rejected?.diagnostics).toContain("the whole edit-dsl reply is discarded");
     expect(rejected?.diagnostics).toContain("nothing is written");
     const created = readFileSync(join(dir, "src", "new.ts"), "utf8");
     expect(created).toContain("export function Alpha");
@@ -9833,15 +9833,15 @@ describe("compact protocol (#111/#119)", () => {
     expect(helperSource(dir)).toContain("return 2;");
   }, 30000);
 
-  test("a multi-file compact reply is all-or-none across files", async () => {
+  test("a multi-file edit-dsl reply is all-or-none across files", async () => {
     const dir = multiFixtureDir();
     const originalA = readFileSync(join(dir, "src", "a.ts"), "utf8");
     const originalB = readFileSync(join(dir, "src", "b.ts"), "utf8");
     let afterFailure = "";
     const provider = new ScriptedProvider(
       [
-        compactSelect("one", "src/a.ts"),
-        compactReply(
+        editDslSelect("one", "src/a.ts"),
+        editDslReply(
           // The `a.ts` clause would pass on its own; `b.ts` resolves but is a
           // no-op, so the apply phase must discard `a.ts`'s returned write too.
           {
@@ -9859,7 +9859,7 @@ describe("compact protocol (#111/#119)", () => {
             replacement: "return 1;",
           },
         ),
-        compactReply(
+        editDslReply(
           {
             locator: { path: "src/a.ts", name: "one", kind: "function" },
             space: null,
@@ -9887,7 +9887,7 @@ describe("compact protocol (#111/#119)", () => {
       cwd: dir,
       issue: "make both declarations satisfy the pair test",
       provider,
-      protocolFormat: "compact",
+      protocolFormat: "edit-dsl",
       checkCommand: TSC,
       testCommand: ["bun", "test"],
     });
@@ -9899,7 +9899,7 @@ describe("compact protocol (#111/#119)", () => {
       (record) => record.kind === "exchange" && record.outcome === "no-op",
     );
     expect(rejected?.diagnostics).toContain("clause 2 of 2");
-    expect(rejected?.diagnostics).toContain("the whole compact reply is discarded");
+    expect(rejected?.diagnostics).toContain("the whole edit-dsl reply is discarded");
     expect(rejected?.diagnostics).not.toContain("already applied (do not resend):");
   }, 30000);
 
@@ -9909,12 +9909,12 @@ describe("compact protocol (#111/#119)", () => {
     let afterFailure = "";
     const provider = new ScriptedProvider(
       [
-        compactSelect("answer", "src/helper.ts", "value"),
-        compactReply(
+        editDslSelect("answer", "src/helper.ts", "value"),
+        editDslReply(
           answerEditor(null, { kind: "snippet", value: "return 1;" }),
           answerEditor("return 2;", { kind: "snippet", value: "return 9;" }),
         ),
-        compactReply(answerEditor("return 2;", { kind: "snippet", value: "return 1;" })),
+        editDslReply(answerEditor("return 2;", { kind: "snippet", value: "return 1;" })),
         "Great! I resolve this problem!",
       ],
       (callIndex) => {
@@ -9927,7 +9927,7 @@ describe("compact protocol (#111/#119)", () => {
       cwd: dir,
       issue: "make the answer test pass",
       provider,
-      protocolFormat: "compact",
+      protocolFormat: "edit-dsl",
       checkCommand: TSC,
       testCommand: ["bun", "test"],
     });
@@ -9937,13 +9937,13 @@ describe("compact protocol (#111/#119)", () => {
     const rejected = result.records.find(
       (record) => record.kind === "exchange" && record.outcome === "matcher",
     );
-    expect(rejected?.diagnostics).toContain("the whole compact reply is discarded");
+    expect(rejected?.diagnostics).toContain("the whole edit-dsl reply is discarded");
     expect(rejected?.diagnostics).toContain("Located occurrences");
   }, 30000);
 
-  test("with the compact format the create prompts teach the compact create form", () => {
+  test("with the edit-dsl format the create prompts teach the edit-dsl create form", () => {
     const addressJson = '{"path":"src/new.ts","symbol":"make","kind":"function"}';
-    const create = buildCreatePrompt(addressJson, "src/new.ts", "compact");
+    const create = buildCreatePrompt(addressJson, "src/new.ts", "edit-dsl");
     expect(create).toContain("A reply is one or more `select … end` clauses");
     expect(create).toContain("does not take `match` or `pick`");
     expect(create).toContain("appends the COMPLETE declaration");
@@ -9958,7 +9958,7 @@ describe("compact protocol (#111/#119)", () => {
       diagnostics: "boom",
       failure: "verification",
       repin: false,
-      protocolFormat: "compact",
+      protocolFormat: "edit-dsl",
     });
     expect(retry).toContain("does not take `match` or `pick`");
     expect(retry).toContain("select function f in src/x.ts");
@@ -9987,15 +9987,15 @@ describe("compact protocol (#111/#119)", () => {
     expect(retry).not.toContain("does not take `match` or `pick`");
   });
 
-  // A whole-declaration compact editor for `path`/`symbol`, used by the
+  // A whole-declaration edit-dsl editor for `path`/`symbol`, used by the
   // implicit-create tests below.
   function createEditor(
     path: string,
     symbol: string,
     kind: string,
     body: string,
-    space: CompactSelection["space"] = null,
-  ): CompactSelection {
+    space: EditDslSelection["space"] = null,
+  ): EditDslSelection {
     return {
       locator: { path, name: symbol, kind },
       space,
@@ -10005,11 +10005,11 @@ describe("compact protocol (#111/#119)", () => {
     };
   }
 
-  test("under compact an undeclared whole-declaration clause creates the file", async () => {
+  test("under edit-dsl an undeclared whole-declaration clause creates the file", async () => {
     const dir = fixtureDir();
     const provider = new ScriptedProvider([
-      compactSelect("extra", "src/extra.ts"),
-      compactReply(
+      editDslSelect("extra", "src/extra.ts"),
+      editDslReply(
         createEditor(
           "src/extra.ts",
           "extra",
@@ -10017,13 +10017,13 @@ describe("compact protocol (#111/#119)", () => {
           "export function extra(): number {\n  return 1;\n}",
         ),
       ),
-      compactReply(answerEditor("return 2;", { kind: "snippet", value: "return 1;" })),
+      editDslReply(answerEditor("return 2;", { kind: "snippet", value: "return 1;" })),
     ]);
     const result = await runLoop({
       cwd: dir,
       issue: "add an extra declaration",
       provider,
-      protocolFormat: "compact",
+      protocolFormat: "edit-dsl",
       checkCommand: TSC,
       testCommand: ["bun", "test"],
     });
@@ -10041,15 +10041,15 @@ describe("compact protocol (#111/#119)", () => {
     expect(applied?.creates).toBe(1);
   }, 30000);
 
-  test("under compact a pick-only multi-range applies every picked range", async () => {
+  test("under edit-dsl a pick-only multi-range applies every picked range", async () => {
     const dir = fixtureDir();
     writeFileSync(
       join(dir, "src", "helper.ts"),
       "export function answer(): number {\n  if (Date.now() > 0) return 1;\n  return 1;\n}\n",
     );
     const provider = new ScriptedProvider([
-      compactSelect("answer", "src/helper.ts", "value"),
-      compactReply(
+      editDslSelect("answer", "src/helper.ts", "value"),
+      editDslReply(
         answerEditor("  return 2;", null, [
           { line: 2, column: 1, endLine: 2, endColumn: END_OF_LINE_COLUMN },
           { line: 3, column: 1, endLine: 3, endColumn: END_OF_LINE_COLUMN },
@@ -10060,7 +10060,7 @@ describe("compact protocol (#111/#119)", () => {
       cwd: dir,
       issue: "make the answer test pass",
       provider,
-      protocolFormat: "compact",
+      protocolFormat: "edit-dsl",
       checkCommand: TSC,
       testCommand: ["bun", "test"],
     });
@@ -10073,11 +10073,11 @@ describe("compact protocol (#111/#119)", () => {
     expect(applied?.creates).toBe(0);
   }, 30000);
 
-  test("under compact a missing symbol with a match still creates (match is ignored)", async () => {
+  test("under edit-dsl a missing symbol with a match still creates (match is ignored)", async () => {
     const dir = fixtureDir();
     const provider = new ScriptedProvider([
-      compactSelect("extra", "src/extra.ts"),
-      compactReply({
+      editDslSelect("extra", "src/extra.ts"),
+      editDslReply({
         ...createEditor(
           "src/extra.ts",
           "extra",
@@ -10086,13 +10086,13 @@ describe("compact protocol (#111/#119)", () => {
         ),
         matcher: { kind: "snippet", value: "return 1;" },
       }),
-      compactReply(answerEditor("return 2;", { kind: "snippet", value: "return 1;" })),
+      editDslReply(answerEditor("return 2;", { kind: "snippet", value: "return 1;" })),
     ]);
     const result = await runLoop({
       cwd: dir,
       issue: "add an extra declaration",
       provider,
-      protocolFormat: "compact",
+      protocolFormat: "edit-dsl",
       checkCommand: TSC,
       testCommand: ["bun", "test"],
     });
@@ -10103,18 +10103,18 @@ describe("compact protocol (#111/#119)", () => {
     expect(applied?.creates).toBe(1);
   }, 30000);
 
-  test("under compact a resolve type create appends a type alias", async () => {
+  test("under edit-dsl a resolve type create appends a type alias", async () => {
     const dir = fixtureDir();
     const provider = new ScriptedProvider([
-      compactSelect("Extra", "src/types.ts"),
-      compactReply(createEditor("src/types.ts", "Extra", "type", "{ n: number }", "type")),
-      compactReply(answerEditor("return 2;", { kind: "snippet", value: "return 1;" })),
+      editDslSelect("Extra", "src/types.ts"),
+      editDslReply(createEditor("src/types.ts", "Extra", "type", "{ n: number }", "type")),
+      editDslReply(answerEditor("return 2;", { kind: "snippet", value: "return 1;" })),
     ]);
     const result = await runLoop({
       cwd: dir,
       issue: "add an extra type",
       provider,
-      protocolFormat: "compact",
+      protocolFormat: "edit-dsl",
       checkCommand: TSC,
       testCommand: ["bun", "test"],
     });
@@ -10125,11 +10125,11 @@ describe("compact protocol (#111/#119)", () => {
     expect(helperSource(dir)).toContain("return 2;");
   }, 30000);
 
-  test("under compact a no-kind undeclared clause still creates", async () => {
+  test("under edit-dsl a no-kind undeclared clause still creates", async () => {
     const dir = fixtureDir();
     const provider = new ScriptedProvider([
-      compactSelect("extra", "src/extra.ts"),
-      compactReply(
+      editDslSelect("extra", "src/extra.ts"),
+      editDslReply(
         // No `kind`: `select extra in src/extra.ts` must still create.
         createEditor(
           "src/extra.ts",
@@ -10138,13 +10138,13 @@ describe("compact protocol (#111/#119)", () => {
           "export function extra(): number {\n  return 1;\n}",
         ),
       ),
-      compactReply(answerEditor("return 2;", { kind: "snippet", value: "return 1;" })),
+      editDslReply(answerEditor("return 2;", { kind: "snippet", value: "return 1;" })),
     ]);
     const result = await runLoop({
       cwd: dir,
       issue: "add an extra declaration",
       provider,
-      protocolFormat: "compact",
+      protocolFormat: "edit-dsl",
       checkCommand: TSC,
       testCommand: ["bun", "test"],
     });
@@ -10153,22 +10153,22 @@ describe("compact protocol (#111/#119)", () => {
     expect(helperSource(dir)).toContain("return 2;");
   }, 30000);
 
-  test("under compact a resolve space miss creates in the requested space", async () => {
+  test("under edit-dsl a resolve space miss creates in the requested space", async () => {
     const dir = fixtureDir();
     const provider = new ScriptedProvider([
-      compactSelect("answer", "src/helper.ts", "type"),
-      compactReply(
+      editDslSelect("answer", "src/helper.ts", "type"),
+      editDslReply(
         // `answer` is a value-space function; `resolve type` is a space miss,
         // so the body is wrapped as a type alias in the requested space.
         createEditor("src/helper.ts", "answer", "function", "42", "type"),
       ),
-      compactReply(answerEditor("return 2;", { kind: "snippet", value: "return 1;" })),
+      editDslReply(answerEditor("return 2;", { kind: "snippet", value: "return 1;" })),
     ]);
     const result = await runLoop({
       cwd: dir,
       issue: "make the answer test pass",
       provider,
-      protocolFormat: "compact",
+      protocolFormat: "edit-dsl",
       checkCommand: TSC,
       testCommand: ["bun", "test"],
     });
@@ -10177,18 +10177,18 @@ describe("compact protocol (#111/#119)", () => {
     expect(helperSource(dir)).toContain("return 2;");
   }, 30000);
 
-  test("under compact a no-resolve body creates a let binding in a new parent directory", async () => {
+  test("under edit-dsl a no-resolve body creates a let binding in a new parent directory", async () => {
     const dir = fixtureDir();
     const provider = new ScriptedProvider([
-      compactSelect("extra", "src/deep/new.ts"),
-      compactReply(createEditor("src/deep/new.ts", "extra", "", "42")),
-      compactReply(answerEditor("return 2;", { kind: "snippet", value: "return 1;" })),
+      editDslSelect("extra", "src/deep/new.ts"),
+      editDslReply(createEditor("src/deep/new.ts", "extra", "", "42")),
+      editDslReply(answerEditor("return 2;", { kind: "snippet", value: "return 1;" })),
     ]);
     const result = await runLoop({
       cwd: dir,
       issue: "add an extra declaration",
       provider,
-      protocolFormat: "compact",
+      protocolFormat: "edit-dsl",
       checkCommand: TSC,
       testCommand: ["bun", "test"],
     });
@@ -10197,11 +10197,11 @@ describe("compact protocol (#111/#119)", () => {
     expect(created).toBe("let extra = 42;\n");
   }, 30000);
 
-  test("under compact a create that duplicates an existing declaration is rejected", async () => {
+  test("under edit-dsl a create that duplicates an existing declaration is rejected", async () => {
     const dir = fixtureDir();
     const provider = new ScriptedProvider([
-      compactSelect("missing", "src/helper.ts"),
-      compactReply(
+      editDslSelect("missing", "src/helper.ts"),
+      editDslReply(
         createEditor(
           "src/helper.ts",
           "missing",
@@ -10209,13 +10209,13 @@ describe("compact protocol (#111/#119)", () => {
           "export function missing(): number {\n  return 1;\n}\nexport function answer(): number {\n  return 2;\n}",
         ),
       ),
-      compactReply(answerEditor("return 2;", { kind: "snippet", value: "return 1;" })),
+      editDslReply(answerEditor("return 2;", { kind: "snippet", value: "return 1;" })),
     ]);
     const result = await runLoop({
       cwd: dir,
       issue: "make the answer test pass",
       provider,
-      protocolFormat: "compact",
+      protocolFormat: "edit-dsl",
       checkCommand: TSC,
       testCommand: ["bun", "test"],
     });
@@ -10228,15 +10228,15 @@ describe("compact protocol (#111/#119)", () => {
     expect(rejected?.diagnostics).toContain("answer");
   }, 30000);
 
-  test("under compact a failing create reply creates no file and the retry resends both", async () => {
+  test("under edit-dsl a failing create reply creates no file and the retry resends both", async () => {
     const dir = fixtureDir();
     const originalHelper = helperSource(dir);
     let extraAfterFailure: string | null = null;
     let helperAfterFailure = "";
     const provider = new ScriptedProvider(
       [
-        compactSelect("extra", "src/extra.ts"),
-        compactReply(
+        editDslSelect("extra", "src/extra.ts"),
+        editDslReply(
           // Clause 1 would create a new file; clause 2 is a kind miss on an
           // existing value-space name, so the whole reply must be discarded.
           createEditor(
@@ -10253,7 +10253,7 @@ describe("compact protocol (#111/#119)", () => {
             replacement: "return 5;",
           },
         ),
-        compactReply(
+        editDslReply(
           createEditor(
             "src/extra.ts",
             "extra",
@@ -10277,7 +10277,7 @@ describe("compact protocol (#111/#119)", () => {
       cwd: dir,
       issue: "make the answer test pass",
       provider,
-      protocolFormat: "compact",
+      protocolFormat: "edit-dsl",
       checkCommand: TSC,
       testCommand: ["bun", "test"],
     });
@@ -10292,7 +10292,7 @@ describe("compact protocol (#111/#119)", () => {
     );
     expect(rejected).toBeDefined();
     expect(rejected?.diagnostics).toContain("clause 2 of 2");
-    expect(rejected?.diagnostics).toContain("the whole compact reply is discarded");
+    expect(rejected?.diagnostics).toContain("the whole edit-dsl reply is discarded");
     expect(rejected?.diagnostics).not.toContain("created (do not resend):");
   }, 30000);
 
@@ -10300,7 +10300,7 @@ describe("compact protocol (#111/#119)", () => {
     const dir = fixtureDir();
     const provider = new ScriptedProvider([
       selectionResponse(),
-      compactReply(
+      editDslReply(
         createEditor(
           "src/extra.ts",
           "extra",
@@ -10318,16 +10318,16 @@ describe("compact protocol (#111/#119)", () => {
       testCommand: ["bun", "test"],
     });
     expect(result.ok).toBe(true);
-    // Under json, the compact reply is not understood: no file is created.
+    // Under json, the edit-dsl reply is not understood: no file is created.
     expect(existsSync(join(dir, "src", "extra.ts"))).toBe(false);
     const rejected = result.records.find((record) => record.outcome === "protocol");
     expect(rejected?.diagnostics).toContain("stage: protocol");
     expect(helperSource(dir)).toContain("return 2;");
   }, 30000);
 
-  test("under compact the system prompt teaches select … end and drops the JSON edit rule", () => {
-    const prompt = buildSystemPrompt(false, "compact");
-    // The compact edit rule and its create/delete semantics replace the JSON rule.
+  test("under edit-dsl the system prompt teaches select … end and drops the JSON edit rule", () => {
+    const prompt = buildSystemPrompt(false, "edit-dsl");
+    // The edit-dsl edit rule and its create/delete semantics replace the JSON rule.
     expect(prompt).toContain("`select <symbol> in <path> [ resolve <value|type|namespace> ]");
     expect(prompt).toContain("fence opens with 6 or more backticks");
     expect(prompt).toContain(
@@ -10342,7 +10342,7 @@ describe("compact protocol (#111/#119)", () => {
     expect(prompt).toContain("an empty fence deletes it");
     expect(prompt).toContain("no JSON edit payload");
     expect(prompt).toContain("naming it in the clause's own `select`");
-    // The pick turn is compact too: a select viewer leads to `# details`.
+    // The pick turn is edit-dsl too: a select viewer leads to `# details`.
     expect(prompt).toContain(
       "First you will be asked to select the target. Reply with ONLY one `select <symbol> in <path>",
     );
@@ -10388,12 +10388,12 @@ describe("compact protocol (#111/#119)", () => {
     expect(expected).not.toContain("multi-payload protocol");
   });
 
-  test("under compact the edit prompt carries the expanded few-shot examples", () => {
+  test("under edit-dsl the edit prompt carries the expanded few-shot examples", () => {
     const edit = buildEditPrompt(
       '{"path":"src/a.ts","symbol":"make","kind":"function"}',
       "const x = 1;\n",
       false,
-      "compact",
+      "edit-dsl",
     );
     expect(edit).toContain("A reply is one or more `select … end` clauses");
     // The four pre-#117 forms remain.
@@ -10410,32 +10410,32 @@ describe("compact protocol (#111/#119)", () => {
     expect(edit).toContain("select function parse in src/x.ts");
   });
 
-  test("under compact a JSON edit payload is a protocol rejection and a compact reply is accepted", async () => {
+  test("under edit-dsl a JSON edit payload is a protocol rejection and an edit-dsl reply is accepted", async () => {
     const dir = fixtureDir();
     const provider = new ScriptedProvider([
-      compactSelect("answer", "src/helper.ts", "value"),
-      // A structurally valid JSON edit payload: compact rejects it outright.
+      editDslSelect("answer", "src/helper.ts", "value"),
+      // A structurally valid JSON edit payload: edit-dsl rejects it outright.
       editResponse("return 1;", "return 2;"),
-      // The required compact form lands on the next exchange.
-      compactReply(answerEditor("return 2;", { kind: "snippet", value: "return 1;" })),
+      // The required edit-dsl form lands on the next exchange.
+      editDslReply(answerEditor("return 2;", { kind: "snippet", value: "return 1;" })),
     ]);
     const result = await runLoop({
       cwd: dir,
       issue: "make the answer test pass",
       provider,
-      protocolFormat: "compact",
+      protocolFormat: "edit-dsl",
       checkCommand: TSC,
       testCommand: ["bun", "test"],
     });
     expect(result.ok).toBe(true);
     expect(helperSource(dir)).toContain("return 2;");
-    // The system prompt the run sent teaches the compact form (call-site wiring).
+    // The system prompt the run sent teaches the edit-dsl form (call-site wiring).
     const system = provider.calls[0]?.[0]?.content ?? "";
     expect(system).toContain("select <symbol> in <path>");
     expect(system).not.toContain(
       "Then you will be asked to edit the selected symbol. Reply with ONLY one flat JSON object",
     );
-    // The JSON payload is the rejected protocol exchange; the compact reply applies.
+    // The JSON payload is the rejected protocol exchange; the edit-dsl reply applies.
     const rejected = result.records.find((record) => record.outcome === "protocol");
     expect(rejected?.diagnostics).toContain("stage: protocol");
     expect(rejected?.diagnostics).toContain("select … end");
@@ -10444,18 +10444,18 @@ describe("compact protocol (#111/#119)", () => {
     expect(applied?.stages).toEqual(["match"]);
   }, 30000);
 
-  test("under compact a malformed reply is a protocol rejection (no JSON fallback)", async () => {
+  test("under edit-dsl a malformed reply is a protocol rejection (no JSON fallback)", async () => {
     const dir = fixtureDir();
     const provider = new ScriptedProvider([
-      compactSelect("answer", "src/helper.ts", "value"),
+      editDslSelect("answer", "src/helper.ts", "value"),
       "not a clause and not JSON",
-      compactReply(answerEditor("return 2;", { kind: "snippet", value: "return 1;" })),
+      editDslReply(answerEditor("return 2;", { kind: "snippet", value: "return 1;" })),
     ]);
     const result = await runLoop({
       cwd: dir,
       issue: "make the answer test pass",
       provider,
-      protocolFormat: "compact",
+      protocolFormat: "edit-dsl",
       checkCommand: TSC,
       testCommand: ["bun", "test"],
     });

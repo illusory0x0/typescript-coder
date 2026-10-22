@@ -73,9 +73,12 @@ export function parseReplayBundle(json: string): ReplayBundle {
     throw new Error("replay bundle calls must be an array of recorded calls");
   }
   // Backward compatibility: @1 bundles recorded before the protocol field are
-  // JSON; unknown values also replay as JSON rather than failing.
+  // JSON; `compact` is the deprecated legacy name for `edit-dsl` and is
+  // normalized on read; unknown values also replay as JSON rather than failing.
   const protocolFormat: ReplayBundle["protocolFormat"] =
-    parsed["protocolFormat"] === "compact" ? "compact" : "json";
+    parsed["protocolFormat"] === "edit-dsl" || parsed["protocolFormat"] === "compact"
+      ? "edit-dsl"
+      : "json";
   return {
     format: REPLAY_BUNDLE_FORMAT,
     side: "tc",

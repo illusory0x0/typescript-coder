@@ -4,7 +4,7 @@
 
 - id: 15
   title: "Rename the compact edit format to edit-dsl"
-  status: todo
+  status: review
   priority: medium
   milestone: null
   parent: null

@@ -1,6 +1,6 @@
 import { describe, expect, test } from "bun:test";
-import { renderViewerFeedback, resolveCompactReply } from "./compact";
-import type { CompactDeps } from "./compact";
+import { renderViewerFeedback, resolveEditDslReply } from "./edit-dsl";
+import type { EditDslDeps } from "./edit-dsl";
 import { parseSelection } from "./selection";
 import { buildIndexTolerant, declarationSpaces } from "./utility";
 
@@ -10,7 +10,7 @@ const TWICE = ["export function twice(): number {", "  return 1;", "  return 1;"
 
 const ONCE = ["export function once(): number {", "  return 1;", "}", ""].join("\n");
 
-function deps(source: string): CompactDeps {
+function deps(source: string): EditDslDeps {
   return {
     sourceFor: () => source,
     resolveEntry: (current, currentPath, locator, space) => {
@@ -41,12 +41,12 @@ function deps(source: string): CompactDeps {
   };
 }
 
-describe("resolveCompactReply (#111)", () => {
+describe("resolveEditDslReply (#111)", () => {
   test("resolves an editor clause with its cascade stage and matcher kind", () => {
     const selections = parseSelection(
       "select function once in a.ts\nmatch `return 1;`\nreplace with\n``````\nreturn 2;\n``````\nend",
     );
-    const result = resolveCompactReply(selections, deps(ONCE));
+    const result = resolveEditDslReply(selections, deps(ONCE));
     expect(result.failures).toEqual([]);
     expect(result.viewers).toEqual([]);
     expect(result.regions).toHaveLength(1);
@@ -61,7 +61,7 @@ describe("resolveCompactReply (#111)", () => {
     const selections = parseSelection(
       "select function once in a.ts\nreplace with\n``````\nfunction once(): number {\n  return 2;\n}\n``````\nend",
     );
-    const result = resolveCompactReply(selections, deps(ONCE));
+    const result = resolveEditDslReply(selections, deps(ONCE));
     const region = result.regions[0];
     expect(region?.stage).toBe("whole-symbol");
     expect(region?.matcherKind).toBeNull();
@@ -71,7 +71,7 @@ describe("resolveCompactReply (#111)", () => {
     const selections = parseSelection(
       "select function twice in a.ts\npick {2, 3}\nreplace with\n``````\n  return 2;\n``````\nend",
     );
-    const result = resolveCompactReply(selections, deps(TWICE));
+    const result = resolveEditDslReply(selections, deps(TWICE));
     expect(result.failures).toEqual([]);
     expect(result.regions).toHaveLength(2);
     const first = TWICE.indexOf("  return 1;");
@@ -94,7 +94,7 @@ describe("resolveCompactReply (#111)", () => {
     const selections = parseSelection(
       "select function twice in a.ts\npick {2, 2:5}\nreplace with\n``````\n  return 2;\n``````\nend",
     );
-    const result = resolveCompactReply(selections, deps(TWICE));
+    const result = resolveEditDslReply(selections, deps(TWICE));
     expect(result.regions).toEqual([]);
     expect(result.failures).toHaveLength(1);
     expect(result.failures[0]?.stage).toBe("range");
@@ -106,7 +106,7 @@ describe("resolveCompactReply (#111)", () => {
     const selections = parseSelection(
       "select function twice in a.ts\npick {2, 4}\nreplace with\n``````\n}\n``````\nend",
     );
-    const result = resolveCompactReply(selections, deps(TWICE));
+    const result = resolveEditDslReply(selections, deps(TWICE));
     expect(result.regions).toEqual([]);
     expect(result.failures).toHaveLength(1);
     expect(result.failures[0]?.stage).toBe("no-op");
@@ -115,7 +115,7 @@ describe("resolveCompactReply (#111)", () => {
 
   test("a viewer enumerates every candidate occurrence and resolves no region", () => {
     const selections = parseSelection("select function twice in a.ts\nmatch `return 1;`\nend");
-    const result = resolveCompactReply(selections, deps(TWICE));
+    const result = resolveEditDslReply(selections, deps(TWICE));
     expect(result.regions).toEqual([]);
     expect(result.failures).toEqual([]);
     expect(result.viewers).toHaveLength(1);
@@ -128,7 +128,7 @@ describe("resolveCompactReply (#111)", () => {
 
   test("a bare viewer returns the whole declaration as its only occurrence", () => {
     const selections = parseSelection("select function once in a.ts\nend");
-    const result = resolveCompactReply(selections, deps(ONCE));
+    const result = resolveEditDslReply(selections, deps(ONCE));
     expect(result.viewers).toHaveLength(1);
     expect(result.viewers[0]?.stage).toBe("whole-symbol");
     expect(result.viewers[0]?.occurrences).toHaveLength(1);
@@ -138,7 +138,7 @@ describe("resolveCompactReply (#111)", () => {
     const selections = parseSelection(
       "select function twice in a.ts\nmatch `return 1;`\nreplace with\n``````\nreturn 2;\n``````\nend",
     );
-    const result = resolveCompactReply(selections, deps(TWICE));
+    const result = resolveEditDslReply(selections, deps(TWICE));
     expect(result.regions).toEqual([]);
     expect(result.failures).toHaveLength(1);
     expect(result.failures[0]?.stage).toBe("matcher");
@@ -149,7 +149,7 @@ describe("resolveCompactReply (#111)", () => {
     const selections = parseSelection(
       "select function once in a.ts\nmatch /(/\nreplace with\n``````\nreturn 2;\n``````\nend",
     );
-    const result = resolveCompactReply(selections, deps(ONCE));
+    const result = resolveEditDslReply(selections, deps(ONCE));
     expect(result.failures[0]?.stage).toBe("matcher");
     expect(result.failures[0]?.cause).toBe("regex-invalid");
   });
@@ -158,7 +158,7 @@ describe("resolveCompactReply (#111)", () => {
     const selections = parseSelection(
       "select function missing in a.ts\nmatch `return 1;`\nreplace with\n``````\nfunction missing(): number {\n  return 0;\n}\n``````\nend",
     );
-    const result = resolveCompactReply(selections, deps(ONCE));
+    const result = resolveEditDslReply(selections, deps(ONCE));
     expect(result.failures).toEqual([]);
     expect(result.regions).toHaveLength(1);
     expect(result.regions[0]?.create).toBe(true);
@@ -169,7 +169,7 @@ describe("resolveCompactReply (#111)", () => {
     const selections = parseSelection(
       "select function missing in a.ts\nreplace with\n``````\nfunction missing(): number {\n  return 0;\n}\n``````\nend",
     );
-    const result = resolveCompactReply(selections, deps(ONCE));
+    const result = resolveEditDslReply(selections, deps(ONCE));
     expect(result.failures).toEqual([]);
     expect(result.regions).toHaveLength(1);
     const region = result.regions[0];
@@ -185,7 +185,7 @@ describe("resolveCompactReply (#111)", () => {
     const selections = parseSelection(
       "select const NEW in src/new.ts\nreplace with\n``````\nconst NEW = 1;\n``````\nend",
     );
-    const result = resolveCompactReply(selections, deps(""));
+    const result = resolveEditDslReply(selections, deps(""));
     expect(result.regions[0]?.create).toBe(true);
     expect(result.regions[0]?.text).toBe("const NEW = 1;\n");
   });
@@ -194,7 +194,7 @@ describe("resolveCompactReply (#111)", () => {
     const selections = parseSelection(
       "select missing in a.ts\nreplace with\n``````\nfunction missing(): number {\n  return 0;\n}\n``````\nend",
     );
-    const result = resolveCompactReply(selections, deps(ONCE));
+    const result = resolveEditDslReply(selections, deps(ONCE));
     expect(result.failures).toEqual([]);
     expect(result.regions).toHaveLength(1);
     expect(result.regions[0]?.create).toBe(true);
@@ -238,7 +238,7 @@ describe("resolveCompactReply (#111)", () => {
         "end",
       ].join("\n"),
     );
-    const result = resolveCompactReply(selections, deps(""));
+    const result = resolveEditDslReply(selections, deps(""));
     // The first create of each name is queued; the repeats are rejected.
     expect(result.regions.map((region) => region.locator.name)).toEqual(["JsonValue", "parseJson"]);
     expect(result.failures).toHaveLength(2);
@@ -249,7 +249,7 @@ describe("resolveCompactReply (#111)", () => {
       'clause 1 and clause 3 both create the same top-level type "JsonValue"',
     );
     expect(first?.diagnostics).toContain(
-      "the whole compact reply is discarded and nothing is written",
+      "the whole edit-dsl reply is discarded and nothing is written",
     );
     expect(second?.index).toBe(3);
     expect(second?.stage).toBe("duplicate");
@@ -259,19 +259,19 @@ describe("resolveCompactReply (#111)", () => {
   });
 
   test("a no-kind clause resolves a declaration of any kind", () => {
-    // The empty kind is the compact wildcard: path + name only.
+    // The empty kind is the edit-dsl wildcard: path + name only.
     const selections = parseSelection(
       "select once in a.ts\nreplace with\n``````\nfunction once(): number {\n  return 2;\n}\n``````\nend",
     );
-    const result = resolveCompactReply(selections, deps(ONCE));
+    const result = resolveEditDslReply(selections, deps(ONCE));
     expect(result.failures).toEqual([]);
     expect(result.regions).toHaveLength(1);
     expect(result.regions[0]?.create).toBe(false);
     expect(result.regions[0]?.stage).toBe("whole-symbol");
   });
 
-  test("the compact address selects a function under resolve value", () => {
-    const result = resolveCompactReply(
+  test("the edit-dsl address selects a function under resolve value", () => {
+    const result = resolveEditDslReply(
       parseSelection("select answer in src/helper.ts resolve value end"),
       deps(ONCE.replace(/once/g, "answer")),
     );
@@ -309,7 +309,7 @@ describe("resolveCompactReply (#111)", () => {
 
   for (const [name, space] of SPACE_CASES) {
     test(`${name} resolves in the ${space} space`, () => {
-      const result = resolveCompactReply(
+      const result = resolveEditDslReply(
         parseSelection(`select ${name} in a.ts resolve ${space} end`),
         deps(SPACE_SOURCE),
       );
@@ -322,7 +322,7 @@ describe("resolveCompactReply (#111)", () => {
 
   test("without resolve a name declared in two spaces is ambiguous", () => {
     const source = "interface Dual {}\nconst Dual = 1;\n";
-    const result = resolveCompactReply(
+    const result = resolveEditDslReply(
       parseSelection("select Dual in a.ts\nreplace with\n``````\n42\n``````\nend"),
       deps(source),
     );
@@ -334,7 +334,7 @@ describe("resolveCompactReply (#111)", () => {
 
   test("a resolve space miss creates in the requested space instead of failing", () => {
     const source = "interface Thing {}\nconst Thing = 1;\n";
-    const result = resolveCompactReply(
+    const result = resolveEditDslReply(
       parseSelection(
         "select Thing in a.ts resolve namespace\nreplace with\n``````\n42\n``````\nend",
       ),
@@ -352,7 +352,7 @@ describe("resolveCompactReply (#111)", () => {
     const selections = parseSelection(
       "select missing in a.ts\nreplace with\n``````\n42\n``````\nend",
     );
-    const result = resolveCompactReply(selections, deps(ONCE));
+    const result = resolveEditDslReply(selections, deps(ONCE));
     expect(result.failures).toEqual([]);
     expect(result.regions[0]?.create).toBe(true);
     expect(result.regions[0]?.text).toBe("\nlet missing = 42;\n");
@@ -362,7 +362,7 @@ describe("resolveCompactReply (#111)", () => {
     const selections = parseSelection(
       "select missing in a.ts resolve value\nreplace with\n``````\n42\n``````\nend",
     );
-    const result = resolveCompactReply(selections, deps(ONCE));
+    const result = resolveEditDslReply(selections, deps(ONCE));
     expect(result.failures).toEqual([]);
     expect(result.regions[0]?.create).toBe(true);
     expect(result.regions[0]?.text).toBe("\nlet missing = 42;\n");
@@ -372,7 +372,7 @@ describe("resolveCompactReply (#111)", () => {
     const selections = parseSelection(
       "select missing in a.ts resolve type\nreplace with\n``````\n{ n: number }\n``````\nend",
     );
-    const result = resolveCompactReply(selections, deps(ONCE));
+    const result = resolveEditDslReply(selections, deps(ONCE));
     expect(result.failures).toEqual([]);
     expect(result.regions[0]?.create).toBe(true);
     expect(result.regions[0]?.text).toBe("\ntype missing = { n: number };\n");
@@ -382,7 +382,7 @@ describe("resolveCompactReply (#111)", () => {
     const selections = parseSelection(
       "select missing in a.ts resolve namespace\nreplace with\n``````\n42\n``````\nend",
     );
-    const result = resolveCompactReply(selections, deps(ONCE));
+    const result = resolveEditDslReply(selections, deps(ONCE));
     expect(result.failures).toEqual([]);
     expect(result.regions[0]?.create).toBe(true);
     expect(result.regions[0]?.text).toBe("\nnamespace missing {\n42\n}\n");
@@ -407,7 +407,7 @@ describe("resolveCompactReply (#111)", () => {
       const selections = parseSelection(
         `select missing in a.ts${resolve}\nreplace with\n\`\`\`\`\`\`\n${complete}\n\`\`\`\`\`\`\nend`,
       );
-      const result = resolveCompactReply(selections, deps(ONCE));
+      const result = resolveEditDslReply(selections, deps(ONCE));
       expect(result.failures).toEqual([]);
       expect(result.regions[0]?.create).toBe(true);
       expect(result.regions[0]?.text).toBe(`\n${complete}\n`);
@@ -418,7 +418,7 @@ describe("resolveCompactReply (#111)", () => {
     const selections = parseSelection(
       "select function missing in a.ts\npick 2\nreplace with\n``````\nfunction missing(): number {\n  return 0;\n}\n``````\nend",
     );
-    const result = resolveCompactReply(selections, deps(ONCE));
+    const result = resolveEditDslReply(selections, deps(ONCE));
     expect(result.failures).toEqual([]);
     expect(result.regions[0]?.create).toBe(true);
     expect(result.regions[0]?.text).toBe("\nfunction missing(): number {\n  return 0;\n}\n");
@@ -429,7 +429,7 @@ describe("resolveCompactReply (#111)", () => {
     const selections = parseSelection(
       `select missing in a.ts\nreplace with\n\`\`\`\`\`\`\n${body}\n\`\`\`\`\`\`\nend`,
     );
-    const result = resolveCompactReply(selections, deps(ONCE));
+    const result = resolveEditDslReply(selections, deps(ONCE));
     expect(result.regions).toEqual([]);
     expect(result.failures[0]?.stage).toBe("address");
     expect(result.failures[0]?.diagnostics).toContain("exactly one");
@@ -442,7 +442,7 @@ describe("resolveCompactReply (#111)", () => {
     const selections = parseSelection(
       `select missing in a.ts\nreplace with\n\`\`\`\`\`\`\n${body}\n\`\`\`\`\`\`\nend`,
     );
-    const result = resolveCompactReply(selections, deps(ONCE));
+    const result = resolveEditDslReply(selections, deps(ONCE));
     expect(result.regions).toEqual([]);
     expect(result.failures[0]?.stage).toBe("address");
     expect(result.failures[0]?.diagnostics).toContain("exactly one");
@@ -453,7 +453,7 @@ describe("resolveCompactReply (#111)", () => {
     const selections = parseSelection(
       `select missing in a.ts\nreplace with\n\`\`\`\`\`\`\n${body}\n\`\`\`\`\`\`\nend`,
     );
-    const result = resolveCompactReply(selections, deps(ONCE));
+    const result = resolveEditDslReply(selections, deps(ONCE));
     expect(result.regions).toEqual([]);
     expect(result.failures[0]?.stage).toBe("address");
     expect(result.failures[0]?.diagnostics).toContain("exactly one");
@@ -475,7 +475,7 @@ describe("resolveCompactReply (#111)", () => {
       const selections = parseSelection(
         `select missing in a.ts${resolve}\nreplace with\n\`\`\`\`\`\`\n${body}\n\`\`\`\`\`\`\nend`,
       );
-      const result = resolveCompactReply(selections, deps(ONCE));
+      const result = resolveEditDslReply(selections, deps(ONCE));
       expect(result.failures).toEqual([]);
       expect(result.regions[0]?.create).toBe(true);
       expect(result.regions[0]?.text).toBe(`\n${body}\n`);
@@ -486,7 +486,7 @@ describe("resolveCompactReply (#111)", () => {
     const selections = parseSelection(
       `select missing in a.ts resolve type\nreplace with\n\`\`\`\`\`\`\n${COMPLETE}\n\`\`\`\`\`\`\nend`,
     );
-    const result = resolveCompactReply(selections, deps(ONCE));
+    const result = resolveEditDslReply(selections, deps(ONCE));
     expect(result.regions).toEqual([]);
     expect(result.failures).toHaveLength(1);
     expect(result.failures[0]?.stage).toBe("address");
@@ -500,7 +500,7 @@ describe("resolveCompactReply (#111)", () => {
     const selections = parseSelection(
       `select missing in a.ts resolve namespace\nreplace with\n\`\`\`\`\`\`\n${COMPLETE_TYPE}\n\`\`\`\`\`\`\nend`,
     );
-    const result = resolveCompactReply(selections, deps(ONCE));
+    const result = resolveEditDslReply(selections, deps(ONCE));
     expect(result.regions).toEqual([]);
     expect(result.failures[0]?.stage).toBe("address");
     expect(result.failures[0]?.diagnostics).toContain('"type"');
@@ -511,7 +511,7 @@ describe("resolveCompactReply (#111)", () => {
     const selections = parseSelection(
       "select missing in a.ts\nreplace with\n``````\nfunction other(): number {\n  return 0;\n}\n``````\nend",
     );
-    const result = resolveCompactReply(selections, deps(ONCE));
+    const result = resolveEditDslReply(selections, deps(ONCE));
     expect(result.regions).toEqual([]);
     expect(result.failures[0]?.stage).toBe("address");
     expect(result.failures[0]?.diagnostics).toContain('declares no top-level "missing"');
@@ -522,7 +522,7 @@ describe("resolveCompactReply (#111)", () => {
     const selections = parseSelection(
       `select missing in a.ts\nreplace with\n\`\`\`\`\`\`\n${body}\n\`\`\`\`\`\`\nend`,
     );
-    const result = resolveCompactReply(selections, deps(ONCE));
+    const result = resolveEditDslReply(selections, deps(ONCE));
     expect(result.failures).toEqual([]);
     expect(result.regions[0]?.create).toBe(true);
     expect(result.regions[0]?.text).toBe(`\n${body}\n`);
@@ -533,7 +533,7 @@ describe("resolveCompactReply (#111)", () => {
     const selections = parseSelection(
       `select missing in a.ts\nreplace with\n\`\`\`\`\`\`\n${body}\n\`\`\`\`\`\`\nend`,
     );
-    const result = resolveCompactReply(selections, deps(ONCE));
+    const result = resolveEditDslReply(selections, deps(ONCE));
     expect(result.regions).toEqual([]);
     expect(result.failures[0]?.stage).toBe("address");
     expect(result.failures[0]?.diagnostics).toContain("exactly one");
@@ -543,7 +543,7 @@ describe("resolveCompactReply (#111)", () => {
     const selections = parseSelection(
       "select const once in a.ts\nreplace with\n``````\n42\n``````\nend",
     );
-    const result = resolveCompactReply(selections, deps(ONCE));
+    const result = resolveEditDslReply(selections, deps(ONCE));
     expect(result.regions).toEqual([]);
     expect(result.failures[0]?.stage).toBe("address");
     expect(result.failures[0]?.undeclaredName).toBeNull();
@@ -553,14 +553,14 @@ describe("resolveCompactReply (#111)", () => {
     const selections = parseSelection(
       "select function missing in a.ts\nreplace with\n``````\n``````\nend",
     );
-    const result = resolveCompactReply(selections, deps(ONCE));
+    const result = resolveEditDslReply(selections, deps(ONCE));
     expect(result.regions).toEqual([]);
     expect(result.failures[0]?.stage).toBe("address");
   });
 
   test("a viewer on an undeclared name is not a create", () => {
     const selections = parseSelection("select function missing in a.ts\nend");
-    const result = resolveCompactReply(selections, deps(ONCE));
+    const result = resolveEditDslReply(selections, deps(ONCE));
     expect(result.regions).toEqual([]);
     expect(result.viewers).toEqual([]);
     expect(result.failures[0]?.stage).toBe("address");
@@ -568,7 +568,7 @@ describe("resolveCompactReply (#111)", () => {
 
   test("a bare viewer renders the whole declaration once, unmarked", () => {
     const selections = parseSelection("select answer in src/helper.ts resolve value end");
-    const result = resolveCompactReply(selections, deps(ONCE.replace(/once/g, "answer")));
+    const result = resolveEditDslReply(selections, deps(ONCE.replace(/once/g, "answer")));
     expect(renderViewerFeedback(result.viewers)).toBe(
       [
         "Located occurrences (viewer clauses write nothing):",
@@ -588,7 +588,7 @@ describe("resolveCompactReply (#111)", () => {
     const selections = parseSelection(
       "select answer in src/helper.ts resolve value\nmatch `return 1;`\nend",
     );
-    const result = resolveCompactReply(selections, deps(ONCE.replace(/once/g, "answer")));
+    const result = resolveEditDslReply(selections, deps(ONCE.replace(/once/g, "answer")));
     expect(renderViewerFeedback(result.viewers)).toBe(
       [
         "Located occurrences (viewer clauses write nothing):",
@@ -606,7 +606,7 @@ describe("resolveCompactReply (#111)", () => {
 
   test("a multi-candidate viewer marks every line and renders the declaration once", () => {
     const selections = parseSelection("select function twice in a.ts\nmatch `return 1;`\nend");
-    const result = resolveCompactReply(selections, deps(TWICE));
+    const result = resolveEditDslReply(selections, deps(TWICE));
     expect(renderViewerFeedback(result.viewers)).toBe(
       [
         "Located occurrences (viewer clauses write nothing):",
@@ -629,7 +629,7 @@ describe("resolveCompactReply (#111)", () => {
       "\n",
     );
     const selections = parseSelection("select type Value in a.ts end");
-    const result = resolveCompactReply(selections, deps(source));
+    const result = resolveEditDslReply(selections, deps(source));
     expect(result.failures).toEqual([]);
     expect(result.viewers).toHaveLength(1);
     const viewer = result.viewers[0];
@@ -648,7 +648,7 @@ describe("resolveCompactReply (#111)", () => {
 
   test("a viewer with no occurrences keeps the empty marker and skips the block", () => {
     const selections = parseSelection("select function twice in a.ts\nmatch `return 9;`\nend");
-    const result = resolveCompactReply(selections, deps(TWICE));
+    const result = resolveEditDslReply(selections, deps(TWICE));
     expect(result.viewers).toHaveLength(1);
     expect(result.viewers[0]?.occurrences).toEqual([]);
     expect(renderViewerFeedback(result.viewers)).toBe(
@@ -665,7 +665,7 @@ describe("resolveCompactReply (#111)", () => {
 
   test("a viewer that fails its matcher reports stage matcher and renders no block", () => {
     const selections = parseSelection("select function twice in a.ts\nmatch /(/\nend");
-    const result = resolveCompactReply(selections, deps(TWICE));
+    const result = resolveEditDslReply(selections, deps(TWICE));
     expect(result.viewers).toEqual([]);
     expect(result.failures).toHaveLength(1);
     expect(result.failures[0]?.stage).toBe("matcher");
@@ -676,7 +676,7 @@ describe("resolveCompactReply (#111)", () => {
     const selections = parseSelection(
       "select function twice in a.ts\nmatch `return 1;`\npick 99\nreplace with\n``````\n  return 2;\n``````\nend",
     );
-    const result = resolveCompactReply(selections, deps(TWICE));
+    const result = resolveEditDslReply(selections, deps(TWICE));
     expect(result.viewers).toEqual([]);
     expect(result.regions).toEqual([]);
     expect(result.failures).toHaveLength(1);

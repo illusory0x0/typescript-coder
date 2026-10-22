@@ -588,7 +588,7 @@ describe("resolveCascade: pick-only editor", () => {
   });
 
   test("the single-span primitive rejects a pick-only multi-range", () => {
-    // The compact layer expands `{a, b}` into one single-range clause per
+    // The edit-dsl layer expands `{a, b}` into one single-range clause per
     // selecter; the primitive itself still resolves exactly one span.
     const entry = entryFor(TWICE, "twice", "function");
     const result = failure(
