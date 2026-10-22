@@ -1,7 +1,7 @@
 ---
 id: 16
 title: "Run tc protocol variants in one concurrent benchmark"
-status: todo
+status: done
 priority: medium
 milestone: null
 parent: null
@@ -47,3 +47,4 @@ A unit-level run with a stubbed runner must show `json`, `edit-dsl`, and `oc` jo
 - Motivating work: the 2026-10-22 three-way pilot (`benchmark/results/2026-10-22-pilot-tc-json.json`, `benchmark/results/2026-10-22-pilot-edit-dsl-oc.json`) had to be split into two invocations.
 - Keep single-protocol behavior and existing report consumers (ledger, `src/benchmark-run.test.ts`, `benchmark/check.ts`) backward compatible; do not rewrite historical result files.
 - Design is deliberately one atomic change: the job matrix, report schema, aggregation, and ledger check must land together or the intermediate report is ambiguous.
+- Implemented the multi-protocol benchmark matrix. `--protocol-format` now accepts a canonicalized, de-duplicated comma list with the `compact` alias per element; `buildJobs` expands tc once per protocol and oc once per task/rep into one job array, and `runPool` keeps the existing bounded pool. `RunRecord.protocol` is null for oc; reports carry `protocolFormats` (scalar `protocolFormat` retained for single/legacy), per-protocol `provenanceByProtocol`, and protocol columns in every aggregate/raw table. Aggregates now emit tc rows per protocol and `overall` is a row list, so protocols are never pooled; the multiplier sentence pairs each tc variant with oc. `benchmark/check.ts` parses ledger Protocol columns and selects per-protocol provenance, with scalar/compact legacy fallback. Verified: `bun run benchmark/run.ts --help`; `just typecheck`; `just test` (1235 pass, 0 fail); `bun test src/benchmark-run.test.ts` (18 pass); `bun benchmark/check.ts` (4 fixture passes, ledger 1 fresh/1 stale, 0 failed; stale is the pre-existing 2026-10-21 prompt hash). No live model run.

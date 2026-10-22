@@ -1,7 +1,7 @@
 import { cpSync, existsSync, mkdirSync, readFileSync, rmSync } from "node:fs";
 import { isAbsolute, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
-import { checkLedger, currentInputHashes } from "../src/provenance";
+import { checkLedger, currentInputHashes, normalizeProtocolFormat } from "../src/provenance";
 import { TASK_ISSUES } from "./run";
 
 interface FixtureTask {
@@ -117,7 +117,7 @@ function checkLedgerFile(ledgerPath: string, repoRoot: string): LedgerOutcome {
         return null;
       }
     },
-    currentFor: (json) => {
+    currentFor: (json, rowProtocol) => {
       const tasks = Array.isArray(json["tasks"])
         ? (json["tasks"] as unknown[]).filter((task): task is string => typeof task === "string")
         : [];
@@ -125,11 +125,19 @@ function checkLedgerFile(ledgerPath: string, repoRoot: string): LedgerOutcome {
       const reps = typeof json["reps"] === "number" ? json["reps"] : 1;
       const effort = typeof json["effort"] === "string" ? json["effort"] : null;
       const multiPayload = json["multiPayload"] === true;
-      // `compact` is the deprecated legacy name for the report's edit-dsl
-      // protocol; normalize it so historical reports still hash correctly.
-      const rawProtocol = json["protocolFormat"];
-      const protocolFormat =
-        rawProtocol === "edit-dsl" || rawProtocol === "compact" ? "edit-dsl" : "json";
+      // #16: a multi-variant report is checked against the protocol the ledger
+      // row names. Legacy rows (no Protocol column) fall back to the report's
+      // scalar `protocolFormat`; `compact` normalizes to `edit-dsl`.
+      const formats = Array.isArray(json["protocolFormats"])
+        ? (json["protocolFormats"] as unknown[]).map((value) => normalizeProtocolFormat(value))
+        : [];
+      const reportProtocol =
+        normalizeProtocolFormat(json["protocolFormat"]) ??
+        (formats.length === 1 ? (formats[0] ?? null) : null);
+      const protocolFormat = rowProtocol ?? reportProtocol;
+      if (protocolFormat === null) {
+        return null;
+      }
       const tokenBudget = typeof json["tokenBudget"] === "number" ? json["tokenBudget"] : null;
       try {
         return currentInputHashes(repoRoot, {

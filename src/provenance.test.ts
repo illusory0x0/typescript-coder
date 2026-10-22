@@ -226,6 +226,181 @@ describe("deriveRowFromJson", () => {
   });
 });
 
+// #16: the ledger's Protocol column selects one tc variant of a multi-variant
+// report; a table without the column keeps the legacy pooled behavior.
+function ledgerRowsWithProtocol(
+  entries: { protocol: string; jsonParser: ConsumptionValue; overall: ConsumptionValue }[],
+): string {
+  const empty = formatValue({ costPerSuccess: null, ok: 0, runs: 0 });
+  return [
+    "## Rows",
+    "",
+    "| Date | Change set | json-parser | sexp-parser | minilisp | Overall | Source | Notes | Protocol |",
+    "| ---- | --- | --- | --- | --- | --- | --- | --- | --- |",
+    ...entries.map(
+      (entry) =>
+        `| 2026-10-22 | multi ${entry.protocol} | ${formatValue(entry.jsonParser)} | ${empty} | ${empty} | ${formatValue(entry.overall)} | \`benchmark/results/multi.json\` | none | ${entry.protocol} |`,
+    ),
+  ].join("\n");
+}
+
+function multiProtocolReport(): Record<string, unknown> {
+  const runs: Record<string, unknown>[] = [];
+  for (const [protocol, costs] of [
+    ["json", [0.002, 0.001]],
+    ["edit-dsl", [0.004, 0.004]],
+  ] as const) {
+    for (const cost of costs) {
+      runs.push({
+        task: "json-parser",
+        side: "tc",
+        protocol,
+        ok: cost > 0.001,
+        cost,
+        tokens: { input: 100, output: 50, cacheRead: 0, cacheWrite: null, reasoning: 0 },
+      });
+    }
+  }
+  return {
+    tasks: ["json-parser"],
+    model: "m",
+    multiPayload: false,
+    effort: null,
+    reps: 2,
+    protocolFormat: null,
+    protocolFormats: ["json", "edit-dsl"],
+    runs,
+  };
+}
+
+describe("per-protocol ledger rows (#16)", () => {
+  test("parses the Protocol column and normalizes the compact alias", () => {
+    const markdown = ledgerRowsWithProtocol([
+      {
+        protocol: "edit-dsl",
+        jsonParser: { costPerSuccess: 0.004, ok: 2, runs: 2 },
+        overall: { costPerSuccess: 0.004, ok: 2, runs: 2 },
+      },
+    ]).replace("| edit-dsl |", "| compact |");
+    const rows = parseConsumptionRows(markdown);
+    expect(rows).toHaveLength(1);
+    expect(rows[0]!.protocol).toBe("edit-dsl");
+  });
+
+  test("legacy tables without a Protocol column parse with protocol null", () => {
+    const markdown = [
+      "## Rows",
+      "",
+      "| Date | Change set | json-parser | sexp-parser | minilisp | Overall | Source | Notes |",
+      "| ---- | --- | --- | --- | --- | --- | --- | --- |",
+      "| 2026-10-20 | legacy | n/a (0/1) | n/a (0/1) | n/a (0/1) | $0.00100 (1/1) | `a.json` | none |",
+    ].join("\n");
+    expect(parseConsumptionRows(markdown)[0]!.protocol).toBeNull();
+  });
+
+  test("deriveRowFromJson filters runs by the row's protocol", () => {
+    const report = multiProtocolReport();
+    const markdown = ledgerRowsWithProtocol([
+      {
+        protocol: "json",
+        jsonParser: { costPerSuccess: 0.003, ok: 1, runs: 2 },
+        overall: { costPerSuccess: 0.003, ok: 1, runs: 2 },
+      },
+      {
+        protocol: "edit-dsl",
+        jsonParser: { costPerSuccess: 0.004, ok: 2, runs: 2 },
+        overall: { costPerSuccess: 0.004, ok: 2, runs: 2 },
+      },
+    ]);
+    const [jsonRow, dslRow] = parseConsumptionRows(markdown);
+    expect(deriveRowFromJson(jsonRow!, report).values["json-parser"]).toEqual({
+      costPerSuccess: 0.003,
+      ok: 1,
+      runs: 2,
+    });
+    expect(deriveRowFromJson(dslRow!, report).values["json-parser"]).toEqual({
+      costPerSuccess: 0.004,
+      ok: 2,
+      runs: 2,
+    });
+  });
+
+  test("checkLedger selects provenanceByProtocol by the row's protocol", () => {
+    const report = {
+      ...multiProtocolReport(),
+      provenance: { inputs: { model: "pooled" }, inputHash: "pooled" },
+      provenanceByProtocol: {
+        json: { inputs: { model: "json" }, inputHash: "json" },
+        "edit-dsl": { inputs: { model: "dsl" }, inputHash: "dsl" },
+      },
+    };
+    const markdown = ledgerRowsWithProtocol([
+      {
+        protocol: "json",
+        jsonParser: { costPerSuccess: 0.003, ok: 1, runs: 2 },
+        overall: { costPerSuccess: 0.003, ok: 1, runs: 2 },
+      },
+      {
+        protocol: "edit-dsl",
+        jsonParser: { costPerSuccess: 0.004, ok: 2, runs: 2 },
+        overall: { costPerSuccess: 0.004, ok: 2, runs: 2 },
+      },
+    ]);
+    const seen: (string | null)[] = [];
+    const result = checkLedger(markdown, {
+      loadSource: () => report,
+      currentFor: (_json, protocol) => {
+        seen.push(protocol);
+        return protocol === "json"
+          ? { inputs: { model: "json" } as never, inputHash: "json" }
+          : { inputs: { model: "dsl" } as never, inputHash: "dsl" };
+      },
+    });
+    expect(result.failures).toEqual([]);
+    expect(result.fresh).toBe(2);
+    // The scalar pooled `provenance` was never used for these rows.
+    expect(result.staleFlags).toEqual([]);
+    expect(seen).toEqual(["json", "edit-dsl"]);
+  });
+
+  test("accepts a legacy scalar protocol report and legacy compact row", () => {
+    const scalar = { inputs: { model: "old" }, inputHash: "old" };
+    const report = {
+      tasks: ["json-parser"],
+      model: "m",
+      protocolFormat: "compact",
+      runs: [
+        {
+          task: "json-parser",
+          side: "tc",
+          ok: true,
+          cost: 0.002,
+          tokens: { input: 100, output: 50, cacheRead: 0, cacheWrite: null, reasoning: 0 },
+        },
+      ],
+      provenance: scalar,
+    };
+    const markdown = ledgerRowsWithProtocol([
+      {
+        protocol: "compact",
+        jsonParser: { costPerSuccess: 0.002, ok: 1, runs: 1 },
+        overall: { costPerSuccess: 0.002, ok: 1, runs: 1 },
+      },
+    ]);
+    const seen: (string | null)[] = [];
+    const result = checkLedger(markdown, {
+      loadSource: () => report,
+      currentFor: (_json, protocol) => {
+        seen.push(protocol);
+        return scalar as never;
+      },
+    });
+    expect(result.failures).toEqual([]);
+    expect(result.fresh).toBe(1);
+    expect(seen).toEqual(["edit-dsl"]);
+  });
+});
+
 describe("checkLedger", () => {
   const report = syntheticReport();
   const goodValues: Record<string, ConsumptionValue> = {

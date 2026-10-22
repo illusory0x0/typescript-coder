@@ -238,6 +238,23 @@ export interface ConsumptionValue {
 
 export type RowValueKey = TaskName | "overall";
 
+/** Edit protocol named by a ledger row or result record (#16/#119). */
+export type LedgerProtocol = "json" | "edit-dsl";
+
+/**
+ * Normalize a protocol name. `compact` is the deprecated alias for `edit-dsl`
+ * (#15), still present in legacy reports, bundles, and ledger rows.
+ */
+export function normalizeProtocolFormat(value: unknown): LedgerProtocol | null {
+  if (value === "json") {
+    return "json";
+  }
+  if (value === "edit-dsl" || value === "compact") {
+    return "edit-dsl";
+  }
+  return null;
+}
+
 export interface ConsumptionRow {
   /** 1-based line in the markdown, for naming a row in a failure. */
   readonly line: number;
@@ -247,6 +264,11 @@ export interface ConsumptionRow {
   readonly sourceJsonPaths: readonly string[];
   /** Coder-side rows (`tc`/`ts`); the ledger's canonical series. */
   readonly side: "coder";
+  /**
+   * Protocol named by the row's `Protocol` column, normalized (#16); null for
+   * legacy tables without that column.
+   */
+  readonly protocol: LedgerProtocol | null;
   readonly values: Readonly<Record<RowValueKey, ConsumptionValue>>;
 }
 
@@ -295,6 +317,22 @@ export function parseConsumptionRows(markdown: string): ConsumptionRow[] {
   if (headingIndex === -1) {
     return [];
   }
+  // The Protocol column is newer than the original table (#16); locate it by
+  // header name so legacy tables without it still parse.
+  let protocolIndex: number | null = null;
+  for (let index = headingIndex + 1; index < lines.length; index += 1) {
+    const line = lines[index] ?? "";
+    if (!line.trim().startsWith("|")) {
+      continue;
+    }
+    const cells = splitTableCells(line);
+    if (cells.length === 0 || isSeparatorRow(cells)) {
+      continue;
+    }
+    const found = cells.findIndex((cell) => cell.toLowerCase() === "protocol");
+    protocolIndex = found === -1 ? null : found;
+    break;
+  }
   const rows: ConsumptionRow[] = [];
   for (let index = headingIndex + 1; index < lines.length; index += 1) {
     const line = lines[index] ?? "";
@@ -313,6 +351,8 @@ export function parseConsumptionRows(markdown: string): ConsumptionRow[] {
     }
     const source = cells[6] ?? "";
     const jsonPaths = [...source.matchAll(SOURCE_JSON)].map((match) => match[1] ?? "");
+    const protocol =
+      protocolIndex === null ? null : normalizeProtocolFormat(cells[protocolIndex] ?? null);
     const jsonParser = parseClaimedValue(cells[2] ?? "");
     const sexpParser = parseClaimedValue(cells[3] ?? "");
     const minilisp = parseClaimedValue(cells[4] ?? "");
@@ -327,6 +367,7 @@ export function parseConsumptionRows(markdown: string): ConsumptionRow[] {
         source,
         sourceJsonPaths: jsonPaths,
         side: "coder",
+        protocol,
         values: {
           "json-parser": jsonParser ?? { costPerSuccess: null, ok: 0, runs: 0 },
           "sexp-parser": sexpParser ?? { costPerSuccess: null, ok: 0, runs: 0 },
@@ -343,6 +384,7 @@ export function parseConsumptionRows(markdown: string): ConsumptionRow[] {
       source,
       sourceJsonPaths: jsonPaths,
       side: "coder",
+      protocol,
       values: {
         "json-parser": jsonParser,
         "sexp-parser": sexpParser,
@@ -433,11 +475,33 @@ function deriveValue(
   return { costPerSuccess: ok === 0 ? null : total / ok, ok, runs: runs.length };
 }
 
+/** The report's scalar protocol, normalized (legacy single-variant reports). */
+function reportProtocolFormat(json: Record<string, unknown>): LedgerProtocol | null {
+  const scalar = normalizeProtocolFormat(json["protocolFormat"]);
+  if (scalar !== null) {
+    return scalar;
+  }
+  const formats = json["protocolFormats"];
+  if (Array.isArray(formats) && formats.length === 1) {
+    return normalizeProtocolFormat(formats[0]);
+  }
+  return null;
+}
+
+// A run's own protocol (#16); legacy records have no field, so fall back to the
+// report's scalar protocol.
+function runProtocolFormat(
+  run: Record<string, unknown>,
+  fallback: LedgerProtocol | null,
+): LedgerProtocol | null {
+  return normalizeProtocolFormat(run["protocol"]) ?? fallback;
+}
+
 /**
  * Re-derive a ledger row's per-task and overall values from its cited source
- * JSON. The row selects the side (the canonical table is the coder side); the
- * JSON may be an older record labelled `ts`/`opencode` or a current one labelled
- * `tc`/`oc`.
+ * JSON. The row selects the side (the canonical table is the coder side) and,
+ * when its Protocol column is present, that tc variant (#16); the JSON may be an
+ * older record labelled `ts`/`opencode` or a current one labelled `tc`/`oc`.
  */
 export function deriveRowFromJson(row: ConsumptionRow, json: unknown): DerivedRow {
   if (!isRecord(json)) {
@@ -450,17 +514,20 @@ export function deriveRowFromJson(row: ConsumptionRow, json: unknown): DerivedRo
     );
   }
   const runs = Array.isArray(json["runs"]) ? (json["runs"] as unknown[]).filter(isRecord) : [];
+  const fallbackProtocol = reportProtocolFormat(json);
+  const sideRuns = runs.filter(
+    (run) =>
+      run["side"] === side &&
+      (row.protocol === null || runProtocolFormat(run, fallbackProtocol) === row.protocol),
+  );
   const values = {} as Record<RowValueKey, ConsumptionValue>;
   for (const task of TASK_NAMES) {
     values[task] = deriveValue(
-      runs.filter((run) => run["task"] === task && run["side"] === side),
+      sideRuns.filter((run) => run["task"] === task),
       side,
     );
   }
-  values.overall = deriveValue(
-    runs.filter((run) => run["side"] === side),
-    side,
-  );
+  values.overall = deriveValue(sideRuns, side);
   return { values };
 }
 
@@ -469,9 +536,13 @@ export interface LedgerCheckOptions {
   readonly loadSource: (path: string) => unknown | null;
   /**
    * Current-tree hashes for a source report (or null to skip the staleness
-   * pass). Receives the parsed source JSON.
+   * pass). Receives the parsed source JSON and the ledger row's protocol (#16),
+   * or null for a legacy row without a Protocol column.
    */
-  readonly currentFor?: (json: Record<string, unknown>) => Provenance | null;
+  readonly currentFor?: (
+    json: Record<string, unknown>,
+    protocol: LedgerProtocol | null,
+  ) => Provenance | null;
 }
 
 export interface LedgerCheckResult {
@@ -489,6 +560,28 @@ function round5(value: number | null): number | null {
 
 function rowLabel(row: ConsumptionRow): string {
   return `${row.date} "${row.changeSet}" (line ${row.line})`;
+}
+
+// Multi-variant reports (#16) carry one provenance block per tc protocol; a
+// ledger row selects its own. Legacy/single-variant reports keep the scalar
+// `provenance`, which is also the fallback when the map has no matching key.
+function recordedProvenanceFor(
+  json: Record<string, unknown>,
+  protocol: LedgerProtocol | null,
+): unknown {
+  const map = json["provenanceByProtocol"];
+  if (protocol !== null && isRecord(map)) {
+    const direct = map[protocol];
+    if (isRecord(direct)) {
+      return direct;
+    }
+    // A legacy ledger row may name the pre-rename alias.
+    const alias = map[protocol === "edit-dsl" ? "compact" : protocol];
+    if (isRecord(alias)) {
+      return alias;
+    }
+  }
+  return json["provenance"];
 }
 
 function sameValue(claimed: ConsumptionValue, derived: ConsumptionValue): boolean {
@@ -571,8 +664,8 @@ export function checkLedger(markdown: string, options: LedgerCheckOptions): Ledg
     if (!isRecord(json)) {
       continue;
     }
-    const recorded = json["provenance"];
-    const current = options.currentFor(json);
+    const recorded = recordedProvenanceFor(json, row.protocol);
+    const current = options.currentFor(json, row.protocol);
     if (!isRecord(recorded) || !isRecord(recorded["inputs"])) {
       stale += 1;
       staleFlags.push(`stale: ${label} (${sourcePath}): no provenance recorded (predates #66)`);

@@ -29,7 +29,11 @@ rep<n>.json`; off by default), `--token-budget <n>` (tc side only: abort a run
 once accumulated provider tokens exceed n; default 120000, see "Run budget"
 below), `--effort <none|low|high|max>` (tc side only: force this reasoning_effort
 on every Edit-loop call, overriding the default described below),
-`--help`. Non-pilot results default to `benchmark/results/<date>.json`.
+`--protocol-format <json|edit-dsl>[,...]` (tc side: one value or a
+comma-separated list; `edit-dsl` is the default, order is canonicalized,
+duplicates collapse, and `compact` is still accepted as the deprecated alias for
+`edit-dsl`), `--help`. Non-pilot results default to
+`benchmark/results/<date>.json`.
 
 The tc side runs every Edit-loop call at `reasoning_effort: none` by default
 (the 2026-10-18 effort sweep showed reasoning only added cost on these tasks);
@@ -48,7 +52,11 @@ run's judged workspace holds the last attempted content rather than the pristine
 fixture. The task × side × rep matrix runs through a bounded worker pool
 (`--concurrency`, default 4); each run keeps its own workspace, git repo,
 session, and logs, and `report.runs` stays in matrix order even though runs
-finish in arbitrary order.
+finish in arbitrary order. A comma-separated `--protocol-format` adds the tc
+protocol dimension to that same matrix: each selected variant gets one tc job
+per task/rep, `oc` still gets exactly one, and all jobs are claimed from the one
+pool (no serial per-protocol phase). Each tc run records its `protocol` (null
+for `oc`) and aggregates/report tables keep the variants in separate rows.
 
 ## Fixtures and the held-out task
 
@@ -116,7 +124,9 @@ reported in each row's `Notes` and never as a tuned column.
   edit protocol (`protocolFormat`: `"json"` or `"edit-dsl"`; legacy bundles
   recorded before the #15 rename carry `"compact"`, which reads as `"edit-dsl"`),
   and the ordered
-  chat calls (request messages, response content, finishReason, usage);
+  chat calls (request messages, response content, finishReason, usage). In a
+  multi-variant run the bundle name carries the protocol
+  (`<task>-tc-<protocol>-rep<n>.json`) so both variants can be replayed;
   consumed offline by the replay runner.
 - `durationMs`: model work only (the judge runs afterwards and is not counted).
 - `startedAt` / `finishedAt`: ISO wall clock of that same model work; the window
@@ -358,7 +368,12 @@ Every result JSON carries a top-level `provenance` block:
 written by `benchmark/run.ts` via `currentInputHashes` so the record pins the
 same tree the runs read). Text pieces are newline-normalized to `\n`; object
 pieces go through a stable, recursively key-sorted JSON encoding, so insertion
-order never changes a hash.
+order never changes a hash. A single-protocol report keeps the scalar
+`provenance` block above. A multi-variant report (`--protocol-format
+json,edit-dsl`) carries `protocolFormats: [...]` and a `provenanceByProtocol`
+map keyed by variant, so each ledger row is checked against the prompt its
+protocol actually measured; `protocolFormat` is null for such a report, while
+legacy scalar reports and `"compact"` values stay readable.
 
 | Digest         | What it covers                                                                       | Computation point                                                 |
 | -------------- | ------------------------------------------------------------------------------------ | ----------------------------------------------------------------- |
@@ -378,7 +393,10 @@ would have been caught mechanically).
 of `results/consumption.md` it re-derives the per-task and overall
 `costPerSuccess` and the `ok/runs` counts from the cited source JSON (rounding
 to five decimals) and **fails**, naming the row, on any mismatch or a missing
-cited file. It then compares each source's recorded `provenance` against a
+cited file. A row with a `Protocol` column re-derives only that tc variant's
+runs from a multi-variant report and uses the matching `provenanceByProtocol`
+block; a legacy table without the column keeps the old pooled behavior and
+scalar `provenance`. It then compares each source's recorded provenance against a
 fresh `currentInputHashes` from the tree and prints a `stale:` line for rows
 whose hashes differ or that carry no `provenance` (historical rows predating
 #66) — stale is a warning, not a failure. `--ledger <path>` points the pass at

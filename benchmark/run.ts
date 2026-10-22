@@ -50,8 +50,8 @@ interface CliArgs {
   tokenBudget: number | null;
   effort: ReasoningEffort | null;
   multiPayload: boolean;
-  /** Edit protocol (#119) forwarded to the tc side; `edit-dsl` is the default. */
-  protocolFormat: ProtocolFormat;
+  /** Edit protocols (#119) to measure on the tc side; `edit-dsl` is the default. */
+  protocolFormats: ProtocolFormat[];
   help: boolean;
 }
 
@@ -173,6 +173,8 @@ interface LogPaths {
 export interface RunRecord {
   readonly task: TaskName;
   readonly side: Side;
+  /** Edit protocol used by a tc run (#119); null for the oc side. */
+  readonly protocol: ProtocolFormat | null;
   readonly rep: number;
   readonly ok: boolean;
   readonly sideOk: boolean;
@@ -208,6 +210,8 @@ interface TokenStats {
 export interface AggregateRow {
   task: TaskName | null;
   side: Side | null;
+  /** Edit protocol of a tc row (#119); null for the oc side and legacy rows. */
+  protocol: ProtocolFormat | null;
   runs: number;
   ok: number;
   failed: number;
@@ -234,7 +238,11 @@ export interface AggregateRow {
 export interface Aggregates {
   byTaskSide: AggregateRow[];
   bySide: AggregateRow[];
-  overall: AggregateRow;
+  /**
+   * One row per side and tc protocol (#16): never a single row that pools two
+   * tc protocols into one comparison.
+   */
+  overall: AggregateRow[];
 }
 
 export interface Report {
@@ -251,8 +259,16 @@ export interface Report {
   effort: ReasoningEffort | null;
   /** Opt-in multi-payload exchanges (#69): whether the tc side batched edits. */
   multiPayload: boolean;
-  /** Edit protocol (#119) the tc side used; `edit-dsl` is the default. */
-  protocolFormat: ProtocolFormat;
+  /**
+   * Edit protocol (#119) the tc side used; scalar for single-protocol and
+   * legacy reports, null when more than one variant was selected (#16).
+   */
+  protocolFormat: ProtocolFormat | null;
+  /**
+   * Selected tc protocol variants (#16), in canonical order. New reports always
+   * write it; absent on legacy single-protocol reports.
+   */
+  protocolFormats?: ProtocolFormat[];
   /** Token budget forwarded to the tc side; null means `DEFAULT_TOKEN_BUDGET`. */
   tokenBudget: number | null;
   bunVersion: string;
@@ -261,8 +277,14 @@ export interface Report {
   infraErrors: string[];
   runs: RunRecord[];
   aggregates: Aggregates;
-  /** Content hashes of the measured inputs (#66); see `src/provenance.ts`. */
-  provenance: RecordedProvenance;
+  /**
+   * Content hashes of the measured inputs (#66); scalar for single-protocol and
+   * legacy reports, null when `provenanceByProtocol` carries one block per tc
+   * variant (#16).
+   */
+  provenance: RecordedProvenance | null;
+  /** Per-protocol provenance for a multi-variant report (#16). */
+  provenanceByProtocol?: Partial<Record<ProtocolFormat, RecordedProvenance>>;
 }
 
 interface RunContext {
@@ -277,14 +299,16 @@ interface RunContext {
   readonly tokenBudget: number | null;
   /** Opt-in multi-payload exchanges (#69) forwarded to the tc side; off by default. */
   readonly multiPayload: boolean;
-  /** Edit protocol (#119) forwarded to the tc side; `edit-dsl` is the default. */
-  readonly protocolFormat: ProtocolFormat;
+  /** Selected tc protocol variants (#16); used to keep multi-variant run names unique. */
+  readonly protocols: readonly ProtocolFormat[];
 }
 
 interface BenchmarkJob {
   readonly task: TaskName;
   readonly side: Side;
   readonly rep: number;
+  /** Edit protocol for a tc job (#119); null for the oc side. */
+  readonly protocol: ProtocolFormat | null;
 }
 
 interface OpencodeContext {
@@ -419,10 +443,14 @@ Options:
                                              tc side: a modify reply may batch path-independent
                                              edits in one {"payloads": [...]} object
                                              (default: off, one flat payload per exchange)
-  --protocol-format <json|edit-dsl>          edit protocol for the tc side (default: edit-dsl);
-                                             json keeps the flat JSON payload; edit-dsl
-                                             requires the 'select … end' syntax (#119);
-                                             compact is a deprecated alias for edit-dsl
+  --protocol-format <json|edit-dsl>[,<...>]  edit protocol(s) for the tc side (default: edit-dsl);
+                                             a comma-separated list measures each variant in
+                                             the same concurrent matrix (for example
+                                             json,edit-dsl); order does not matter and
+                                             duplicates collapse. json keeps the flat JSON
+                                             payload; edit-dsl requires the 'select … end'
+                                             syntax (#119); compact is a deprecated alias
+                                             for edit-dsl
   --help, -h                                 print this help and exit
 `);
 }
@@ -467,16 +495,35 @@ function parseEffort(value: string): ReasoningEffort {
   failUsage(`invalid --effort value: ${value}`);
 }
 
-function parseProtocolFormat(value: string): ProtocolFormat {
-  if (value === "json" || value === "edit-dsl") {
-    return value;
+// Canonical display/iteration order: `json` before `edit-dsl`, so
+// `edit-dsl,json` and `json,edit-dsl` select the same matrix and report.
+const PROTOCOL_ORDER: readonly ProtocolFormat[] = ["json", "edit-dsl"];
+
+/**
+ * Parse `--protocol-format`: one value or a comma-separated list (#16). Each
+ * element accepts the deprecated `compact` alias, duplicates collapse, and the
+ * result is canonicalized so input order never changes the matrix.
+ */
+export function parseProtocolFormats(value: string): ProtocolFormat[] {
+  const selected = new Set<ProtocolFormat>();
+  for (const raw of value.split(",")) {
+    const element = raw.trim();
+    if (element === "json" || element === "edit-dsl") {
+      selected.add(element);
+    } else if (element === "compact") {
+      // `compact` is the deprecated input alias for `edit-dsl`; normalize it so
+      // reports and recorded bundles only ever carry `edit-dsl`.
+      selected.add("edit-dsl");
+    } else {
+      // Throw (rather than exit) so the parser stays unit-testable; `parseArgs`
+      // turns it into the same usage error.
+      throw new Error(`invalid --protocol-format value: ${element === "" ? raw : element}`);
+    }
   }
-  // `compact` is the deprecated input alias for `edit-dsl`; normalize it so
-  // reports and recorded bundles only ever carry `edit-dsl`.
-  if (value === "compact") {
-    return "edit-dsl";
+  if (selected.size === 0) {
+    throw new Error("missing value for --protocol-format");
   }
-  failUsage(`invalid --protocol-format value: ${value}`);
+  return PROTOCOL_ORDER.filter((protocol) => selected.has(protocol));
 }
 
 function parseSide(value: string): SideSelection {
@@ -510,7 +557,7 @@ export function parseArgs(argv: string[]): CliArgs {
     tokenBudget: null,
     effort: null,
     multiPayload: false,
-    protocolFormat: "edit-dsl",
+    protocolFormats: ["edit-dsl"],
     help: false,
   };
   for (let index = 0; index < argv.length; index += 1) {
@@ -635,7 +682,11 @@ export function parseArgs(argv: string[]): CliArgs {
         if (value === undefined || value.startsWith("-")) {
           failUsage("missing value for --protocol-format");
         }
-        args.protocolFormat = parseProtocolFormat(value);
+        try {
+          args.protocolFormats = parseProtocolFormats(value);
+        } catch (error) {
+          failUsage(errorMessage(error));
+        }
         index += 1;
         break;
       }
@@ -1301,14 +1352,13 @@ function initWorkspaceGit(workspace: string): void {
   }
 }
 
-async function runOnce(
-  task: TaskName,
-  side: Side,
-  rep: number,
-  context: RunContext,
-): Promise<RunRecord> {
+async function runOnce(job: BenchmarkJob, context: RunContext): Promise<RunRecord> {
+  const { task, side, rep, protocol } = job;
   const fixtureDir = join(context.repoRoot, "benchmark", "fixtures", task);
-  const runName = `${task}-${side}-rep${rep}`;
+  // Keep today's `task-side-repN` names for single-protocol runs; only a
+  // multi-variant matrix needs the protocol in the name to stay unique (#16).
+  const protocolSuffix = protocol !== null && context.protocols.length > 1 ? `-${protocol}` : "";
+  const runName = `${task}-${side}${protocolSuffix}-rep${rep}`;
   const workspace = join(context.runRoot, runName);
   const logsDir = join(context.runRoot, "logs", runName);
   mkdirSync(logsDir, { recursive: true });
@@ -1320,6 +1370,9 @@ async function runOnce(
     side === "tc" && context.replayDir !== null ? join(context.replayDir, `${runName}.json`) : null;
   let outcome: SideOutcome;
   if (side === "tc") {
+    if (protocol === null) {
+      throw new InfraError("tc job is missing its edit protocol");
+    }
     outcome = await runTypescriptCoderSide({
       workspace,
       issue,
@@ -1332,7 +1385,7 @@ async function runOnce(
       tokenBudget: context.tokenBudget,
       effort: context.effort,
       multiPayload: context.multiPayload,
-      protocolFormat: context.protocolFormat,
+      protocolFormat: protocol,
       failureRoot: context.repoRoot,
     });
   } else {
@@ -1366,6 +1419,7 @@ async function runOnce(
   return {
     task,
     side,
+    protocol,
     rep,
     // A termination-matrix ending is a run failure even when the judge passes
     // on the state left on disk (#43); judge fields stay as recorded.
@@ -1405,11 +1459,12 @@ async function runOnce(
   };
 }
 
-function printRecord(record: RunRecord): void {
+function printRecord(record: RunRecord, showProtocol: boolean): void {
   const seconds = (record.durationMs / 1000).toFixed(1);
   const label = record.ok ? "PASS" : "FAIL";
+  const variant = showProtocol && record.protocol !== null ? ` ${record.protocol}` : "";
   process.stdout.write(
-    `${label} ${record.task} ${record.side} rep${record.rep} (${seconds}s, tokens=${
+    `${label} ${record.task} ${record.side}${variant} rep${record.rep} (${seconds}s, tokens=${
       record.tokens.total ?? "unavailable"
     }, cost=${formatUsd(record.cost)}, steps=${record.steps ?? "n/a"})\n`,
   );
@@ -1442,9 +1497,14 @@ export function aggregateRuns(
   runs: readonly RunRecord[],
   task: TaskName | null,
   side: Side | null,
+  /** Omitted = no protocol filter (legacy callers); null = runs without one (oc). */
+  protocol: ProtocolFormat | null | undefined = undefined,
 ): AggregateRow {
   const selected = runs.filter(
-    (run) => (task === null || run.task === task) && (side === null || run.side === side),
+    (run) =>
+      (task === null || run.task === task) &&
+      (side === null || run.side === side) &&
+      (protocol === undefined || (run.protocol ?? null) === protocol),
   );
   const usageRuns = selected.filter((run) => run.tokens.total !== null);
   const ok = selected.filter((run) => run.ok).length;
@@ -1505,6 +1565,8 @@ export function aggregateRuns(
   return {
     task,
     side,
+    protocol:
+      protocol === undefined ? (side === "oc" ? null : (selected[0]?.protocol ?? null)) : protocol,
     runs: selected.length,
     ok,
     failed: selected.length - ok,
@@ -1531,21 +1593,55 @@ export function aggregateRuns(
   };
 }
 
+// Protocols present among tc runs; a legacy run without the field reads as
+// null so old callers still get exactly one tc row set.
+function protocolsFromRuns(runs: readonly RunRecord[]): (ProtocolFormat | null)[] {
+  const protocols = new Set<ProtocolFormat | null>();
+  for (const run of runs) {
+    if (run.side === "tc") {
+      protocols.add(run.protocol ?? null);
+    }
+  }
+  return protocols.size === 0 ? [null] : [...protocols];
+}
+
+function aggregatesForSide(
+  runs: readonly RunRecord[],
+  task: TaskName | null,
+  side: Side,
+  protocols: readonly (ProtocolFormat | null)[],
+): AggregateRow[] {
+  // `oc` has no protocol dimension: exactly one row however many tc variants
+  // were selected (#16).
+  if (side === "oc") {
+    return [aggregateRuns(runs, task, side, null)];
+  }
+  return protocols.map((protocol) => aggregateRuns(runs, task, side, protocol));
+}
+
+/**
+ * Group runs by task, side, and (for tc) edit protocol (#16). Two tc variants
+ * never share a row, and `overall` is a row list rather than one pooled tc row.
+ * Callers that omit `protocols` get the variants observed among the tc runs, so
+ * legacy single-protocol inputs keep one tc row set.
+ */
 export function computeAggregates(
   runs: readonly RunRecord[],
   tasks: readonly TaskName[],
   sides: readonly Side[],
+  protocols: readonly (ProtocolFormat | null)[] = protocolsFromRuns(runs),
 ): Aggregates {
   const byTaskSide: AggregateRow[] = [];
   for (const task of tasks) {
     for (const side of sides) {
-      byTaskSide.push(aggregateRuns(runs, task, side));
+      byTaskSide.push(...aggregatesForSide(runs, task, side, protocols));
     }
   }
+  const bySide = sides.flatMap((side) => aggregatesForSide(runs, null, side, protocols));
   return {
     byTaskSide,
-    bySide: sides.map((side) => aggregateRuns(runs, null, side)),
-    overall: aggregateRuns(runs, null, null),
+    bySide,
+    overall: bySide,
   };
 }
 
@@ -1579,8 +1675,34 @@ function formatOneLine(text: string, limit = 160): string {
   return collapsed.length > limit ? `${collapsed.slice(0, limit)}...` : collapsed;
 }
 
-function successSummary(row: AggregateRow): string {
-  return `${row.side ?? "all"} ${row.ok}/${row.runs} (${formatPercent(row.successRate)})`;
+// A tc row is named by side and protocol when the report has several variants;
+// a single-protocol report keeps the historical bare side label.
+function hasMultipleProtocols(rows: readonly AggregateRow[]): boolean {
+  const protocols = new Set<ProtocolFormat>();
+  for (const row of rows) {
+    if (row.side === "tc" && row.protocol !== null) {
+      protocols.add(row.protocol);
+    }
+  }
+  return protocols.size > 1;
+}
+
+function sideLabel(row: AggregateRow, showProtocol: boolean): string {
+  const side = row.side ?? "all";
+  return showProtocol && row.protocol !== null ? `${side} ${row.protocol}` : side;
+}
+
+// The multiplier sentence names the variant first (`json tc 1.38x oc`) so a
+// tc protocol is never mistaken for the side itself.
+function multiplierSideLabel(row: AggregateRow, showProtocol: boolean): string {
+  const side = row.side ?? "all";
+  return showProtocol && row.protocol !== null ? `${row.protocol} ${side}` : side;
+}
+
+function successSummary(row: AggregateRow, showProtocol: boolean): string {
+  return `${sideLabel(row, showProtocol)} ${row.ok}/${row.runs} (${formatPercent(
+    row.successRate,
+  )})`;
 }
 
 function successRateSentence(rows: readonly AggregateRow[]): string {
@@ -1588,17 +1710,18 @@ function successRateSentence(rows: readonly AggregateRow[]): string {
   if (first === undefined) {
     return "No side ran; success rates are not comparable.";
   }
+  const showProtocol = hasMultipleProtocols(rows);
   if (rows.length === 1) {
-    return `Only one side ran: ${successSummary(first)}.`;
+    return `Only one side ran: ${successSummary(first, showProtocol)}.`;
   }
-  const summaries = rows.map(successSummary).join(" vs ");
+  const summaries = rows.map((row) => successSummary(row, showProtocol)).join(" vs ");
   const equal = rows.every((row) => row.successRate === first.successRate);
   return equal ? `Success rates are equal: ${summaries}.` : `Success rates differ: ${summaries}.`;
 }
 
 // `higher X.XXx lower` for a two-side pair, or null when the pair cannot be
 // compared (a missing total or a zero lower side).
-function multiplierLabel(rows: readonly AggregateRow[]): string | null {
+function multiplierLabel(rows: readonly AggregateRow[], showProtocol: boolean): string | null {
   const [first, second] = rows;
   if (first === undefined || second === undefined) {
     return null;
@@ -1615,7 +1738,30 @@ function multiplierLabel(rows: readonly AggregateRow[]): string | null {
   if (low <= 0) {
     return null;
   }
-  return `${higher.side} ${(high / low).toFixed(2)}x ${lower.side}`;
+  return `${multiplierSideLabel(higher, showProtocol)} ${(high / low).toFixed(2)}x ${multiplierSideLabel(
+    lower,
+    showProtocol,
+  )}`;
+}
+
+// One comparison per tc row against the oc row (#16): with two tc variants the
+// first two rows must never be paired with each other.
+function multiplierLabels(rows: readonly AggregateRow[], showProtocol: boolean): string[] {
+  const oc = rows.find((row) => row.side === "oc");
+  if (oc === undefined) {
+    return [];
+  }
+  const labels: string[] = [];
+  for (const row of rows) {
+    if (row.side !== "tc") {
+      continue;
+    }
+    const label = multiplierLabel([row, oc], showProtocol);
+    if (label !== null) {
+      labels.push(label);
+    }
+  }
+  return labels;
 }
 
 /**
@@ -1627,24 +1773,27 @@ export function tokenMultiplierSentence(
   bySide: readonly AggregateRow[],
   byTaskSide: readonly AggregateRow[],
 ): string {
-  const sides = bySide.filter((row) => row.side !== null);
-  const overall = multiplierLabel(sides);
+  const showProtocol = hasMultipleProtocols([...bySide, ...byTaskSide]);
+  const overallLabels = multiplierLabels(
+    bySide.filter((row) => row.side !== null),
+    showProtocol,
+  );
   const taskParts: string[] = [];
   const taskNames = [
     ...new Set(byTaskSide.map((row) => row.task).filter((task): task is TaskName => task !== null)),
   ];
   for (const task of taskNames) {
-    const label = multiplierLabel(
+    for (const label of multiplierLabels(
       byTaskSide.filter((row) => row.task === task && row.side !== null),
-    );
-    if (label !== null) {
+      showProtocol,
+    )) {
       taskParts.push(`${task} ${label}`);
     }
   }
-  if (overall === null && taskParts.length === 0) {
+  if (overallLabels.length === 0 && taskParts.length === 0) {
     return "Token multiplier (cache-excluded): not comparable (both sides must run).";
   }
-  const parts = overall === null ? [] : [`${overall} overall`];
+  const parts = overallLabels.map((label) => `${label} overall`);
   parts.push(...taskParts);
   return `Token multiplier (cache-excluded total, higher/lower): ${parts.join("; ")}.`;
 }
@@ -1671,15 +1820,23 @@ function resolveReferencePath(repoRoot: string, task: TaskName): string {
 export function writeMarkdownReport(mdPath: string, report: Report): void {
   const repoRoot = fileURLToPath(new URL("..", import.meta.url));
   const { aggregates } = report;
+  const protocolFormats =
+    report.protocolFormats ?? (report.protocolFormat == null ? [] : [report.protocolFormat]);
+  const protocolLine =
+    protocolFormats.length > 1
+      ? `- protocol-formats: ${protocolFormats.join(", ")} (#119)`
+      : `- protocol-format: ${protocolFormats[0] ?? report.protocolFormat ?? "json"} (#119)`;
   const lines: string[] = [];
   lines.push(`# Benchmark report — ${report.date}`, "");
   lines.push(
     `- mode: ${report.mode}`,
     `- model: ${report.model}`,
-    ...(report.ocModel === null ? [] : [`- oc model: ${report.ocModel}`]),
+    ...(report.ocModel === null || report.ocModel === undefined
+      ? []
+      : [`- oc model: ${report.ocModel}`]),
     `- effort: ${report.effort ?? "none (default)"}`,
     `- multi-payload: ${report.multiPayload ? "on (#69)" : "off (default)"}`,
-    `- protocol-format: ${report.protocolFormat ?? "json"} (#119)`,
+    protocolLine,
     `- concurrency: ${report.concurrency}`,
     `- tasks: ${report.tasks.join(", ")}`,
     `- sides: ${report.sides.join(", ")}`,
@@ -1740,12 +1897,12 @@ export function writeMarkdownReport(mdPath: string, report: Report): void {
 
   lines.push("## Per-task results", "");
   lines.push(
-    "| Task | Side | Success | Mean in (no cache) | Mean out | Mean total | Mean $ | $/success | Mean dur (s) | Mean steps |",
-    "| --- | --- | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: |",
+    "| Task | Side | Protocol | Success | Mean in (no cache) | Mean out | Mean total | Mean $ | $/success | Mean dur (s) | Mean steps |",
+    "| --- | --- | --- | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: |",
   );
   for (const row of aggregates.byTaskSide) {
     lines.push(
-      `| ${row.task ?? "all"} | ${row.side ?? "all"} | ${row.ok}/${row.runs} | ${formatTokenCount(
+      `| ${row.task ?? "all"} | ${row.side ?? "all"} | ${row.protocol ?? "n/a"} | ${row.ok}/${row.runs} | ${formatTokenCount(
         row.tokens.in.mean,
       )} | ${formatTokenCount(row.tokens.out.mean)} | ${formatTokenCount(
         row.tokens.total.mean,
@@ -1758,12 +1915,12 @@ export function writeMarkdownReport(mdPath: string, report: Report): void {
 
   lines.push("## Overall comparison", "");
   lines.push(
-    "| Side | Success | Mean in (no cache) | Mean out | Mean total | Total tokens | Mean $ | Total $ | $/success | Mean dur (s) | Mean steps |",
-    "| --- | --- | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: |",
+    "| Side | Protocol | Success | Mean in (no cache) | Mean out | Mean total | Total tokens | Mean $ | Total $ | $/success | Mean dur (s) | Mean steps |",
+    "| --- | --- | --- | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: |",
   );
   for (const row of aggregates.bySide) {
     lines.push(
-      `| ${row.side ?? "all"} | ${row.ok}/${row.runs} | ${formatTokenCount(
+      `| ${row.side ?? "all"} | ${row.protocol ?? "n/a"} | ${row.ok}/${row.runs} | ${formatTokenCount(
         row.tokens.in.mean,
       )} | ${formatTokenCount(row.tokens.out.mean)} | ${formatTokenCount(
         row.tokens.total.mean,
@@ -1777,12 +1934,14 @@ export function writeMarkdownReport(mdPath: string, report: Report): void {
   lines.push("");
   lines.push("Per success (usage-run sums divided by successful runs):", "");
   lines.push(
-    "| Side | In (no cache) | Out | Total | Cost |",
-    "| --- | ---: | ---: | ---: | ---: |",
+    "| Side | Protocol | In (no cache) | Out | Total | Cost |",
+    "| --- | --- | ---: | ---: | ---: | ---: |",
   );
   for (const row of aggregates.bySide) {
     lines.push(
-      `| ${row.side ?? "all"} | ${formatTokenCount(row.tokensPerSuccess.in)} | ${formatTokenCount(
+      `| ${row.side ?? "all"} | ${row.protocol ?? "n/a"} | ${formatTokenCount(
+        row.tokensPerSuccess.in,
+      )} | ${formatTokenCount(
         row.tokensPerSuccess.out,
       )} | ${formatTokenCount(row.tokensPerSuccess.total)} | ${formatUsd(row.costPerSuccess)} |`,
     );
@@ -1803,62 +1962,69 @@ export function writeMarkdownReport(mdPath: string, report: Report): void {
   lines.push("## Selector adoption (#101)", "");
   lines.push("Per task and side (payloads that used each selector):", "");
   lines.push(
-    "| Task | Side | range | matcher | whole-symbol |",
-    "| --- | --- | ---: | ---: | ---: |",
+    "| Task | Side | Protocol | range | matcher | whole-symbol |",
+    "| --- | --- | --- | ---: | ---: | ---: |",
   );
   for (const row of aggregates.byTaskSide) {
     lines.push(
-      `| ${row.task ?? "all"} | ${row.side ?? "all"} | ${row.selectors.range} | ${
-        row.selectors.matcher
-      } | ${row.selectors.wholeSymbol} |`,
+      `| ${row.task ?? "all"} | ${row.side ?? "all"} | ${row.protocol ?? "n/a"} | ${
+        row.selectors.range
+      } | ${row.selectors.matcher} | ${row.selectors.wholeSymbol} |`,
     );
   }
   lines.push("");
-  lines.push("| Side | range | matcher | whole-symbol |", "| --- | ---: | ---: | ---: |");
+  lines.push(
+    "| Side | Protocol | range | matcher | whole-symbol |",
+    "| --- | --- | ---: | ---: | ---: |",
+  );
   for (const row of aggregates.bySide) {
     lines.push(
-      `| ${row.side ?? "all"} | ${row.selectors.range} | ${row.selectors.matcher} | ${
-        row.selectors.wholeSymbol
-      } |`,
+      `| ${row.side ?? "all"} | ${row.protocol ?? "n/a"} | ${row.selectors.range} | ${
+        row.selectors.matcher
+      } | ${row.selectors.wholeSymbol} |`,
     );
   }
   lines.push("");
   lines.push("Resolved cascade stages and matcher kinds (#110):", "");
   lines.push("Per task and side (payloads that resolved at each stage / used each matcher):", "");
   lines.push(
-    "| Task | Side | whole-symbol | match | pick | snippet | regex |",
-    "| --- | --- | ---: | ---: | ---: | ---: | ---: |",
+    "| Task | Side | Protocol | whole-symbol | match | pick | snippet | regex |",
+    "| --- | --- | --- | ---: | ---: | ---: | ---: | ---: |",
   );
   for (const row of aggregates.byTaskSide) {
     lines.push(
-      `| ${row.task ?? "all"} | ${row.side ?? "all"} | ${row.stages.wholeSymbol} | ${
+      `| ${row.task ?? "all"} | ${row.side ?? "all"} | ${row.protocol ?? "n/a"} | ${
+        row.stages.wholeSymbol
+      } | ${row.stages.match} | ${row.stages.pick} | ${row.matcherKinds.snippet} | ${
+        row.matcherKinds.regex
+      } |`,
+    );
+  }
+  lines.push("");
+  lines.push(
+    "| Side | Protocol | whole-symbol | match | pick | snippet | regex |",
+    "| --- | --- | ---: | ---: | ---: | ---: | ---: |",
+  );
+  for (const row of aggregates.bySide) {
+    lines.push(
+      `| ${row.side ?? "all"} | ${row.protocol ?? "n/a"} | ${row.stages.wholeSymbol} | ${
         row.stages.match
       } | ${row.stages.pick} | ${row.matcherKinds.snippet} | ${row.matcherKinds.regex} |`,
     );
   }
   lines.push("");
-  lines.push(
-    "| Side | whole-symbol | match | pick | snippet | regex |",
-    "| --- | ---: | ---: | ---: | ---: | ---: |",
-  );
-  for (const row of aggregates.bySide) {
+  // #111: edit-dsl implicit-create clauses the replies carried.
+  lines.push("Implicit creates (#111):", "");
+  lines.push("| Task | Side | Protocol | creates |", "| --- | --- | --- | ---: |");
+  for (const row of aggregates.byTaskSide) {
     lines.push(
-      `| ${row.side ?? "all"} | ${row.stages.wholeSymbol} | ${row.stages.match} | ${
-        row.stages.pick
-      } | ${row.matcherKinds.snippet} | ${row.matcherKinds.regex} |`,
+      `| ${row.task ?? "all"} | ${row.side ?? "all"} | ${row.protocol ?? "n/a"} | ${row.creates} |`,
     );
   }
   lines.push("");
-  // #111: edit-dsl implicit-create clauses the replies carried.
-  lines.push("Implicit creates (#111):", "");
-  lines.push("| Task | Side | creates |", "| --- | --- | ---: |");
-  for (const row of aggregates.byTaskSide) {
-    lines.push(`| ${row.task ?? "all"} | ${row.side ?? "all"} | ${row.creates} |`);
-  }
-  lines.push("");
-  lines.push("| Side | creates |", "| --- | ---: |");
+  lines.push("| Side | Protocol | creates |", "| --- | --- | ---: |");
   for (const row of aggregates.bySide) {
-    lines.push(`| ${row.side ?? "all"} | ${row.creates} |`);
+    lines.push(`| ${row.side ?? "all"} | ${row.protocol ?? "n/a"} | ${row.creates} |`);
   }
   lines.push("");
 
@@ -1941,12 +2107,14 @@ export function writeMarkdownReport(mdPath: string, report: Report): void {
     "oc `Raw in` excludes them. The cache-excluded comparison total is in the tables",
     "above (and each row's `tokens.billable`), not here.",
     "",
-    "| Task | Side | Rep | OK | Raw in | Raw out | Raw total | Cost | Rate | Steps | Dur (s) |",
-    "| --- | --- | ---: | --- | ---: | ---: | ---: | ---: | --- | ---: | ---: |",
+    "| Task | Side | Protocol | Rep | OK | Raw in | Raw out | Raw total | Cost | Rate | Steps | Dur (s) |",
+    "| --- | --- | --- | ---: | --- | ---: | ---: | ---: | ---: | --- | ---: | ---: |",
   );
   for (const run of report.runs) {
     lines.push(
-      `| ${run.task} | ${run.side} | ${run.rep} | ${run.ok ? "yes" : "no"} | ${formatTokenCount(
+      `| ${run.task} | ${run.side} | ${run.protocol ?? "n/a"} | ${run.rep} | ${
+        run.ok ? "yes" : "no"
+      } | ${formatTokenCount(
         run.tokens.input,
       )} | ${formatTokenCount(run.tokens.output)} | ${formatTokenCount(run.tokens.total)} | ${formatUsd(
         run.cost ?? null,
@@ -1958,6 +2126,64 @@ export function writeMarkdownReport(mdPath: string, report: Report): void {
   lines.push("");
 
   writeFile(mdPath, `${lines.join("\n")}\n`);
+}
+
+/**
+ * Bounded worker pool over one job array (#16): workers claim jobs by index, so
+ * every side/protocol variant competes for the same slots. Results keep job
+ * order even though completion order is arbitrary.
+ */
+export async function runPool<Job, Result>(
+  jobs: readonly Job[],
+  concurrency: number,
+  run: (job: Job, index: number) => Promise<Result>,
+): Promise<Result[]> {
+  const results = new Array<Result>(jobs.length);
+  let next = 0;
+  const workers = Array.from(
+    { length: Math.min(concurrency, jobs.length) },
+    async (): Promise<void> => {
+      for (;;) {
+        const index = next++;
+        const job = jobs[index];
+        if (job === undefined) {
+          return;
+        }
+        results[index] = await run(job, index);
+      }
+    },
+  );
+  await Promise.all(workers);
+  return results;
+}
+
+/**
+ * Expand the task × side × rep matrix with the tc protocol dimension (#16).
+ * `oc` has no protocol: it gets exactly one job per task/rep however many tc
+ * variants are selected. The pool in `main` claims all jobs from one array, so
+ * variants run concurrently rather than in a serial per-protocol phase.
+ */
+export function buildJobs(
+  tasks: readonly TaskName[],
+  sides: readonly Side[],
+  reps: number,
+  protocols: readonly ProtocolFormat[],
+): BenchmarkJob[] {
+  const jobs: BenchmarkJob[] = [];
+  for (const task of tasks) {
+    for (const side of sides) {
+      for (let rep = 1; rep <= reps; rep += 1) {
+        if (side === "tc") {
+          for (const protocol of protocols) {
+            jobs.push({ task, side, rep, protocol });
+          }
+        } else {
+          jobs.push({ task, side, rep, protocol: null });
+        }
+      }
+    }
+  }
+  return jobs;
 }
 
 async function main(): Promise<number> {
@@ -1989,19 +2215,36 @@ async function main(): Promise<number> {
   const tasks = args.task === null ? TASKS.map((task) => task.name) : [args.task];
   const sides: Side[] = args.side === "both" ? ["tc", "oc"] : [args.side];
   const reps = args.pilot ? PILOT_REPS : args.reps;
+  const protocols = args.protocolFormats;
 
-  const jobs: BenchmarkJob[] = [];
-  for (const task of tasks) {
-    for (const side of sides) {
-      for (let rep = 1; rep <= reps; rep += 1) {
-        jobs.push({ task, side, rep });
-      }
-    }
-  }
+  const jobs = buildJobs(tasks, sides, reps, protocols);
 
   // The full run on the pilot's date references the pilot report when it has
   // already been written; other days (and missing files) stay null.
   const pilotCandidate = join(repoRoot, "benchmark", "results", `pilot-${date}.json`);
+
+  // #66/#16: pin the measured inputs per tc protocol, so a multi-variant report
+  // can be checked against the prompt each ledger row actually measured.
+  const provenanceFor = (protocol: ProtocolFormat): RecordedProvenance => ({
+    ...currentInputHashes(repoRoot, {
+      tasks,
+      taskIssues: TASK_ISSUES,
+      model: args.model,
+      multiPayload: args.multiPayload,
+      protocolFormat: protocol,
+      effort: args.effort,
+      reps,
+      tokenBudget: args.tokenBudget,
+    }),
+    computedAt: generatedAt,
+  });
+  const provenanceByProtocol: Partial<Record<ProtocolFormat, RecordedProvenance>> = {};
+  for (const protocol of protocols) {
+    provenanceByProtocol[protocol] = provenanceFor(protocol);
+  }
+  const singleProtocol = protocols.length === 1 ? protocols[0] : undefined;
+  const scalarProvenance =
+    singleProtocol === undefined ? null : (provenanceByProtocol[singleProtocol] ?? null);
 
   const report: Report = {
     generatedAt,
@@ -2015,7 +2258,10 @@ async function main(): Promise<number> {
     ocModel: args.ocModel === null || args.ocModel === args.model ? null : args.ocModel,
     effort: args.effort,
     multiPayload: args.multiPayload,
-    protocolFormat: args.protocolFormat,
+    // Scalar for today's single-protocol shape; null when variants are pooled
+    // into no row, with the full selection in `protocolFormats` (#16).
+    protocolFormat: singleProtocol ?? null,
+    protocolFormats: protocols,
     tokenBudget: args.tokenBudget,
     bunVersion: Bun.version,
     opencodeVersion: null,
@@ -2024,22 +2270,11 @@ async function main(): Promise<number> {
     runs: [],
     // Preflight errors write this zeroed aggregate set; the normal path
     // recomputes it from the final runs after the pool.
-    aggregates: computeAggregates([], tasks, sides),
+    aggregates: computeAggregates([], tasks, sides, protocols),
     // #66: pin the measured inputs from the same tree the runs read, so the
     // record is self-describing and the ledger check can flag staleness.
-    provenance: {
-      ...currentInputHashes(repoRoot, {
-        tasks,
-        taskIssues: TASK_ISSUES,
-        model: args.model,
-        multiPayload: args.multiPayload,
-        protocolFormat: args.protocolFormat,
-        effort: args.effort,
-        reps,
-        tokenBudget: args.tokenBudget,
-      }),
-      computedAt: generatedAt,
-    },
+    provenance: scalarProvenance,
+    ...(singleProtocol === undefined ? { provenanceByProtocol } : {}),
   };
 
   let opencode: OpencodeContext | null = null;
@@ -2090,33 +2325,24 @@ async function main(): Promise<number> {
     replayDir,
     tokenBudget: args.tokenBudget,
     multiPayload: args.multiPayload,
-    protocolFormat: args.protocolFormat,
+    protocols,
   };
 
   // Bounded worker pool: workers claim jobs by index so each run keeps its own
   // workspace, session, and logs. Completion order only affects the interleaved
-  // prints; `report.runs` is rebuilt from `records` in job order afterwards.
-  const records = new Array<RunRecord>(jobs.length);
-  let next = 0;
-  const workers = Array.from(
-    { length: Math.min(args.concurrency, jobs.length) },
-    async (): Promise<void> => {
-      for (;;) {
-        const i = next++;
-        const job = jobs[i];
-        if (job === undefined) {
-          return;
-        }
-        process.stdout.write(
-          `starting ${job.task} ${job.side} rep${job.rep} (${i + 1}/${jobs.length})\n`,
-        );
-        const record = await runOnce(job.task, job.side, job.rep, context);
-        records[i] = record;
-        printRecord(record);
-      }
-    },
-  );
-  await Promise.all(workers);
+  // prints; `records` stays in job order. A single protocol keeps today's
+  // `task side repN` console shape (#16); variants are named only when the
+  // matrix measures more than one.
+  const showProtocol = protocols.length > 1;
+  const records = await runPool(jobs, Math.min(args.concurrency, jobs.length), async (job, i) => {
+    const variant = showProtocol && job.protocol !== null ? ` ${job.protocol}` : "";
+    process.stdout.write(
+      `starting ${job.task} ${job.side}${variant} rep${job.rep} (${i + 1}/${jobs.length})\n`,
+    );
+    const record = await runOnce(job, context);
+    printRecord(record, showProtocol);
+    return record;
+  });
 
   for (const record of records) {
     report.runs.push(record);
@@ -2131,7 +2357,7 @@ async function main(): Promise<number> {
     rmSync(runRoot, { recursive: true, force: true });
   }
 
-  report.aggregates = computeAggregates(report.runs, tasks, sides);
+  report.aggregates = computeAggregates(report.runs, tasks, sides, protocols);
   writeReport(jsonPath, report);
   writeMarkdownReport(markdownPathFor(jsonPath), report);
   const passed = report.runs.filter((run) => run.ok).length;

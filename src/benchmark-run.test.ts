@@ -27,6 +27,9 @@ interface TokenStatsLike {
 interface AggregateLike {
   task: string | null;
   side: string | null;
+  protocol: string | null;
+  runs: number;
+  ok: number;
   tokens: { in: TokenStatsLike; out: TokenStatsLike; total: TokenStatsLike };
   tokensPerSuccess: { in: number | null; out: number | null; total: number | null };
   selectors: { range: number; matcher: number; wholeSymbol: number };
@@ -38,22 +41,51 @@ interface AggregateLike {
 interface AggregatesLike {
   bySide: AggregateLike[];
   byTaskSide: AggregateLike[];
-  overall: AggregateLike;
+  overall: AggregateLike[];
+}
+
+interface JobLike {
+  task: string;
+  side: string;
+  rep: number;
+  protocol: string | null;
 }
 
 interface RunModule {
-  aggregateRuns(runs: readonly unknown[], task: string | null, side: string | null): AggregateLike;
   computeAggregates(
     runs: readonly unknown[],
     tasks: readonly string[],
     sides: readonly string[],
+    protocols?: readonly string[],
   ): AggregatesLike;
+  aggregateRuns(
+    runs: readonly unknown[],
+    task: string | null,
+    side: string | null,
+    protocol?: string | null,
+  ): AggregateLike;
+  buildJobs(
+    tasks: readonly string[],
+    sides: readonly string[],
+    reps: number,
+    protocols: readonly string[],
+  ): JobLike[];
+  runPool<Job, Result>(
+    jobs: readonly Job[],
+    concurrency: number,
+    run: (job: Job, index: number) => Promise<Result>,
+  ): Promise<Result[]>;
+  parseProtocolFormats(value: string): string[];
   tokenMultiplierSentence(
     bySide: readonly AggregateLike[],
     byTaskSide: readonly AggregateLike[],
   ): string;
   writeMarkdownReport(path: string, report: unknown): void;
-  parseArgs(argv: string[]): { model: string; ocModel: string | null; protocolFormat: string };
+  parseArgs(argv: string[]): {
+    model: string;
+    ocModel: string | null;
+    protocolFormats: string[];
+  };
   opencodeModelFor(model: string, ocModel: string | null): string;
 }
 
@@ -68,6 +100,7 @@ function makeRun(
   side: "tc" | "oc",
   buckets: { input: number; output: number; cacheRead?: number },
   exchangeStats: Record<string, unknown> | null = null,
+  protocol: string | null = null,
 ): Record<string, unknown> {
   const raw = {
     input: buckets.input,
@@ -80,6 +113,7 @@ function makeRun(
   return {
     task,
     side,
+    protocol,
     rep: 1,
     ok: true,
     sideOk: true,
@@ -226,20 +260,23 @@ describe("rendered report (#89)", () => {
         expect(markdown).toContain("Like-for-like tokens (#89)");
         expect(markdown).toContain("Mean in (no cache)");
         expect(markdown).toContain("decision-only");
-        // json-parser tc: in 200, out 500, total 700.
-        expect(markdown).toContain("| json-parser | tc | 1/1 | 200 | 500 | 700 |");
+        // json-parser tc: in 200, out 500, total 700 (no protocol on this
+        // synthetic legacy record).
+        expect(markdown).toContain("| json-parser | tc | n/a | 1/1 | 200 | 500 | 700 |");
         expect(markdown).toContain("oc 1.56x tc overall");
         expect(markdown).toContain("json-parser oc 1.86x tc");
         // #101: adoption surfaces per task/side and per side.
         expect(markdown).toContain("## Selector adoption (#101)");
-        expect(markdown).toContain("| Task | Side | range | matcher | whole-symbol |");
-        expect(markdown).toContain("| Side | range | matcher | whole-symbol |");
+        expect(markdown).toContain("| Task | Side | Protocol | range | matcher | whole-symbol |");
+        expect(markdown).toContain("| Side | Protocol | range | matcher | whole-symbol |");
         // #110: resolved stages and matcher kinds surface alongside.
         expect(markdown).toContain("Resolved cascade stages and matcher kinds (#110)");
         expect(markdown).toContain(
-          "| Task | Side | whole-symbol | match | pick | snippet | regex |",
+          "| Task | Side | Protocol | whole-symbol | match | pick | snippet | regex |",
         );
-        expect(markdown).toContain("| Side | whole-symbol | match | pick | snippet | regex |");
+        expect(markdown).toContain(
+          "| Side | Protocol | whole-symbol | match | pick | snippet | regex |",
+        );
         // #111: edit-dsl implicit-create clauses surface alongside.
         expect(markdown).toContain("Implicit creates (#111):");
       } finally {
@@ -415,11 +452,11 @@ describe("oc model override (--oc-model)", () => {
 describe("edit protocol override (--protocol-format) (#119)", () => {
   test.skipIf(!runModulePresent)("parses --protocol-format and defaults to edit-dsl", async () => {
     const { parseArgs } = await loadRunModule();
-    expect(parseArgs([]).protocolFormat).toBe("edit-dsl");
-    expect(parseArgs(["--multi-payload"]).protocolFormat).toBe("edit-dsl");
-    expect(parseArgs(["--protocol-format", "edit-dsl"]).protocolFormat).toBe("edit-dsl");
-    expect(parseArgs(["--protocol-format", "json"]).protocolFormat).toBe("json");
-    expect(parseArgs(["--protocol-format", "compact"]).protocolFormat).toBe("edit-dsl");
+    expect(parseArgs([]).protocolFormats).toEqual(["edit-dsl"]);
+    expect(parseArgs(["--multi-payload"]).protocolFormats).toEqual(["edit-dsl"]);
+    expect(parseArgs(["--protocol-format", "edit-dsl"]).protocolFormats).toEqual(["edit-dsl"]);
+    expect(parseArgs(["--protocol-format", "json"]).protocolFormats).toEqual(["json"]);
+    expect(parseArgs(["--protocol-format", "compact"]).protocolFormats).toEqual(["edit-dsl"]);
   });
 
   test.skipIf(!runModulePresent)("the report renders the selected protocol format", async () => {
@@ -469,4 +506,197 @@ describe("edit protocol override (--protocol-format) (#119)", () => {
       rmSync(dir, { recursive: true, force: true });
     }
   });
+});
+
+// #16: one invocation measures several tc protocol variants (plus oc) from the
+// same worker pool, with per-protocol records, aggregates, and report rows.
+describe("concurrent protocol variants (#16)", () => {
+  const multiRuns = (): Record<string, unknown>[] => [
+    makeRun("json-parser", "tc", { input: 1000, output: 500 }, null, "json"),
+    makeRun("json-parser", "tc", { input: 200, output: 100 }, null, "json"),
+    makeRun("json-parser", "tc", { input: 400, output: 200 }, null, "edit-dsl"),
+    makeRun("json-parser", "oc", { input: 900, output: 400 }),
+  ];
+
+  test.skipIf(!runModulePresent)(
+    "parses comma lists in either order, de-duplicates, and normalizes the compact alias",
+    async () => {
+      const { parseProtocolFormats, parseArgs } = await loadRunModule();
+      expect(parseProtocolFormats("json")).toEqual(["json"]);
+      expect(parseProtocolFormats("edit-dsl")).toEqual(["edit-dsl"]);
+      expect(parseProtocolFormats("json,edit-dsl")).toEqual(["json", "edit-dsl"]);
+      // Order-independent: canonical order is json then edit-dsl.
+      expect(parseProtocolFormats("edit-dsl,json")).toEqual(["json", "edit-dsl"]);
+      expect(parseProtocolFormats("json,json,compact")).toEqual(["json", "edit-dsl"]);
+      expect(parseArgs(["--protocol-format", "edit-dsl,json"]).protocolFormats).toEqual([
+        "json",
+        "edit-dsl",
+      ]);
+      expect(() => parseProtocolFormats("json,yaml")).toThrow(
+        "invalid --protocol-format value: yaml",
+      );
+      expect(() => parseProtocolFormats("json,")).toThrow("invalid --protocol-format value");
+    },
+  );
+
+  test.skipIf(!runModulePresent)(
+    "buildJobs expands tc once per protocol and oc once per task/rep",
+    async () => {
+      const { buildJobs } = await loadRunModule();
+      const jobs = buildJobs(["json-parser"], ["tc", "oc"], 2, ["json", "edit-dsl"]);
+      expect(jobs).toHaveLength(6);
+      const ocJobs = jobs.filter((job) => job.side === "oc");
+      const tcJobs = jobs.filter((job) => job.side === "tc");
+      // One oc job per task/rep, regardless of how many tc protocols are selected.
+      expect(ocJobs).toHaveLength(2);
+      expect(ocJobs.every((job) => job.protocol === null)).toBe(true);
+      expect(tcJobs).toHaveLength(4);
+      expect(tcJobs.map((job) => job.protocol).sort()).toEqual([
+        "edit-dsl",
+        "edit-dsl",
+        "json",
+        "json",
+      ]);
+      // Every job lives in the same array (one pool), not per-protocol phases.
+      expect(new Set(jobs.map((job) => `${job.side}/${job.rep}/${job.protocol ?? "-"}`)).size).toBe(
+        6,
+      );
+    },
+  );
+
+  test.skipIf(!runModulePresent)(
+    "one pool claims json, edit-dsl, and oc jobs concurrently (stubbed runner)",
+    async () => {
+      const { buildJobs, runPool } = await loadRunModule();
+      const jobs = buildJobs(["json-parser"], ["tc", "oc"], 1, ["json", "edit-dsl"]);
+      const claimed: string[] = [];
+      let inFlight = 0;
+      let maxInFlight = 0;
+      const results = await runPool(jobs, 2, async (job) => {
+        inFlight += 1;
+        maxInFlight = Math.max(maxInFlight, inFlight);
+        claimed.push(`${job.side}:${job.protocol ?? "-"}`);
+        await new Promise((resolve) => setTimeout(resolve, 5));
+        inFlight -= 1;
+        return `${job.side}:${job.protocol ?? "-"}`;
+      });
+      // Same array, same pool: all three variants ran, with real concurrency.
+      expect(claimed.sort()).toEqual(["oc:-", "tc:edit-dsl", "tc:json"]);
+      expect(maxInFlight).toBeGreaterThan(1);
+      // Results stay in job order, not completion order.
+      expect(results).toEqual(jobs.map((job) => `${job.side}:${job.protocol ?? "-"}`));
+    },
+  );
+
+  test.skipIf(!runModulePresent)(
+    "aggregates keep each tc protocol separate and give oc one row set",
+    async () => {
+      const { aggregateRuns, computeAggregates } = await loadRunModule();
+      const runs = multiRuns();
+      const aggregates = computeAggregates(
+        runs,
+        ["json-parser"],
+        ["tc", "oc"],
+        ["json", "edit-dsl"],
+      );
+      expect(aggregates.byTaskSide).toHaveLength(3);
+      const jsonRow = aggregates.byTaskSide.find(
+        (row) => row.side === "tc" && row.protocol === "json",
+      );
+      const dslRow = aggregates.byTaskSide.find(
+        (row) => row.side === "tc" && row.protocol === "edit-dsl",
+      );
+      const ocRow = aggregates.byTaskSide.find((row) => row.side === "oc");
+      expect(jsonRow?.tokens.total.total).toBe(1800);
+      expect(jsonRow?.tokens.total.mean).toBe(900);
+      expect(dslRow?.tokens.total.total).toBe(600);
+      expect(dslRow?.tokens.total.mean).toBe(600);
+      expect(ocRow?.protocol).toBeNull();
+      expect(ocRow?.tokens.total.total).toBe(1300);
+
+      // The overall comparison is a row list: no pooled tc row.
+      expect(aggregates.overall).toHaveLength(3);
+      expect(aggregates.overall.filter((row) => row.side === "tc")).toHaveLength(2);
+      expect(aggregates.overall.filter((row) => row.side === "oc")).toHaveLength(1);
+
+      const direct = aggregateRuns(runs, "json-parser", "tc", "json");
+      expect(direct.runs).toBe(2);
+      expect(direct.protocol).toBe("json");
+    },
+  );
+
+  test.skipIf(!runModulePresent)(
+    "multiplier sentence compares each tc variant with oc, never tc with tc",
+    async () => {
+      const { computeAggregates, tokenMultiplierSentence } = await loadRunModule();
+      const runs = multiRuns();
+      const aggregates = computeAggregates(
+        runs,
+        ["json-parser"],
+        ["tc", "oc"],
+        ["json", "edit-dsl"],
+      );
+      const sentence = tokenMultiplierSentence(aggregates.bySide, aggregates.byTaskSide);
+      // json 1800 vs oc 1300; edit-dsl 600 vs oc 1300.
+      expect(sentence).toContain("json tc 1.38x oc overall");
+      expect(sentence).toContain("oc 2.17x edit-dsl tc overall");
+      expect(sentence).toContain("json-parser json tc 1.38x oc");
+      expect(sentence).toContain("json-parser oc 2.17x edit-dsl tc");
+      // The bug compared the first two rows (json vs edit-dsl).
+      expect(sentence).not.toContain("tc 3.00x");
+      expect(sentence).not.toContain("json tc 3.00x edit-dsl tc");
+    },
+  );
+
+  test.skipIf(!runModulePresent)(
+    "Markdown identifies every variant in the header and tables",
+    async () => {
+      const { computeAggregates, writeMarkdownReport } = await loadRunModule();
+      const runs = multiRuns();
+      const tasks = ["json-parser"];
+      const sides = ["tc", "oc"];
+      const report = {
+        generatedAt: "2026-10-22T00:00:00.000Z",
+        date: "2026-10-22",
+        mode: "pilot",
+        tasks,
+        sides,
+        reps: 1,
+        concurrency: 4,
+        model: "deepseek-v4.1-flash",
+        ocModel: null,
+        effort: null,
+        multiPayload: false,
+        protocolFormat: null,
+        protocolFormats: ["json", "edit-dsl"],
+        tokenBudget: null,
+        bunVersion: "1.0.0",
+        opencodeVersion: null,
+        pilotReference: null,
+        infraErrors: [],
+        runs,
+        aggregates: computeAggregates(runs, tasks, sides, ["json", "edit-dsl"]),
+        provenance: null,
+        provenanceByProtocol: {},
+      };
+      const dir = mkdtempSync(join(tmpdir(), "run-multi-protocol-"));
+      try {
+        // The JSON report is this object serialized: the selected list and each
+        // run's protocol are part of the record itself, not only the Markdown.
+        expect(report.protocolFormats).toEqual(["json", "edit-dsl"]);
+        expect(report.runs.map((run) => run.protocol)).toEqual(["json", "json", "edit-dsl", null]);
+        const md = join(dir, "multi.md");
+        writeMarkdownReport(md, report);
+        const markdown = readFileSync(md, "utf8");
+        expect(markdown).toContain("- protocol-formats: json, edit-dsl (#119)");
+        expect(markdown).toContain("| json-parser | tc | json | 2/2 |");
+        expect(markdown).toContain("| json-parser | tc | edit-dsl | 1/1 |");
+        expect(markdown).toContain("| json-parser | oc | n/a | 1/1 |");
+        expect(markdown).toContain("| tc | json | 2/2 |");
+        expect(markdown).toContain("| tc | edit-dsl | 1/1 |");
+      } finally {
+        rmSync(dir, { recursive: true, force: true });
+      }
+    },
+  );
 });

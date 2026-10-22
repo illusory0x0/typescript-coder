@@ -2,14 +2,6 @@
 # rewrites it; `add` appends; other writes keep it. `check` enforces it.
 # A dep, and every child of an umbrella, must be listed before its dependent.
 
-- id: 16
-  title: "Run tc protocol variants in one concurrent benchmark"
-  status: todo
-  priority: medium
-  milestone: null
-  parent: null
-  deps: []
-  file: 0016-run-tc-protocol-variants-in-one-concurrent-benchmark.md
 - id: 24
   title: "Offer a valid fallback after repeated edit-dsl address failures"
   status: todo
