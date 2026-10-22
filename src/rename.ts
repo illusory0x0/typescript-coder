@@ -17,6 +17,7 @@ import type {
   ImportDeclaration,
   MemberName,
   MethodDeclaration,
+  NamespaceDeclaration,
   Node,
   ObjectMethod,
   Parameter,
@@ -52,11 +53,32 @@ export interface RenameOptions {
 
 interface Binding {
   name: string;
+  /** Fully qualified path for namespace/member targets; null for ordinary locals. */
+  path: string | null;
+  /** True for member bindings that are addressable only by path, not lexically. */
+  qualifiedOnly: boolean;
   spaces: Set<SymbolSpace>;
   kinds: Set<string>;
   declarations: Node[];
   identifiers: Identifier[];
   scopes: Set<LexicalScope>;
+}
+
+interface ReferenceBase {
+  name: string;
+  space: SymbolSpace;
+  scope: LexicalScope;
+}
+
+interface QualifiedReference {
+  /** The lexical base (`A` in `A.B`), or null for a `this.field` reference. */
+  base: ReferenceBase | null;
+  /** The enclosing class path for `this.field`, or null for a base-driven path. */
+  ownerPath: string | null;
+  /** The member path after the base/owner, e.g. `B.C` in `A.B.C`. */
+  restPath: string;
+  /** True when this reference spans the whole member chain, not a prefix. */
+  isFullChain: boolean;
 }
 
 interface Reference {
@@ -65,6 +87,7 @@ interface Reference {
   scope: LexicalScope;
   start: number;
   end: number;
+  qualified: QualifiedReference | null;
 }
 
 class LexicalScope {
@@ -132,6 +155,7 @@ interface CaptureCollision {
   scope: LexicalScope;
   space: SymbolSpace;
   referenceStart: number | null;
+  path: string | null;
 }
 
 /**
@@ -146,13 +170,35 @@ class RenameModel {
   readonly root = new LexicalScope("global", null);
   readonly bindings: Binding[] = [];
   private readonly references: Reference[] = [];
+  private readonly bindingsByPath = new Map<string, Binding[]>();
+  private readonly namespaceScopes = new Map<Binding, LexicalScope>();
+  private readonly source: string;
+  private namespacePath: string[] = [];
+  private classPath: string | null = null;
 
   constructor(program: Program) {
+    this.source = program.source;
     this.visitStatements(program.body, this.root);
   }
 
   private child(kind: ScopeKind, parent: LexicalScope): LexicalScope {
     return new LexicalScope(kind, parent);
+  }
+
+  private qualify(name: string): string {
+    return [...this.namespacePath, name].join(".");
+  }
+
+  private indexPath(binding: Binding): void {
+    if (binding.path === null) {
+      return;
+    }
+    const existing = this.bindingsByPath.get(binding.path);
+    if (existing === undefined) {
+      this.bindingsByPath.set(binding.path, [binding]);
+    } else if (!existing.includes(binding)) {
+      existing.push(binding);
+    }
   }
 
   private declare(
@@ -162,6 +208,7 @@ class RenameModel {
     kinds: readonly string[],
     declaration: Node,
     identifier: Identifier | null,
+    path: string | null = null,
   ): Binding {
     const existing = scope.bindings
       .get(name)
@@ -180,10 +227,16 @@ class RenameModel {
       if (identifier !== null && !hasIdentifier(existing.identifiers, identifier)) {
         existing.identifiers.push(identifier);
       }
+      if (path !== null) {
+        existing.path = path;
+        this.indexPath(existing);
+      }
       return existing;
     }
     const binding: Binding = {
       name,
+      path,
+      qualifiedOnly: false,
       spaces: new Set(spaces),
       kinds: new Set(kinds),
       declarations: [declaration],
@@ -197,6 +250,58 @@ class RenameModel {
       siblings.push(binding);
     }
     this.bindings.push(binding);
+    this.indexPath(binding);
+    return binding;
+  }
+
+  /**
+   * Declare a member binding that is addressable by qualified path only. It is
+   * deliberately not inserted into the lexical scope: `Widget.field` and
+   * `this.field` are structural references, while a bare `field` in source may
+   * resolve to an outer local and must not be treated as a class member.
+   */
+  private declareQualified(
+    name: string,
+    path: string,
+    spaces: readonly SymbolSpace[],
+    kinds: readonly string[],
+    declaration: Node,
+    identifier: Identifier | null,
+  ): Binding {
+    const existing = this.bindingsByPath
+      .get(path)
+      ?.find(
+        (binding) =>
+          [...binding.kinds].some((kind) => kinds.includes(kind)) &&
+          [...binding.spaces].some((space) => spaces.includes(space)),
+      );
+    if (existing !== undefined) {
+      for (const space of spaces) {
+        existing.spaces.add(space);
+      }
+      for (const kind of kinds) {
+        existing.kinds.add(kind);
+      }
+      if (!existing.declarations.includes(declaration)) {
+        existing.declarations.push(declaration);
+      }
+      if (identifier !== null && !hasIdentifier(existing.identifiers, identifier)) {
+        existing.identifiers.push(identifier);
+      }
+      return existing;
+    }
+    const binding: Binding = {
+      name,
+      path,
+      qualifiedOnly: true,
+      spaces: new Set(spaces),
+      kinds: new Set(kinds),
+      declarations: [declaration],
+      identifiers: identifier === null ? [] : [identifier],
+      scopes: new Set(),
+    };
+    this.bindings.push(binding);
+    this.indexPath(binding);
     return binding;
   }
 
@@ -212,7 +317,62 @@ class RenameModel {
   }
 
   private reference(name: string, space: SymbolSpace, scope: LexicalScope, node: Node): void {
-    this.references.push({ name, space, scope, start: node.start, end: node.end });
+    this.references.push({
+      name,
+      space,
+      scope,
+      start: node.start,
+      end: node.end,
+      qualified: null,
+    });
+  }
+
+  private qualifiedReference(
+    name: string,
+    space: SymbolSpace,
+    scope: LexicalScope,
+    start: number,
+    end: number,
+    qualified: QualifiedReference,
+  ): void {
+    this.references.push({ name, space, scope, start, end, qualified });
+  }
+
+  private resolveQualifiedBase(base: ReferenceBase): Binding | null {
+    const direct = resolveBinding(base.scope, base.name, base.space);
+    if (direct !== null) {
+      return direct;
+    }
+    return base.space === "namespace" ? null : resolveBinding(base.scope, base.name, "namespace");
+  }
+
+  private qualifiedPathOf(reference: Reference): string | null {
+    const qualified = reference.qualified;
+    if (qualified === null) {
+      return null;
+    }
+    if (qualified.ownerPath !== null) {
+      return `${qualified.ownerPath}.${qualified.restPath}`;
+    }
+    if (qualified.base === null) {
+      return null;
+    }
+    const base = this.resolveQualifiedBase(qualified.base);
+    if (base === null || base.path === null) {
+      return null;
+    }
+    return `${base.path}.${qualified.restPath}`;
+  }
+
+  private resolveReference(reference: Reference): Binding | null {
+    if (reference.qualified === null) {
+      return resolveBinding(reference.scope, reference.name, reference.space);
+    }
+    const path = this.qualifiedPathOf(reference);
+    if (path === null) {
+      return null;
+    }
+    return this.bindingsByPath.get(path)?.[0] ?? null;
   }
 
   /** Resolve every collected reference and return the edits for `targets`. */
@@ -227,10 +387,22 @@ class RenameModel {
       }
     }
     for (const reference of this.references) {
-      const binding = resolveBinding(reference.scope, reference.name, reference.space);
-      if (binding !== null && targets.has(binding)) {
-        add(reference.start, reference.end);
+      const binding = this.resolveReference(reference);
+      if (binding === null || !targets.has(binding)) {
+        continue;
       }
+      // A namespace is a container: `A.B.Z` names Z, not B, so only rename a
+      // namespace reference that spans the complete qualified path. Member
+      // targets (fields/enum members) may appear as a prefix of a longer chain
+      // (`this.field.nested`, `Color.Red.value`) and are renamed there too.
+      if (
+        binding.kinds.has("namespace") &&
+        reference.qualified !== null &&
+        !reference.qualified.isFullChain
+      ) {
+        continue;
+      }
+      add(reference.start, reference.end);
     }
     return [...edits.values()].sort((left, right) => left.start - right.start);
   }
@@ -240,22 +412,44 @@ class RenameModel {
    * declaration scope(s) are checked first (a plain same-scope collision); then
    * every reference that resolves to the target is walked up to the target's
    * declaration scope, so an intervening shadow also rejects the rename.
+   * Qualified member targets also reject a new last segment that already
+   * exists at the same qualified parent path.
    */
   captureCollision(target: Binding, newName: string): CaptureCollision | null {
     const check = (scope: LexicalScope, space: SymbolSpace): Binding | undefined =>
       scope.resolveLocal(newName, space).find((binding) => binding !== target);
 
+    if (target.path !== null) {
+      const dot = target.path.lastIndexOf(".");
+      const newPath = dot < 0 ? newName : `${target.path.slice(0, dot)}.${newName}`;
+      const pathCollision = this.bindingsByPath.get(newPath)?.find((binding) => binding !== target);
+      if (pathCollision !== undefined) {
+        const scope = target.scopes.values().next().value ?? this.root;
+        return {
+          scope,
+          space: pathCollision.spaces.values().next().value ?? "value",
+          referenceStart: null,
+          path: newPath,
+        };
+      }
+    }
+
     for (const scope of target.scopes) {
       for (const space of target.spaces) {
         if (check(scope, space) !== undefined) {
-          return { scope, space, referenceStart: null };
+          return { scope, space, referenceStart: null, path: null };
         }
       }
     }
 
     for (const reference of this.references) {
-      const binding = resolveBinding(reference.scope, reference.name, reference.space);
+      const binding = this.resolveReference(reference);
       if (binding !== target) {
+        continue;
+      }
+      if (reference.qualified !== null) {
+        // Qualified references are structural, not lexical; the parent-path
+        // collision check above covers their capture risk.
         continue;
       }
       let current: LexicalScope | null = reference.scope;
@@ -265,6 +459,7 @@ class RenameModel {
             scope: current,
             space: reference.space,
             referenceStart: reference.start,
+            path: null,
           };
         }
         // Stop at the target's declaration scope: bindings above it are
@@ -325,6 +520,7 @@ class RenameModel {
         return;
       }
       case "EnumDeclaration": {
+        const enumPath = this.qualify(statement.name.name);
         const binding = this.declare(
           scope,
           statement.name.name,
@@ -332,6 +528,7 @@ class RenameModel {
           ["enum"],
           statement,
           statement.name,
+          enumPath,
         );
         const enumScope = this.child("block", scope);
         this.attach(enumScope, binding);
@@ -344,6 +541,7 @@ class RenameModel {
               ["enum-member"],
               member,
               member.name,
+              `${enumPath}.${member.name.name}`,
             );
           }
           if (member.initializer !== null) {
@@ -352,13 +550,9 @@ class RenameModel {
         }
         return;
       }
-      case "NamespaceDeclaration": {
-        // Namespace and dotted-target renames belong to issue #20; still walk
-        // the body so local references to outer bindings resolve correctly.
-        const namespaceScope = this.child("namespace", scope);
-        this.visitStatements(statement.body, namespaceScope);
+      case "NamespaceDeclaration":
+        this.visitNamespace(statement, scope);
         return;
-      }
       case "ImportDeclaration":
         this.visitImport(statement, scope);
         return;
@@ -500,6 +694,75 @@ class RenameModel {
     this.visitBlock(handler.body, catchScope);
   }
 
+  private namespaceIdentifiers(declaration: NamespaceDeclaration): Identifier[] {
+    let offset = declaration.start;
+    const identifiers: Identifier[] = [];
+    for (const segment of declaration.name.split(".")) {
+      const start = this.source.indexOf(segment, offset);
+      if (start < 0 || start >= declaration.end) {
+        break;
+      }
+      identifiers.push({
+        kind: "Identifier",
+        name: segment,
+        start,
+        end: start + segment.length,
+      });
+      offset = start + segment.length;
+    }
+    return identifiers;
+  }
+
+  private visitNamespace(declaration: NamespaceDeclaration, scope: LexicalScope): void {
+    const segments = declaration.name.split(".");
+    const identifiers = this.namespaceIdentifiers(declaration);
+    const prefix = [...this.namespacePath];
+    let currentScope = scope;
+    for (let index = 0; index < segments.length; index += 1) {
+      const segment = segments[index];
+      if (segment === undefined) {
+        break;
+      }
+      const path = [...prefix, segment].join(".");
+      const identifier = identifiers[index] ?? null;
+      let binding = currentScope.bindings
+        .get(segment)
+        ?.find((candidate) => candidate.kinds.has("namespace"));
+      if (binding === undefined) {
+        binding = this.declare(
+          currentScope,
+          segment,
+          ["namespace", "value"],
+          ["namespace"],
+          declaration,
+          identifier,
+          path,
+        );
+      } else {
+        if (!binding.declarations.includes(declaration)) {
+          binding.declarations.push(declaration);
+        }
+        if (identifier !== null && !hasIdentifier(binding.identifiers, identifier)) {
+          binding.identifiers.push(identifier);
+        }
+        binding.path = path;
+        this.indexPath(binding);
+      }
+      let namespaceScope = this.namespaceScopes.get(binding);
+      if (namespaceScope === undefined) {
+        namespaceScope = this.child("namespace", currentScope);
+        this.namespaceScopes.set(binding, namespaceScope);
+      }
+      currentScope = namespaceScope;
+      prefix.push(segment);
+    }
+
+    const savedPath = this.namespacePath;
+    this.namespacePath = prefix;
+    this.visitStatements(declaration.body, currentScope);
+    this.namespacePath = savedPath;
+  }
+
   private visitBlock(block: BlockStatement, scope: LexicalScope): void {
     const blockScope = this.child("block", scope);
     this.visitStatements(block.body, blockScope);
@@ -604,7 +867,9 @@ class RenameModel {
 
   private visitClassDeclaration(declaration: ClassDeclaration, scope: LexicalScope): void {
     let binding: Binding | null = null;
+    let classPath: string | null = null;
     if (declaration.name !== null) {
+      classPath = this.qualify(declaration.name.name);
       binding = this.declare(
         scope,
         declaration.name.name,
@@ -612,6 +877,7 @@ class RenameModel {
         ["class"],
         declaration,
         declaration.name,
+        classPath,
       );
     }
     const classScope = this.child("class", scope);
@@ -625,7 +891,10 @@ class RenameModel {
     for (const implemented of declaration.implements) {
       this.visitType(implemented, classScope, "type");
     }
-    this.visitClassMembers(declaration.members, classScope);
+    const savedClassPath = this.classPath;
+    this.classPath = classPath;
+    this.visitClassMembers(declaration.members, classScope, classPath);
+    this.classPath = savedClassPath;
     for (const decorator of declaration.decorators ?? []) {
       this.visitExpression(decorator, scope);
     }
@@ -633,7 +902,9 @@ class RenameModel {
 
   private visitClassExpression(expression: ClassExpression, scope: LexicalScope): void {
     const classScope = this.child("class", scope);
+    let classPath: string | null = null;
     if (expression.name !== null) {
+      classPath = this.qualify(expression.name.name);
       this.declare(
         classScope,
         expression.name.name,
@@ -641,6 +912,7 @@ class RenameModel {
         ["class"],
         expression,
         expression.name,
+        classPath,
       );
     }
     this.visitTypeParameters(expression.typeParameters, classScope);
@@ -650,16 +922,33 @@ class RenameModel {
     for (const implemented of expression.implements) {
       this.visitType(implemented, classScope, "type");
     }
-    this.visitClassMembers(expression.members, classScope);
+    const savedClassPath = this.classPath;
+    this.classPath = classPath;
+    this.visitClassMembers(expression.members, classScope, classPath);
+    this.classPath = savedClassPath;
     for (const decorator of expression.decorators ?? []) {
       this.visitExpression(decorator, scope);
     }
   }
 
-  private visitClassMembers(members: readonly ClassMember[], scope: LexicalScope): void {
+  private visitClassMembers(
+    members: readonly ClassMember[],
+    scope: LexicalScope,
+    classPath: string | null,
+  ): void {
     for (const member of members) {
       switch (member.kind) {
         case "PropertyDeclaration":
+          if (member.name.kind === "Identifier" && classPath !== null) {
+            this.declareQualified(
+              member.name.name,
+              `${classPath}.${member.name.name}`,
+              ["value"],
+              ["variable", "field"],
+              member,
+              member.name,
+            );
+          }
           this.visitMemberName(member.name, scope);
           if (member.type !== null) {
             this.visitType(member.type, scope, "type");
@@ -672,6 +961,16 @@ class RenameModel {
           }
           break;
         case "MethodDeclaration":
+          if (member.name.kind === "Identifier" && classPath !== null) {
+            this.declareQualified(
+              member.name.name,
+              `${classPath}.${member.name.name}`,
+              ["value"],
+              ["method"],
+              member,
+              null,
+            );
+          }
           this.visitMemberName(member.name, scope);
           this.visitMethodFunction(member, scope);
           for (const decorator of member.decorators ?? []) {
@@ -891,10 +1190,7 @@ class RenameModel {
         }
         return;
       case "MemberExpression":
-        this.visitExpression(expression.object, scope);
-        if (expression.computed) {
-          this.visitExpression(expression.property, scope);
-        }
+        this.visitMemberExpression(expression, scope);
         return;
       case "CallExpression":
       case "NewExpression": {
@@ -951,6 +1247,84 @@ class RenameModel {
     }
   }
 
+  private visitMemberExpression(
+    expression: Extract<Expression, { kind: "MemberExpression" }>,
+    scope: LexicalScope,
+  ): void {
+    const properties: Array<{ name: string; node: Identifier }> = [];
+    let current: Expression = expression;
+    while (
+      current.kind === "MemberExpression" &&
+      !current.computed &&
+      current.property.kind === "Identifier"
+    ) {
+      properties.unshift({ name: current.property.name, node: current.property });
+      current = current.object;
+    }
+
+    if (current.kind === "Identifier") {
+      this.reference(current.name, "value", scope, current);
+      if (properties.length === 0) {
+        return;
+      }
+      const base: ReferenceBase = { name: current.name, space: "value", scope };
+      const rest = properties.map((property) => property.name);
+      const lastIndex = properties.length - 1;
+      for (let index = 0; index < properties.length; index += 1) {
+        const property = properties[index];
+        if (property === undefined) {
+          continue;
+        }
+        this.qualifiedReference(
+          property.name,
+          "value",
+          scope,
+          property.node.start,
+          property.node.end,
+          {
+            base,
+            ownerPath: null,
+            restPath: rest.slice(0, index + 1).join("."),
+            isFullChain: index === lastIndex,
+          },
+        );
+      }
+      return;
+    }
+
+    if (current.kind === "ThisExpression") {
+      if (this.classPath === null || properties.length === 0) {
+        return;
+      }
+      const rest = properties.map((property) => property.name);
+      const lastIndex = properties.length - 1;
+      for (let index = 0; index < properties.length; index += 1) {
+        const property = properties[index];
+        if (property === undefined) {
+          continue;
+        }
+        this.qualifiedReference(
+          property.name,
+          "value",
+          scope,
+          property.node.start,
+          property.node.end,
+          {
+            base: null,
+            ownerPath: this.classPath,
+            restPath: rest.slice(0, index + 1).join("."),
+            isFullChain: index === lastIndex,
+          },
+        );
+      }
+      return;
+    }
+
+    // An arbitrary receiver (call result, computed access, etc.) is not
+    // type-resolved; walk it for local references but do not guess members.
+    this.visitExpression(current, scope);
+  }
+
   private visitProperty(property: Property, scope: LexicalScope): void {
     if (property.computed || property.shorthand) {
       this.visitExpression(property.key, scope);
@@ -1003,6 +1377,16 @@ class RenameModel {
     this.visitBlock(expression.body, functionScope);
   }
 
+  private lastSegmentSpan(node: Node, name: string): { start: number; end: number } {
+    const slice = this.source.slice(node.start, node.end);
+    const index = slice.indexOf(name);
+    const last = name.slice(name.lastIndexOf(".") + 1);
+    const relative =
+      index < 0 ? Math.max(0, name.length - last.length) : index + name.lastIndexOf(".") + 1;
+    const start = node.start + relative;
+    return { start, end: start + last.length };
+  }
+
   private visitType(type: Type, scope: LexicalScope, space: SymbolSpace): void {
     switch (type.kind) {
       case "TypeReference": {
@@ -1014,6 +1398,17 @@ class RenameModel {
             scope,
             start: type.start,
             end: type.start + first.length,
+            qualified: null,
+          });
+        }
+        if (type.name.includes(".")) {
+          const last = type.name.slice(type.name.lastIndexOf(".") + 1);
+          const span = this.lastSegmentSpan(type, type.name);
+          this.qualifiedReference(last, space, scope, span.start, span.end, {
+            base: { name: first, space, scope },
+            ownerPath: null,
+            restPath: type.name.slice(first.length + 1),
+            isFullChain: true,
           });
         }
         for (const argument of type.typeArguments ?? []) {
@@ -1159,12 +1554,18 @@ class RenameModel {
     if (locator.path !== "" && locator.path !== this.fileName) {
       return [];
     }
-    if (locator.name.includes(".")) {
-      return [];
+    const dotted = locator.name.includes(".");
+    let candidates = dotted
+      ? (this.bindingsByPath.get(locator.name) ?? [])
+      : this.bindings.filter(
+          (binding) =>
+            !binding.qualifiedOnly &&
+            binding.name === locator.name &&
+            kindMatches(binding, locator.kind),
+        );
+    if (dotted) {
+      candidates = candidates.filter((binding) => kindMatches(binding, locator.kind));
     }
-    let candidates = this.bindings.filter(
-      (binding) => binding.name === locator.name && kindMatches(binding, locator.kind),
-    );
     const space = options.space ?? null;
     if (space !== null) {
       candidates = candidates.filter((binding) => binding.spaces.has(space));
@@ -1365,9 +1766,11 @@ export function resolveLocalRename(
   const collision = model.captureCollision(target, rename.to);
   if (collision !== null) {
     const location =
-      collision.referenceStart === null
-        ? `in the same ${collision.scope.kind} scope`
-        : `in an intervening ${collision.scope.kind} scope at offset ${collision.referenceStart}, which would capture that reference`;
+      collision.path !== null
+        ? `at the qualified path \`${collision.path}\``
+        : collision.referenceStart === null
+          ? `in the same ${collision.scope.kind} scope`
+          : `in an intervening ${collision.scope.kind} scope at offset ${collision.referenceStart}, which would capture that reference`;
     return {
       ok: false,
       diagnostics:

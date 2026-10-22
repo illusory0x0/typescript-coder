@@ -10,14 +10,6 @@
   parent: null
   deps: []
   file: 0016-run-tc-protocol-variants-in-one-concurrent-benchmark.md
-- id: 20
-  title: "Resolve dotted and member rename targets"
-  status: todo
-  priority: medium
-  milestone: null
-  parent: 17
-  deps: [18, 19]
-  file: 0020-resolve-dotted-and-member-rename-targets.md
 - id: 21
   title: "Apply renames atomically in the edit-dsl loop and teach the grammar"
   status: todo

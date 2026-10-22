@@ -247,6 +247,180 @@ describe("resolveLocalRename", () => {
     );
   });
 
+  test("renames the last segment of a dotted namespace and exact references only", () => {
+    const source = [
+      "namespace A.B {",
+      "  export const value = 1;",
+      "}",
+      "const alias = A.B;",
+      "const nested = A.B.Z;",
+      "const other = X.A.B;",
+      "",
+    ].join("\n");
+    expect(rename(source, locator("A.B", "namespace"), "B", "C")).toBe(
+      [
+        "namespace A.C {",
+        "  export const value = 1;",
+        "}",
+        "const alias = A.C;",
+        "const nested = A.B.Z;",
+        "const other = X.A.B;",
+        "",
+      ].join("\n"),
+    );
+  });
+
+  test("renames a nested namespace declaration and its qualified reference", () => {
+    const source = [
+      "namespace A {",
+      "  export namespace B {",
+      "    export const value = 1;",
+      "  }",
+      "}",
+      "const alias = A.B;",
+      "",
+    ].join("\n");
+    expect(rename(source, locator("A.B", "namespace"), "B", "C")).toBe(
+      [
+        "namespace A {",
+        "  export namespace C {",
+        "    export const value = 1;",
+        "  }",
+        "}",
+        "const alias = A.C;",
+        "",
+      ].join("\n"),
+    );
+  });
+
+  test("rejects a namespace rename colliding at the same qualified path", () => {
+    const source = ["namespace A.B {}", "namespace A.C {}", ""].join("\n");
+    const result = resolveLocalRename(source, "a.ts", locator("A.B", "namespace"), {
+      from: "B",
+      to: "C",
+    });
+    expect(result.ok).toBe(false);
+    if (!result.ok) {
+      expect(result.diagnostics).toContain("collision");
+      expect(result.diagnostics).toContain("A.C");
+    }
+  });
+
+  test("renames enum members without touching same-named members elsewhere", () => {
+    const source = [
+      "enum Color { Red, Green }",
+      "enum Other { Red }",
+      "const one = Color.Red;",
+      "const two = Color.Green;",
+      "const three = Other.Red;",
+      "const four = Color.Red.valueOf();",
+      "",
+    ].join("\n");
+    expect(rename(source, locator("Color.Red", ""), "Red", "Crimson")).toBe(
+      [
+        "enum Color { Crimson, Green }",
+        "enum Other { Red }",
+        "const one = Color.Crimson;",
+        "const two = Color.Green;",
+        "const three = Other.Red;",
+        "const four = Color.Crimson.valueOf();",
+        "",
+      ].join("\n"),
+    );
+  });
+
+  test("rejects an enum member rename colliding at the same enum path", () => {
+    const source = ["enum Color { Red, Green }", ""].join("\n");
+    const result = resolveLocalRename(source, "a.ts", locator("Color.Red", ""), {
+      from: "Red",
+      to: "Green",
+    });
+    expect(result.ok).toBe(false);
+    if (!result.ok) {
+      expect(result.diagnostics).toContain("collision");
+      expect(result.diagnostics).toContain("Color.Green");
+    }
+  });
+
+  test("renames class fields and this.field references only", () => {
+    const source = [
+      "class Widget {",
+      "  field = 1;",
+      "  other = 2;",
+      "  read() {",
+      "    return this.field + this.other;",
+      "  }",
+      "}",
+      "class Other {",
+      "  field = 3;",
+      "}",
+      "const w = new Widget();",
+      "const staticField = Widget.field;",
+      "const arbitrary = w.field;",
+      "",
+    ].join("\n");
+    expect(rename(source, locator("Widget.field", "variable"), "field", "value")).toBe(
+      [
+        "class Widget {",
+        "  value = 1;",
+        "  other = 2;",
+        "  read() {",
+        "    return this.value + this.other;",
+        "  }",
+        "}",
+        "class Other {",
+        "  field = 3;",
+        "}",
+        "const w = new Widget();",
+        "const staticField = Widget.value;",
+        "const arbitrary = w.field;",
+        "",
+      ].join("\n"),
+    );
+  });
+
+  test("rejects a field rename colliding at the same class path", () => {
+    const source = ["class Widget {", "  field = 1;", "  other = 2;", "}", ""].join("\n");
+    const result = resolveLocalRename(source, "a.ts", locator("Widget.field", "variable"), {
+      from: "field",
+      to: "other",
+    });
+    expect(result.ok).toBe(false);
+    if (!result.ok) {
+      expect(result.diagnostics).toContain("collision");
+      expect(result.diagnostics).toContain("Widget.other");
+    }
+  });
+
+  test("rejects an ambiguous dotted target", () => {
+    const source = ["namespace A.B {}", "class A {", "  static B = 1;", "}", ""].join("\n");
+    const result = resolveLocalRename(source, "a.ts", locator("A.B", ""), {
+      from: "B",
+      to: "C",
+    });
+    expect(result.ok).toBe(false);
+    if (!result.ok) {
+      expect(result.diagnostics).toContain("ambiguous");
+    }
+  });
+
+  test("an unresolvable dotted target produces a diagnostic and no edits", () => {
+    const result = resolveLocalRename(
+      "namespace A.B {}",
+      "a.ts",
+      locator("A.Missing", "namespace"),
+      {
+        from: "Missing",
+        to: "Other",
+      },
+    );
+    expect(result.ok).toBe(false);
+    if (!result.ok) {
+      expect(result.diagnostics).toContain("cannot resolve");
+      expect(result.diagnostics).toContain("A.Missing");
+    }
+  });
+
   test("an unresolvable target produces a diagnostic and no edits", () => {
     const result = resolveLocalRename("const x = 1;", "a.ts", locator("missing", "const"), {
       from: "missing",

@@ -1,7 +1,7 @@
 ---
 id: 20
 title: "Resolve dotted and member rename targets"
-status: todo
+status: done
 priority: medium
 milestone: null
 parent: 17
@@ -57,3 +57,4 @@ bun test src/rename.test.ts
 - Project-wide reference discovery can start with same-file references; if a
   change spans files, the resolver must read every affected file before atomic
   apply.
+- Extended `src/rename.ts` with structural dotted/member target resolution: namespaces (dotted and nested), enum members, class fields via `this.field`/`Class.field`, exact suffix isolation, and qualified-path collision checks. Verified `bunx tsc --noEmit` and `bun test src/rename.test.ts` (22 pass, 0 fail). Conservative limitation: arbitrary receiver fields and same-class bare field names are not rewritten.
