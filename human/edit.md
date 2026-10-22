@@ -4,6 +4,11 @@ if editor can not find path, then create a file.
 if editor can not find symbol, append new symbol in the last position. 
 if resolve kind missing, default create let binding. 
 
+renamer: this not need implement the full typescript type checker. 
+  1. scope lookup for local variable 
+  2. path resolution for dotted symbol (e.g. std.array.length)
+  3. typescript type inference is quite simple, most of time you need add type annoation, 
+     in fact the real complex is typing rule, not inference rule. 
 
 ````
 multiEditor = { editor | fs } ;
@@ -26,13 +31,19 @@ editor      = 'select', symbol,                 (* select toplevel typescript *)
               'in', path,                       (* in path relative project root *)
               [ resolve kind ]                  (* resolve typescript overloading (type,namespace,function...)* )
               [ (* if missing then behavior like str_search in toplevel definition *)
-                'match', ( snippet | regex ) 
-              ],                                (* structure match or regex search *)
-              [ (* if missing then view the code with line number, matched AST would use ⁉️ to strong *)
-                [ 'pick', selecters ] ,          (* pick selecter from fuzzy matched AST *)
-                'replace', 'with', fence        (* replace with valid typescript snippet )
-              ]
+                'match', ( snippet | regex )    (* structure match or regex search *)
+              ],                                
+              replacer | renamer               
               'end' ;
+
+replacer = [ 
+              (* if missing then view the code with line number, matched AST would use ⁉️ to strong *)
+              [ 'pick', selecters ] ,          (* pick selecter from fuzzy matched AST *)
+              'replace', 'with', fence         (* replace with valid typescript snippet )
+           ]
+renamer  = [
+              'rename', identifier 'to', identifier  (* semantics renaming, local variable, fields, namespace, enums *)
+           ]
 
 selecters  = '{', selecter, { ',', selecter }, '}'
             | selecter ;                                   (* single-selecter sugar *)
