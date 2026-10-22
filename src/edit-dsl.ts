@@ -416,6 +416,7 @@ function pickOverlapDiagnostics(selection: Selection): string {
 export function resolveEditDslReply(
   selections: readonly Selection[],
   deps: EditDslDeps,
+  indices?: readonly number[],
 ): EditDslResolution {
   const regions: EditDslRegion[] = [];
   const viewers: EditDslViewer[] = [];
@@ -426,11 +427,12 @@ export function resolveEditDslReply(
   // same name; reject the repeat here, naming both clauses.
   const creates = new Map<string, number>();
 
-  for (let index = 0; index < selections.length; index += 1) {
-    const selection = selections[index];
+  for (let position = 0; position < selections.length; position += 1) {
+    const selection = selections[position];
     if (selection === undefined) {
       continue;
     }
+    const index = indices?.[position] ?? position;
     const path = selection.locator.path;
     const source = deps.sourceFor(path);
     const address = deps.resolveEntry(source, path, selection.locator, selection.space);

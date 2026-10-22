@@ -27,11 +27,12 @@ context, selection resolution, gates). Protocol prompt text lives in
 2. **Round.** A round has a budget of **3 exchanges** shared by selecting a
    target, writing an edit, and any retries after a rejection.
 3. **Select/pick.** Under edit-dsl, the first reply is one `select … end` clause
-   naming a symbol-index entry. A viewer (no `replace`) pins the declaration and
-   the harness sends a `# details` prompt with the declaration's source numbered
-   by file-absolute lines; an editor clause applies its own replacement. A
-   missing path, missing symbol, or space miss pins mode `create` and asks for a
-   create clause. Under explicit JSON, the model instead replies with a JSON
+   naming a symbol-index entry, or file commands (`create`/`delete`/`read`/
+   `write`) that pin their target. A viewer (no `replace`) pins the declaration
+   and the harness sends a `# details` prompt with the declaration's source
+   numbered by file-absolute lines; an editor clause applies its own replacement.
+   A missing path, missing symbol, or space miss pins mode `create` and asks for
+   a create clause. Under explicit JSON, the model instead replies with a JSON
    address `{mode, path, symbol, kind}` (`modify` | `create` | `delete`);
    resolution is strict and there is no silent first-match. The first successful
    selection is pinned for the run; later exchanges must echo it (a
@@ -39,7 +40,8 @@ context, selection resolution, gates). Protocol prompt text lives in
    file).
 4. **Edit.** The pinned declaration is shown with 1-based line numbers, and the
    model replies with one edit payload. Under edit-dsl that is one or more
-   `select … end` clauses with 6+ backtick replacement fences; under JSON it is
+   `select … end` clauses with 5+ hyphen (or 6+ backtick) replacement fences,
+   optionally mixed with raw file commands; under JSON it is
    an address, an optional `matcher` (snippet or 1-based `range`, the latter
    winning), and a `replacement`. The optional multi-payload protocol lets one
    JSON reply batch non-overlapping regions and/or multiple files, applied
@@ -118,8 +120,8 @@ async function runLoop(options: LoopOptions): Promise<LoopResult> {
       }
 
       // 2. Select, if nothing is pinned yet. Edit-dsl parses one `select … end`
-      //    clause (a viewer yields `# details`, an editor prefetches its edit);
-      //    JSON resolves the strict {mode, path, symbol, kind} address.
+      //    clause or file commands (a viewer yields `# details`, an editor
+      //    prefetches its edit); JSON resolves the strict address.
       if (pinned === null) {
         const selection = resolveSelection(reply, options.cwd); // strict AND
         if (!selection.ok) {

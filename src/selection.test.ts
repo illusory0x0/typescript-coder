@@ -2,7 +2,9 @@ import { describe, expect, test } from "bun:test";
 import {
   END_OF_LINE_COLUMN,
   SelectionSyntaxError,
+  parseMultiEditor,
   parseSelection,
+  serializeMultiEditor,
   serializeSelection,
   serializeSelections,
   toEditPayload,
@@ -10,6 +12,7 @@ import {
 import type { Selection } from "./selection";
 
 const FENCE = "``````";
+const DASH_FENCE = "-----";
 
 function first(text: string): Selection {
   const selections = parseSelection(text);
@@ -196,6 +199,19 @@ describe("parseSelection", () => {
     expect(first(text).replacement).toBe("x");
   });
 
+  test("parses a five-hyphen fence", () => {
+    const text = ["select foo in a.ts", "replace with", DASH_FENCE, "x", DASH_FENCE, "end"].join(
+      "\n",
+    );
+    expect(first(text).replacement).toBe("x");
+  });
+
+  test("accepts a longer hyphen fence when the closing run matches", () => {
+    const dashes = "-".repeat(8);
+    const text = ["select foo in a.ts", "replace with", dashes, "x", dashes, "end"].join("\n");
+    expect(first(text).replacement).toBe("x");
+  });
+
   test("parses one reply with several clauses", () => {
     const text = [
       "select function clamp in src/math.ts",
@@ -327,6 +343,21 @@ describe("parseSelection failures", () => {
     expectSyntax("select foo in a.ts\nreplace with\n```\nx\n```\nend", "6");
   });
 
+  test("rejects a four-hyphen fence opening", () => {
+    expectSyntax("select foo in a.ts\nreplace with\n----\nx\n----\nend", "5");
+  });
+
+  test("rejects a closing hyphen run that differs from the opening", () => {
+    expectSyntax(`select foo in a.ts\nreplace with\n${DASH_FENCE}\nx\n------\nend`, "fence");
+  });
+
+  test("rejects a hyphen fence body with three hyphens", () => {
+    expectSyntax(
+      `select foo in a.ts\nreplace with\n${DASH_FENCE}\na---b\n${DASH_FENCE}\nend`,
+      "fence",
+    );
+  });
+
   test("rejects a closing run that differs from the opening", () => {
     const seven = "`".repeat(7);
     expectSyntax(`select foo in a.ts\nreplace with\n${FENCE}\nx\n${seven}\nend`, "fence");
@@ -435,7 +466,7 @@ describe("serializeSelection", () => {
     expect(serializeSelection(selection)).toBe("select answer in a.ts resolve value\nend");
   });
 
-  test("uses a six-tick fence", () => {
+  test("uses a five-hyphen fence", () => {
     const selection: Selection = {
       locator: { path: "a.ts", name: "foo", kind: "" },
       space: null,
@@ -443,7 +474,19 @@ describe("serializeSelection", () => {
       pick: null,
       replacement: "y",
     };
-    expect(serializeSelection(selection)).toContain(`${FENCE}\ny\n${FENCE}`);
+    expect(serializeSelection(selection)).toContain(`${DASH_FENCE}\ny\n${DASH_FENCE}`);
+  });
+
+  test("falls back to a six-tick fence when the body contains a hyphen run", () => {
+    const selection: Selection = {
+      locator: { path: "a.ts", name: "foo", kind: "" },
+      space: null,
+      matcher: null,
+      pick: null,
+      replacement: "a---b",
+    };
+    expect(serializeSelection(selection)).toContain(`${FENCE}\na---b\n${FENCE}`);
+    expect(parseSelection(serializeSelection(selection))).toEqual([selection]);
   });
 
   test("escapes a backtick and a backslash in a snippet", () => {
@@ -470,7 +513,7 @@ describe("serializeSelection", () => {
     expect(parseSelection(serializeSelection(selection))).toEqual([selection]);
   });
 
-  test("throws when the body contains three backticks", () => {
+  test("serializes a body containing three backticks with a hyphen fence", () => {
     const selection: Selection = {
       locator: { path: "a.ts", name: "foo", kind: "" },
       space: null,
@@ -478,8 +521,22 @@ describe("serializeSelection", () => {
       pick: null,
       replacement: "before\n```\nafter",
     };
+    expect(serializeSelection(selection)).toContain(
+      `${DASH_FENCE}\nbefore\n\`\`\`\nafter\n${DASH_FENCE}`,
+    );
+    expect(parseSelection(serializeSelection(selection))).toEqual([selection]);
+  });
+
+  test("throws when the body contains both delimiter runs", () => {
+    const selection: Selection = {
+      locator: { path: "a.ts", name: "foo", kind: "" },
+      space: null,
+      matcher: null,
+      pick: null,
+      replacement: "---\n```",
+    };
     expect(() => serializeSelection(selection)).toThrow(SelectionSyntaxError);
-    expect(() => serializeSelection(selection)).toThrow(/3 or more backticks/);
+    expect(() => serializeSelection(selection)).toThrow(/3 or more backticks or hyphens/);
   });
 });
 
@@ -546,5 +603,106 @@ describe("toEditPayload", () => {
       `select answer in main.ts resolve value\nreplace with\n${FENCE}\nlet answer = 2;\n${FENCE}\nend`,
     );
     expect(toEditPayload(selection)).toBeNull();
+  });
+});
+
+describe("parseMultiEditor", () => {
+  test("parses create, delete, read, write, and editor statements", () => {
+    const text = [
+      "create src/new.ts done",
+      "delete src/old.ts done",
+      "read src/a.ts within {1, 3:2-4} done",
+      "write src/a.ts within 2 with",
+      DASH_FENCE,
+      "return 2;",
+      DASH_FENCE,
+      "done",
+      "select answer in src/a.ts resolve value end",
+    ].join("\n");
+    const statements = parseMultiEditor(text);
+    expect(statements).toHaveLength(5);
+    expect(statements[0]).toEqual({
+      type: "fs",
+      statement: { op: "create", path: "src/new.ts" },
+    });
+    expect(statements[1]).toEqual({
+      type: "fs",
+      statement: { op: "delete", path: "src/old.ts" },
+    });
+    expect(statements[2]).toEqual({
+      type: "fs",
+      statement: {
+        op: "read",
+        path: "src/a.ts",
+        ranges: [
+          { line: 1, column: 1, endLine: 1, endColumn: END_OF_LINE_COLUMN },
+          { line: 3, column: 2, endLine: 4, endColumn: END_OF_LINE_COLUMN },
+        ],
+      },
+    });
+    expect(statements[3]).toEqual({
+      type: "fs",
+      statement: {
+        op: "write",
+        path: "src/a.ts",
+        ranges: [{ line: 2, column: 1, endLine: 2, endColumn: END_OF_LINE_COLUMN }],
+        replacement: "return 2;",
+      },
+    });
+    expect(statements[4]?.type).toBe("editor");
+  });
+
+  test("write with no within replaces the whole file", () => {
+    const [statement] = parseMultiEditor(
+      ["write src/a.ts with", DASH_FENCE, "export const a = 1;", DASH_FENCE, "done"].join("\n"),
+    );
+    expect(statement).toEqual({
+      type: "fs",
+      statement: {
+        op: "write",
+        path: "src/a.ts",
+        ranges: null,
+        replacement: "export const a = 1;",
+      },
+    });
+  });
+
+  test("round-trips every fs statement", () => {
+    const text = [
+      "create src/new.ts done",
+      "delete src/old.ts done",
+      "read src/a.ts done",
+      "read src/a.ts within 1 done",
+      "write src/a.ts with",
+      DASH_FENCE,
+      "export const a = 1;",
+      DASH_FENCE,
+      "done",
+      "select answer in src/a.ts end",
+    ].join("\n");
+    expect(serializeMultiEditor(parseMultiEditor(text))).toBe(
+      [
+        "create src/new.ts done",
+        "delete src/old.ts done",
+        "read src/a.ts done",
+        "read src/a.ts within 1 done",
+        ["write src/a.ts with", DASH_FENCE, "export const a = 1;", DASH_FENCE, "done"].join("\n"),
+        "select answer in src/a.ts\nend",
+      ].join("\n\n"),
+    );
+  });
+
+  test("requires done after a create", () => {
+    expect(() => parseMultiEditor("create src/new.ts")).toThrow(/done/);
+  });
+
+  test("requires with before the write fence", () => {
+    expect(() =>
+      parseMultiEditor(["write src/a.ts", DASH_FENCE, "x", DASH_FENCE, "done"].join("\n")),
+    ).toThrow(/with/);
+  });
+
+  test("rejects an unknown statement keyword", () => {
+    expect(() => parseMultiEditor("rename src/a.ts done")).toThrow(/select/);
   });
 });

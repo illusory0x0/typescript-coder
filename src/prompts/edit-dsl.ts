@@ -17,11 +17,14 @@ import {
 // edit rule, and the pick turn itself is a single select clause. The `json`
 // format never uses these paragraphs.
 export const EDIT_DSL_SELECT_SYSTEM_PARAGRAPH =
-  "First you will be asked to select the target. Reply with ONLY one `select <symbol> in <path> [ resolve <value|type|namespace> ] end` clause naming one symbol-index entry; the clause is a viewer unless it carries `replace`, and a viewer leads to a `# details` prompt before the edit. Keep the reply to that one clause with no prose and no JSON.";
+  "First you will be asked to select the target or act on files directly. Reply with ONLY one `select <symbol> in <path> [ resolve <value|type|namespace> ] end` clause naming one symbol-index entry, or with one or more raw file commands (`create`, `delete`, `read`, `write`). A select clause is a viewer unless it carries `replace`, and a viewer leads to a `# details` prompt before the edit. Do not mix a select clause and file commands in this first reply. Keep the reply to those statements with no prose and no JSON.";
 export const EDIT_DSL_EDIT_SYSTEM_PARAGRAPH =
-  "Then you will be asked to edit the selected symbol. Reply with ONLY one or more `select … end` clauses: `select <symbol> in <path> [ resolve <value|type|namespace> ] [ match (<snippet> | /regex/) ] [ [ pick <range> ] replace with <fence> ] end` (an optional declaration `kind` may precede the symbol). Clauses apply in document order and independently; a clause that stops before `replace` is a viewer that locates and writes nothing unless it contains `pick`; `pick` requires `replace` and is not a viewer form. `resolve value`, `resolve type`, or `resolve namespace` selects the TypeScript symbol space when the same name is declared in more than one, and a space miss names the available spaces instead of falling back. `match` locates a span inside the named declaration (narrow a tie with `pick <range>`, whose coordinates are the 1-based file-absolute positions of the numbered current-source block); a viewer renders the numbered declaration with `⁉️` on the matched lines. `replace with <fence>` rewrites the target, and the fence opens with 6 or more backticks and closes with the same run. A bare `select … replace with … end` with no `match` rewrites the whole declaration; an empty fence deletes it. Keep the same declaration kind and name unless the task requires otherwise. No markdown fences around the reply and no explanations, and no JSON edit payload — it is rejected.";
+  "Then you will be asked to edit the selected symbol. Reply with ONLY one or more `select … end` clauses: `select <symbol> in <path> [ resolve <value|type|namespace> ] [ match (<snippet> | /regex/) ] [ [ pick <range> ] replace with <fence> ] end` (an optional declaration `kind` may precede the symbol). Clauses apply in document order and independently; a clause that stops before `replace` is a viewer that locates and writes nothing unless it contains `pick`; `pick` requires `replace` and is not a viewer form. `resolve value`, `resolve type`, or `resolve namespace` selects the TypeScript symbol space when the same name is declared in more than one, and a space miss names the available spaces instead of falling back. `match` locates a span inside the named declaration (narrow a tie with `pick <range>`, whose coordinates are the 1-based file-absolute positions of the numbered current-source block); a viewer renders the numbered declaration with `⁉️` on the matched lines. `replace with <fence>` rewrites the target, and the fence opens with 5 or more hyphens (for example `-----`) or 6 or more backticks and closes with the same run. A bare `select … replace with … end` with no `match` rewrites the whole declaration; an empty fence deletes it. Keep the same declaration kind and name unless the task requires otherwise. No markdown fences around the reply and no explanations, and no JSON edit payload — it is rejected.";
 export const EDIT_DSL_CREATE_DELETE_SYSTEM_PARAGRAPH =
-  'A "create" selection asks for the COMPLETE declaration in the fence, which opens with 6 or more backticks; the harness appends it to the target file as a new top-level declaration, creating the file and any parent directories when needed. A complete top-level declaration is appended verbatim; otherwise the clause\'s `resolve` picks the wrapper: no `resolve` or `resolve value` wraps the body as `let <symbol> = <body>;`, `resolve type` as `type <symbol> = <body>;`, and `resolve namespace` as a `namespace <symbol> { … }` block. A "delete" selection carries no clause: the harness removes the declaration. To remove only part of a declaration, use `match` with an empty fence. The syntax gate discards any clause that leaves the file unparseable and writes nothing; the clauses that resolve apply independently.';
+  'A "create" selection asks for the COMPLETE declaration in the fence, which opens with 5 or more hyphens (for example `-----`) or 6 or more backticks; the harness appends it to the target file as a new top-level declaration, creating the file and any parent directories when needed. A complete top-level declaration is appended verbatim; otherwise the clause\'s `resolve` picks the wrapper: no `resolve` or `resolve value` wraps the body as `let <symbol> = <body>;`, `resolve type` as `type <symbol> = <body>;`, and `resolve namespace` as a `namespace <symbol> { … }` block. A "delete" selection carries no clause: the harness removes the declaration. To remove only part of a declaration, use `match` with an empty fence. The syntax gate discards any clause that leaves the file unparseable and writes nothing; the clauses that resolve apply independently.';
+export const EDIT_DSL_FS_SYSTEM_PARAGRAPH =
+  "Raw file commands may accompany or replace the select workflow: `create <path> done` creates an empty file (it must not already exist), `delete <path> done` removes it, `read <path> [within <selecters>] done` shows the file or selected lines without writing, and `write <path> [within <selecters>] with <fence> done` writes the whole file or replaces the selected lines (creating the file when absent). A path that does not exist is created by `write`; a missing symbol in an editor still appends. A reply may carry several statements; they apply atomically, and a `read` sees the source as it was before the reply. File commands and a `select` may not be mixed in the first reply; after the first target is pinned they may be mixed.";
+
 export const EDIT_DSL_ROUNDS_SYSTEM_PARAGRAPH =
   "A round allows at most 3 exchanges: picking the target, writing the edit, and re-asking after a rejected edit share that budget. When an edit verifies, the run is done; when verification fails, the next round shows the current source and the failing diagnostics, and it may either revise the pinned declaration or re-pin to a different declaration in the same file by naming it in the clause's own `select` (the new address must resolve uniquely in the current source). A round that exhausts its 3 exchanges without a valid edit continues through a continuation prompt: reply `STOP` to end the run, or return a corrected edit (or, when no target is pinned, a corrected selection) to open a fresh round with a new 3-exchange budget; the run is capped at 32 rounds, after which it ends with the failure summary.";
 
@@ -30,7 +33,7 @@ export function buildEditDslSystemPrompt(multiPayload = false): string {
     {
       select: EDIT_DSL_SELECT_SYSTEM_PARAGRAPH,
       edit: EDIT_DSL_EDIT_SYSTEM_PARAGRAPH,
-      createDelete: EDIT_DSL_CREATE_DELETE_SYSTEM_PARAGRAPH,
+      createDelete: `${EDIT_DSL_CREATE_DELETE_SYSTEM_PARAGRAPH}\n\n${EDIT_DSL_FS_SYSTEM_PARAGRAPH}`,
       rounds: EDIT_DSL_ROUNDS_SYSTEM_PARAGRAPH,
     },
     multiPayload,
@@ -146,6 +149,49 @@ export function buildEditDslCreatePrompt(
 ): string {
   const prompt = `${editDslGoal(issue, indexText)}\nTarget file:\n\n\`\`\`\n${path}\n\`\`\`\n\n${editDslCreateInstruction()}\n`;
   return appendEditDslSpecFiles(prompt, specFiles);
+}
+
+/** First content prompt after a first-turn raw file command pinned `path`. */
+export function buildEditDslCommandPrompt(
+  issue: string,
+  indexText: string,
+  path: string,
+  source: string,
+  specFiles: readonly SourceFile[] = [],
+): string {
+  const body = source === "" ? "(empty file)" : numberLinesFrom(source, 1);
+  const prompt = `${editDslGoal(issue, indexText)}\n# Target file\n\n\`\`\`\n${path}\n\`\`\`\n\n\`\`\`text\n${body}\n\`\`\`\n\nReply with the next \`select … end\` clause or file command.\n`;
+  return appendEditDslSpecFiles(prompt, specFiles);
+}
+
+/** Feedback after a read-only reply: show what was read, then ask for the next command. */
+export function buildEditDslReadPrompt(
+  issue: string,
+  indexText: string,
+  feedback: string,
+  specFiles: readonly SourceFile[] = [],
+): string {
+  const prompt = `${editDslGoal(issue, indexText)}\n# read\n\n${feedback}\n\nReply with the next \`select … end\` clause or file command.\n`;
+  return appendEditDslSpecFiles(prompt, specFiles);
+}
+
+/** Retry prompt for a rejected raw file command (first turn or no pinned target). */
+export function buildEditDslCommandRetryPrompt(
+  issue: string,
+  indexText: string,
+  diagnostics: string,
+): string {
+  return `${editDslGoal(issue, indexText)}
+The previous reply was rejected.
+
+Diagnostics:
+
+\`\`\`
+${diagnostics}
+\`\`\`
+
+Reply with one \`select … end\` clause or one or more file commands (\`create\`, \`delete\`, \`read\`, \`write\`).
+`;
 }
 
 // EditDsl confirmation turn (#B3): the verified declaration, then the one-line
@@ -271,9 +317,9 @@ export function renderEditDslExamples(): string {
  */
 export function editDslInstruction(): string {
   return [
-    "A reply is one or more `select … end` clauses (see the examples below), with no markdown fences around the reply and no explanations. Clauses apply in document order and independently; a clause that stops before `replace` is a viewer that writes nothing unless it contains `pick`; `pick` requires `replace` and is not a viewer form.",
+    "A reply is one or more `select … end` clauses (see the examples below), optionally mixed with raw file commands (`create <path> done`, `delete <path> done`, `read <path> [within <selecters>] done`, `write <path> [within <selecters>] with <fence> done`), with no markdown fences around the reply and no explanations. Statements apply in document order and independently; a clause that stops before `replace` is a viewer that writes nothing unless it contains `pick`; `pick` requires `replace` and is not a viewer form.",
     "",
-    "Each clause: `select <symbol> in <path>` names the declaration (an optional `kind` may precede the symbol), and `resolve <value|type|namespace>` selects the TypeScript symbol space when the name is declared in more than one. `match <snippet | /regex/>` locates a span inside it (narrow a tie with `pick <range>`, which requires `replace`); `replace with <fence>` rewrites the target, where the fence opens with 6 or more backticks and closes with the same run. Omit `match` for a whole-declaration rewrite; use an empty fence to delete. Coordinates are the 1-based file-absolute positions of the numbered source block.",
+    "Each clause: `select <symbol> in <path>` names the declaration (an optional `kind` may precede the symbol), and `resolve <value|type|namespace>` selects the TypeScript symbol space when the name is declared in more than one. `match <snippet | /regex/>` locates a span inside it (narrow a tie with `pick <range>`, which requires `replace`); `replace with <fence>` rewrites the target, where the fence opens with 5 or more hyphens (for example `-----`) or 6 or more backticks and closes with the same run. Omit `match` for a whole-declaration rewrite; use an empty fence to delete. Coordinates are the 1-based file-absolute positions of the numbered source block.",
     "",
     "A viewer's next prompt carries one numbered declaration block per clause with `⁉️` in the gutter on the matched lines.",
     "",
@@ -295,7 +341,7 @@ export function editDslInstruction(): string {
  */
 export function editDslCreateInstruction(): string {
   return [
-    'The pinned selection uses mode "create", so reply with a create clause. A whole-declaration `select <symbol> in <path> [ resolve <value|type|namespace> ] replace with <fence> end` clause with a non-empty fence creates the declaration, where the fence opens with 6 or more backticks: when the symbol — or the whole file — is absent the harness appends the COMPLETE declaration in the fence as a new top-level declaration, creating the file and its parent directories if needed.',
+    'The pinned selection uses mode "create", so reply with a create clause. A whole-declaration `select <symbol> in <path> [ resolve <value|type|namespace> ] replace with <fence> end` clause with a non-empty fence creates the declaration, where the fence opens with 5 or more hyphens (for example `-----`) or 6 or more backticks: when the symbol — or the whole file — is absent the harness appends the COMPLETE declaration in the fence as a new top-level declaration, creating the file and its parent directories if needed.',
     "",
     "A complete top-level declaration in the fence is appended verbatim. Any other body is wrapped by the clause's symbol space: no `resolve` or `resolve value` wraps it as `let <symbol> = <body>;`, `resolve type` as `type <symbol> = <body>;`, and `resolve namespace` as a `namespace <symbol> { … }` block.",
     "",
@@ -378,7 +424,7 @@ export function buildEditDslSelectionContinuationPrompt(input: {
     input.failureHistory === undefined || input.failureHistory.trim() === ""
       ? ""
       : `\n${input.failureHistory}\n`;
-  return `Round ${input.round} of ${input.maxRounds} exhausted its ${MAX_EDIT_EXCHANGES}-exchange selection budget without a valid selection. Reply STOP to end the run, or return one \`select … end\` clause naming a symbol-index entry.
+  return `Round ${input.round} of ${input.maxRounds} exhausted its ${MAX_EDIT_EXCHANGES}-exchange selection budget without a valid selection. Reply STOP to end the run, or return one \`select … end\` clause naming a symbol-index entry or a raw file command.
 
 ${editDslGoal(input.issue, input.indexText)}
 Diagnostics:

@@ -31,6 +31,44 @@ export interface Selection {
   replacement: string | null;
 }
 
+/** A `create <path> done` file command. */
+export interface CreateFileStatement {
+  op: "create";
+  path: string;
+}
+
+/** A `delete <path> done` file command. */
+export interface DeleteFileStatement {
+  op: "delete";
+  path: string;
+}
+
+/** A `read <path> [within <selecters>] done` viewer command. */
+export interface ReadFileStatement {
+  op: "read";
+  path: string;
+  ranges: EditRange[] | null;
+}
+
+/** A `write <path> [within <selecters>] with <fence> done` file command. */
+export interface WriteFileStatement {
+  op: "write";
+  path: string;
+  ranges: EditRange[] | null;
+  replacement: string;
+}
+
+export type FileStatement =
+  | CreateFileStatement
+  | DeleteFileStatement
+  | ReadFileStatement
+  | WriteFileStatement;
+
+/** One parsed reply statement: a symbol editor or a raw file command. */
+export type EditStatement =
+  | { type: "editor"; selection: Selection }
+  | { type: "fs"; statement: FileStatement };
+
 /**
  * Sentinel `endColumn` for a range whose end is the end of its line: a bare
  * `line`, or a `line:col-line` span with no end column (`docs/edit-protocol.md`
@@ -169,6 +207,80 @@ class SelectionReader {
       }
       selections.push(this.parseEditor());
     }
+  }
+
+  parseMultiEditor(): EditStatement[] {
+    const statements: EditStatement[] = [];
+    for (;;) {
+      this.skipWhitespace();
+      if (this.atEnd()) {
+        return statements;
+      }
+      if (this.keywordAt("select")) {
+        statements.push({ type: "editor", selection: this.parseEditor() });
+        continue;
+      }
+      if (this.keywordAt("create")) {
+        statements.push({ type: "fs", statement: this.parseCreate() });
+        continue;
+      }
+      if (this.keywordAt("delete")) {
+        statements.push({ type: "fs", statement: this.parseDelete() });
+        continue;
+      }
+      if (this.keywordAt("read")) {
+        statements.push({ type: "fs", statement: this.parseRead() });
+        continue;
+      }
+      if (this.keywordAt("write")) {
+        statements.push({ type: "fs", statement: this.parseWrite() });
+        continue;
+      }
+      throw new SelectionSyntaxError(
+        statements.length === 0
+          ? "expected `select`, `create`, `delete`, `read`, or `write` to begin a statement"
+          : "unexpected input after a statement; expected `select`, `create`, `delete`, `read`, or `write`",
+      );
+    }
+  }
+
+  private parseCreate(): CreateFileStatement {
+    this.expectKeyword("create", "expected `create` to begin a file command");
+    const path = this.readToken("expected a file path after `create`");
+    this.expectKeyword("done", "expected `done` to terminate the `create` command");
+    return { op: "create", path };
+  }
+
+  private parseDelete(): DeleteFileStatement {
+    this.expectKeyword("delete", "expected `delete` to begin a file command");
+    const path = this.readToken("expected a file path after `delete`");
+    this.expectKeyword("done", "expected `done` to terminate the `delete` command");
+    return { op: "delete", path };
+  }
+
+  private parseRead(): ReadFileStatement {
+    this.expectKeyword("read", "expected `read` to begin a file command");
+    const path = this.readToken("expected a file path after `read`");
+    const ranges = this.parseWithin();
+    this.expectKeyword("done", "expected `done` to terminate the `read` command");
+    return { op: "read", path, ranges };
+  }
+
+  private parseWrite(): WriteFileStatement {
+    this.expectKeyword("write", "expected `write` to begin a file command");
+    const path = this.readToken("expected a file path after `write`");
+    const ranges = this.parseWithin();
+    this.expectKeyword("with", "expected `with` before the fence in a `write` command");
+    const replacement = this.parseFence();
+    this.expectKeyword("done", "expected `done` to terminate the `write` command");
+    return { op: "write", path, ranges, replacement };
+  }
+
+  private parseWithin(): EditRange[] | null {
+    if (!this.matchKeyword("within")) {
+      return null;
+    }
+    return this.parseMultiRange("within");
   }
 
   private parseEditor(): Selection {
@@ -326,19 +438,19 @@ class SelectionReader {
     }
   }
 
-  private parseMultiRange(): EditRange[] {
+  private parseMultiRange(label = "pick"): EditRange[] {
     this.skipWhitespace();
     if (this.text[this.pos] !== "{") {
-      return [this.parseRange()];
+      return [this.parseRange(label)];
     }
     this.pos += 1; // `{`
     const ranges: EditRange[] = [];
     for (;;) {
       this.skipWhitespace();
       if (this.text[this.pos] === "}") {
-        throw new SelectionSyntaxError("`pick {…}` needs at least one range");
+        throw new SelectionSyntaxError(`\`${label} {…}\` needs at least one range`);
       }
-      ranges.push(this.parseRange());
+      ranges.push(this.parseRange(label));
       this.skipWhitespace();
       const char = this.text[this.pos];
       if (char === ",") {
@@ -349,17 +461,17 @@ class SelectionReader {
         this.pos += 1;
         return ranges;
       }
-      throw new SelectionSyntaxError("expected `,` or `}` inside `pick {…}`");
+      throw new SelectionSyntaxError(`expected \`,\` or \`}\` inside \`${label} {…}\``);
     }
   }
 
-  private parseRange(): EditRange {
-    const line = this.parseCoordinate("line");
+  private parseRange(label = "pick"): EditRange {
+    const line = this.parseCoordinate("line", label);
     this.skipWhitespace();
     let column: number | null = null;
     if (this.text[this.pos] === ":") {
       this.pos += 1;
-      column = this.parseCoordinate("column");
+      column = this.parseCoordinate("column", label);
       this.skipWhitespace();
     }
     if (this.text[this.pos] !== "-") {
@@ -371,41 +483,47 @@ class SelectionReader {
       return { line, column, endLine: line, endColumn: column };
     }
     this.pos += 1; // `-`
-    const endLine = this.parseCoordinate("line");
+    const endLine = this.parseCoordinate("line", label);
     this.skipWhitespace();
     let endColumn = END_OF_LINE_COLUMN;
     if (this.text[this.pos] === ":") {
       this.pos += 1;
-      endColumn = this.parseCoordinate("column");
+      endColumn = this.parseCoordinate("column", label);
     }
     return { line, column: column ?? 1, endLine, endColumn };
   }
 
-  private parseCoordinate(field: "line" | "column"): number {
+  private parseCoordinate(field: "line" | "column", label = "pick"): number {
     const start = this.pos;
     while (this.pos < this.length && isDigit(this.text[this.pos] ?? "")) {
       this.pos += 1;
     }
     if (this.pos === start) {
-      throw new SelectionSyntaxError(`expected a 1-based ${field} in \`pick\``);
+      throw new SelectionSyntaxError(`expected a 1-based ${field} in \`${label}\``);
     }
     const value = Number(this.text.slice(start, this.pos));
     if (!Number.isInteger(value) || value < 1) {
-      throw new SelectionSyntaxError(`\`pick\` ${field} must be a positive (1-based) integer`);
+      throw new SelectionSyntaxError(`\`${label}\` ${field} must be a positive (1-based) integer`);
     }
     return value;
   }
 
   private parseFence(): string {
     this.skipWhitespace();
+    const fenceChar = this.text[this.pos];
+    if (fenceChar !== "`" && fenceChar !== "-") {
+      throw new SelectionSyntaxError(
+        "expected a fence opening with 5 or more hyphens or 6 or more backticks after `replace with`",
+      );
+    }
     let open = 0;
-    while (this.text[this.pos] === "`") {
+    while (this.text[this.pos] === fenceChar) {
       open += 1;
       this.pos += 1;
     }
-    if (open < 6) {
+    if (fenceChar === "`" ? open < 6 : open < 5) {
       throw new SelectionSyntaxError(
-        "expected a fence opening with at least 6 backticks after `replace with`",
+        "expected a fence opening with 5 or more hyphens or 6 or more backticks after `replace with`",
       );
     }
     // The opening run must end its line; the body is raw until a closing line.
@@ -418,7 +536,7 @@ class SelectionReader {
     }
     if (lineEnd >= this.length || this.text[lineEnd] !== "\n") {
       throw new SelectionSyntaxError(
-        "malformed fence: the opening backticks must be followed by a newline",
+        "malformed fence: the opening fence run must be followed by a newline",
       );
     }
     const bodyStart = lineEnd + 1;
@@ -429,34 +547,38 @@ class SelectionReader {
         end = this.length;
       }
       const line = this.text.slice(lineStart, end).replace(/\r$/, "");
-      if (isClosingFence(line, open)) {
+      if (isClosingFence(line, open, fenceChar)) {
         let body = this.text.slice(bodyStart, lineStart);
         if (body.endsWith("\r\n")) {
           body = body.slice(0, -2);
         } else if (body.endsWith("\n") || body.endsWith("\r")) {
           body = body.slice(0, -1);
         }
-        if (longestBacktickRun(body) >= 3) {
-          throw new SelectionSyntaxError("fence body contains a run of 3 or more backticks");
+        if (longestRun(body, fenceChar) >= 3) {
+          throw new SelectionSyntaxError(
+            `fence body contains a run of 3 or more ${fenceChar === "`" ? "backticks" : "hyphens"}`,
+          );
         }
         this.pos = end >= this.length ? this.length : end + 1;
         return body;
       }
       if (end >= this.length) {
-        throw new SelectionSyntaxError("unclosed fence: expected a closing backtick run");
+        throw new SelectionSyntaxError(
+          `unclosed fence: expected a closing ${fenceChar === "`" ? "backtick" : "hyphen"} run`,
+        );
       }
       lineStart = end + 1;
     }
   }
 }
 
-function isClosingFence(line: string, open: number): boolean {
+function isClosingFence(line: string, open: number, fenceChar: "`" | "-"): boolean {
   const trimmed = line.replace(/[ \t]+$/, "");
   if (trimmed.length !== open) {
     return false;
   }
   for (const char of trimmed) {
-    if (char !== "`") {
+    if (char !== fenceChar) {
       return false;
     }
   }
@@ -471,6 +593,11 @@ function isClosingFence(line: string, open: number): boolean {
  */
 export function parseSelection(text: string): Selection[] {
   return new SelectionReader(text).parse();
+}
+
+/** Parse a full `multiEditor` reply: editors and `create`/`delete`/`read`/`write`. */
+export function parseMultiEditor(text: string): EditStatement[] {
+  return new SelectionReader(text).parseMultiEditor();
 }
 
 function escapeSnippet(value: string): string {
@@ -510,11 +637,11 @@ function renderMultiRange(pick: EditRange[]): string {
   return `{${pick.map(renderRange).join(", ")}}`;
 }
 
-function longestBacktickRun(body: string): number {
+function longestRun(body: string, fenceChar: "`" | "-"): number {
   let longest = 0;
   let current = 0;
   for (const char of body) {
-    if (char === "`") {
+    if (char === fenceChar) {
       current += 1;
       longest = Math.max(longest, current);
     } else {
@@ -525,13 +652,20 @@ function longestBacktickRun(body: string): number {
 }
 
 function renderFence(body: string): string {
-  if (longestBacktickRun(body) >= 3) {
-    throw new SelectionSyntaxError(
-      "cannot serialize a fence body containing a run of 3 or more backticks",
-    );
+  // Prefer the five-hyphen fence the edit-dsl prompt teaches; fall back to six
+  // backticks only when the body itself contains a hyphen-run the fence would
+  // close on. A body with both delimiter runs cannot be serialized.
+  if (longestRun(body, "-") < 3) {
+    const dashes = "-".repeat(5);
+    return `${dashes}\n${body}\n${dashes}`;
   }
-  const ticks = "`".repeat(6);
-  return `${ticks}\n${body}\n${ticks}`;
+  if (longestRun(body, "`") < 3) {
+    const ticks = "`".repeat(6);
+    return `${ticks}\n${body}\n${ticks}`;
+  }
+  throw new SelectionSyntaxError(
+    "cannot serialize a fence body containing a run of 3 or more backticks or hyphens",
+  );
 }
 
 /** Render one selection back to the edit-dsl grammar (one `select … end` clause). */
@@ -561,6 +695,37 @@ export function serializeSelection(selection: Selection): string {
 /** Render several clauses, one blank line apart (the §8 multi-clause layout). */
 export function serializeSelections(selections: Selection[]): string {
   return selections.map(serializeSelection).join("\n\n");
+}
+
+/** Render one raw file command back to the `multiEditor` grammar. */
+export function serializeFileStatement(statement: FileStatement): string {
+  switch (statement.op) {
+    case "create":
+      return `create ${statement.path} done`;
+    case "delete":
+      return `delete ${statement.path} done`;
+    case "read": {
+      const within =
+        statement.ranges === null ? "" : ` within ${renderMultiRange(statement.ranges)}`;
+      return `read ${statement.path}${within} done`;
+    }
+    case "write": {
+      const within =
+        statement.ranges === null ? "" : ` within ${renderMultiRange(statement.ranges)}`;
+      return `write ${statement.path}${within} with\n${renderFence(statement.replacement)}\ndone`;
+    }
+  }
+}
+
+/** Render a full `multiEditor` reply, one blank line between statements. */
+export function serializeMultiEditor(statements: readonly EditStatement[]): string {
+  return statements
+    .map((statement) =>
+      statement.type === "editor"
+        ? serializeSelection(statement.selection)
+        : serializeFileStatement(statement.statement),
+    )
+    .join("\n\n");
 }
 
 /**

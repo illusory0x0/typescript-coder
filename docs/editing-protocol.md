@@ -12,8 +12,9 @@ Two reply formats exist, selected by `--protocol-format` (default `edit-dsl`):
 
 - **edit-dsl**: the default. One or more `select … end` clauses, on the same
   resolver but with richer locators (regex, multi-range `pick`) and atomic
-  multi-clause replies. A JSON edit payload in this mode is a protocol
-  rejection.
+  multi-clause replies. The same reply language also carries raw file commands
+  (`create`, `delete`, `read`, `write`). A JSON edit payload in this mode is a
+  protocol rejection.
 - **json**: opt-in, one flat object per exchange. Explicit-targets mode
   (`--targets`) always uses it.
 
@@ -74,8 +75,9 @@ wrapper; it batches by sending more clauses.
 select [kind] <symbol> in <path> [ resolve (value|type|namespace) ] [ match (<snippet> | /regex/) ] [ [ pick <range-or-set> ] replace with <fence> ] end
 ```
 
-A reply is one or more clauses, with no markdown fences around the reply (a
-fenced _reply_ is tolerated) and no prose. The grammar is read by a hand-written
+A reply is one or more statements — `select` clauses or raw file commands
+(below) — with no markdown fences around the reply (a fenced _reply_ is
+tolerated) and no prose. The grammar is read by a hand-written
 recursive-descent reader in which whitespace between tokens is
 insignificant, except inside a fence body and a `/regex/`. Any malformed input
 throws a `stage: syntax` diagnostic naming the offending field, and a partial
@@ -105,10 +107,11 @@ selection is never returned.
   range. A pick-only `{a, b, …}` set is supported as separate regions: the same
   fence replacement is applied to every resolved range (all-or-none at
   resolution; overlapping ranges are a `stage: range` failure).
-- **`replace with <fence>`**: 6 or more backticks on their own line, a raw body,
-  and a closing line of the same backtick run. The body may not contain a run of
-  3 or more backticks; the serializer always opens exactly 6. An empty fence
-  deletes the target.
+- **`replace with <fence>`**: 5 or more hyphens (for example `-----`) or 6 or
+  more backticks on their own line, a raw body, and a closing line of the same
+  run. The body may not contain a run of 3 or more of the fence's own delimiter.
+  The serializer prefers five hyphens and falls back to six backticks when the
+  body contains a hyphen run. An empty fence deletes the target.
 - **`end`** terminates the clause.
 
 A clause that stops before `replace` is a **viewer**: it locates and writes
@@ -131,7 +134,12 @@ model call. A missing path, a missing symbol, or a space miss pins mode
 ISO/IEC 14977 EBNF (originally drafted in `human/edit.md`):
 
 ```ebnf
-multiEditor = { editor } ;
+multiEditor = { editor | fs } ;
+
+fs          = 'create', path, 'done'
+            | 'delete', path, 'done'
+            | 'read', path, [ 'within', multiRange ], 'done'
+            | 'write', path, [ 'within', multiRange ], 'with', fence, 'done' ;
 
 editor      = 'select', [ kind ], symbol, 'in', path,
               [ 'resolve', space ],
@@ -155,7 +163,8 @@ path        = ? file path token ? ;
 symbol      = ? declared identifier ? ;
 snippet     = ? '`' , verbatim source, '`' ? ;
 regex       = ? '/' , ECMA-262 pattern, no flags, '/' ? ;
-fence       = ? 6+ backticks; body free of a run >= 3; closing run matches ? ;
+fence       = ? 5+ hyphens or 6+ backticks; body free of a run >= 3 of the
+                fence's own delimiter; closing run matches ? ;
 ```
 
 A coordinate is digits only: `0` parses as a `line`/`column` but is rejected as
@@ -177,6 +186,39 @@ An omitted end column means "to end of its line": it is carried internally as
 the sentinel `END_OF_LINE_COLUMN = 0` and translated to the end line's length
 before the shared range resolver runs. Since columns are 1-based, `0` is never a
 real position.
+
+### Raw file commands
+
+`multiEditor` also admits four file commands:
+
+```text
+create <path> done
+delete <path> done
+read   <path> [ within <selecters> ] done
+write  <path> [ within <selecters> ] with <fence> done
+```
+
+- **`create`** creates an empty file. An existing path is an `address` failure;
+  parent directories are created. It does not run the parse/format gate.
+- **`delete`** removes an existing regular file inside the workspace. A missing
+  path is an `address` failure; directories and paths outside the workspace are
+  rejected. `human/` is read-only for agents.
+- **`read`** is a viewer: it returns the file (or the selected lines) and writes
+  nothing. A missing path is an `address` failure. A `read` always sees the
+  source as it was before the current reply, even when the same reply also
+  writes that file.
+- **`write`** replaces the whole file when `within` is absent, or the selected
+  text when it is present, and creates the file if it does not exist. The
+  replacement goes through the same parse gate, duplicate guard, formatter, and
+  no-op check as an editor region.
+
+`within` uses the same 1-based, inclusive `selecters` syntax as `pick`
+(`12`, `12:3`, `12:3-14`, `12:3-14:5`, or a `{…}` set). Multiple selecters are
+separate regions and must not overlap. A reply may mix editors and file
+commands after the first target is pinned; the first reply is either exactly one
+`select` clause or file commands, not both. All statements apply atomically.
+Two creates that append at the same offset are applied in clause order; two
+creates of the same declaration still fail at the duplicate guard.
 
 ## 3. Resolution: the cascade
 
@@ -302,11 +344,14 @@ The formats differ in what a batch means:
   the end so earlier offsets stay valid, and if any guard fails the whole
   exchange is discarded. Overlapping same-file regions discard the exchange and
   name both regions.
-- **Edit-dsl replies are atomic across the whole reply.** Every clause resolves
-  against its file's current source; if any clause fails resolution, or the
-  apply pipeline reports any guard/overlap failure, the whole reply is discarded
-  and nothing is written — no file, including creates. Only a reply with no
-  failures writes every resolved region. A mixed viewer+editor reply that fails
+- **Edit-dsl replies are atomic across the whole reply.** Every statement
+  resolves against its file's current source; if any statement fails
+  resolution, or the apply pipeline reports any guard/overlap failure, the whole
+  reply is discarded and nothing is written — no file, including creates,
+  deletes, and raw writes. Only a reply with no failures writes every resolved
+  region and file command. Multiple creates that append at the same end offset
+  are applied in clause order; duplicate creates of the same declaration still
+  fail at the duplicate guard. A mixed viewer+editor reply that fails
   writes nothing but still carries the viewer feedback. A failing reply is a
   retry-driving rejection, and the retry must carry the full corrected reply
   (there is no "already applied" list).

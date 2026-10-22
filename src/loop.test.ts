@@ -1123,7 +1123,7 @@ describe("attempt digest (#57)", () => {
       })(),
     );
     expect(editDsl).toContain(
-      "Ruled out after 3 repeats: protocol — This attempt MUST reply with only `select … end` clauses",
+      "Ruled out after 3 repeats: protocol — This attempt MUST reply with only `select … end` clauses or file commands",
     );
     expect(editDsl).not.toContain("exactly one flat JSON object");
     // The default json format is unchanged.
@@ -8974,7 +8974,7 @@ describe("edit-dsl protocol (#111/#119)", () => {
     expect(edit).toContain("select const MAX_TOKENS in src/x.ts");
     expect(edit).toContain("pick 2");
     expect(edit).toContain(`match ${TICK}return 1;${TICK}`);
-    expect(edit).toContain(`${TICK.repeat(6)}\nreturn 2;\n${TICK.repeat(6)}`);
+    expect(edit).toContain("-----\nreturn 2;\n-----");
     expect(edit).toContain("select function clamp in src/x.ts");
     const retry = buildRetryPrompt({
       exchangeNumber: 2,
@@ -9792,48 +9792,29 @@ describe("edit-dsl protocol (#111/#119)", () => {
     expect(helperSource(dir)).toContain("return 2;");
   }, 30000);
 
-  test("two same-offset zero-width creates are overlapping and write nothing (#13)", async () => {
+  test("two same-offset zero-width creates append in clause order (#13)", async () => {
     const dir = fixtureDir();
-    const originalHelper = helperSource(dir);
-    let newAfterFailure: string | null = "unread";
-    let helperAfterFailure = "";
-    const provider = new ScriptedProvider(
-      [
-        editDslSelect("Alpha", "src/new.ts"),
-        editDslReply(
-          // Both creates append at the empty file's offset 0..0.
-          createEditor(
-            "src/new.ts",
-            "Alpha",
-            "function",
-            "export function Alpha(): number {\n  return 1;\n}",
-          ),
-          createEditor(
-            "src/new.ts",
-            "Beta",
-            "function",
-            "export function Beta(): number {\n  return 2;\n}",
-          ),
+    const provider = new ScriptedProvider([
+      editDslSelect("Alpha", "src/new.ts"),
+      editDslReply(
+        // Both creates append at the empty file's offset 0..0; the append
+        // policy keeps clause order instead of discarding the reply.
+        createEditor(
+          "src/new.ts",
+          "Alpha",
+          "function",
+          "export function Alpha(): number {\n  return 1;\n}",
         ),
-        editDslReply(
-          createEditor(
-            "src/new.ts",
-            "Alpha",
-            "function",
-            "export function Alpha(): number {\n  return 1;\n}",
-          ),
+        createEditor(
+          "src/new.ts",
+          "Beta",
+          "function",
+          "export function Beta(): number {\n  return 2;\n}",
         ),
-        editDslReply(answerEditor("return 2;", { kind: "snippet", value: "return 1;" })),
-        "Great! I resolve this problem!",
-      ],
-      (callIndex) => {
-        if (callIndex === 2) {
-          const newPath = join(dir, "src", "new.ts");
-          newAfterFailure = existsSync(newPath) ? readFileSync(newPath, "utf8") : null;
-          helperAfterFailure = helperSource(dir);
-        }
-      },
-    );
+      ),
+      editDslReply(answerEditor("return 2;", { kind: "snippet", value: "return 1;" })),
+      "Great! I resolve this problem!",
+    ]);
     const result = await runLoop({
       cwd: dir,
       issue: "add the Alpha declaration",
@@ -9843,21 +9824,11 @@ describe("edit-dsl protocol (#111/#119)", () => {
       testCommand: ["bun", "test"],
     });
     expect(result.ok).toBe(true);
-    expect(newAfterFailure).toBeNull();
-    expect(helperAfterFailure).toBe(originalHelper);
-    const rejected = result.records.find((record) => record.cause === "multi-duplicate");
-    expect(rejected).toBeDefined();
-    expect(rejected?.diagnostics).toContain("overlap");
-    expect(rejected?.diagnostics).toContain("0..0");
-    expect(rejected?.diagnostics).toContain("clause 1");
-    expect(rejected?.diagnostics).toContain("clause 2");
-    expect(rejected?.diagnostics).toContain("the whole edit-dsl reply is discarded");
-    expect(rejected?.diagnostics).toContain("nothing is written");
-    // The repair names the one-fence form instead of only asking to split.
-    expect(rejected?.diagnostics).toContain("ONE clause's `replace with` fence");
     const created = readFileSync(join(dir, "src", "new.ts"), "utf8");
-    expect(created).toContain("export function Alpha");
-    expect(created).not.toContain("export function Beta");
+    expect(created.indexOf("export function Alpha")).toBeLessThan(
+      created.indexOf("export function Beta"),
+    );
+    expect(result.records.some((record) => record.cause === "multi-duplicate")).toBe(false);
     expect(helperSource(dir)).toContain("return 2;");
   }, 30000);
 
@@ -10032,6 +10003,114 @@ describe("edit-dsl protocol (#111/#119)", () => {
       replacement: body,
     };
   }
+
+  test("a first-turn write command pins the file and verifies", async () => {
+    const dir = fixtureDir();
+    const body = "export function answer(): number {\n  return 2;\n}";
+    const provider = new ScriptedProvider([
+      ["write src/helper.ts with", "-----", body, "-----", "done"].join("\n"),
+      "Great! I resolve this problem!",
+    ]);
+    const result = await runLoop({
+      cwd: dir,
+      issue: "make the answer test pass",
+      provider,
+      protocolFormat: "edit-dsl",
+      checkCommand: TSC,
+      testCommand: ["bun", "test"],
+    });
+    expect(result.ok).toBe(true);
+    expect(result.filePath).toBe("src/helper.ts");
+    expect(helperSource(dir)).toContain("return 2;");
+  }, 30000);
+
+  test("a first-turn read command returns details before the next write", async () => {
+    const dir = fixtureDir();
+    const body = "export function answer(): number {\n  return 2;\n}";
+    const provider = new ScriptedProvider([
+      "read src/helper.ts done",
+      ["write src/helper.ts with", "-----", body, "-----", "done"].join("\n"),
+      "Great! I resolve this problem!",
+    ]);
+    const result = await runLoop({
+      cwd: dir,
+      issue: "make the answer test pass",
+      provider,
+      protocolFormat: "edit-dsl",
+      checkCommand: TSC,
+      testCommand: ["bun", "test"],
+    });
+    expect(result.ok).toBe(true);
+    expect(helperSource(dir)).toContain("return 2;");
+    const readCall = provider.calls.find((call) =>
+      call.some((message) => message.content?.includes("Read results") === true),
+    );
+    expect(readCall).toBeDefined();
+  }, 30000);
+
+  test("a content-turn write command replaces the pinned file", async () => {
+    const dir = fixtureDir();
+    const body = "export function answer(): number {\n  return 2;\n}";
+    const provider = new ScriptedProvider([
+      editDslSelect("answer", "src/helper.ts", "value"),
+      ["write src/helper.ts with", "-----", body, "-----", "done"].join("\n"),
+      "Great! I resolve this problem!",
+    ]);
+    const result = await runLoop({
+      cwd: dir,
+      issue: "make the answer test pass",
+      provider,
+      protocolFormat: "edit-dsl",
+      checkCommand: TSC,
+      testCommand: ["bun", "test"],
+    });
+    expect(result.ok).toBe(true);
+    expect(helperSource(dir)).toContain("return 2;");
+  }, 30000);
+
+  test("a reply can create one file and write another atomically", async () => {
+    const dir = fixtureDir();
+    const body = "export function answer(): number {\n  return 2;\n}";
+    const provider = new ScriptedProvider([
+      ["create src/new.ts done", "write src/helper.ts with", "-----", body, "-----", "done"].join(
+        "\n",
+      ),
+      "Great! I resolve this problem!",
+    ]);
+    const result = await runLoop({
+      cwd: dir,
+      issue: "make the answer test pass",
+      provider,
+      protocolFormat: "edit-dsl",
+      checkCommand: TSC,
+      testCommand: ["bun", "test"],
+    });
+    expect(result.ok).toBe(true);
+    expect(existsSync(join(dir, "src", "new.ts"))).toBe(true);
+    expect(helperSource(dir)).toContain("return 2;");
+  }, 30000);
+
+  test("a delete command removes the file before the next write", async () => {
+    const dir = fixtureDir();
+    writeFileSync(join(dir, "src", "extra.ts"), "export const extra = 1;\n");
+    const body = "export function answer(): number {\n  return 2;\n}";
+    const provider = new ScriptedProvider([
+      "delete src/extra.ts done",
+      ["write src/helper.ts with", "-----", body, "-----", "done"].join("\n"),
+      "Great! I resolve this problem!",
+    ]);
+    const result = await runLoop({
+      cwd: dir,
+      issue: "make the answer test pass",
+      provider,
+      protocolFormat: "edit-dsl",
+      checkCommand: TSC,
+      testCommand: ["bun", "test"],
+    });
+    expect(result.ok).toBe(true);
+    expect(existsSync(join(dir, "src", "extra.ts"))).toBe(false);
+    expect(helperSource(dir)).toContain("return 2;");
+  }, 30000);
 
   test("under edit-dsl an undeclared whole-declaration clause creates the file", async () => {
     const dir = fixtureDir();
@@ -10357,7 +10436,7 @@ describe("edit-dsl protocol (#111/#119)", () => {
     const prompt = buildSystemPrompt(false, "edit-dsl");
     // The edit-dsl edit rule and its create/delete semantics replace the JSON rule.
     expect(prompt).toContain("`select <symbol> in <path> [ resolve <value|type|namespace> ]");
-    expect(prompt).toContain("fence opens with 6 or more backticks");
+    expect(prompt).toContain("fence opens with 5 or more hyphens");
     expect(prompt).toContain(
       "a clause that stops before `replace` is a viewer that locates and writes nothing unless it contains `pick`; `pick` requires `replace`",
     );
@@ -10372,7 +10451,7 @@ describe("edit-dsl protocol (#111/#119)", () => {
     expect(prompt).toContain("naming it in the clause's own `select`");
     // The pick turn is edit-dsl too: a select viewer leads to `# details`.
     expect(prompt).toContain(
-      "First you will be asked to select the target. Reply with ONLY one `select <symbol> in <path>",
+      "First you will be asked to select the target or act on files directly. Reply with ONLY one `select <symbol> in <path>",
     );
     expect(prompt).toContain("`# details`");
     expect(prompt).not.toContain('{"mode": "modify", "path": ..., "symbol": ..., "kind": ...}');
@@ -10429,7 +10508,7 @@ describe("edit-dsl protocol (#111/#119)", () => {
     expect(edit).toContain("select const MAX_TOKENS in src/x.ts");
     expect(edit).toContain("pick 2");
     expect(edit).toContain(`match ${TICK}return 1;${TICK}`);
-    expect(edit).toContain(`${TICK.repeat(6)}\nreturn 2;\n${TICK.repeat(6)}`);
+    expect(edit).toContain("-----\nreturn 2;\n-----");
     expect(edit).toContain("select function clamp in src/x.ts");
     // #117 adds the create and the viewer-then-editor forms, labelled apart.
     expect(edit).toContain("5. Create:");

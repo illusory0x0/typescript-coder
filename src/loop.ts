@@ -10,15 +10,17 @@ import {
 import { basename, dirname, isAbsolute, join, relative, resolve, sep } from "node:path";
 import { applyMatcherSplice, extractJsonObject, findMatcher, stripCodeFences } from "./matcher";
 import type { MatcherResult } from "./matcher";
-import { parseSelection, SelectionSyntaxError } from "./selection";
-import type { Selection as EditDslSelection } from "./selection";
+import { parseMultiEditor, parseSelection, SelectionSyntaxError } from "./selection";
+import type { EditStatement, FileStatement, Selection as EditDslSelection } from "./selection";
+import { renderReadFeedback, resolveMultiEditor } from "./multi-editor";
+import type { MultiEditorDeps, MultiEditorResolution } from "./multi-editor";
 import {
   duplicateDeclarationNote,
   markedViewerLines,
   renderViewerFeedback,
   resolveEditDslReply,
 } from "./edit-dsl";
-import type { EditDslRegion, EditDslResolution } from "./edit-dsl";
+import type { EditDslRegion } from "./edit-dsl";
 import { formatSource } from "./editor";
 import {
   applyResolvedRegions,
@@ -71,11 +73,14 @@ import {
   truncateSource,
 } from "./prompts/shared";
 import {
+  buildEditDslCommandPrompt,
+  buildEditDslCommandRetryPrompt,
   buildEditDslCreatePrompt,
   buildEditDslDetailsPrompt,
   buildEditDslEditPrompt,
   buildEditDslModifiedPrompt,
   buildEditDslPinnedCreatePrompt,
+  buildEditDslReadPrompt,
   buildEditDslSelectionContinuationPrompt,
   buildEditDslSelectionRetryPrompt,
   buildEditDslSymbolIndex,
@@ -176,9 +181,9 @@ function editDslParseDiagnostics(content: string, error: SelectionSyntaxError): 
 // straight back to the payload this mode rejects (the observed rep1
 // `address ↔ protocol` loop).
 const EDIT_DSL_PROTOCOL_CORRECTION =
-  "Reply with one or more `select … end` clauses as the entire response (`select <symbol> in <path> [ resolve <value|type|namespace> ] [ match (<snippet> | /regex/) ] [ [ pick <range> ] replace with <fence> ] end`, where the fence opens with 6 or more backticks; a `pick` requires `replace`); a JSON edit payload is not accepted in this mode.";
+  "Reply with one or more `select … end` clauses or a file command (`create`, `delete`, `read`, `write`) as the entire response (`select <symbol> in <path> [ resolve <value|type|namespace> ] [ match (<snippet> | /regex/) ] [ [ pick <range> ] replace with <fence> ] end`, where the fence opens with 5 or more hyphens (for example `-----`) or 6 or more backticks; a `pick` requires `replace`); a JSON edit payload is not accepted in this mode.";
 const EDIT_DSL_PROTOCOL_ESCALATION =
-  "This attempt MUST reply with only `select … end` clauses — one or more, with no prose, no markdown fences, and no JSON edit payload.";
+  "This attempt MUST reply with only `select … end` clauses or file commands — with no prose, no markdown fences, and no JSON edit payload.";
 
 function comparePaths(left: string, right: string): number {
   if (left === right) {
@@ -2695,6 +2700,19 @@ function safeAppendPath(cwd: string, path: string): string | null {
     return null;
   }
   return path;
+}
+
+function safeMutablePath(cwd: string, path: string): string | null {
+  const safe = safeAppendPath(cwd, path);
+  if (safe === null) {
+    return null;
+  }
+  // human/ is human-authored and read-only for agents; raw file commands must
+  // not bypass that boundary.
+  if (safe === "human" || safe.startsWith("human/")) {
+    return null;
+  }
+  return safe;
 }
 
 function readFileIfExists(path: string): string | null {
@@ -5903,6 +5921,24 @@ async function runEditDslLoop(options: LoopOptions): Promise<LoopResult> {
   const protocolFormat: ProtocolFormat = "edit-dsl";
   // B1: the edit-dsl symbol index is a select-line list, not YAML.
   const editDslIndexText = buildEditDslSymbolIndex(index);
+  const makeMultiEditorDeps = (cache = new Map<string, string>()): MultiEditorDeps => ({
+    sourceFor: (path) => {
+      const cached = cache.get(path);
+      if (cached !== undefined) {
+        return cached;
+      }
+      const source = readFileIfExists(join(cwd, path)) ?? "";
+      cache.set(path, source);
+      return source;
+    },
+    fileExists: (path) => {
+      const stats = statSync(join(cwd, path), { throwIfNoEntry: false });
+      return stats !== undefined && stats.isFile();
+    },
+    isSafePath: (path) => safeMutablePath(cwd, path) !== null,
+    resolveEntry: (source, path, locator, space) =>
+      resolveCurrentEntry(source, path, locator, space),
+  });
   const systemMessage: ChatMessage = {
     role: "system",
     content: buildSystemPrompt(multiPayload, protocolFormat),
@@ -6318,13 +6354,59 @@ async function runEditDslLoop(options: LoopOptions): Promise<LoopResult> {
           entry: IndexEntry | null;
           source: string;
         } | null = null;
+        let fsPick: { path: string; mode: "modify" | "create" } | null = null;
+        let fsReadFeedback: string | null = null;
+        let fsReply = false;
         try {
-          const parsed = parseSelection(stripCodeFences(response.content ?? ""));
-          if (parsed.length !== 1) {
-            diagnostic = `stage: protocol\nthe first edit-dsl reply must be exactly one \`select … end\` clause; found ${parsed.length}`;
-          } else {
-            const selected = parsed[0];
-            if (selected !== undefined) {
+          const stripped = stripCodeFences(response.content ?? "");
+          // Remember the reply's shape even when the parser rejects it, so the
+          // retry prompt keeps the raw-file-command path open after a syntax
+          // error rather than demanding a select clause.
+          fsReply = /^\s*(?:create|delete|read|write)\b/.test(stripped);
+          const statements = parseMultiEditor(stripped);
+          let editorCount = 0;
+          let fsCount = 0;
+          let editorSelection: EditDslSelection | null = null;
+          const fsStatements: FileStatement[] = [];
+          for (const statement of statements) {
+            if (statement.type === "editor") {
+              editorCount += 1;
+              editorSelection = statement.selection;
+            } else {
+              fsCount += 1;
+              fsStatements.push(statement.statement);
+            }
+          }
+          if (fsCount > 0 && editorCount === 0) {
+            fsReply = true;
+            const readsOnly = fsStatements.every((statement) => statement.op === "read");
+            const resolution = resolveMultiEditor(statements, makeMultiEditorDeps());
+            if (resolution.failures.length > 0) {
+              const first = resolution.failures[0];
+              diagnostic = first?.diagnostics ?? "stage: protocol\nthe file command was rejected";
+              selectionStage = first?.stage === "address" ? "address" : "protocol";
+            } else if (readsOnly) {
+              fsReadFeedback = renderReadFeedback(resolution.reads);
+              candidate = {
+                path: resolution.reads[0]?.path ?? "",
+                name: "",
+                kind: "",
+              };
+            } else {
+              const mutation = fsStatements.find((statement) => statement.op !== "read");
+              if (mutation === undefined) {
+                diagnostic = "stage: protocol\nthe reply carried no file command";
+              } else {
+                const path = mutation.path;
+                const exists =
+                  statSync(join(cwd, path), { throwIfNoEntry: false })?.isFile() === true;
+                fsPick = { path, mode: exists ? "modify" : "create" };
+                candidate = { path, name: "", kind: "" };
+              }
+            }
+          } else if (editorCount === 1 && fsCount === 0) {
+            const selected = editorSelection;
+            if (selected !== null) {
               candidate = selected.locator;
               const pickSource = readFileIfExists(join(cwd, selected.locator.path)) ?? "";
               const resolved = resolveCurrentEntry(
@@ -6352,6 +6434,14 @@ async function runEditDslLoop(options: LoopOptions): Promise<LoopResult> {
                 selectionStage = "address";
               }
             }
+          } else if (editorCount === 0 && fsCount === 0) {
+            diagnostic =
+              "stage: protocol\nthe reply was empty; expected a `select` clause or a file command";
+          } else if (editorCount > 1) {
+            diagnostic = `stage: protocol\nthe first edit-dsl reply must be exactly one \`select … end\` clause; found ${editorCount}`;
+          } else {
+            diagnostic =
+              "stage: protocol\nthe first reply may contain one `select` clause or file commands, not both";
           }
         } catch (error) {
           if (!(error instanceof SelectionSyntaxError)) {
@@ -6395,8 +6485,83 @@ async function runEditDslLoop(options: LoopOptions): Promise<LoopResult> {
           messages.push({ role: "assistant", content: response.content ?? "" });
           messages.push({
             role: "user",
-            content: buildEditDslSelectionRetryPrompt(options.issue, editDslIndexText, diagnostic),
+            content: fsReply
+              ? buildEditDslCommandRetryPrompt(options.issue, editDslIndexText, diagnostic)
+              : buildEditDslSelectionRetryPrompt(options.issue, editDslIndexText, diagnostic),
           });
+          continue;
+        }
+        if (fsReadFeedback !== null) {
+          records.push(
+            recordRow({
+              row: records.length + 1,
+              iteration,
+              kind: "exchange",
+              exchange,
+              locator: candidate,
+              replacement: null,
+              diagnostics: fsReadFeedback,
+              outcome: "viewer",
+              finishReason: response.finishReason,
+              toolCalls: response.toolCalls.length,
+            }),
+          );
+          lastDiagnostics = fsReadFeedback;
+          lastFailure = "edit";
+          if (exchange === MAX_EDIT_EXCHANGES) {
+            if (iteration >= MAX_RUN_ITERATIONS) {
+              return await terminate("edit-exhausted", capDiagnostics(iterationOpenedBy));
+            }
+            continuation = {
+              round: iteration,
+              pick: true,
+              diagnostics: combinedDiagnostics(iterationOpenedBy, fsReadFeedback),
+            };
+            break;
+          }
+          messages.push({ role: "assistant", content: response.content ?? "" });
+          messages.push({
+            role: "user",
+            content: buildEditDslReadPrompt(
+              options.issue,
+              editDslIndexText,
+              fsReadFeedback,
+              specFiles,
+            ),
+          });
+          continue;
+        }
+        if (fsPick !== null) {
+          const path = fsPick.path;
+          const source = readFileIfExists(join(cwd, path)) ?? "";
+          const locator: Locator = { path, name: "", kind: "" };
+          pinned = { mode: fsPick.mode, locator };
+          pinnedAddressJson = pinJson(pinned);
+          pinnedAssistantContent = (response.content ?? "").trim();
+          records.push(
+            recordRow({
+              row: records.length + 1,
+              iteration,
+              kind: "exchange",
+              exchange,
+              locator,
+              replacement: null,
+              diagnostics: null,
+              outcome: "selected",
+              finishReason: response.finishReason,
+              toolCalls: response.toolCalls.length,
+            }),
+          );
+          messages.push({ role: "assistant", content: pinnedAssistantContent });
+          baseSource = source;
+          initialContentPrompt = buildEditDslCommandPrompt(
+            options.issue,
+            editDslIndexText,
+            path,
+            source,
+            specFiles,
+          );
+          prefetchedReply = response;
           continue;
         }
         if (editDslPick === null) {
@@ -6800,37 +6965,33 @@ async function runEditDslLoop(options: LoopOptions): Promise<LoopResult> {
       // #119: the edit-dsl reply state. Under the edit-dsl protocol it is parsed
       // first and is the required form.
       let editDslReply = false;
+      let editDslStatements: EditStatement[] = [];
       let editDslSelections: EditDslSelection[] = [];
-      let editDslResolution: EditDslResolution | null = null;
-      // Parse `select … end` clauses and resolve them against each file's current
-      // source. Returns null when the reply carries no clause; a
+      let editDslResolution: MultiEditorResolution | null = null;
+      // Parse a `multiEditor` reply and resolve editors/file commands against
+      // each file's current source. Returns null when the reply is empty; a
       // `SelectionSyntaxError` propagates to the caller.
       const parseEditDsl = (): {
+        statements: EditStatement[];
         selections: EditDslSelection[];
-        resolution: EditDslResolution;
+        resolution: MultiEditorResolution;
       } | null => {
-        const selections = parseSelection(stripCodeFences(content));
-        if (selections.length === 0) {
+        const statements = parseMultiEditor(stripCodeFences(content));
+        if (statements.length === 0) {
           return null;
         }
-        const editDslSources = new Map<string, string>();
-        const resolution = resolveEditDslReply(selections, {
-          sourceFor: (path) => {
-            if (path === target) {
-              return sourceBefore;
-            }
-            const cached = editDslSources.get(path);
-            if (cached !== undefined) {
-              return cached;
-            }
-            const source = readFileIfExists(join(cwd, path)) ?? "";
-            editDslSources.set(path, source);
-            return source;
-          },
-          resolveEntry: (source, path, locator, space) =>
-            resolveCurrentEntry(source, path, locator, space),
+        const cached = makeMultiEditorDeps();
+        const resolution = resolveMultiEditor(statements, {
+          ...cached,
+          sourceFor: (path) => (path === target ? sourceBefore : cached.sourceFor(path)),
         });
-        return { selections, resolution };
+        const selections = statements
+          .filter(
+            (statement): statement is Extract<EditStatement, { type: "editor" }> =>
+              statement.type === "editor",
+          )
+          .map((statement) => statement.selection);
+        return { statements, selections, resolution };
       };
       if (failure !== null) {
         // Refused self-check request: no payload to parse.
@@ -6841,6 +7002,7 @@ async function runEditDslLoop(options: LoopOptions): Promise<LoopResult> {
             failure = EDIT_DSL_FORCE_DIAGNOSTICS;
           } else {
             editDslReply = true;
+            editDslStatements = parsed.statements;
             editDslSelections = parsed.selections;
             editDslResolution = parsed.resolution;
             failure = null;
@@ -6864,9 +7026,10 @@ async function runEditDslLoop(options: LoopOptions): Promise<LoopResult> {
       let editDslApplied = false;
       let editDslAppliedRegions: ResolvedRegion[] = [];
       let editDslCreates = 0;
+      let editDslDeletes: { index: number; path: string }[] = [];
       let editDslViewerFeedback: string | null = null;
       if (failure === null && editDslReply && editDslResolution !== null) {
-        const totalClauses = editDslSelections.length;
+        const totalClauses = editDslStatements.length;
         const blocks: string[] = [];
         let firstEditDslStage: EditFailureStage | null = null;
         let firstEditDslCause: MatcherCause | undefined;
@@ -6913,9 +7076,12 @@ async function runEditDslLoop(options: LoopOptions): Promise<LoopResult> {
           );
         }
         const regions = editDslResolution.regions.map(editDslRegionToResolved);
+        const fsCreates = editDslResolution.creates;
+        editDslDeletes = editDslResolution.deletes;
         // #111: count the create clauses the reply resolved, applied or not, so
         // the stage/metrics instrumentation records create-form adoption.
-        editDslCreates = editDslResolution.regions.filter((region) => region.create).length;
+        editDslCreates =
+          editDslResolution.regions.filter((region) => region.create).length + fsCreates.length;
         // Whole-reply atomicity (§6): resolution failures discard every
         // resolved region, and any apply failure discards every returned write
         // (including files that passed). Nothing is written until both sets are
@@ -6928,6 +7094,10 @@ async function runEditDslLoop(options: LoopOptions): Promise<LoopResult> {
               path === target ? sourceBefore : (readFileIfExists(join(cwd, path)) ?? ""),
             target,
             prevCheck,
+            // Multiple create clauses append at the same end offset. Treat
+            // those zero-width inserts as ordered appends instead of an
+            // overlap; real span overlaps still fail below.
+            policy: { sameOffsetInserts: "append" },
             noteFailure: (note) => {
               noteEditDslFailure(
                 note.region.index,
@@ -6946,6 +7116,9 @@ async function runEditDslLoop(options: LoopOptions): Promise<LoopResult> {
               blocks.push(editDslOverlapDiagnostics(totalClauses, path, earlier, later));
             },
           });
+          for (const create of fsCreates) {
+            writes.push({ path: create.path, source: "" });
+          }
         }
         if (blocks.length > 0) {
           // The whole edit-dsl reply is discarded: no file write, no create.
@@ -6955,14 +7128,20 @@ async function runEditDslLoop(options: LoopOptions): Promise<LoopResult> {
           }
           matcherCause = firstEditDslCause;
           addressUndeclaredName = firstEditDslUndeclared;
-        } else if (regions.length > 0) {
+        } else if (regions.length > 0 || fsCreates.length > 0 || editDslDeletes.length > 0) {
           editDslApplied = true;
           editDslAppliedRegions = regions;
           batchWrites.push(...writes);
-          newSource = writes[0]?.source ?? null;
+          newSource = writes.find((write) => write.path === target)?.source ?? sourceBefore;
         }
-        if (editDslResolution.viewers.length > 0) {
-          editDslViewerFeedback = renderViewerFeedback(editDslResolution.viewers);
+        const readFeedback =
+          editDslResolution.reads.length === 0 ? null : renderReadFeedback(editDslResolution.reads);
+        const viewerFeedback =
+          editDslResolution.viewers.length === 0
+            ? null
+            : renderViewerFeedback(editDslResolution.viewers);
+        if (viewerFeedback !== null || readFeedback !== null) {
+          editDslViewerFeedback = [viewerFeedback, readFeedback].filter(Boolean).join("\n\n");
         }
       }
       // A viewer locate turn (#111): a reply that carried only viewers writes
@@ -6984,7 +7163,7 @@ async function runEditDslLoop(options: LoopOptions): Promise<LoopResult> {
               diagnostics: editDslViewerFeedback,
               outcome: "viewer",
               finishReason: response.finishReason,
-              payloads: editDslSelections.length,
+              payloads: editDslStatements.length,
               toolCalls: response.toolCalls.length,
             }),
           );
@@ -7106,6 +7285,9 @@ async function runEditDslLoop(options: LoopOptions): Promise<LoopResult> {
         // wrote nothing.
         for (const write of batchWrites) {
           writeTarget(cwd, write.path, write.source);
+        }
+        for (const deletion of editDslDeletes) {
+          rmSync(join(cwd, deletion.path), { force: true });
         }
       } else {
         writeTarget(cwd, target, newSource);
