@@ -1,7 +1,7 @@
 ---
 id: 24
 title: "Offer a valid fallback after repeated edit-dsl address failures"
-status: todo
+status: done
 priority: medium
 milestone: null
 parent: 22
@@ -57,3 +57,4 @@ The regression test should assert both recovery and the absence of a
 Depends on #23 so the fallback vocabulary matches the normalized variable
 kinds. Local function/block scope targets are out of scope; use the bare-select
 or raw-write path rather than expanding the index here.
+- Implemented the repeated-address fallback. The edit-dsl loop now counts address rejections since the last applied edit (independent of the same-cause streak, so an address/protocol alternation cannot hide them). After the second address failure, `rejectionLead` emits a live-target escape derived from the failing locator: a bare `select <name> in <path>` omitting the kind, plus a raw `write <path> with ----- … ----- done` whole-file repair. The undeclared-name create/add-path wording and JSON protocol stay unchanged. Selection retries fold the fallback into the prompt; content retries carry it as the correction lead. Added a unit test with a non-hardcoded path/name and a scripted loop test (two wrong-kind selects, then bare select/edit) asserting recovery and no token-budget termination. Verified: `just typecheck`; `just test` (1237 pass, 0 fail); `just accept --all` (8/8 pass).

@@ -6802,6 +6802,44 @@ describe("runLoop", () => {
       expect(rejectionLead("format-export-duplication", 1)).toBeNull();
     });
 
+    test("a repeated edit-dsl address failure offers a concrete fallback (#24)", () => {
+      const live = { path: "src/lisp.ts", name: "MAXIMUM" };
+      const policy = rejectionPolicy("address", "edit-dsl");
+      if (policy.action !== "retry") {
+        throw new Error("expected a retryable address policy");
+      }
+      // Count 1 keeps the generic address wording unchanged.
+      expect(
+        rejectionLead("address", 1, {
+          protocolFormat: "edit-dsl",
+          addressFailures: 1,
+          address: live,
+        }),
+      ).toBe(policy.correction);
+      const fallback = rejectionLead("address", 2, {
+        protocolFormat: "edit-dsl",
+        addressFailures: 2,
+        address: live,
+      });
+      expect(fallback).toContain("select MAXIMUM in src/lisp.ts");
+      expect(fallback).toContain("omit the kind");
+      expect(fallback).toContain("write src/lisp.ts with");
+      expect(fallback).toContain("five or more hyphens");
+      // The fallback is only for the edit-dsl protocol.
+      expect(rejectionLead("address", 2, { addressFailures: 2, address: live })).toBe(
+        "This attempt MUST echo the pinned address exactly as shown; the diagnostics name no other declaration to re-pin to.",
+      );
+      // An undeclared name keeps its create/add-path wording.
+      const undeclared = rejectionLead("address", 2, {
+        protocolFormat: "edit-dsl",
+        addressFailures: 2,
+        address: live,
+        undeclaredName: "car",
+      });
+      expect(undeclared).toContain('"car" is not declared');
+      expect(undeclared).not.toContain("write src/lisp.ts with");
+    });
+
     test("matcher-not-found retries with the base class correction (#56)", async () => {
       const dir = fixtureDir();
       const provider = new ScriptedProvider([
@@ -8559,6 +8597,53 @@ describe("edit-dsl protocol (#111/#119)", () => {
       "First you will be asked to select the target. Reply with ONLY a JSON object",
     );
     expect(helperSource(dir)).toContain("return 2;");
+  }, 30000);
+
+  test("a repeated kind-mismatch address loop recovers through the fallback (#24)", async () => {
+    const dir = passingFixtureDir();
+    writeFileSync(join(dir, "src", "lisp.ts"), "export const MAX_TOKENS = 10;\n");
+    writeFileSync(
+      join(dir, "src", "lisp.test.ts"),
+      'import { expect, test } from "bun:test";\nimport { MAX_TOKENS } from "./lisp";\n\ntest("max tokens", () => {\n  expect(MAX_TOKENS).toBe(20);\n});\n',
+    );
+    const provider = new ScriptedProvider([
+      // Two wrong-kind re-pins of a `const`: `function` cannot match the
+      // internal `variable` entry, so both are address failures.
+      editDslSelect("MAX_TOKENS", "src/lisp.ts", null, "function"),
+      editDslSelect("MAX_TOKENS", "src/lisp.ts", null, "function"),
+      // Recover through the offered bare select (kind omitted).
+      editDslSelect("MAX_TOKENS", "src/lisp.ts"),
+      editDslReply({
+        locator: { path: "src/lisp.ts", name: "MAX_TOKENS", kind: "const" },
+        space: null,
+        matcher: { kind: "snippet", value: "10" },
+        pick: null,
+        replacement: "20",
+      }),
+      "Great! I resolve this problem!",
+    ]);
+    const result = await runLoopBase({
+      cwd: dir,
+      issue: "make the max-tokens test pass",
+      provider,
+      checkCommand: TSC,
+      testCommand: ["bun", "test"],
+    });
+    expect(result.ok).toBe(true);
+    expect(result.terminationReason).not.toBe("token-budget");
+    expect(readFileSync(join(dir, "src", "lisp.ts"), "utf8")).toContain(
+      "export const MAX_TOKENS = 20;",
+    );
+    // The retry after the second address failure names both concrete escapes.
+    const fallbackPrompt = provider.calls.find((call) =>
+      call.some(
+        (message) =>
+          message.content?.includes("select MAX_TOKENS in src/lisp.ts") === true &&
+          message.content.includes("write src/lisp.ts with") &&
+          message.content.includes("omit the kind"),
+      ),
+    );
+    expect(fallbackPrompt).toBeDefined();
   }, 30000);
 
   test("runLoop renames a declaration and its references without a tool call", async () => {

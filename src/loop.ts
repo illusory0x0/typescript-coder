@@ -1732,6 +1732,18 @@ function addressUndeclaredEscalation(name: string): string {
   return `This attempt MUST return an address the current source resolves: echo the pinned address exactly as shown, or re-pin to a declaration the diagnostics name — ${quoted} is not declared, so re-pinning to it cannot succeed. To add that declaration, carry it inside the replacement of an address that resolves; mode "create" applies only while the run is still choosing a target.`;
 }
 
+// #24: after repeated address failures the ordinary "re-pin" advice has not
+// worked (wrong kind, local/unindexable target). Offer two concrete escapes
+// derived from the live target: the bare select that omits the kind, and the
+// raw whole-file write that bypasses address resolution entirely.
+function repeatedAddressFallback(path: string, name: string): string {
+  const write = `write ${path} with ----- … ----- done`;
+  if (name === "") {
+    return `The address keeps failing, so stop trying to select it. Repair the whole file with a raw \`${write}\` (the fence opens with five or more hyphens).`;
+  }
+  return `The address keeps failing, so stop guessing at its kind. Select the live target with a bare \`select ${name} in ${path}\` (omit the kind), or repair the whole file with a raw \`${write}\` (the fence opens with five or more hyphens).`;
+}
+
 /**
  * Context the dynamic #65 lead needs beyond the cause and its streak: the
  * verification diagnostics that opened the round (the no-op pointer) and the
@@ -1742,6 +1754,13 @@ export interface RejectionLeadContext {
   pendingDiagnostics?: string | null;
   /** The rejected address names a declaration the current source lacks (#65). */
   undeclaredName?: string;
+  /**
+   * Total address rejections since the last applied edit (#24). Unlike the
+   * same-cause streak this survives intervening protocol/matcher failures.
+   */
+  addressFailures?: number;
+  /** The live path/name of the address that kept failing (#24). */
+  address?: { path: string; name: string };
   /**
    * The edit protocol the run uses (#117/#119): an edit-dsl run re-teaches the
    * `select … end` form on a `protocol` rejection instead of the JSON payload
@@ -1780,6 +1799,17 @@ export function rejectionLead(
     return escalated
       ? addressUndeclaredEscalation(context.undeclaredName)
       : addressUndeclaredCorrection(context.undeclaredName);
+  }
+  // #24: a repeated address failure gets a concrete escape before the generic
+  // policy repeats advice the model has already failed to apply.
+  if (
+    cause === "address" &&
+    format === "edit-dsl" &&
+    (context.addressFailures ?? 0) >= 2 &&
+    context.address !== undefined &&
+    context.address.path !== ""
+  ) {
+    return repeatedAddressFallback(context.address.path, context.address.name);
   }
   const policy = rejectionPolicy(cause, format);
   if (policy.action !== "retry" || policy.correction === null) {
@@ -6028,6 +6058,10 @@ async function runEditDslLoop(options: LoopOptions): Promise<LoopResult> {
   let lastRejectionCause: RejectionCause | null = null;
   let lastRejectionStreak = 0;
   let lastCorrection: string | null = null;
+  // #24: address rejections since the last applied edit, independent of the
+  // same-cause streak because the motivating loop alternates address and
+  // protocol failures. Cleared only when an edit applies.
+  let addressFailures = 0;
   const registerRejection = (cause: RejectionCause, context: RejectionLeadContext = {}): void => {
     if (cause === lastRejectionCause) {
       lastRejectionStreak += 1;
@@ -6035,12 +6069,20 @@ async function runEditDslLoop(options: LoopOptions): Promise<LoopResult> {
       lastRejectionCause = cause;
       lastRejectionStreak = 1;
     }
-    lastCorrection = rejectionLead(cause, lastRejectionStreak, { ...context, protocolFormat });
+    if (cause === "address") {
+      addressFailures += 1;
+    }
+    lastCorrection = rejectionLead(cause, lastRejectionStreak, {
+      ...context,
+      protocolFormat,
+      addressFailures,
+    });
   };
   const clearRejectionPolicy = (): void => {
     lastRejectionCause = null;
     lastRejectionStreak = 0;
     lastCorrection = null;
+    addressFailures = 0;
   };
   // Prior-attempts digest (#57): a bounded, incrementally-updated checkpoint of
   // the failing chain. It is rendered into the #52 round-continuation prompts
@@ -6486,8 +6528,22 @@ async function runEditDslLoop(options: LoopOptions): Promise<LoopResult> {
               toolCalls: response.toolCalls.length,
             }),
           );
-          registerRejection(cause);
-          lastDiagnostics = diagnostic;
+          registerRejection(cause, {
+            address:
+              cause === "address" && candidate.path !== ""
+                ? { path: candidate.path, name: candidate.name }
+                : undefined,
+          });
+          // #24: the selection retry normally carries only diagnostics, so fold
+          // the concrete repeated-address fallback into this prompt.
+          const selectionDiagnostics =
+            cause === "address" &&
+            addressFailures >= 2 &&
+            lastCorrection !== null &&
+            candidate.path !== ""
+              ? `${lastCorrection}\n\n${diagnostic}`
+              : diagnostic;
+          lastDiagnostics = selectionDiagnostics;
           lastFailure = "edit";
           if (exchange === MAX_EDIT_EXCHANGES) {
             if (iteration >= MAX_RUN_ITERATIONS) {
@@ -6498,7 +6554,7 @@ async function runEditDslLoop(options: LoopOptions): Promise<LoopResult> {
             continuation = {
               round: iteration,
               pick: true,
-              diagnostics: combinedDiagnostics(iterationOpenedBy, diagnostic),
+              diagnostics: combinedDiagnostics(iterationOpenedBy, selectionDiagnostics),
             };
             break;
           }
@@ -6506,8 +6562,16 @@ async function runEditDslLoop(options: LoopOptions): Promise<LoopResult> {
           messages.push({
             role: "user",
             content: fsReply
-              ? buildEditDslCommandRetryPrompt(options.issue, editDslIndexText, diagnostic)
-              : buildEditDslSelectionRetryPrompt(options.issue, editDslIndexText, diagnostic),
+              ? buildEditDslCommandRetryPrompt(
+                  options.issue,
+                  editDslIndexText,
+                  selectionDiagnostics,
+                )
+              : buildEditDslSelectionRetryPrompt(
+                  options.issue,
+                  editDslIndexText,
+                  selectionDiagnostics,
+                ),
           });
           continue;
         }
@@ -7014,6 +7078,9 @@ async function runEditDslLoop(options: LoopOptions): Promise<LoopResult> {
       // current source does not declare, so the retry lead keeps the add path
       // open instead of demanding a re-pin that cannot resolve.
       let addressUndeclaredName: string | null = null;
+      // #24: the live path/name of the first address failure in this reply,
+      // used for the repeated-address fallback lead.
+      let firstEditDslAddress: { path: string; name: string } | null = null;
       // #119: the edit-dsl reply state. Under the edit-dsl protocol it is parsed
       // first and is the required form.
       let editDslReply = false;
@@ -7098,6 +7165,9 @@ async function runEditDslLoop(options: LoopOptions): Promise<LoopResult> {
             firstEditDslStage = stage;
             firstEditDslCause = origin.matcherCause;
             firstEditDslUndeclared = origin.undeclaredName ?? null;
+          }
+          if (firstEditDslAddress === null && stage === "address" && failurePath !== "") {
+            firstEditDslAddress = { path: failurePath, name: locator.name };
           }
           blocks.push(
             editDslClauseDiagnostics(
@@ -7314,6 +7384,7 @@ async function runEditDslLoop(options: LoopOptions): Promise<LoopResult> {
         registerRejection(cause, {
           pendingDiagnostics: iterationOpenedBy,
           undeclaredName: addressUndeclaredName ?? undefined,
+          address: firstEditDslAddress ?? undefined,
         });
         lastDiagnostics = retryDiagnostics(diagnostics);
         lastFailure = "edit";
