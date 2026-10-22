@@ -19,6 +19,7 @@ digraph issues {
   "12" [label="#12 Fix duplicate-declaration handling in the compact edit protocol"];
   "13" [label="#13 Reject duplicate creates and same-offset zero-width regions in one compact reply"];
   "14" [label="#14 Make duplicate top-level declarations repairable from the model-facing diagnostics"];
+  "15" [label="#15 Rename the compact edit format to edit-dsl"];
 
   // parent edges (parent -> child), solid
   "1" -> "2";
