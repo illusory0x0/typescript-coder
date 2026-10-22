@@ -12,7 +12,7 @@ discovery, splicing, formatting, and verification. Implementation:
 1. **Context.** The workspace's `.ts` files are discovered and parsed into a
    symbol index. Under the default edit-dsl protocol the index is rendered as
    top-level `select <name> in <path> [resolve <space>]` lines (no signatures,
-   capped); explicit `--protocol-format=json` keeps the YAML context
+   no test files, capped); explicit `--protocol-format=json` keeps the YAML context
    (path → name/kind/signature, with a cap and a `truncated: true` flag). Test
    files, plus any file the issue names inline, are attached whole as read-only
    spec files. One system prompt and one user prompt (goal + index/context) open

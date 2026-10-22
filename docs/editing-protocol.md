@@ -117,7 +117,9 @@ nothing (§4). A clause that stops after `pick` is not a viewer; `pick` requires
 
 **Select first.** The first edit-dsl reply is exactly one clause. The harness
 renders its symbol index as top-level `select <name> in <path> [resolve <space>]`
-lines. A viewer (no `replace`) pins the declaration and the harness answers with
+lines. Test files (`*.test.ts`) are specifications rather than edit targets, so
+they are not advertised in the index; an explicit test address still resolves.
+A viewer (no `replace`) pins the declaration and the harness answers with
 a `# details` prompt: the goal, the symbol index, and the declaration source
 numbered with file-absolute lines; the next reply is the edit clause. An editor
 clause (with `replace`) carries its own edit and is applied without a second

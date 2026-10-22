@@ -8652,6 +8652,32 @@ describe("edit-dsl protocol (#111/#119)", () => {
     expect(text).not.toContain("files:");
   });
 
+  test("the edit-dsl symbol index omits test files", () => {
+    const files: SourceFile[] = [
+      {
+        path: "src/a.ts",
+        source: "export function answer(): number {\n  return 1;\n}\n",
+      },
+      {
+        path: "src/a.test.ts",
+        source: "export function parse(text: string): number {\n  return Number(text);\n}\n",
+      },
+    ];
+    const text = buildEditDslSymbolIndex(buildIndexTolerant(files).index);
+    expect(text).toContain("select answer in src/a.ts resolve value");
+    expect(text).not.toContain("src/a.test.ts");
+
+    // A from-scratch fixture whose only file is its test has no suggested
+    // anchor; the model creates src/impl.ts from the Goal instead.
+    const onlyTest = buildIndexTolerant([
+      {
+        path: "src/lisp.test.ts",
+        source: "export function evaluate(program: string): number {\n  return 1;\n}\n",
+      },
+    ]).index;
+    expect(buildEditDslSymbolIndex(onlyTest)).toBe("");
+  });
+
   test("the edit-dsl symbol index is capped with a plain truncation note", () => {
     const declarations = Array.from(
       { length: 501 },

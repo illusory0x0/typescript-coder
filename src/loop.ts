@@ -177,6 +177,8 @@ export function buildContextYaml(files: SourceFile[], build?: TolerantIndex): st
 // EditDsl select-first index: one `select <name> in <path>` line per top-level
 // declaration, deduped by path+name, with a `resolve` space only when the
 // declaration occupies exactly one space (class/enum dual-space entries omit it).
+// Test files are omitted: they are specifications, and a from-scratch fixture
+// often contains only its test, whose helpers would otherwise be the sole anchor.
 // Capped like the YAML context; a truncation note is a plain comment line.
 export function buildEditDslSymbolIndex(index: SymbolIndex): string {
   const seen = new Set<string>();
@@ -184,6 +186,13 @@ export function buildEditDslSymbolIndex(index: SymbolIndex): string {
   let truncated = false;
   for (const entry of index.entries) {
     if (entry.locator.name.includes(".")) {
+      continue;
+    }
+    // Tests are specifications, not edit targets: a from-scratch fixture often
+    // contains only its test file, and advertising that file's helpers would
+    // anchor the first select on the wrong file. Explicit test addresses still
+    // resolve through the full index.
+    if (entry.locator.path.endsWith(TEST_FILE_SUFFIX)) {
       continue;
     }
     const key = `${entry.locator.path}\u0000${entry.locator.name}`;
