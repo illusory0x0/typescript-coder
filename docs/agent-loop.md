@@ -4,8 +4,15 @@
 the model is asked to pick one declaration, then to rewrite part of it, and the
 harness decides whether the result counts. The model never chooses files to
 read or commands to run; it answers structured prompts and the harness owns
-discovery, splicing, formatting, and verification. Implementation:
-`runLoop` in `src/loop.ts`.
+discovery, splicing, formatting, and verification.
+
+Implementation: `runLoop` in `src/loop.ts` is a dispatcher. Explicit-targets
+mode and `--protocol-format=json` route to `runJsonLoop`; the default routes to
+`runEditDslLoop`. The two drivers are independent: each owns its run driver
+(budget, rounds, records) and shares only the lower-level primitives (index and
+context, selection resolution, gates). Protocol prompt text lives in
+`src/prompts/{json,edit-dsl}.ts` and the commit/gate pipeline in
+`src/commit.ts`.
 
 ## Shape of a run
 
@@ -176,8 +183,8 @@ async function runLoop(options: LoopOptions): Promise<LoopResult> {
 
 ### What the skeleton leaves out
 
-These are real branches in `runLoop`; the core above is still correct without
-them, which is why they sit outside it:
+These are real branches in the two drivers; the core above is still correct
+without them, which is why they sit outside it:
 
 - **Verification failures also advance `stalledRounds`** — the counter spans
   both rejection cycles and failed verifications, and is never reset (a pass
@@ -188,9 +195,9 @@ them, which is why they sit outside it:
 - **Termination reasons other than budget** — token budget, three consecutive
   truncated completions, a broken previous source, and a harness-side
   formatter fault each take their own exit.
-- **Explicit-targets mode** — when the caller supplies addresses, picking is
-  skipped, the target queue drives rounds, and same-file targets are sequenced
-  across exchanges.
+- **Explicit-targets mode** — when the caller supplies addresses the JSON
+  driver skips picking, the target queue drives rounds, and same-file targets
+  are sequenced across exchanges; the edit-dsl driver never sees targets.
 - **Prompt variants** — lean issue messages on `tsc` repair rounds, repair-context
   shrinking, a bounded prior-attempts digest, and a failure-history note only
   feed the continuation and no-progress prompts.
