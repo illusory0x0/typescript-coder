@@ -10,11 +10,3 @@
   parent: null
   deps: []
   file: 0016-run-tc-protocol-variants-in-one-concurrent-benchmark.md
-- id: 17
-  title: "Implement semantic rename in edit-dsl"
-  status: todo
-  priority: medium
-  milestone: null
-  parent: null
-  deps: []
-  file: 0017-implement-semantic-rename-in-edit-dsl.md

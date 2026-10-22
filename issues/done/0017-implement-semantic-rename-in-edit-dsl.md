@@ -1,7 +1,7 @@
 ---
 id: 17
 title: "Implement semantic rename in edit-dsl"
-status: todo
+status: done
 priority: medium
 milestone: null
 parent: null
@@ -71,3 +71,4 @@ rg -n "rename|renamer" src docs acceptance human/edit.md
   of truth, not an edit target.
 - Priority is left at the tracker default (medium) because the request did not
   name one.
+- Umbrella complete. Children landed as #18 `1fe80be`, #19 `20f6271`, #20 `21d1964`, and #21 `57df25b`. Semantic rename now parses, resolves local bindings by lexical scope, handles dotted namespace/enum/class-field targets, and applies atomically through the edit-dsl loop with prompt/docs/acceptance coverage. Final verification: `just typecheck`; `just test` (1221 pass, 0 fail); `just accept --all` (8/8 pass, including `edit-dsl-rename`). Known limits: same-file references only; arbitrary receiver-typed fields and same-class bare field names are not rewritten; namespace non-final segments are not rewritten.
