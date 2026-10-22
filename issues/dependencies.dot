@@ -20,6 +20,7 @@ digraph issues {
   "13" [label="#13 Reject duplicate creates and same-offset zero-width regions in one compact reply"];
   "14" [label="#14 Make duplicate top-level declarations repairable from the model-facing diagnostics"];
   "15" [label="#15 Rename the compact edit format to edit-dsl"];
+  "16" [label="#16 Run tc protocol variants in one concurrent benchmark"];
 
   // parent edges (parent -> child), solid
   "1" -> "2";
