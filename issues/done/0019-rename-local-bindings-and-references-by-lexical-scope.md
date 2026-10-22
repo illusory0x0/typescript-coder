@@ -1,7 +1,7 @@
 ---
 id: 19
 title: "Rename local bindings and references by lexical scope"
-status: todo
+status: done
 priority: medium
 milestone: null
 parent: 17
@@ -54,3 +54,4 @@ bun test src/rename.test.ts
   fails the shadowing criteria.
 - Destructuring patterns are nice to have but can be called out explicitly if
   the parser cannot yet supply identifier spans for them.
+- Implemented a pure scope-aware local rename model in `src/rename.ts` with collision/capture rejection and tests in `src/rename.test.ts`. Verified `bunx tsc --noEmit` and `bun test src/rename.test.ts` (13 pass, 0 fail). Dotted/member and loop integration remain in #20–#21.

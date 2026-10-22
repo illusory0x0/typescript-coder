@@ -10,14 +10,6 @@
   parent: null
   deps: []
   file: 0016-run-tc-protocol-variants-in-one-concurrent-benchmark.md
-- id: 19
-  title: "Rename local bindings and references by lexical scope"
-  status: todo
-  priority: medium
-  milestone: null
-  parent: 17
-  deps: [18]
-  file: 0019-rename-local-bindings-and-references-by-lexical-scope.md
 - id: 20
   title: "Resolve dotted and member rename targets"
   status: todo
