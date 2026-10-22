@@ -10,14 +10,6 @@
   parent: null
   deps: []
   file: 0016-run-tc-protocol-variants-in-one-concurrent-benchmark.md
-- id: 18
-  title: "Parse and serialize the rename editor clause"
-  status: todo
-  priority: medium
-  milestone: null
-  parent: 17
-  deps: []
-  file: 0018-parse-and-serialize-the-rename-editor-clause.md
 - id: 19
   title: "Rename local bindings and references by lexical scope"
   status: todo

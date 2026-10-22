@@ -11,13 +11,21 @@ export interface SelectionMatcher {
   value: string;
 }
 
+/** The `rename <from> to <to>` renamer clause: a semantic rename, not a rewrite. */
+export interface RenameSpec {
+  from: string;
+  to: string;
+}
+
 /**
  * One parsed `select … end` clause. It is payload-equivalent to the JSON edit
  * model (`docs/editing-protocol.md`) only while `space` is null; a clause that
  * names a symbol space has no JSON form (see `toEditPayload`).
  * `replacement === null` is a **viewer** (no `replace`); `matcher === null`
  * means no `match`; `pick === null` means no `pick`. A parsed `pick` always has
- * a `replace`: `pick` without a `replace` is a syntax error.
+ * a `replace`: `pick` without a `replace` is a syntax error. `rename` is the
+ * replacer's alternative (`rename <from> to <to>`), absent when the clause has
+ * no renamer.
  */
 export interface Selection {
   locator: Locator;
@@ -29,6 +37,7 @@ export interface Selection {
   matcher: SelectionMatcher | null;
   pick: EditRange[] | null;
   replacement: string | null;
+  rename?: RenameSpec | null;
 }
 
 /** A `create <path> done` file command. */
@@ -338,14 +347,41 @@ class SelectionReader {
     }
 
     let pick: EditRange[] | null = null;
-    if (this.matchKeyword("pick")) {
-      pick = this.parseMultiRange();
-    }
-
     let replacement: string | null = null;
-    if (this.matchKeyword("replace")) {
-      this.expectKeyword("with", "expected `with` after `replace`");
-      replacement = this.parseFence();
+    let rename: RenameSpec | null = null;
+
+    // The grammar places `match` before `replacer | renamer`, so a rename is
+    // the alternative branch after the optional match, not a suffix of a
+    // replace.
+    if (this.matchKeyword("rename")) {
+      rename = this.parseRename();
+      this.skipWhitespace();
+      if (this.keywordAt("pick")) {
+        throw new SelectionSyntaxError(
+          "rename cannot be combined with `pick`; use either `rename <from> to <to>` or `pick … replace with …`",
+        );
+      }
+      if (this.keywordAt("replace")) {
+        throw new SelectionSyntaxError(
+          "rename cannot be combined with `replace`; use either `rename <from> to <to>` or `pick … replace with …`",
+        );
+      }
+    } else {
+      if (this.matchKeyword("pick")) {
+        pick = this.parseMultiRange();
+      }
+      if (this.matchKeyword("replace")) {
+        this.expectKeyword("with", "expected `with` after `replace`");
+        replacement = this.parseFence();
+      }
+      this.skipWhitespace();
+      if (this.keywordAt("rename")) {
+        throw new SelectionSyntaxError(
+          pick !== null
+            ? "rename cannot be combined with `pick`; use either `rename <from> to <to>` or `pick … replace with …`"
+            : "rename cannot be combined with `replace`; use either `rename <from> to <to>` or `pick … replace with …`",
+        );
+      }
     }
 
     this.expectKeyword("end", "expected `end` to terminate the clause");
@@ -356,7 +392,25 @@ class SelectionReader {
       );
     }
 
-    return { locator: { path, name, kind }, space, matcher, pick, replacement };
+    const selection: Selection = {
+      locator: { path, name, kind },
+      space,
+      matcher,
+      pick,
+      replacement,
+    };
+    if (rename !== null) {
+      selection.rename = rename;
+    }
+    return selection;
+  }
+
+  private parseRename(): RenameSpec {
+    this.skipWhitespace();
+    const from = this.readToken("expected an identifier after `rename`");
+    this.expectKeyword("to", "expected `to` after the `rename` identifier");
+    const to = this.readToken("expected an identifier after `to`");
+    return { from, to };
   }
 
   private parseSpace(): SymbolSpace {
@@ -682,6 +736,9 @@ export function serializeSelection(selection: Selection): string {
   if (selection.matcher !== null) {
     parts.push(`match ${renderMatcher(selection.matcher)}`);
   }
+  if (selection.rename !== undefined && selection.rename !== null) {
+    parts.push(`rename ${selection.rename.from} to ${selection.rename.to}`);
+  }
   if (selection.pick !== null) {
     parts.push(`pick ${renderMultiRange(selection.pick)}`);
   }
@@ -732,11 +789,14 @@ export function serializeMultiEditor(statements: readonly EditStatement[]): stri
  * The explicit bridge to the shipped JSON payload (`docs/edit-protocol.md` §9).
  * Returns an `EditPayload` only for the subset the payload can express: a
  * `snippet` or no matcher, no `pick` or a single range, and an editor (a
- * `replace`). Regex matchers, a multi-range `pick`, and viewers have no payload
- * form and return `null`.
+ * `replace`). Regex matchers, a multi-range `pick`, viewers, and renames have
+ * no payload form and return `null`.
  */
 export function toEditPayload(selection: Selection): EditPayload | null {
   if (selection.replacement === null) {
+    return null;
+  }
+  if (selection.rename !== undefined && selection.rename !== null) {
     return null;
   }
   if (selection.space !== null) {

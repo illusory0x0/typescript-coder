@@ -1,7 +1,7 @@
 ---
 id: 18
 title: "Parse and serialize the rename editor clause"
-status: todo
+status: done
 priority: medium
 milestone: null
 parent: 17
@@ -47,3 +47,4 @@ bun test src/selection.test.ts
   a `match`; the resolver decides whether the match narrows anything.
 - Keep the parse error messages specific (`expected \`to\``, `rename cannot be
   combined with \`replace\``) so the loop's syntax diagnostic is actionable.
+- Implemented parser/serializer and tests for rename clauses. Verified with `bunx tsc --noEmit` and `bun test src/selection.test.ts` (82 pass, 0 fail). Resolver/loop work remains in #19–#21.

@@ -103,6 +103,27 @@ describe("parseSelection", () => {
     expect(first("select answer in main.ts end").space).toBeNull();
   });
 
+  test("parses a rename clause", () => {
+    const selection = first("select value in src/a.ts rename value to total end");
+    expect(selection.rename).toEqual({ from: "value", to: "total" });
+    expect(selection.pick).toBeNull();
+    expect(selection.replacement).toBeNull();
+  });
+
+  test("parses a rename after a match", () => {
+    const selection = first(
+      "select function clamp in src/math.ts\nmatch `Number.isNaN`\nrename clamp to clampTo\nend",
+    );
+    expect(selection.matcher).toEqual({ kind: "snippet", value: "Number.isNaN" });
+    expect(selection.rename).toEqual({ from: "clamp", to: "clampTo" });
+  });
+
+  test("parses a dotted rename symbol", () => {
+    const selection = first("select std.array.length in src/a.ts\nrename length to size\nend");
+    expect(selection.locator.name).toBe("std.array.length");
+    expect(selection.rename).toEqual({ from: "length", to: "size" });
+  });
+
   test("parses a match snippet viewer", () => {
     const selection = first("select function clamp in src/math.ts\nmatch `Number.isNaN`\nend");
     expect(selection.matcher).toEqual({ kind: "snippet", value: "Number.isNaN" });
@@ -319,6 +340,35 @@ describe("parseSelection failures", () => {
     expect(selection.replacement).toBe("y");
   });
 
+  test("rejects a rename combined with pick", () => {
+    expectSyntax("select value in a.ts\nrename value to total\npick 1\nend", "rename");
+    expectSyntax("select value in a.ts\nrename value to total\npick 1\nend", "pick");
+    expectSyntax(
+      "select value in a.ts\npick 1\nrename value to total\nend",
+      "rename cannot be combined with `pick`",
+    );
+  });
+
+  test("rejects a rename combined with replace", () => {
+    expectSyntax(
+      `select value in a.ts\nrename value to total\nreplace with\n${FENCE}\nx\n${FENCE}\nend`,
+      "rename cannot be combined with `replace`",
+    );
+    expectSyntax(
+      `select value in a.ts\nreplace with\n${FENCE}\nx\n${FENCE}\nrename value to total\nend`,
+      "rename cannot be combined with `replace`",
+    );
+  });
+
+  test("names a missing `to`", () => {
+    expectSyntax("select value in a.ts\nrename value end", "to");
+  });
+
+  test("names an empty rename identifier", () => {
+    expectSyntax("select value in a.ts\nrename", "identifier");
+    expectSyntax("select value in a.ts\nrename value to", "identifier");
+  });
+
   test("names an unterminated clause", () => {
     expectSyntax("select foo in a.ts\nmatch `x`", "end");
   });
@@ -455,6 +505,42 @@ describe("serializeSelection", () => {
     expect(parseSelection(serializeSelections(table))).toEqual(table);
   });
 
+  test("round-trips a rename clause with a dotted symbol and a match", () => {
+    const selection: Selection = {
+      locator: { path: "src/a.ts", name: "std.array.length", kind: "" },
+      space: null,
+      matcher: { kind: "snippet", value: "length" },
+      pick: null,
+      replacement: null,
+      rename: { from: "length", to: "size" },
+    };
+    const text = serializeSelection(selection);
+    expect(text).toBe(
+      [
+        "select std.array.length in src/a.ts",
+        "match `length`",
+        "rename length to size",
+        "end",
+      ].join("\n"),
+    );
+    expect(parseSelection(text)).toEqual([selection]);
+  });
+
+  test("round-trips a rename clause without a match", () => {
+    const selection: Selection = {
+      locator: { path: "src/a.ts", name: "value", kind: "" },
+      space: null,
+      matcher: null,
+      pick: null,
+      replacement: null,
+      rename: { from: "value", to: "total" },
+    };
+    expect(serializeSelection(selection)).toBe(
+      "select value in src/a.ts\nrename value to total\nend",
+    );
+    expect(parseSelection(serializeSelection(selection))).toEqual([selection]);
+  });
+
   test("emits resolve after the path", () => {
     const selection: Selection = {
       locator: { path: "a.ts", name: "answer", kind: "" },
@@ -581,6 +667,10 @@ describe("toEditPayload", () => {
 
   test("has no payload form for a viewer", () => {
     expect(toEditPayload(first("select foo in a.ts\nend"))).toBeNull();
+  });
+
+  test("has no payload form for a rename", () => {
+    expect(toEditPayload(first("select value in a.ts\nrename value to total\nend"))).toBeNull();
   });
 
   test("has no payload form for a regex matcher", () => {
