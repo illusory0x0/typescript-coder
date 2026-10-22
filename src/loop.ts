@@ -239,6 +239,15 @@ const EDIT_DSL_ROUNDS_SYSTEM_PARAGRAPH =
 export const EDIT_DSL_FORCE_DIAGNOSTICS =
   "stage: protocol\nthe reply must be one or more `select … end` clauses; a JSON edit payload is not accepted in this mode";
 
+// A JSON edit payload is a protocol rejection; any other unparseable reply names
+// its actual syntax error. Dropping the `SelectionSyntaxError` message made a
+// missing `end` look like a rejected JSON payload, sending the model back to the
+// payload form this mode forbids.
+function editDslParseDiagnostics(content: string, error: SelectionSyntaxError): string {
+  const trimmed = stripCodeFences(content).trimStart();
+  return trimmed.startsWith("{") ? EDIT_DSL_FORCE_DIAGNOSTICS : error.diagnostics;
+}
+
 // #117/#119: under the edit-dsl protocol a `protocol` rejection means the reply
 // was not `select … end` (usually a JSON edit payload). The retry must re-teach
 // the edit-dsl form; the JSON-flavored #56 correction would drive the model
@@ -3923,10 +3932,18 @@ function editDslOverlapDiagnostics(
   earlier: ResolvedRegion,
   later: ResolvedRegion,
 ): string {
+  const jointCreates =
+    earlier.create &&
+    later.create &&
+    earlier.start === earlier.end &&
+    later.start === later.end &&
+    earlier.start === later.start;
   return [
     "stage: edit-dsl",
     `clause ${earlier.index + 1} and clause ${later.index + 1} of ${total} both edit ${JSON.stringify(path)} but their regions overlap (offsets ${earlier.start}..${earlier.end} and ${later.start}..${later.end}); the whole edit-dsl reply is discarded and nothing is written`,
-    `clause ${earlier.index + 1} (${addressJson(earlier.locator)}) and clause ${later.index + 1} (${addressJson(later.locator)}) must address non-overlapping regions, or be split across replies`,
+    jointCreates
+      ? "put every new declaration in ONE clause's `replace with` fence (the fence body may declare several top-level names), or send one create per reply"
+      : `clause ${earlier.index + 1} (${addressJson(earlier.locator)}) and clause ${later.index + 1} (${addressJson(later.locator)}) must address non-overlapping regions, or be split across replies`,
   ].join("\n");
 }
 
@@ -5730,7 +5747,7 @@ export async function runLoop(options: LoopOptions): Promise<LoopResult> {
             if (!(error instanceof SelectionSyntaxError)) {
               throw error;
             }
-            diagnostic = EDIT_DSL_FORCE_DIAGNOSTICS;
+            diagnostic = editDslParseDiagnostics(response.content ?? "", error);
           }
         } else {
           try {
@@ -6354,7 +6371,7 @@ export async function runLoop(options: LoopOptions): Promise<LoopResult> {
           if (!(error instanceof SelectionSyntaxError)) {
             throw error;
           }
-          failure = EDIT_DSL_FORCE_DIAGNOSTICS;
+          failure = editDslParseDiagnostics(content, error);
         }
       } else if (multiPayload) {
         const parsed = parseEditResponseList(content);

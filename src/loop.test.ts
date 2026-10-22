@@ -9853,6 +9853,8 @@ describe("edit-dsl protocol (#111/#119)", () => {
     expect(rejected?.diagnostics).toContain("clause 2");
     expect(rejected?.diagnostics).toContain("the whole edit-dsl reply is discarded");
     expect(rejected?.diagnostics).toContain("nothing is written");
+    // The repair names the one-fence form instead of only asking to split.
+    expect(rejected?.diagnostics).toContain("ONE clause's `replace with` fence");
     const created = readFileSync(join(dir, "src", "new.ts"), "utf8");
     expect(created).toContain("export function Alpha");
     expect(created).not.toContain("export function Beta");
@@ -10487,7 +10489,31 @@ describe("edit-dsl protocol (#111/#119)", () => {
     });
     expect(result.ok).toBe(true);
     const rejected = result.records.find((record) => record.outcome === "protocol");
-    expect(rejected?.diagnostics).toContain("select … end");
+    expect(rejected?.diagnostics).toContain("stage: syntax");
+    expect(rejected?.diagnostics).toContain("expected `select`");
+    expect(helperSource(dir)).toContain("return 2;");
+  }, 30000);
+
+  test("under edit-dsl a select missing `end` reports the syntax error, not JSON", async () => {
+    const dir = fixtureDir();
+    const provider = new ScriptedProvider([
+      editDslSelect("answer", "src/helper.ts", "value"),
+      "select answer in src/helper.ts resolve value",
+      editDslReply(answerEditor("return 2;", { kind: "snippet", value: "return 1;" })),
+    ]);
+    const result = await runLoop({
+      cwd: dir,
+      issue: "make the answer test pass",
+      provider,
+      protocolFormat: "edit-dsl",
+      checkCommand: TSC,
+      testCommand: ["bun", "test"],
+    });
+    expect(result.ok).toBe(true);
+    const rejected = result.records.find((record) => record.outcome === "protocol");
+    expect(rejected?.diagnostics).toContain("stage: syntax");
+    expect(rejected?.diagnostics).toContain("expected `end`");
+    expect(rejected?.diagnostics).not.toContain("JSON edit payload");
     expect(helperSource(dir)).toContain("return 2;");
   }, 30000);
 });
