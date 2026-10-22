@@ -524,6 +524,8 @@ export const scenarios: Scenario[] = [
     prepare: (dir: string, repoRoot: string) => {
       cpSync(join(repoRoot, "src"), join(dir, "src"), { recursive: true });
       cpSync(join(repoRoot, "tsconfig.json"), join(dir, "tsconfig.json"));
+      // The copied suite's bin test reads package.json (#80), so copy it too.
+      cpSync(join(repoRoot, "package.json"), join(dir, "package.json"));
       symlinkSync(join(repoRoot, "node_modules"), join(dir, "node_modules"), "dir");
       writeFileSync(join(dir, ".nested-smoke"), "acceptance self-host copy\n");
     },
