@@ -21,6 +21,11 @@ digraph issues {
   "14" [label="#14 Make duplicate top-level declarations repairable from the model-facing diagnostics"];
   "15" [label="#15 Rename the compact edit format to edit-dsl"];
   "16" [label="#16 Run tc protocol variants in one concurrent benchmark"];
+  "17" [label="#17 Implement semantic rename in edit-dsl"];
+  "18" [label="#18 Parse and serialize the rename editor clause"];
+  "19" [label="#19 Rename local bindings and references by lexical scope"];
+  "20" [label="#20 Resolve dotted and member rename targets"];
+  "21" [label="#21 Apply renames atomically in the edit-dsl loop and teach the grammar"];
 
   // parent edges (parent -> child), solid
   "1" -> "2";
@@ -34,6 +39,10 @@ digraph issues {
   "6" -> "11";
   "12" -> "13";
   "12" -> "14";
+  "17" -> "18";
+  "17" -> "19";
+  "17" -> "20";
+  "17" -> "21";
 
   // dependency edges (blocker -> blocked), dashed
   "2" -> "3" [style=dashed, label="blocks"];
@@ -45,4 +54,9 @@ digraph issues {
   "8" -> "11" [style=dashed, label="blocks"];
   "9" -> "11" [style=dashed, label="blocks"];
   "10" -> "11" [style=dashed, label="blocks"];
+  "18" -> "19" [style=dashed, label="blocks"];
+  "18" -> "20" [style=dashed, label="blocks"];
+  "19" -> "20" [style=dashed, label="blocks"];
+  "19" -> "21" [style=dashed, label="blocks"];
+  "20" -> "21" [style=dashed, label="blocks"];
 }
