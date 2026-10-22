@@ -1,0 +1,3281 @@
+{
+  "generatedAt": "2026-10-22T08:02:32.721Z",
+  "date": "2026-10-22",
+  "mode": "full",
+  "tasks": [
+    "json-parser",
+    "sexp-parser",
+    "minilisp",
+    "csv-parser"
+  ],
+  "sides": [
+    "tc"
+  ],
+  "reps": 3,
+  "concurrency": 4,
+  "model": "deepseek-v4.1-flash",
+  "ocModel": null,
+  "effort": null,
+  "multiPayload": false,
+  "protocolFormat": "json",
+  "tokenBudget": null,
+  "bunVersion": "1.3.13",
+  "opencodeVersion": null,
+  "pilotReference": null,
+  "infraErrors": [],
+  "runs": [
+    {
+      "task": "json-parser",
+      "side": "tc",
+      "rep": 1,
+      "ok": true,
+      "sideOk": true,
+      "tokens": {
+        "input": 3205,
+        "output": 1668,
+        "cacheRead": 1408,
+        "cacheWrite": null,
+        "reasoning": 0,
+        "total": 4873,
+        "billable": {
+          "in": 1797,
+          "out": 1668,
+          "total": 3465
+        }
+      },
+      "usageAvailable": true,
+      "usageSource": "chat-completions",
+      "rawUsage": [
+        {
+          "prompt_tokens": 1526,
+          "completion_tokens": 28,
+          "total_tokens": 1554,
+          "prompt_tokens_details": {
+            "cached_tokens": 0
+          },
+          "completion_tokens_details": {
+            "reasoning_tokens": 0
+          }
+        },
+        {
+          "prompt_tokens": 1679,
+          "completion_tokens": 1640,
+          "total_tokens": 3319,
+          "prompt_tokens_details": {
+            "cached_tokens": 1408
+          },
+          "completion_tokens_details": {
+            "reasoning_tokens": 0
+          }
+        }
+      ],
+      "durationMs": 234628,
+      "startedAt": "2026-10-22T08:02:32.741Z",
+      "finishedAt": "2026-10-22T08:06:27.368Z",
+      "cost": 0.002549148,
+      "rateClass": "peak",
+      "steps": 3,
+      "records": [
+        {
+          "row": 1,
+          "iteration": 1,
+          "kind": "exchange",
+          "exchange": 1,
+          "outcome": "selected",
+          "diagnosticsHead": null,
+          "replacementChars": null,
+          "finishReason": "stop",
+          "cause": null,
+          "payloads": 0,
+          "toolCalls": 0,
+          "selectors": null,
+          "stages": null,
+          "matcherKinds": null
+        },
+        {
+          "row": 2,
+          "iteration": 1,
+          "kind": "exchange",
+          "exchange": 2,
+          "outcome": "applied",
+          "diagnosticsHead": null,
+          "replacementChars": 4729,
+          "finishReason": "stop",
+          "cause": null,
+          "payloads": 1,
+          "toolCalls": 0,
+          "selectors": [
+            "whole-symbol"
+          ],
+          "stages": [
+            "whole-symbol"
+          ],
+          "matcherKinds": [
+            null
+          ]
+        },
+        {
+          "row": 3,
+          "iteration": 1,
+          "kind": "verification",
+          "exchange": null,
+          "outcome": "ok",
+          "diagnosticsHead": null,
+          "replacementChars": 4729,
+          "finishReason": "stop",
+          "cause": null,
+          "payloads": 0,
+          "toolCalls": 0,
+          "selectors": null,
+          "stages": null,
+          "matcherKinds": null
+        }
+      ],
+      "exchangeStats": {
+        "turns": 2,
+        "payloads": 1,
+        "toolCalls": 0,
+        "applied": 1,
+        "rejected": 0,
+        "selected": 1,
+        "stopped": 0,
+        "selfChecks": 0,
+        "range": 0,
+        "matcher": 0,
+        "wholeSymbol": 1,
+        "stageWholeSymbol": 1,
+        "stageMatch": 0,
+        "stagePick": 0,
+        "snippet": 0,
+        "regex": 0,
+        "creates": 0
+      },
+      "loopDiagnostics": null,
+      "terminationReason": null,
+      "model": "deepseek-v4.1-flash",
+      "workspace": "tmp/benchmark/2026-10-22T08-02-32-723Z-8dd9708e/json-parser-tc-rep1",
+      "logs": {
+        "side": "tmp/benchmark/2026-10-22T08-02-32-723Z-8dd9708e/logs/json-parser-tc-rep1/side.log",
+        "judge": "tmp/benchmark/2026-10-22T08-02-32-723Z-8dd9708e/logs/json-parser-tc-rep1/judge.log",
+        "session": null,
+        "stats": null
+      },
+      "versions": {
+        "bun": "1.3.13",
+        "opencode": null
+      },
+      "judge": {
+        "testsOk": true,
+        "tscOk": true,
+        "fixtureOk": true,
+        "detail": null
+      },
+      "error": null,
+      "infraError": null
+    },
+    {
+      "task": "json-parser",
+      "side": "tc",
+      "rep": 2,
+      "ok": true,
+      "sideOk": true,
+      "tokens": {
+        "input": 3205,
+        "output": 1599,
+        "cacheRead": 2816,
+        "cacheWrite": null,
+        "reasoning": 0,
+        "total": 4804,
+        "billable": {
+          "in": 389,
+          "out": 1599,
+          "total": 1988
+        }
+      },
+      "usageAvailable": true,
+      "usageSource": "chat-completions",
+      "rawUsage": [
+        {
+          "prompt_tokens": 1526,
+          "completion_tokens": 28,
+          "total_tokens": 1554,
+          "prompt_tokens_details": {
+            "cached_tokens": 1408
+          },
+          "completion_tokens_details": {
+            "reasoning_tokens": 0
+          }
+        },
+        {
+          "prompt_tokens": 1679,
+          "completion_tokens": 1571,
+          "total_tokens": 3250,
+          "prompt_tokens_details": {
+            "cached_tokens": 1408
+          },
+          "completion_tokens_details": {
+            "reasoning_tokens": 0
+          }
+        }
+      ],
+      "durationMs": 234406,
+      "startedAt": "2026-10-22T08:02:32.769Z",
+      "finishedAt": "2026-10-22T08:06:27.175Z",
+      "cost": 0.0020523959999999997,
+      "rateClass": "peak",
+      "steps": 3,
+      "records": [
+        {
+          "row": 1,
+          "iteration": 1,
+          "kind": "exchange",
+          "exchange": 1,
+          "outcome": "selected",
+          "diagnosticsHead": null,
+          "replacementChars": null,
+          "finishReason": "stop",
+          "cause": null,
+          "payloads": 0,
+          "toolCalls": 0,
+          "selectors": null,
+          "stages": null,
+          "matcherKinds": null
+        },
+        {
+          "row": 2,
+          "iteration": 1,
+          "kind": "exchange",
+          "exchange": 2,
+          "outcome": "applied",
+          "diagnosticsHead": null,
+          "replacementChars": 4536,
+          "finishReason": "stop",
+          "cause": null,
+          "payloads": 1,
+          "toolCalls": 0,
+          "selectors": [
+            "whole-symbol"
+          ],
+          "stages": [
+            "whole-symbol"
+          ],
+          "matcherKinds": [
+            null
+          ]
+        },
+        {
+          "row": 3,
+          "iteration": 1,
+          "kind": "verification",
+          "exchange": null,
+          "outcome": "ok",
+          "diagnosticsHead": null,
+          "replacementChars": 4536,
+          "finishReason": "stop",
+          "cause": null,
+          "payloads": 0,
+          "toolCalls": 0,
+          "selectors": null,
+          "stages": null,
+          "matcherKinds": null
+        }
+      ],
+      "exchangeStats": {
+        "turns": 2,
+        "payloads": 1,
+        "toolCalls": 0,
+        "applied": 1,
+        "rejected": 0,
+        "selected": 1,
+        "stopped": 0,
+        "selfChecks": 0,
+        "range": 0,
+        "matcher": 0,
+        "wholeSymbol": 1,
+        "stageWholeSymbol": 1,
+        "stageMatch": 0,
+        "stagePick": 0,
+        "snippet": 0,
+        "regex": 0,
+        "creates": 0
+      },
+      "loopDiagnostics": null,
+      "terminationReason": null,
+      "model": "deepseek-v4.1-flash",
+      "workspace": "tmp/benchmark/2026-10-22T08-02-32-723Z-8dd9708e/json-parser-tc-rep2",
+      "logs": {
+        "side": "tmp/benchmark/2026-10-22T08-02-32-723Z-8dd9708e/logs/json-parser-tc-rep2/side.log",
+        "judge": "tmp/benchmark/2026-10-22T08-02-32-723Z-8dd9708e/logs/json-parser-tc-rep2/judge.log",
+        "session": null,
+        "stats": null
+      },
+      "versions": {
+        "bun": "1.3.13",
+        "opencode": null
+      },
+      "judge": {
+        "testsOk": true,
+        "tscOk": true,
+        "fixtureOk": true,
+        "detail": null
+      },
+      "error": null,
+      "infraError": null
+    },
+    {
+      "task": "json-parser",
+      "side": "tc",
+      "rep": 3,
+      "ok": true,
+      "sideOk": true,
+      "tokens": {
+        "input": 3205,
+        "output": 1618,
+        "cacheRead": 2816,
+        "cacheWrite": null,
+        "reasoning": 0,
+        "total": 4823,
+        "billable": {
+          "in": 389,
+          "out": 1618,
+          "total": 2007
+        }
+      },
+      "usageAvailable": true,
+      "usageSource": "chat-completions",
+      "rawUsage": [
+        {
+          "prompt_tokens": 1526,
+          "completion_tokens": 28,
+          "total_tokens": 1554,
+          "prompt_tokens_details": {
+            "cached_tokens": 1408
+          },
+          "completion_tokens_details": {
+            "reasoning_tokens": 0
+          }
+        },
+        {
+          "prompt_tokens": 1679,
+          "completion_tokens": 1590,
+          "total_tokens": 3269,
+          "prompt_tokens_details": {
+            "cached_tokens": 1408
+          },
+          "completion_tokens_details": {
+            "reasoning_tokens": 0
+          }
+        }
+      ],
+      "durationMs": 234392,
+      "startedAt": "2026-10-22T08:02:32.779Z",
+      "finishedAt": "2026-10-22T08:06:27.171Z",
+      "cost": 0.002075196,
+      "rateClass": "peak",
+      "steps": 3,
+      "records": [
+        {
+          "row": 1,
+          "iteration": 1,
+          "kind": "exchange",
+          "exchange": 1,
+          "outcome": "selected",
+          "diagnosticsHead": null,
+          "replacementChars": null,
+          "finishReason": "stop",
+          "cause": null,
+          "payloads": 0,
+          "toolCalls": 0,
+          "selectors": null,
+          "stages": null,
+          "matcherKinds": null
+        },
+        {
+          "row": 2,
+          "iteration": 1,
+          "kind": "exchange",
+          "exchange": 2,
+          "outcome": "applied",
+          "diagnosticsHead": null,
+          "replacementChars": 4616,
+          "finishReason": "stop",
+          "cause": null,
+          "payloads": 1,
+          "toolCalls": 0,
+          "selectors": [
+            "whole-symbol"
+          ],
+          "stages": [
+            "whole-symbol"
+          ],
+          "matcherKinds": [
+            null
+          ]
+        },
+        {
+          "row": 3,
+          "iteration": 1,
+          "kind": "verification",
+          "exchange": null,
+          "outcome": "ok",
+          "diagnosticsHead": null,
+          "replacementChars": 4616,
+          "finishReason": "stop",
+          "cause": null,
+          "payloads": 0,
+          "toolCalls": 0,
+          "selectors": null,
+          "stages": null,
+          "matcherKinds": null
+        }
+      ],
+      "exchangeStats": {
+        "turns": 2,
+        "payloads": 1,
+        "toolCalls": 0,
+        "applied": 1,
+        "rejected": 0,
+        "selected": 1,
+        "stopped": 0,
+        "selfChecks": 0,
+        "range": 0,
+        "matcher": 0,
+        "wholeSymbol": 1,
+        "stageWholeSymbol": 1,
+        "stageMatch": 0,
+        "stagePick": 0,
+        "snippet": 0,
+        "regex": 0,
+        "creates": 0
+      },
+      "loopDiagnostics": null,
+      "terminationReason": null,
+      "model": "deepseek-v4.1-flash",
+      "workspace": "tmp/benchmark/2026-10-22T08-02-32-723Z-8dd9708e/json-parser-tc-rep3",
+      "logs": {
+        "side": "tmp/benchmark/2026-10-22T08-02-32-723Z-8dd9708e/logs/json-parser-tc-rep3/side.log",
+        "judge": "tmp/benchmark/2026-10-22T08-02-32-723Z-8dd9708e/logs/json-parser-tc-rep3/judge.log",
+        "session": null,
+        "stats": null
+      },
+      "versions": {
+        "bun": "1.3.13",
+        "opencode": null
+      },
+      "judge": {
+        "testsOk": true,
+        "tscOk": true,
+        "fixtureOk": true,
+        "detail": null
+      },
+      "error": null,
+      "infraError": null
+    },
+    {
+      "task": "sexp-parser",
+      "side": "tc",
+      "rep": 1,
+      "ok": true,
+      "sideOk": true,
+      "tokens": {
+        "input": 4743,
+        "output": 1096,
+        "cacheRead": 1664,
+        "cacheWrite": null,
+        "reasoning": 0,
+        "total": 5839,
+        "billable": {
+          "in": 3079,
+          "out": 1096,
+          "total": 4175
+        }
+      },
+      "usageAvailable": true,
+      "usageSource": "chat-completions",
+      "rawUsage": [
+        {
+          "prompt_tokens": 1256,
+          "completion_tokens": 547,
+          "total_tokens": 1803,
+          "prompt_tokens_details": {
+            "cached_tokens": 512
+          },
+          "completion_tokens_details": {
+            "reasoning_tokens": 0
+          }
+        },
+        {
+          "prompt_tokens": 1889,
+          "completion_tokens": 31,
+          "total_tokens": 1920,
+          "prompt_tokens_details": {
+            "cached_tokens": 1152
+          },
+          "completion_tokens_details": {
+            "reasoning_tokens": 0
+          }
+        },
+        {
+          "prompt_tokens": 1598,
+          "completion_tokens": 518,
+          "total_tokens": 2116,
+          "prompt_tokens_details": {
+            "audio_tokens": 0,
+            "cached_tokens": 0,
+            "cache_creation_input_tokens": 0,
+            "cache_write_tokens": 0
+          },
+          "completion_tokens_details": {
+            "accepted_prediction_tokens": 0,
+            "audio_tokens": 0,
+            "reasoning_tokens": 0,
+            "rejected_prediction_tokens": 0
+          }
+        }
+      ],
+      "durationMs": 238559,
+      "startedAt": "2026-10-22T08:02:32.789Z",
+      "finishedAt": "2026-10-22T08:06:31.347Z",
+      "cost": 0.002248884,
+      "rateClass": "peak",
+      "steps": 4,
+      "records": [
+        {
+          "row": 1,
+          "iteration": 1,
+          "kind": "exchange",
+          "exchange": 1,
+          "outcome": "protocol",
+          "diagnosticsHead": "stage: protocol expected {\"mode\":\"modify\"|\"create\"|\"delete\",\"path\": ..., \"symbol\": ..., \"kind\": ...}; unexpected key(s) \"replacement\"",
+          "replacementChars": null,
+          "finishReason": "stop",
+          "cause": "protocol",
+          "payloads": 0,
+          "toolCalls": 0,
+          "selectors": null,
+          "stages": null,
+          "matcherKinds": null
+        },
+        {
+          "row": 2,
+          "iteration": 1,
+          "kind": "exchange",
+          "exchange": 2,
+          "outcome": "selected",
+          "diagnosticsHead": null,
+          "replacementChars": null,
+          "finishReason": "stop",
+          "cause": null,
+          "payloads": 0,
+          "toolCalls": 0,
+          "selectors": null,
+          "stages": null,
+          "matcherKinds": null
+        },
+        {
+          "row": 3,
+          "iteration": 1,
+          "kind": "exchange",
+          "exchange": 3,
+          "outcome": "applied",
+          "diagnosticsHead": null,
+          "replacementChars": 1398,
+          "finishReason": "stop",
+          "cause": null,
+          "payloads": 1,
+          "toolCalls": 0,
+          "selectors": [
+            "whole-symbol"
+          ],
+          "stages": [
+            "whole-symbol"
+          ],
+          "matcherKinds": [
+            null
+          ]
+        },
+        {
+          "row": 4,
+          "iteration": 1,
+          "kind": "verification",
+          "exchange": null,
+          "outcome": "ok",
+          "diagnosticsHead": null,
+          "replacementChars": 1398,
+          "finishReason": "stop",
+          "cause": null,
+          "payloads": 0,
+          "toolCalls": 0,
+          "selectors": null,
+          "stages": null,
+          "matcherKinds": null
+        }
+      ],
+      "exchangeStats": {
+        "turns": 3,
+        "payloads": 1,
+        "toolCalls": 0,
+        "applied": 1,
+        "rejected": 1,
+        "selected": 1,
+        "stopped": 0,
+        "selfChecks": 0,
+        "range": 0,
+        "matcher": 0,
+        "wholeSymbol": 1,
+        "stageWholeSymbol": 1,
+        "stageMatch": 0,
+        "stagePick": 0,
+        "snippet": 0,
+        "regex": 0,
+        "creates": 0
+      },
+      "loopDiagnostics": null,
+      "terminationReason": null,
+      "model": "deepseek-v4.1-flash",
+      "workspace": "tmp/benchmark/2026-10-22T08-02-32-723Z-8dd9708e/sexp-parser-tc-rep1",
+      "logs": {
+        "side": "tmp/benchmark/2026-10-22T08-02-32-723Z-8dd9708e/logs/sexp-parser-tc-rep1/side.log",
+        "judge": "tmp/benchmark/2026-10-22T08-02-32-723Z-8dd9708e/logs/sexp-parser-tc-rep1/judge.log",
+        "session": null,
+        "stats": null
+      },
+      "versions": {
+        "bun": "1.3.13",
+        "opencode": null
+      },
+      "judge": {
+        "testsOk": true,
+        "tscOk": true,
+        "fixtureOk": true,
+        "detail": null
+      },
+      "error": null,
+      "infraError": null
+    },
+    {
+      "task": "sexp-parser",
+      "side": "tc",
+      "rep": 2,
+      "ok": true,
+      "sideOk": true,
+      "tokens": {
+        "input": 2673,
+        "output": 490,
+        "cacheRead": 1152,
+        "cacheWrite": null,
+        "reasoning": 0,
+        "total": 3163,
+        "billable": {
+          "in": 1521,
+          "out": 490,
+          "total": 2011
+        }
+      },
+      "usageAvailable": true,
+      "usageSource": "chat-completions",
+      "rawUsage": [
+        {
+          "prompt_tokens": 1256,
+          "completion_tokens": 30,
+          "total_tokens": 1286,
+          "prompt_tokens_details": {
+            "audio_tokens": 0,
+            "cached_tokens": 0,
+            "cache_creation_input_tokens": 0,
+            "cache_write_tokens": 0
+          },
+          "completion_tokens_details": {
+            "accepted_prediction_tokens": 0,
+            "audio_tokens": 0,
+            "reasoning_tokens": 0,
+            "rejected_prediction_tokens": 0
+          }
+        },
+        {
+          "prompt_tokens": 1417,
+          "completion_tokens": 460,
+          "total_tokens": 1877,
+          "prompt_tokens_details": {
+            "audio_tokens": 0,
+            "cached_tokens": 1152,
+            "cache_creation_input_tokens": 0,
+            "cache_write_tokens": 0
+          },
+          "completion_tokens_details": {
+            "accepted_prediction_tokens": 0,
+            "audio_tokens": 0,
+            "reasoning_tokens": 0,
+            "rejected_prediction_tokens": 0
+          }
+        }
+      ],
+      "durationMs": 11493,
+      "startedAt": "2026-10-22T08:06:27.318Z",
+      "finishedAt": "2026-10-22T08:06:38.811Z",
+      "cost": 0.001051212,
+      "rateClass": "peak",
+      "steps": 3,
+      "records": [
+        {
+          "row": 1,
+          "iteration": 1,
+          "kind": "exchange",
+          "exchange": 1,
+          "outcome": "selected",
+          "diagnosticsHead": null,
+          "replacementChars": null,
+          "finishReason": "stop",
+          "cause": null,
+          "payloads": 0,
+          "toolCalls": 0,
+          "selectors": null,
+          "stages": null,
+          "matcherKinds": null
+        },
+        {
+          "row": 2,
+          "iteration": 1,
+          "kind": "exchange",
+          "exchange": 2,
+          "outcome": "applied",
+          "diagnosticsHead": null,
+          "replacementChars": 1292,
+          "finishReason": "stop",
+          "cause": null,
+          "payloads": 1,
+          "toolCalls": 0,
+          "selectors": [
+            "whole-symbol"
+          ],
+          "stages": [
+            "whole-symbol"
+          ],
+          "matcherKinds": [
+            null
+          ]
+        },
+        {
+          "row": 3,
+          "iteration": 1,
+          "kind": "verification",
+          "exchange": null,
+          "outcome": "ok",
+          "diagnosticsHead": null,
+          "replacementChars": 1292,
+          "finishReason": "stop",
+          "cause": null,
+          "payloads": 0,
+          "toolCalls": 0,
+          "selectors": null,
+          "stages": null,
+          "matcherKinds": null
+        }
+      ],
+      "exchangeStats": {
+        "turns": 2,
+        "payloads": 1,
+        "toolCalls": 0,
+        "applied": 1,
+        "rejected": 0,
+        "selected": 1,
+        "stopped": 0,
+        "selfChecks": 0,
+        "range": 0,
+        "matcher": 0,
+        "wholeSymbol": 1,
+        "stageWholeSymbol": 1,
+        "stageMatch": 0,
+        "stagePick": 0,
+        "snippet": 0,
+        "regex": 0,
+        "creates": 0
+      },
+      "loopDiagnostics": null,
+      "terminationReason": null,
+      "model": "deepseek-v4.1-flash",
+      "workspace": "tmp/benchmark/2026-10-22T08-02-32-723Z-8dd9708e/sexp-parser-tc-rep2",
+      "logs": {
+        "side": "tmp/benchmark/2026-10-22T08-02-32-723Z-8dd9708e/logs/sexp-parser-tc-rep2/side.log",
+        "judge": "tmp/benchmark/2026-10-22T08-02-32-723Z-8dd9708e/logs/sexp-parser-tc-rep2/judge.log",
+        "session": null,
+        "stats": null
+      },
+      "versions": {
+        "bun": "1.3.13",
+        "opencode": null
+      },
+      "judge": {
+        "testsOk": true,
+        "tscOk": true,
+        "fixtureOk": true,
+        "detail": null
+      },
+      "error": null,
+      "infraError": null
+    },
+    {
+      "task": "sexp-parser",
+      "side": "tc",
+      "rep": 3,
+      "ok": true,
+      "sideOk": true,
+      "tokens": {
+        "input": 4489,
+        "output": 636,
+        "cacheRead": 1792,
+        "cacheWrite": null,
+        "reasoning": 0,
+        "total": 5125,
+        "billable": {
+          "in": 2697,
+          "out": 636,
+          "total": 3333
+        }
+      },
+      "usageAvailable": true,
+      "usageSource": "chat-completions",
+      "rawUsage": [
+        {
+          "prompt_tokens": 1256,
+          "completion_tokens": 29,
+          "total_tokens": 1285,
+          "prompt_tokens_details": {
+            "audio_tokens": 0,
+            "cached_tokens": 0,
+            "cache_creation_input_tokens": 0,
+            "cache_write_tokens": 0
+          },
+          "completion_tokens_details": {
+            "accepted_prediction_tokens": 0,
+            "audio_tokens": 0,
+            "reasoning_tokens": 0,
+            "rejected_prediction_tokens": 0
+          }
+        },
+        {
+          "prompt_tokens": 1415,
+          "completion_tokens": 35,
+          "total_tokens": 1450,
+          "prompt_tokens_details": {
+            "audio_tokens": 0,
+            "cached_tokens": 1408,
+            "cache_creation_input_tokens": 0,
+            "cache_write_tokens": 0
+          },
+          "completion_tokens_details": {
+            "accepted_prediction_tokens": 0,
+            "audio_tokens": 0,
+            "reasoning_tokens": 0,
+            "rejected_prediction_tokens": 0
+          }
+        },
+        {
+          "prompt_tokens": 1818,
+          "completion_tokens": 572,
+          "total_tokens": 2390,
+          "prompt_cache_hit_tokens": 384,
+          "prompt_cache_miss_tokens": 1434,
+          "prompt_tokens_details": {
+            "cached_tokens": 384
+          }
+        }
+      ],
+      "durationMs": 12949,
+      "startedAt": "2026-10-22T08:06:27.329Z",
+      "finishedAt": "2026-10-22T08:06:40.278Z",
+      "cost": 0.001583052,
+      "rateClass": "peak",
+      "steps": 5,
+      "records": [
+        {
+          "row": 1,
+          "iteration": 1,
+          "kind": "exchange",
+          "exchange": 1,
+          "outcome": "selected",
+          "diagnosticsHead": null,
+          "replacementChars": null,
+          "finishReason": "stop",
+          "cause": null,
+          "payloads": 0,
+          "toolCalls": 0,
+          "selectors": null,
+          "stages": null,
+          "matcherKinds": null
+        },
+        {
+          "row": 2,
+          "iteration": 1,
+          "kind": "exchange",
+          "exchange": 2,
+          "outcome": "applied",
+          "diagnosticsHead": null,
+          "replacementChars": 44,
+          "finishReason": "stop",
+          "cause": null,
+          "payloads": 1,
+          "toolCalls": 0,
+          "selectors": [
+            "whole-symbol"
+          ],
+          "stages": [
+            "whole-symbol"
+          ],
+          "matcherKinds": [
+            null
+          ]
+        },
+        {
+          "row": 3,
+          "iteration": 1,
+          "kind": "verification",
+          "exchange": null,
+          "outcome": "tests",
+          "diagnosticsHead": "stage: tests tests failed: test output: bun test v1.3.13 (bf2e2cec) src/sexp.test.ts: # Unhandled error between tests ------------------------------- 1 | }) 2 | { ^ SyntaxError: Export named 'parseSex",
+          "replacementChars": 44,
+          "finishReason": "stop",
+          "cause": null,
+          "payloads": 0,
+          "toolCalls": 0,
+          "selectors": null,
+          "stages": null,
+          "matcherKinds": null
+        },
+        {
+          "row": 4,
+          "iteration": 2,
+          "kind": "exchange",
+          "exchange": 1,
+          "outcome": "applied",
+          "diagnosticsHead": null,
+          "replacementChars": 1462,
+          "finishReason": "stop",
+          "cause": null,
+          "payloads": 1,
+          "toolCalls": 0,
+          "selectors": [
+            "matcher"
+          ],
+          "stages": [
+            "match"
+          ],
+          "matcherKinds": [
+            "snippet"
+          ]
+        },
+        {
+          "row": 5,
+          "iteration": 2,
+          "kind": "verification",
+          "exchange": null,
+          "outcome": "ok",
+          "diagnosticsHead": null,
+          "replacementChars": 1462,
+          "finishReason": "stop",
+          "cause": null,
+          "payloads": 0,
+          "toolCalls": 0,
+          "selectors": null,
+          "stages": null,
+          "matcherKinds": null
+        }
+      ],
+      "exchangeStats": {
+        "turns": 3,
+        "payloads": 2,
+        "toolCalls": 0,
+        "applied": 2,
+        "rejected": 0,
+        "selected": 1,
+        "stopped": 0,
+        "selfChecks": 0,
+        "range": 0,
+        "matcher": 1,
+        "wholeSymbol": 1,
+        "stageWholeSymbol": 1,
+        "stageMatch": 1,
+        "stagePick": 0,
+        "snippet": 1,
+        "regex": 0,
+        "creates": 0
+      },
+      "loopDiagnostics": null,
+      "terminationReason": null,
+      "model": "deepseek-v4.1-flash",
+      "workspace": "tmp/benchmark/2026-10-22T08-02-32-723Z-8dd9708e/sexp-parser-tc-rep3",
+      "logs": {
+        "side": "tmp/benchmark/2026-10-22T08-02-32-723Z-8dd9708e/logs/sexp-parser-tc-rep3/side.log",
+        "judge": "tmp/benchmark/2026-10-22T08-02-32-723Z-8dd9708e/logs/sexp-parser-tc-rep3/judge.log",
+        "session": null,
+        "stats": null
+      },
+      "versions": {
+        "bun": "1.3.13",
+        "opencode": null
+      },
+      "judge": {
+        "testsOk": true,
+        "tscOk": true,
+        "fixtureOk": true,
+        "detail": null
+      },
+      "error": null,
+      "infraError": null
+    },
+    {
+      "task": "minilisp",
+      "side": "tc",
+      "rep": 1,
+      "ok": true,
+      "sideOk": true,
+      "tokens": {
+        "input": 94965,
+        "output": 9962,
+        "cacheRead": 22784,
+        "cacheWrite": null,
+        "reasoning": 0,
+        "total": 104927,
+        "billable": {
+          "in": 72181,
+          "out": 9962,
+          "total": 82143
+        }
+      },
+      "usageAvailable": true,
+      "usageSource": "chat-completions",
+      "rawUsage": [
+        {
+          "prompt_tokens": 1752,
+          "completion_tokens": 27,
+          "total_tokens": 1779,
+          "prompt_tokens_details": {
+            "audio_tokens": 0,
+            "cached_tokens": 1664,
+            "cache_creation_input_tokens": 0,
+            "cache_write_tokens": 0
+          },
+          "completion_tokens_details": {
+            "accepted_prediction_tokens": 0,
+            "audio_tokens": 0,
+            "reasoning_tokens": 0,
+            "rejected_prediction_tokens": 0
+          }
+        },
+        {
+          "prompt_tokens": 1906,
+          "completion_tokens": 2329,
+          "total_tokens": 4235,
+          "prompt_tokens_details": {
+            "audio_tokens": 0,
+            "cached_tokens": 1792,
+            "cache_creation_input_tokens": 0,
+            "cache_write_tokens": 0
+          },
+          "completion_tokens_details": {
+            "accepted_prediction_tokens": 0,
+            "audio_tokens": 0,
+            "reasoning_tokens": 0,
+            "rejected_prediction_tokens": 0
+          }
+        },
+        {
+          "prompt_tokens": 5435,
+          "completion_tokens": 48,
+          "total_tokens": 5483,
+          "prompt_tokens_details": {
+            "audio_tokens": 0,
+            "cached_tokens": 2048,
+            "cache_creation_input_tokens": 0,
+            "cache_write_tokens": 0
+          },
+          "completion_tokens_details": {
+            "accepted_prediction_tokens": 0,
+            "audio_tokens": 0,
+            "reasoning_tokens": 0,
+            "rejected_prediction_tokens": 0
+          }
+        },
+        {
+          "prompt_tokens": 5525,
+          "completion_tokens": 98,
+          "total_tokens": 5623,
+          "prompt_tokens_details": {
+            "audio_tokens": 0,
+            "cached_tokens": 1664,
+            "cache_creation_input_tokens": 0,
+            "cache_write_tokens": 0
+          },
+          "completion_tokens_details": {
+            "accepted_prediction_tokens": 0,
+            "audio_tokens": 0,
+            "reasoning_tokens": 0,
+            "rejected_prediction_tokens": 0
+          }
+        },
+        {
+          "prompt_tokens": 5528,
+          "completion_tokens": 54,
+          "total_tokens": 5582,
+          "prompt_tokens_details": {
+            "audio_tokens": 0,
+            "cached_tokens": 1664,
+            "cache_creation_input_tokens": 0,
+            "cache_write_tokens": 0
+          },
+          "completion_tokens_details": {
+            "accepted_prediction_tokens": 0,
+            "audio_tokens": 0,
+            "reasoning_tokens": 0,
+            "rejected_prediction_tokens": 0
+          }
+        },
+        {
+          "prompt_tokens": 5630,
+          "completion_tokens": 5,
+          "total_tokens": 5635,
+          "prompt_tokens_details": {
+            "audio_tokens": 0,
+            "cached_tokens": 0,
+            "cache_creation_input_tokens": 0,
+            "cache_write_tokens": 0
+          },
+          "completion_tokens_details": {
+            "accepted_prediction_tokens": 0,
+            "audio_tokens": 0,
+            "reasoning_tokens": 0,
+            "rejected_prediction_tokens": 0
+          }
+        },
+        {
+          "prompt_tokens": 7992,
+          "completion_tokens": 121,
+          "total_tokens": 8113,
+          "prompt_tokens_details": {
+            "cached_tokens": 512,
+            "cache_write_tokens": null
+          },
+          "completion_tokens_details": {
+            "reasoning_tokens": 0
+          }
+        },
+        {
+          "prompt_tokens": 5457,
+          "completion_tokens": 5,
+          "total_tokens": 5462,
+          "prompt_tokens_details": {
+            "audio_tokens": 0,
+            "cached_tokens": 1664,
+            "cache_creation_input_tokens": 0,
+            "cache_write_tokens": 0
+          },
+          "completion_tokens_details": {
+            "accepted_prediction_tokens": 0,
+            "audio_tokens": 0,
+            "reasoning_tokens": 0,
+            "rejected_prediction_tokens": 0
+          }
+        },
+        {
+          "prompt_tokens": 8023,
+          "completion_tokens": 40,
+          "total_tokens": 8063,
+          "prompt_tokens_details": {
+            "audio_tokens": 0,
+            "cached_tokens": 1664,
+            "cache_creation_input_tokens": 0,
+            "cache_write_tokens": 0
+          },
+          "completion_tokens_details": {
+            "accepted_prediction_tokens": 0,
+            "audio_tokens": 0,
+            "reasoning_tokens": 0,
+            "rejected_prediction_tokens": 0
+          }
+        },
+        {
+          "prompt_tokens": 5526,
+          "completion_tokens": 244,
+          "total_tokens": 5770,
+          "prompt_tokens_details": {
+            "audio_tokens": 0,
+            "cached_tokens": 1664,
+            "cache_creation_input_tokens": 0,
+            "cache_write_tokens": 0
+          },
+          "completion_tokens_details": {
+            "accepted_prediction_tokens": 0,
+            "audio_tokens": 0,
+            "reasoning_tokens": 0,
+            "rejected_prediction_tokens": 0
+          }
+        },
+        {
+          "prompt_tokens": 5691,
+          "completion_tokens": 1382,
+          "total_tokens": 7073,
+          "prompt_tokens_details": {
+            "cached_tokens": 0
+          },
+          "completion_tokens_details": {
+            "reasoning_tokens": 0
+          }
+        },
+        {
+          "prompt_tokens": 5622,
+          "completion_tokens": 1348,
+          "total_tokens": 6970,
+          "prompt_tokens_details": {
+            "cached_tokens": 1664
+          },
+          "completion_tokens_details": {
+            "reasoning_tokens": 0
+          }
+        },
+        {
+          "prompt_tokens": 5543,
+          "completion_tokens": 1437,
+          "total_tokens": 6980,
+          "prompt_tokens_details": {
+            "cached_tokens": 1664
+          },
+          "completion_tokens_details": {
+            "reasoning_tokens": 0
+          }
+        },
+        {
+          "prompt_tokens": 5891,
+          "completion_tokens": 1382,
+          "total_tokens": 7273,
+          "prompt_tokens_details": {
+            "cached_tokens": 0
+          },
+          "completion_tokens_details": {
+            "reasoning_tokens": 0
+          }
+        },
+        {
+          "prompt_tokens": 5512,
+          "completion_tokens": 6,
+          "total_tokens": 5518,
+          "prompt_tokens_details": {
+            "cached_tokens": 1664
+          },
+          "completion_tokens_details": {
+            "reasoning_tokens": 0
+          }
+        },
+        {
+          "prompt_tokens": 8078,
+          "completion_tokens": 62,
+          "total_tokens": 8140,
+          "prompt_tokens_details": {
+            "cached_tokens": 1792
+          },
+          "completion_tokens_details": {
+            "reasoning_tokens": 0
+          }
+        },
+        {
+          "prompt_tokens": 5854,
+          "completion_tokens": 1374,
+          "total_tokens": 7228,
+          "prompt_tokens_details": {
+            "cached_tokens": 1664
+          },
+          "completion_tokens_details": {
+            "reasoning_tokens": 0
+          }
+        }
+      ],
+      "durationMs": 145596,
+      "startedAt": "2026-10-22T08:06:27.497Z",
+      "finishedAt": "2026-10-22T08:08:53.093Z",
+      "cost": 0.033745404,
+      "rateClass": "peak",
+      "steps": 20,
+      "records": [
+        {
+          "row": 1,
+          "iteration": 1,
+          "kind": "exchange",
+          "exchange": 1,
+          "outcome": "selected",
+          "diagnosticsHead": null,
+          "replacementChars": null,
+          "finishReason": "stop",
+          "cause": null,
+          "payloads": 0,
+          "toolCalls": 0,
+          "selectors": null,
+          "stages": null,
+          "matcherKinds": null
+        },
+        {
+          "row": 2,
+          "iteration": 1,
+          "kind": "exchange",
+          "exchange": 2,
+          "outcome": "applied",
+          "diagnosticsHead": null,
+          "replacementChars": 7075,
+          "finishReason": "stop",
+          "cause": null,
+          "payloads": 1,
+          "toolCalls": 0,
+          "selectors": [
+            "whole-symbol"
+          ],
+          "stages": [
+            "whole-symbol"
+          ],
+          "matcherKinds": [
+            null
+          ]
+        },
+        {
+          "row": 3,
+          "iteration": 1,
+          "kind": "verification",
+          "exchange": null,
+          "outcome": "tests",
+          "diagnosticsHead": "stage: tests tests failed: failing tests: - minilisp special forms > lambda application - minilisp special forms > define function shorthand - minilisp special forms > closures capture their defining ",
+          "replacementChars": 7075,
+          "finishReason": "stop",
+          "cause": null,
+          "payloads": 0,
+          "toolCalls": 0,
+          "selectors": null,
+          "stages": null,
+          "matcherKinds": null
+        },
+        {
+          "row": 4,
+          "iteration": 2,
+          "kind": "exchange",
+          "exchange": 1,
+          "outcome": "matcher",
+          "diagnosticsHead": "stage: matcher the matcher could not be parsed as TypeScript: expected \"}\" (line 1, column 43); a matcher must be a single copied statement or expression, or a contiguous run of statements copied from",
+          "replacementChars": 49,
+          "finishReason": "stop",
+          "cause": "matcher-unparseable",
+          "payloads": 1,
+          "toolCalls": 0,
+          "selectors": [
+            "matcher"
+          ],
+          "stages": [
+            "match"
+          ],
+          "matcherKinds": [
+            "snippet"
+          ]
+        },
+        {
+          "row": 5,
+          "iteration": 2,
+          "kind": "exchange",
+          "exchange": 2,
+          "outcome": "no-op",
+          "diagnosticsHead": "stage: no-op the edit does not change the file: the replacement is identical to the text it replaces; change the code so the diagnostics are actually addressed",
+          "replacementChars": 227,
+          "finishReason": "stop",
+          "cause": "no-op",
+          "payloads": 1,
+          "toolCalls": 0,
+          "selectors": [
+            "whole-symbol"
+          ],
+          "stages": [
+            "whole-symbol"
+          ],
+          "matcherKinds": [
+            null
+          ]
+        },
+        {
+          "row": 6,
+          "iteration": 2,
+          "kind": "exchange",
+          "exchange": 3,
+          "outcome": "matcher",
+          "diagnosticsHead": "stage: matcher the matcher was not found inside interface \"LispClosure\" in src/lisp.ts (line 3, column 8); copy a complete snippet from the current source, or omit \"matcher\" for a whole-symbol rewrite",
+          "replacementChars": 25,
+          "finishReason": "stop",
+          "cause": "matcher-not-found",
+          "payloads": 1,
+          "toolCalls": 0,
+          "selectors": [
+            "matcher"
+          ],
+          "stages": [
+            "match"
+          ],
+          "matcherKinds": [
+            "snippet"
+          ]
+        },
+        {
+          "row": 7,
+          "iteration": 3,
+          "kind": "exchange",
+          "exchange": 1,
+          "outcome": "self-check",
+          "diagnosticsHead": "Self-check (read): src/lisp.ts (230 line(s), truncated at 8000 characters). 1 | export type LispValue = number | boolean | string | LispValue[] | LispClosure; 2 | 3 | export interface LispClosure { 4 ",
+          "replacementChars": null,
+          "finishReason": "stop",
+          "cause": null,
+          "payloads": 0,
+          "toolCalls": 0,
+          "selectors": null,
+          "stages": null,
+          "matcherKinds": null
+        },
+        {
+          "row": 8,
+          "iteration": 3,
+          "kind": "exchange",
+          "exchange": 2,
+          "outcome": "applied",
+          "diagnosticsHead": null,
+          "replacementChars": 137,
+          "finishReason": "stop",
+          "cause": null,
+          "payloads": 1,
+          "toolCalls": 0,
+          "selectors": [
+            "matcher"
+          ],
+          "stages": [
+            "match"
+          ],
+          "matcherKinds": [
+            "snippet"
+          ]
+        },
+        {
+          "row": 9,
+          "iteration": 3,
+          "kind": "verification",
+          "exchange": null,
+          "outcome": "tests",
+          "diagnosticsHead": "stage: tests tests failed: failing tests: - minilisp special forms > lambda application - minilisp special forms > define function shorthand - minilisp special forms > closures capture their defining ",
+          "replacementChars": 137,
+          "finishReason": "stop",
+          "cause": null,
+          "payloads": 0,
+          "toolCalls": 0,
+          "selectors": null,
+          "stages": null,
+          "matcherKinds": null
+        },
+        {
+          "row": 10,
+          "iteration": 4,
+          "kind": "exchange",
+          "exchange": 1,
+          "outcome": "self-check",
+          "diagnosticsHead": "Self-check (read): src/lisp.ts (232 line(s), truncated at 8000 characters). 1 | export type LispValue = number | boolean | string | LispValue[] | LispClosure; 2 | 3 | export interface LispClosure { 4 ",
+          "replacementChars": null,
+          "finishReason": "stop",
+          "cause": null,
+          "payloads": 0,
+          "toolCalls": 0,
+          "selectors": null,
+          "stages": null,
+          "matcherKinds": null
+        },
+        {
+          "row": 11,
+          "iteration": 4,
+          "kind": "exchange",
+          "exchange": 2,
+          "outcome": "matcher",
+          "diagnosticsHead": "stage: matcher the matcher was not found inside interface \"LispClosure\" in src/lisp.ts (line 3, column 8); copy a complete snippet from the current source, or omit \"matcher\" for a whole-symbol rewrite",
+          "replacementChars": 13,
+          "finishReason": "stop",
+          "cause": "matcher-not-found",
+          "payloads": 1,
+          "toolCalls": 0,
+          "selectors": [
+            "matcher"
+          ],
+          "stages": [
+            "match"
+          ],
+          "matcherKinds": [
+            "snippet"
+          ]
+        },
+        {
+          "row": 12,
+          "iteration": 4,
+          "kind": "exchange",
+          "exchange": 3,
+          "outcome": "gate",
+          "diagnosticsHead": "stage: gate the edit was discarded because the resulting source does not parse; nothing was written expected \"}\" (line 229, column 1)",
+          "replacementChars": 748,
+          "finishReason": "stop",
+          "cause": "gate",
+          "payloads": 1,
+          "toolCalls": 0,
+          "selectors": [
+            "range"
+          ],
+          "stages": [
+            "pick"
+          ],
+          "matcherKinds": [
+            null
+          ]
+        },
+        {
+          "row": 13,
+          "iteration": 5,
+          "kind": "exchange",
+          "exchange": 1,
+          "outcome": "range",
+          "diagnosticsHead": "stage: range the \"range\" (line 98, column 1 to line 222, column 2) is invalid for function \"evalExpr\" in src/lisp.ts: the range does not sit inside the pinned declaration the pinned declaration curren",
+          "replacementChars": 4432,
+          "finishReason": "stop",
+          "cause": "range-invalid",
+          "payloads": 1,
+          "toolCalls": 0,
+          "selectors": [
+            "range"
+          ],
+          "stages": [
+            "pick"
+          ],
+          "matcherKinds": [
+            null
+          ]
+        },
+        {
+          "row": 14,
+          "iteration": 5,
+          "kind": "exchange",
+          "exchange": 2,
+          "outcome": "matcher",
+          "diagnosticsHead": "stage: matcher the matcher could not be parsed as TypeScript: expected \"}\" (line 1, column 53); a matcher must be a single copied statement or expression, or a contiguous run of statements copied from",
+          "replacementChars": 4162,
+          "finishReason": "stop",
+          "cause": "matcher-unparseable",
+          "payloads": 1,
+          "toolCalls": 0,
+          "selectors": [
+            "matcher"
+          ],
+          "stages": [
+            "match"
+          ],
+          "matcherKinds": [
+            "snippet"
+          ]
+        },
+        {
+          "row": 15,
+          "iteration": 5,
+          "kind": "exchange",
+          "exchange": 3,
+          "outcome": "range",
+          "diagnosticsHead": "stage: range the \"range\" (line 98, column 1 to line 222, column 2) is invalid for function \"evalExpr\" in src/lisp.ts: the range does not sit inside the pinned declaration the pinned declaration curren",
+          "replacementChars": 4613,
+          "finishReason": "stop",
+          "cause": "range-invalid",
+          "payloads": 1,
+          "toolCalls": 0,
+          "selectors": [
+            "range"
+          ],
+          "stages": [
+            "pick"
+          ],
+          "matcherKinds": [
+            null
+          ]
+        },
+        {
+          "row": 16,
+          "iteration": 6,
+          "kind": "exchange",
+          "exchange": 1,
+          "outcome": "gate",
+          "diagnosticsHead": "stage: gate the edit was discarded because the resulting source does not parse; nothing was written unexpected token \"}\" (line 220, column 2) replacement line 123, column 2: 122 | } 123 | }",
+          "replacementChars": 4432,
+          "finishReason": "stop",
+          "cause": "gate",
+          "payloads": 1,
+          "toolCalls": 0,
+          "selectors": [
+            "range"
+          ],
+          "stages": [
+            "pick"
+          ],
+          "matcherKinds": [
+            null
+          ]
+        },
+        {
+          "row": 17,
+          "iteration": 6,
+          "kind": "exchange",
+          "exchange": 2,
+          "outcome": "self-check",
+          "diagnosticsHead": "Self-check (read): src/lisp.ts (232 line(s), truncated at 8000 characters). 1 | export type LispValue = number | boolean | string | LispValue[] | LispClosure; 2 | 3 | export interface LispClosure { 4 ",
+          "replacementChars": null,
+          "finishReason": "stop",
+          "cause": null,
+          "payloads": 0,
+          "toolCalls": 0,
+          "selectors": null,
+          "stages": null,
+          "matcherKinds": null
+        },
+        {
+          "row": 18,
+          "iteration": 6,
+          "kind": "exchange",
+          "exchange": 3,
+          "outcome": "matcher",
+          "diagnosticsHead": "stage: matcher the matcher could not be parsed as TypeScript: expected \"}\" (line 1, column 53); a matcher must be a single copied statement or expression, or a contiguous run of statements copied from",
+          "replacementChars": 52,
+          "finishReason": "stop",
+          "cause": "matcher-unparseable",
+          "payloads": 1,
+          "toolCalls": 0,
+          "selectors": [
+            "matcher"
+          ],
+          "stages": [
+            "match"
+          ],
+          "matcherKinds": [
+            "snippet"
+          ]
+        },
+        {
+          "row": 19,
+          "iteration": 7,
+          "kind": "exchange",
+          "exchange": 1,
+          "outcome": "applied",
+          "diagnosticsHead": null,
+          "replacementChars": 4489,
+          "finishReason": "stop",
+          "cause": null,
+          "payloads": 1,
+          "toolCalls": 0,
+          "selectors": [
+            "whole-symbol"
+          ],
+          "stages": [
+            "whole-symbol"
+          ],
+          "matcherKinds": [
+            null
+          ]
+        },
+        {
+          "row": 20,
+          "iteration": 7,
+          "kind": "verification",
+          "exchange": null,
+          "outcome": "ok",
+          "diagnosticsHead": null,
+          "replacementChars": 4489,
+          "finishReason": "stop",
+          "cause": null,
+          "payloads": 0,
+          "toolCalls": 0,
+          "selectors": null,
+          "stages": null,
+          "matcherKinds": null
+        }
+      ],
+      "exchangeStats": {
+        "turns": 17,
+        "payloads": 13,
+        "toolCalls": 0,
+        "applied": 3,
+        "rejected": 10,
+        "selected": 1,
+        "stopped": 0,
+        "selfChecks": 3,
+        "range": 4,
+        "matcher": 6,
+        "wholeSymbol": 3,
+        "stageWholeSymbol": 3,
+        "stageMatch": 6,
+        "stagePick": 4,
+        "snippet": 6,
+        "regex": 0,
+        "creates": 0
+      },
+      "loopDiagnostics": null,
+      "terminationReason": null,
+      "model": "deepseek-v4.1-flash",
+      "workspace": "tmp/benchmark/2026-10-22T08-02-32-723Z-8dd9708e/minilisp-tc-rep1",
+      "logs": {
+        "side": "tmp/benchmark/2026-10-22T08-02-32-723Z-8dd9708e/logs/minilisp-tc-rep1/side.log",
+        "judge": "tmp/benchmark/2026-10-22T08-02-32-723Z-8dd9708e/logs/minilisp-tc-rep1/judge.log",
+        "session": null,
+        "stats": null
+      },
+      "versions": {
+        "bun": "1.3.13",
+        "opencode": null
+      },
+      "judge": {
+        "testsOk": true,
+        "tscOk": true,
+        "fixtureOk": true,
+        "detail": null
+      },
+      "error": null,
+      "infraError": null
+    },
+    {
+      "task": "minilisp",
+      "side": "tc",
+      "rep": 2,
+      "ok": true,
+      "sideOk": true,
+      "tokens": {
+        "input": 3658,
+        "output": 1978,
+        "cacheRead": 1664,
+        "cacheWrite": null,
+        "reasoning": null,
+        "total": 5636,
+        "billable": {
+          "in": 1994,
+          "out": 1978,
+          "total": 3972
+        }
+      },
+      "usageAvailable": true,
+      "usageSource": "chat-completions",
+      "rawUsage": [
+        {
+          "prompt_tokens": 1752,
+          "completion_tokens": 27,
+          "total_tokens": 1779,
+          "prompt_cache_hit_tokens": 0,
+          "prompt_cache_miss_tokens": 1752,
+          "prompt_tokens_details": {
+            "cached_tokens": 0
+          }
+        },
+        {
+          "prompt_tokens": 1906,
+          "completion_tokens": 1951,
+          "total_tokens": 3857,
+          "prompt_cache_hit_tokens": 1664,
+          "prompt_cache_miss_tokens": 242,
+          "prompt_tokens_details": {
+            "cached_tokens": 1664
+          }
+        }
+      ],
+      "durationMs": 14712,
+      "startedAt": "2026-10-22T08:06:31.520Z",
+      "finishedAt": "2026-10-22T08:06:46.233Z",
+      "cost": 0.0029817839999999995,
+      "rateClass": "peak",
+      "steps": 3,
+      "records": [
+        {
+          "row": 1,
+          "iteration": 1,
+          "kind": "exchange",
+          "exchange": 1,
+          "outcome": "selected",
+          "diagnosticsHead": null,
+          "replacementChars": null,
+          "finishReason": "stop",
+          "cause": null,
+          "payloads": 0,
+          "toolCalls": 0,
+          "selectors": null,
+          "stages": null,
+          "matcherKinds": null
+        },
+        {
+          "row": 2,
+          "iteration": 1,
+          "kind": "exchange",
+          "exchange": 2,
+          "outcome": "applied",
+          "diagnosticsHead": null,
+          "replacementChars": 5757,
+          "finishReason": "stop",
+          "cause": null,
+          "payloads": 1,
+          "toolCalls": 0,
+          "selectors": [
+            "whole-symbol"
+          ],
+          "stages": [
+            "whole-symbol"
+          ],
+          "matcherKinds": [
+            null
+          ]
+        },
+        {
+          "row": 3,
+          "iteration": 1,
+          "kind": "verification",
+          "exchange": null,
+          "outcome": "ok",
+          "diagnosticsHead": null,
+          "replacementChars": 5757,
+          "finishReason": "stop",
+          "cause": null,
+          "payloads": 0,
+          "toolCalls": 0,
+          "selectors": null,
+          "stages": null,
+          "matcherKinds": null
+        }
+      ],
+      "exchangeStats": {
+        "turns": 2,
+        "payloads": 1,
+        "toolCalls": 0,
+        "applied": 1,
+        "rejected": 0,
+        "selected": 1,
+        "stopped": 0,
+        "selfChecks": 0,
+        "range": 0,
+        "matcher": 0,
+        "wholeSymbol": 1,
+        "stageWholeSymbol": 1,
+        "stageMatch": 0,
+        "stagePick": 0,
+        "snippet": 0,
+        "regex": 0,
+        "creates": 0
+      },
+      "loopDiagnostics": null,
+      "terminationReason": null,
+      "model": "deepseek-v4.1-flash",
+      "workspace": "tmp/benchmark/2026-10-22T08-02-32-723Z-8dd9708e/minilisp-tc-rep2",
+      "logs": {
+        "side": "tmp/benchmark/2026-10-22T08-02-32-723Z-8dd9708e/logs/minilisp-tc-rep2/side.log",
+        "judge": "tmp/benchmark/2026-10-22T08-02-32-723Z-8dd9708e/logs/minilisp-tc-rep2/judge.log",
+        "session": null,
+        "stats": null
+      },
+      "versions": {
+        "bun": "1.3.13",
+        "opencode": null
+      },
+      "judge": {
+        "testsOk": true,
+        "tscOk": true,
+        "fixtureOk": true,
+        "detail": null
+      },
+      "error": null,
+      "infraError": null
+    },
+    {
+      "task": "minilisp",
+      "side": "tc",
+      "rep": 3,
+      "ok": true,
+      "sideOk": true,
+      "tokens": {
+        "input": 25138,
+        "output": 8715,
+        "cacheRead": 7424,
+        "cacheWrite": null,
+        "reasoning": 0,
+        "total": 33853,
+        "billable": {
+          "in": 17714,
+          "out": 8715,
+          "total": 26429
+        }
+      },
+      "usageAvailable": true,
+      "usageSource": "chat-completions",
+      "rawUsage": [
+        {
+          "prompt_tokens": 1752,
+          "completion_tokens": 27,
+          "total_tokens": 1779,
+          "prompt_tokens_details": {
+            "cached_tokens": 1536
+          }
+        },
+        {
+          "prompt_tokens": 1906,
+          "completion_tokens": 2031,
+          "total_tokens": 3937,
+          "prompt_tokens_details": {
+            "audio_tokens": 0,
+            "cached_tokens": 1792,
+            "cache_creation_input_tokens": 0,
+            "cache_write_tokens": 0
+          },
+          "completion_tokens_details": {
+            "accepted_prediction_tokens": 0,
+            "audio_tokens": 0,
+            "reasoning_tokens": 0,
+            "rejected_prediction_tokens": 0
+          }
+        },
+        {
+          "prompt_tokens": 2103,
+          "completion_tokens": 2113,
+          "total_tokens": 4216,
+          "prompt_tokens_details": {
+            "audio_tokens": 0,
+            "cached_tokens": 0,
+            "cache_creation_input_tokens": 0,
+            "cache_write_tokens": 0
+          },
+          "completion_tokens_details": {
+            "accepted_prediction_tokens": 0,
+            "audio_tokens": 0,
+            "reasoning_tokens": 0,
+            "rejected_prediction_tokens": 0
+          }
+        },
+        {
+          "prompt_tokens": 2167,
+          "completion_tokens": 2103,
+          "total_tokens": 4270,
+          "prompt_tokens_details": {
+            "audio_tokens": 0,
+            "cached_tokens": 1664,
+            "cache_creation_input_tokens": 0,
+            "cache_write_tokens": 0
+          },
+          "completion_tokens_details": {
+            "accepted_prediction_tokens": 0,
+            "audio_tokens": 0,
+            "reasoning_tokens": 0,
+            "rejected_prediction_tokens": 0
+          }
+        },
+        {
+          "prompt_tokens": 2092,
+          "completion_tokens": 2158,
+          "total_tokens": 4250,
+          "prompt_tokens_details": {
+            "audio_tokens": 0,
+            "cached_tokens": 1664,
+            "cache_creation_input_tokens": 0,
+            "cache_write_tokens": 0
+          },
+          "completion_tokens_details": {
+            "accepted_prediction_tokens": 0,
+            "audio_tokens": 0,
+            "reasoning_tokens": 0,
+            "rejected_prediction_tokens": 0
+          }
+        },
+        {
+          "prompt_tokens": 4301,
+          "completion_tokens": 5,
+          "total_tokens": 4306,
+          "prompt_tokens_details": {
+            "audio_tokens": 0,
+            "cached_tokens": 0,
+            "cache_creation_input_tokens": 0,
+            "cache_write_tokens": 0
+          },
+          "completion_tokens_details": {
+            "accepted_prediction_tokens": 0,
+            "audio_tokens": 0,
+            "reasoning_tokens": 0,
+            "rejected_prediction_tokens": 0
+          }
+        },
+        {
+          "prompt_tokens": 6599,
+          "completion_tokens": 236,
+          "total_tokens": 6835,
+          "prompt_tokens_details": {
+            "cached_tokens": 0
+          },
+          "completion_tokens_details": {
+            "reasoning_tokens": 0
+          }
+        },
+        {
+          "prompt_tokens": 4218,
+          "completion_tokens": 42,
+          "total_tokens": 4260,
+          "prompt_tokens_details": {
+            "cached_tokens": 768
+          },
+          "completion_tokens_details": {
+            "reasoning_tokens": 0
+          }
+        }
+      ],
+      "durationMs": 102746,
+      "startedAt": "2026-10-22T08:06:38.936Z",
+      "finishedAt": "2026-10-22T08:08:21.682Z",
+      "cost": 0.015816743999999997,
+      "rateClass": "peak",
+      "steps": 11,
+      "records": [
+        {
+          "row": 1,
+          "iteration": 1,
+          "kind": "exchange",
+          "exchange": 1,
+          "outcome": "selected",
+          "diagnosticsHead": null,
+          "replacementChars": null,
+          "finishReason": "stop",
+          "cause": null,
+          "payloads": 0,
+          "toolCalls": 0,
+          "selectors": null,
+          "stages": null,
+          "matcherKinds": null
+        },
+        {
+          "row": 2,
+          "iteration": 1,
+          "kind": "exchange",
+          "exchange": 2,
+          "outcome": "gate",
+          "diagnosticsHead": "stage: gate the edit was discarded because the resulting source does not parse; nothing was written unexpected token \"...\" (line 3, column 38) replacement line 3, column 38: 2 | 3 | type Env = Map<str",
+          "replacementChars": 5938,
+          "finishReason": "stop",
+          "cause": "gate",
+          "payloads": 1,
+          "toolCalls": 0,
+          "selectors": [
+            "whole-symbol"
+          ],
+          "stages": [
+            "whole-symbol"
+          ],
+          "matcherKinds": [
+            null
+          ]
+        },
+        {
+          "row": 3,
+          "iteration": 1,
+          "kind": "exchange",
+          "exchange": 3,
+          "outcome": "gate",
+          "diagnosticsHead": "stage: gate the edit was discarded because the resulting source does not parse; nothing was written unexpected token \"...\" (line 3, column 29) replacement line 3, column 29: 2 | export type LispPair =",
+          "replacementChars": 6473,
+          "finishReason": "stop",
+          "cause": "gate",
+          "payloads": 1,
+          "toolCalls": 0,
+          "selectors": [
+            "whole-symbol"
+          ],
+          "stages": [
+            "whole-symbol"
+          ],
+          "matcherKinds": [
+            null
+          ]
+        },
+        {
+          "row": 4,
+          "iteration": 2,
+          "kind": "exchange",
+          "exchange": 1,
+          "outcome": "gate",
+          "diagnosticsHead": "stage: gate the edit was discarded because the resulting source does not parse; nothing was written named imports may not be empty (line 1, column 14) replacement line 1, column 14: 1 | import type {}",
+          "replacementChars": 6198,
+          "finishReason": "stop",
+          "cause": "gate",
+          "payloads": 1,
+          "toolCalls": 0,
+          "selectors": [
+            "whole-symbol"
+          ],
+          "stages": [
+            "whole-symbol"
+          ],
+          "matcherKinds": [
+            null
+          ]
+        },
+        {
+          "row": 5,
+          "iteration": 2,
+          "kind": "exchange",
+          "exchange": 2,
+          "outcome": "applied",
+          "diagnosticsHead": null,
+          "replacementChars": 6478,
+          "finishReason": "stop",
+          "cause": null,
+          "payloads": 1,
+          "toolCalls": 0,
+          "selectors": [
+            "whole-symbol"
+          ],
+          "stages": [
+            "whole-symbol"
+          ],
+          "matcherKinds": [
+            null
+          ]
+        },
+        {
+          "row": 6,
+          "iteration": 2,
+          "kind": "verification",
+          "exchange": null,
+          "outcome": "tsc",
+          "diagnosticsHead": "stage: tsc replacement line 149: TS2339: Property 'set' does not exist on type 'WeakSet<object>'. — in declaration `run` (function) 148 | }) as unknown as LispValue; 149 | userFns.set(fn as unknown as",
+          "replacementChars": 6478,
+          "finishReason": "stop",
+          "cause": null,
+          "payloads": 0,
+          "toolCalls": 0,
+          "selectors": null,
+          "stages": null,
+          "matcherKinds": null
+        },
+        {
+          "row": 7,
+          "iteration": 3,
+          "kind": "exchange",
+          "exchange": 1,
+          "outcome": "self-check",
+          "diagnosticsHead": "Self-check (read): src/lisp.ts (198 line(s), truncated at 8000 characters). 1 | export type LispValue = number | boolean | LispValue[]; 2 | 3 | type Expr = number | boolean | string | Expr[]; 4 | 5 | ",
+          "replacementChars": null,
+          "finishReason": "stop",
+          "cause": null,
+          "payloads": 0,
+          "toolCalls": 0,
+          "selectors": null,
+          "stages": null,
+          "matcherKinds": null
+        },
+        {
+          "row": 8,
+          "iteration": 3,
+          "kind": "exchange",
+          "exchange": 2,
+          "outcome": "applied",
+          "diagnosticsHead": null,
+          "replacementChars": 378,
+          "finishReason": "stop",
+          "cause": null,
+          "payloads": 1,
+          "toolCalls": 0,
+          "selectors": [
+            "matcher"
+          ],
+          "stages": [
+            "match"
+          ],
+          "matcherKinds": [
+            "snippet"
+          ]
+        },
+        {
+          "row": 9,
+          "iteration": 3,
+          "kind": "verification",
+          "exchange": null,
+          "outcome": "tsc",
+          "diagnosticsHead": "stage: tsc elsewhere in file: src/lisp.ts(170,19): error TS2339: Property 'set' does not exist on type 'WeakSet<object>'. — in declaration `run` (function) stage: tests tests failed: failing tests: - ",
+          "replacementChars": 378,
+          "finishReason": "stop",
+          "cause": null,
+          "payloads": 0,
+          "toolCalls": 0,
+          "selectors": null,
+          "stages": null,
+          "matcherKinds": null
+        },
+        {
+          "row": 10,
+          "iteration": 4,
+          "kind": "exchange",
+          "exchange": 1,
+          "outcome": "applied",
+          "diagnosticsHead": null,
+          "replacementChars": 0,
+          "finishReason": "stop",
+          "cause": null,
+          "payloads": 1,
+          "toolCalls": 0,
+          "selectors": [
+            "matcher"
+          ],
+          "stages": [
+            "match"
+          ],
+          "matcherKinds": [
+            "snippet"
+          ]
+        },
+        {
+          "row": 11,
+          "iteration": 4,
+          "kind": "verification",
+          "exchange": null,
+          "outcome": "ok",
+          "diagnosticsHead": null,
+          "replacementChars": 0,
+          "finishReason": "stop",
+          "cause": null,
+          "payloads": 0,
+          "toolCalls": 0,
+          "selectors": null,
+          "stages": null,
+          "matcherKinds": null
+        }
+      ],
+      "exchangeStats": {
+        "turns": 8,
+        "payloads": 6,
+        "toolCalls": 0,
+        "applied": 3,
+        "rejected": 3,
+        "selected": 1,
+        "stopped": 0,
+        "selfChecks": 1,
+        "range": 0,
+        "matcher": 2,
+        "wholeSymbol": 4,
+        "stageWholeSymbol": 4,
+        "stageMatch": 2,
+        "stagePick": 0,
+        "snippet": 2,
+        "regex": 0,
+        "creates": 0
+      },
+      "loopDiagnostics": null,
+      "terminationReason": null,
+      "model": "deepseek-v4.1-flash",
+      "workspace": "tmp/benchmark/2026-10-22T08-02-32-723Z-8dd9708e/minilisp-tc-rep3",
+      "logs": {
+        "side": "tmp/benchmark/2026-10-22T08-02-32-723Z-8dd9708e/logs/minilisp-tc-rep3/side.log",
+        "judge": "tmp/benchmark/2026-10-22T08-02-32-723Z-8dd9708e/logs/minilisp-tc-rep3/judge.log",
+        "session": null,
+        "stats": null
+      },
+      "versions": {
+        "bun": "1.3.13",
+        "opencode": null
+      },
+      "judge": {
+        "testsOk": true,
+        "tscOk": true,
+        "fixtureOk": true,
+        "detail": null
+      },
+      "error": null,
+      "infraError": null
+    },
+    {
+      "task": "csv-parser",
+      "side": "tc",
+      "rep": 1,
+      "ok": true,
+      "sideOk": true,
+      "tokens": {
+        "input": 2750,
+        "output": 598,
+        "cacheRead": 2688,
+        "cacheWrite": null,
+        "reasoning": 0,
+        "total": 3348,
+        "billable": {
+          "in": 62,
+          "out": 598,
+          "total": 660
+        }
+      },
+      "usageAvailable": true,
+      "usageSource": "chat-completions",
+      "rawUsage": [
+        {
+          "prompt_tokens": 1296,
+          "completion_tokens": 29,
+          "total_tokens": 1325,
+          "prompt_tokens_details": {
+            "audio_tokens": 0,
+            "cached_tokens": 1280,
+            "cache_creation_input_tokens": 0,
+            "cache_write_tokens": 0
+          },
+          "completion_tokens_details": {
+            "accepted_prediction_tokens": 0,
+            "audio_tokens": 0,
+            "reasoning_tokens": 0,
+            "rejected_prediction_tokens": 0
+          }
+        },
+        {
+          "prompt_tokens": 1454,
+          "completion_tokens": 569,
+          "total_tokens": 2023,
+          "prompt_tokens_details": {
+            "audio_tokens": 0,
+            "cached_tokens": 1408,
+            "cache_creation_input_tokens": 0,
+            "cache_write_tokens": 0
+          },
+          "completion_tokens_details": {
+            "accepted_prediction_tokens": 0,
+            "audio_tokens": 0,
+            "reasoning_tokens": 0,
+            "rejected_prediction_tokens": 0
+          }
+        }
+      ],
+      "durationMs": 18613,
+      "startedAt": "2026-10-22T08:06:40.404Z",
+      "finishedAt": "2026-10-22T08:06:59.017Z",
+      "cost": 0.000752328,
+      "rateClass": "peak",
+      "steps": 3,
+      "records": [
+        {
+          "row": 1,
+          "iteration": 1,
+          "kind": "exchange",
+          "exchange": 1,
+          "outcome": "selected",
+          "diagnosticsHead": null,
+          "replacementChars": null,
+          "finishReason": "stop",
+          "cause": null,
+          "payloads": 0,
+          "toolCalls": 0,
+          "selectors": null,
+          "stages": null,
+          "matcherKinds": null
+        },
+        {
+          "row": 2,
+          "iteration": 1,
+          "kind": "exchange",
+          "exchange": 2,
+          "outcome": "applied",
+          "diagnosticsHead": null,
+          "replacementChars": 1475,
+          "finishReason": "stop",
+          "cause": null,
+          "payloads": 1,
+          "toolCalls": 0,
+          "selectors": [
+            "whole-symbol"
+          ],
+          "stages": [
+            "whole-symbol"
+          ],
+          "matcherKinds": [
+            null
+          ]
+        },
+        {
+          "row": 3,
+          "iteration": 1,
+          "kind": "verification",
+          "exchange": null,
+          "outcome": "ok",
+          "diagnosticsHead": null,
+          "replacementChars": 1475,
+          "finishReason": "stop",
+          "cause": null,
+          "payloads": 0,
+          "toolCalls": 0,
+          "selectors": null,
+          "stages": null,
+          "matcherKinds": null
+        }
+      ],
+      "exchangeStats": {
+        "turns": 2,
+        "payloads": 1,
+        "toolCalls": 0,
+        "applied": 1,
+        "rejected": 0,
+        "selected": 1,
+        "stopped": 0,
+        "selfChecks": 0,
+        "range": 0,
+        "matcher": 0,
+        "wholeSymbol": 1,
+        "stageWholeSymbol": 1,
+        "stageMatch": 0,
+        "stagePick": 0,
+        "snippet": 0,
+        "regex": 0,
+        "creates": 0
+      },
+      "loopDiagnostics": null,
+      "terminationReason": null,
+      "model": "deepseek-v4.1-flash",
+      "workspace": "tmp/benchmark/2026-10-22T08-02-32-723Z-8dd9708e/csv-parser-tc-rep1",
+      "logs": {
+        "side": "tmp/benchmark/2026-10-22T08-02-32-723Z-8dd9708e/logs/csv-parser-tc-rep1/side.log",
+        "judge": "tmp/benchmark/2026-10-22T08-02-32-723Z-8dd9708e/logs/csv-parser-tc-rep1/judge.log",
+        "session": null,
+        "stats": null
+      },
+      "versions": {
+        "bun": "1.3.13",
+        "opencode": null
+      },
+      "judge": {
+        "testsOk": true,
+        "tscOk": true,
+        "fixtureOk": true,
+        "detail": null
+      },
+      "error": null,
+      "infraError": null
+    },
+    {
+      "task": "csv-parser",
+      "side": "tc",
+      "rep": 2,
+      "ok": true,
+      "sideOk": true,
+      "tokens": {
+        "input": 2750,
+        "output": 610,
+        "cacheRead": 2688,
+        "cacheWrite": null,
+        "reasoning": 0,
+        "total": 3360,
+        "billable": {
+          "in": 62,
+          "out": 610,
+          "total": 672
+        }
+      },
+      "usageAvailable": true,
+      "usageSource": "chat-completions",
+      "rawUsage": [
+        {
+          "prompt_tokens": 1296,
+          "completion_tokens": 29,
+          "total_tokens": 1325,
+          "prompt_tokens_details": {
+            "audio_tokens": 0,
+            "cached_tokens": 1280,
+            "cache_creation_input_tokens": 0,
+            "cache_write_tokens": 0
+          },
+          "completion_tokens_details": {
+            "accepted_prediction_tokens": 0,
+            "audio_tokens": 0,
+            "reasoning_tokens": 0,
+            "rejected_prediction_tokens": 0
+          }
+        },
+        {
+          "prompt_tokens": 1454,
+          "completion_tokens": 581,
+          "total_tokens": 2035,
+          "prompt_tokens_details": {
+            "audio_tokens": 0,
+            "cached_tokens": 1408,
+            "cache_creation_input_tokens": 0,
+            "cache_write_tokens": 0
+          },
+          "completion_tokens_details": {
+            "accepted_prediction_tokens": 0,
+            "audio_tokens": 0,
+            "reasoning_tokens": 0,
+            "rejected_prediction_tokens": 0
+          }
+        }
+      ],
+      "durationMs": 11897,
+      "startedAt": "2026-10-22T08:06:46.369Z",
+      "finishedAt": "2026-10-22T08:06:58.267Z",
+      "cost": 0.0007667279999999999,
+      "rateClass": "peak",
+      "steps": 3,
+      "records": [
+        {
+          "row": 1,
+          "iteration": 1,
+          "kind": "exchange",
+          "exchange": 1,
+          "outcome": "selected",
+          "diagnosticsHead": null,
+          "replacementChars": null,
+          "finishReason": "stop",
+          "cause": null,
+          "payloads": 0,
+          "toolCalls": 0,
+          "selectors": null,
+          "stages": null,
+          "matcherKinds": null
+        },
+        {
+          "row": 2,
+          "iteration": 1,
+          "kind": "exchange",
+          "exchange": 2,
+          "outcome": "applied",
+          "diagnosticsHead": null,
+          "replacementChars": 1548,
+          "finishReason": "stop",
+          "cause": null,
+          "payloads": 1,
+          "toolCalls": 0,
+          "selectors": [
+            "whole-symbol"
+          ],
+          "stages": [
+            "whole-symbol"
+          ],
+          "matcherKinds": [
+            null
+          ]
+        },
+        {
+          "row": 3,
+          "iteration": 1,
+          "kind": "verification",
+          "exchange": null,
+          "outcome": "ok",
+          "diagnosticsHead": null,
+          "replacementChars": 1548,
+          "finishReason": "stop",
+          "cause": null,
+          "payloads": 0,
+          "toolCalls": 0,
+          "selectors": null,
+          "stages": null,
+          "matcherKinds": null
+        }
+      ],
+      "exchangeStats": {
+        "turns": 2,
+        "payloads": 1,
+        "toolCalls": 0,
+        "applied": 1,
+        "rejected": 0,
+        "selected": 1,
+        "stopped": 0,
+        "selfChecks": 0,
+        "range": 0,
+        "matcher": 0,
+        "wholeSymbol": 1,
+        "stageWholeSymbol": 1,
+        "stageMatch": 0,
+        "stagePick": 0,
+        "snippet": 0,
+        "regex": 0,
+        "creates": 0
+      },
+      "loopDiagnostics": null,
+      "terminationReason": null,
+      "model": "deepseek-v4.1-flash",
+      "workspace": "tmp/benchmark/2026-10-22T08-02-32-723Z-8dd9708e/csv-parser-tc-rep2",
+      "logs": {
+        "side": "tmp/benchmark/2026-10-22T08-02-32-723Z-8dd9708e/logs/csv-parser-tc-rep2/side.log",
+        "judge": "tmp/benchmark/2026-10-22T08-02-32-723Z-8dd9708e/logs/csv-parser-tc-rep2/judge.log",
+        "session": null,
+        "stats": null
+      },
+      "versions": {
+        "bun": "1.3.13",
+        "opencode": null
+      },
+      "judge": {
+        "testsOk": true,
+        "tscOk": true,
+        "fixtureOk": true,
+        "detail": null
+      },
+      "error": null,
+      "infraError": null
+    },
+    {
+      "task": "csv-parser",
+      "side": "tc",
+      "rep": 3,
+      "ok": true,
+      "sideOk": true,
+      "tokens": {
+        "input": 17298,
+        "output": 2615,
+        "cacheRead": 4992,
+        "cacheWrite": null,
+        "reasoning": 0,
+        "total": 19913,
+        "billable": {
+          "in": 12306,
+          "out": 2615,
+          "total": 14921
+        }
+      },
+      "usageAvailable": true,
+      "usageSource": "chat-completions",
+      "rawUsage": [
+        {
+          "prompt_tokens": 1296,
+          "completion_tokens": 30,
+          "total_tokens": 1326,
+          "prompt_tokens_details": {
+            "cached_tokens": 0,
+            "cache_write_tokens": null
+          },
+          "completion_tokens_details": {
+            "reasoning_tokens": 0
+          }
+        },
+        {
+          "prompt_tokens": 1454,
+          "completion_tokens": 489,
+          "total_tokens": 1943,
+          "prompt_tokens_details": {
+            "audio_tokens": 0,
+            "cached_tokens": 1408,
+            "cache_creation_input_tokens": 0,
+            "cache_write_tokens": 0
+          },
+          "completion_tokens_details": {
+            "accepted_prediction_tokens": 0,
+            "audio_tokens": 0,
+            "reasoning_tokens": 0,
+            "rejected_prediction_tokens": 0
+          }
+        },
+        {
+          "prompt_tokens": 2647,
+          "completion_tokens": 134,
+          "total_tokens": 2781,
+          "prompt_tokens_details": {
+            "cached_tokens": 1280,
+            "cache_write_tokens": null
+          },
+          "completion_tokens_details": {
+            "reasoning_tokens": 0
+          }
+        },
+        {
+          "prompt_tokens": 2738,
+          "completion_tokens": 571,
+          "total_tokens": 3309,
+          "prompt_tokens_details": {
+            "audio_tokens": 0,
+            "cached_tokens": 1280,
+            "cache_creation_input_tokens": 0,
+            "cache_write_tokens": 0
+          },
+          "completion_tokens_details": {
+            "accepted_prediction_tokens": 0,
+            "audio_tokens": 0,
+            "reasoning_tokens": 0,
+            "rejected_prediction_tokens": 0
+          }
+        },
+        {
+          "prompt_tokens": 2970,
+          "completion_tokens": 561,
+          "total_tokens": 3531,
+          "prompt_tokens_details": {
+            "cached_tokens": 512
+          },
+          "completion_tokens_details": {
+            "reasoning_tokens": 0
+          }
+        },
+        {
+          "prompt_tokens": 3044,
+          "completion_tokens": 263,
+          "total_tokens": 3307,
+          "prompt_tokens_details": {
+            "cached_tokens": 0
+          },
+          "completion_tokens_details": {
+            "reasoning_tokens": 0
+          }
+        },
+        {
+          "prompt_tokens": 3149,
+          "completion_tokens": 567,
+          "total_tokens": 3716,
+          "prompt_tokens_details": {
+            "cached_tokens": 512
+          },
+          "completion_tokens_details": {
+            "reasoning_tokens": 0
+          }
+        }
+      ],
+      "durationMs": 84456,
+      "startedAt": "2026-10-22T08:06:58.403Z",
+      "finishedAt": "2026-10-22T08:08:22.859Z",
+      "cost": 0.006859752,
+      "rateClass": "peak",
+      "steps": 10,
+      "records": [
+        {
+          "row": 1,
+          "iteration": 1,
+          "kind": "exchange",
+          "exchange": 1,
+          "outcome": "selected",
+          "diagnosticsHead": null,
+          "replacementChars": null,
+          "finishReason": "stop",
+          "cause": null,
+          "payloads": 0,
+          "toolCalls": 0,
+          "selectors": null,
+          "stages": null,
+          "matcherKinds": null
+        },
+        {
+          "row": 2,
+          "iteration": 1,
+          "kind": "exchange",
+          "exchange": 2,
+          "outcome": "applied",
+          "diagnosticsHead": null,
+          "replacementChars": 1224,
+          "finishReason": "stop",
+          "cause": null,
+          "payloads": 1,
+          "toolCalls": 0,
+          "selectors": [
+            "whole-symbol"
+          ],
+          "stages": [
+            "whole-symbol"
+          ],
+          "matcherKinds": [
+            null
+          ]
+        },
+        {
+          "row": 3,
+          "iteration": 1,
+          "kind": "verification",
+          "exchange": null,
+          "outcome": "tests",
+          "diagnosticsHead": "stage: tests tests failed: failing tests: - csv-parser rows > a trailing newline does not add a row - csv-parser errors > a character after a closing quote is rejected test output: bun test v1.3.13 (b",
+          "replacementChars": 1224,
+          "finishReason": "stop",
+          "cause": null,
+          "payloads": 0,
+          "toolCalls": 0,
+          "selectors": null,
+          "stages": null,
+          "matcherKinds": null
+        },
+        {
+          "row": 4,
+          "iteration": 2,
+          "kind": "exchange",
+          "exchange": 1,
+          "outcome": "matcher",
+          "diagnosticsHead": "stage: matcher the matcher could not be parsed as TypeScript: unexpected token \"}\" (line 5, column 1); a matcher must be a single copied statement or expression, or a contiguous run of statements copi",
+          "replacementChars": 163,
+          "finishReason": "stop",
+          "cause": "matcher-unparseable",
+          "payloads": 1,
+          "toolCalls": 0,
+          "selectors": [
+            "matcher"
+          ],
+          "stages": [
+            "match"
+          ],
+          "matcherKinds": [
+            "snippet"
+          ]
+        },
+        {
+          "row": 5,
+          "iteration": 2,
+          "kind": "exchange",
+          "exchange": 2,
+          "outcome": "applied",
+          "diagnosticsHead": null,
+          "replacementChars": 1487,
+          "finishReason": "stop",
+          "cause": null,
+          "payloads": 1,
+          "toolCalls": 0,
+          "selectors": [
+            "whole-symbol"
+          ],
+          "stages": [
+            "whole-symbol"
+          ],
+          "matcherKinds": [
+            null
+          ]
+        },
+        {
+          "row": 6,
+          "iteration": 2,
+          "kind": "verification",
+          "exchange": null,
+          "outcome": "tests",
+          "diagnosticsHead": "stage: tests tests failed: failing tests: - csv-parser fields > a quoted field may contain commas - csv-parser fields > doubled quotes inside a quoted field are one quote - csv-parser fields > a quote",
+          "replacementChars": 1487,
+          "finishReason": "stop",
+          "cause": null,
+          "payloads": 0,
+          "toolCalls": 0,
+          "selectors": null,
+          "stages": null,
+          "matcherKinds": null
+        },
+        {
+          "row": 7,
+          "iteration": 3,
+          "kind": "exchange",
+          "exchange": 1,
+          "outcome": "protocol",
+          "diagnosticsHead": "stage: protocol expected {\"path\": ..., \"symbol\": ..., \"kind\": ..., \"matcher\": ..., \"replacement\": ...}; JSON Parse error: Expected ':' before value in object property definition",
+          "replacementChars": null,
+          "finishReason": "stop",
+          "cause": "protocol",
+          "payloads": 0,
+          "toolCalls": 0,
+          "selectors": null,
+          "stages": null,
+          "matcherKinds": null
+        },
+        {
+          "row": 8,
+          "iteration": 3,
+          "kind": "exchange",
+          "exchange": 2,
+          "outcome": "range",
+          "diagnosticsHead": "stage: range the \"range\" (line 41, column 1 to line 54, column 9) is invalid for function \"parseCsv\" in src/csv.ts: the end position (line 54, column 9) is outside the shown current source the pinned ",
+          "replacementChars": 245,
+          "finishReason": "stop",
+          "cause": "range-invalid",
+          "payloads": 1,
+          "toolCalls": 0,
+          "selectors": [
+            "range"
+          ],
+          "stages": [
+            "pick"
+          ],
+          "matcherKinds": [
+            null
+          ]
+        },
+        {
+          "row": 9,
+          "iteration": 3,
+          "kind": "exchange",
+          "exchange": 3,
+          "outcome": "applied",
+          "diagnosticsHead": null,
+          "replacementChars": 1467,
+          "finishReason": "stop",
+          "cause": null,
+          "payloads": 1,
+          "toolCalls": 0,
+          "selectors": [
+            "whole-symbol"
+          ],
+          "stages": [
+            "whole-symbol"
+          ],
+          "matcherKinds": [
+            null
+          ]
+        },
+        {
+          "row": 10,
+          "iteration": 3,
+          "kind": "verification",
+          "exchange": null,
+          "outcome": "ok",
+          "diagnosticsHead": null,
+          "replacementChars": 1467,
+          "finishReason": "stop",
+          "cause": null,
+          "payloads": 0,
+          "toolCalls": 0,
+          "selectors": null,
+          "stages": null,
+          "matcherKinds": null
+        }
+      ],
+      "exchangeStats": {
+        "turns": 7,
+        "payloads": 5,
+        "toolCalls": 0,
+        "applied": 3,
+        "rejected": 3,
+        "selected": 1,
+        "stopped": 0,
+        "selfChecks": 0,
+        "range": 1,
+        "matcher": 1,
+        "wholeSymbol": 3,
+        "stageWholeSymbol": 3,
+        "stageMatch": 1,
+        "stagePick": 1,
+        "snippet": 1,
+        "regex": 0,
+        "creates": 0
+      },
+      "loopDiagnostics": null,
+      "terminationReason": null,
+      "model": "deepseek-v4.1-flash",
+      "workspace": "tmp/benchmark/2026-10-22T08-02-32-723Z-8dd9708e/csv-parser-tc-rep3",
+      "logs": {
+        "side": "tmp/benchmark/2026-10-22T08-02-32-723Z-8dd9708e/logs/csv-parser-tc-rep3/side.log",
+        "judge": "tmp/benchmark/2026-10-22T08-02-32-723Z-8dd9708e/logs/csv-parser-tc-rep3/judge.log",
+        "session": null,
+        "stats": null
+      },
+      "versions": {
+        "bun": "1.3.13",
+        "opencode": null
+      },
+      "judge": {
+        "testsOk": true,
+        "tscOk": true,
+        "fixtureOk": true,
+        "detail": null
+      },
+      "error": null,
+      "infraError": null
+    }
+  ],
+  "aggregates": {
+    "byTaskSide": [
+      {
+        "task": "json-parser",
+        "side": "tc",
+        "runs": 3,
+        "ok": 3,
+        "failed": 0,
+        "successRate": 1,
+        "usageRuns": 3,
+        "tokens": {
+          "in": {
+            "mean": 858.3333333333334,
+            "total": 2575
+          },
+          "out": {
+            "mean": 1628.3333333333333,
+            "total": 4885
+          },
+          "total": {
+            "mean": 2486.6666666666665,
+            "total": 7460
+          }
+        },
+        "cost": {
+          "mean": 0.00222558,
+          "total": 0.0066767400000000005
+        },
+        "durationMsMean": 234475.33333333334,
+        "stepsMean": 3,
+        "tokensPerSuccess": {
+          "in": 858.3333333333334,
+          "out": 1628.3333333333333,
+          "total": 2486.6666666666665
+        },
+        "costPerSuccess": 0.00222558,
+        "selectors": {
+          "range": 0,
+          "matcher": 0,
+          "wholeSymbol": 3
+        },
+        "stages": {
+          "wholeSymbol": 3,
+          "match": 0,
+          "pick": 0
+        },
+        "matcherKinds": {
+          "snippet": 0,
+          "regex": 0
+        },
+        "creates": 0
+      },
+      {
+        "task": "sexp-parser",
+        "side": "tc",
+        "runs": 3,
+        "ok": 3,
+        "failed": 0,
+        "successRate": 1,
+        "usageRuns": 3,
+        "tokens": {
+          "in": {
+            "mean": 2432.3333333333335,
+            "total": 7297
+          },
+          "out": {
+            "mean": 740.6666666666666,
+            "total": 2222
+          },
+          "total": {
+            "mean": 3173,
+            "total": 9519
+          }
+        },
+        "cost": {
+          "mean": 0.0016277159999999998,
+          "total": 0.0048831479999999995
+        },
+        "durationMsMean": 87667,
+        "stepsMean": 4,
+        "tokensPerSuccess": {
+          "in": 2432.3333333333335,
+          "out": 740.6666666666666,
+          "total": 3173
+        },
+        "costPerSuccess": 0.0016277159999999998,
+        "selectors": {
+          "range": 0,
+          "matcher": 1,
+          "wholeSymbol": 3
+        },
+        "stages": {
+          "wholeSymbol": 3,
+          "match": 1,
+          "pick": 0
+        },
+        "matcherKinds": {
+          "snippet": 1,
+          "regex": 0
+        },
+        "creates": 0
+      },
+      {
+        "task": "minilisp",
+        "side": "tc",
+        "runs": 3,
+        "ok": 3,
+        "failed": 0,
+        "successRate": 1,
+        "usageRuns": 3,
+        "tokens": {
+          "in": {
+            "mean": 30629.666666666668,
+            "total": 91889
+          },
+          "out": {
+            "mean": 6885,
+            "total": 20655
+          },
+          "total": {
+            "mean": 37514.666666666664,
+            "total": 112544
+          }
+        },
+        "cost": {
+          "mean": 0.017514644,
+          "total": 0.052543932
+        },
+        "durationMsMean": 87684.66666666667,
+        "stepsMean": 11.333333333333334,
+        "tokensPerSuccess": {
+          "in": 30629.666666666668,
+          "out": 6885,
+          "total": 37514.666666666664
+        },
+        "costPerSuccess": 0.017514644,
+        "selectors": {
+          "range": 4,
+          "matcher": 8,
+          "wholeSymbol": 8
+        },
+        "stages": {
+          "wholeSymbol": 8,
+          "match": 8,
+          "pick": 4
+        },
+        "matcherKinds": {
+          "snippet": 8,
+          "regex": 0
+        },
+        "creates": 0
+      },
+      {
+        "task": "csv-parser",
+        "side": "tc",
+        "runs": 3,
+        "ok": 3,
+        "failed": 0,
+        "successRate": 1,
+        "usageRuns": 3,
+        "tokens": {
+          "in": {
+            "mean": 4143.333333333333,
+            "total": 12430
+          },
+          "out": {
+            "mean": 1274.3333333333333,
+            "total": 3823
+          },
+          "total": {
+            "mean": 5417.666666666667,
+            "total": 16253
+          }
+        },
+        "cost": {
+          "mean": 0.0027929359999999998,
+          "total": 0.008378808
+        },
+        "durationMsMean": 38322,
+        "stepsMean": 5.333333333333333,
+        "tokensPerSuccess": {
+          "in": 4143.333333333333,
+          "out": 1274.3333333333333,
+          "total": 5417.666666666667
+        },
+        "costPerSuccess": 0.0027929359999999998,
+        "selectors": {
+          "range": 1,
+          "matcher": 1,
+          "wholeSymbol": 5
+        },
+        "stages": {
+          "wholeSymbol": 5,
+          "match": 1,
+          "pick": 1
+        },
+        "matcherKinds": {
+          "snippet": 1,
+          "regex": 0
+        },
+        "creates": 0
+      }
+    ],
+    "bySide": [
+      {
+        "task": null,
+        "side": "tc",
+        "runs": 12,
+        "ok": 12,
+        "failed": 0,
+        "successRate": 1,
+        "usageRuns": 12,
+        "tokens": {
+          "in": {
+            "mean": 9515.916666666666,
+            "total": 114191
+          },
+          "out": {
+            "mean": 2632.0833333333335,
+            "total": 31585
+          },
+          "total": {
+            "mean": 12148,
+            "total": 145776
+          }
+        },
+        "cost": {
+          "mean": 0.006040218999999999,
+          "total": 0.07248262799999998
+        },
+        "durationMsMean": 112037.25,
+        "stepsMean": 5.916666666666667,
+        "tokensPerSuccess": {
+          "in": 9515.916666666666,
+          "out": 2632.0833333333335,
+          "total": 12148
+        },
+        "costPerSuccess": 0.006040218999999999,
+        "selectors": {
+          "range": 5,
+          "matcher": 10,
+          "wholeSymbol": 19
+        },
+        "stages": {
+          "wholeSymbol": 19,
+          "match": 10,
+          "pick": 5
+        },
+        "matcherKinds": {
+          "snippet": 10,
+          "regex": 0
+        },
+        "creates": 0
+      }
+    ],
+    "overall": {
+      "task": null,
+      "side": null,
+      "runs": 12,
+      "ok": 12,
+      "failed": 0,
+      "successRate": 1,
+      "usageRuns": 12,
+      "tokens": {
+        "in": {
+          "mean": 9515.916666666666,
+          "total": 114191
+        },
+        "out": {
+          "mean": 2632.0833333333335,
+          "total": 31585
+        },
+        "total": {
+          "mean": 12148,
+          "total": 145776
+        }
+      },
+      "cost": {
+        "mean": 0.006040218999999999,
+        "total": 0.07248262799999998
+      },
+      "durationMsMean": 112037.25,
+      "stepsMean": 5.916666666666667,
+      "tokensPerSuccess": {
+        "in": 9515.916666666666,
+        "out": 2632.0833333333335,
+        "total": 12148
+      },
+      "costPerSuccess": 0.006040218999999999,
+      "selectors": {
+        "range": 5,
+        "matcher": 10,
+        "wholeSymbol": 19
+      },
+      "stages": {
+        "wholeSymbol": 19,
+        "match": 10,
+        "pick": 5
+      },
+      "matcherKinds": {
+        "snippet": 10,
+        "regex": 0
+      },
+      "creates": 0
+    }
+  },
+  "provenance": {
+    "inputs": {
+      "model": "eb1394ac7fc44dc30655e16d1ca9bc59b8549b0f3144076e0e467982d17b4474",
+      "taskIssue": "f804315c31409381af225e25efafbf67ce848cdd323c4eeec81d6b10bc598a24",
+      "fixture": "f7f2c7770301209f01f973de4e1b1b8e52302ffa3e749558993909f14d792681",
+      "systemPrompt": "cdd21ce09270b89e9ae01ac4bde7417226789419a618155f02ed401e4e82f5c4",
+      "loopConfig": "c3a6ac3bbb97ab6e7258844b30e9009c07b542b7d102fb8110a30070773538a5",
+      "pricing": "aab6f45ac055bdc46329be2c46279a8ce322bfa62c0c61f0ef177d8b67766560"
+    },
+    "inputHash": "6b6f8a24c33a7ac157ff1fcd1b0669c425041e189ca3fbdf36294d68cadda253",
+    "computedAt": "2026-10-22T08:02:32.721Z"
+  }
+}

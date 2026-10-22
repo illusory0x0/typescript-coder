@@ -6,7 +6,21 @@ if resolve kind missing, default create let binding.
 
 
 ````
-multiEditor = { editor } ;
+multiEditor = { editor | fs } ;
+
+
+fs = 'create', path, done             |    (* create new file *) 
+     'delete', path, done             |    (* delete file *)
+     
+     'read',  path,                        (* read file *)
+     ['within', selecters, ]               (* if missing, read the whole file *)
+      done                            |    
+
+     'write', path,                        (* write file *)
+     ['within', selecters, ]               (* if missing, write the whole file *)
+     'with', fence,                    
+      done;
+
 
 editor      = 'select', symbol,                 (* select toplevel typescript *)
               'in', path,                       (* in path relative project root *)
