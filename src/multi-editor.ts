@@ -1,8 +1,9 @@
 import { resolveEditDslReply } from "./edit-dsl";
 import type { EditDslDeps, EditDslFailure, EditDslRegion, EditDslViewer } from "./edit-dsl";
 import type { EditRange } from "./loop";
+import { resolveLocalRename } from "./rename";
 import { END_OF_LINE_COLUMN } from "./selection";
-import type { EditStatement, FileStatement, Selection } from "./selection";
+import type { EditStatement, FileStatement, RenameSpec, Selection } from "./selection";
 import type { Locator } from "./utility";
 
 /** One line of a `read` result, numbered exactly like the other prompt blocks. */
@@ -77,6 +78,23 @@ function fsFailure(
     stage,
     cause: null,
     diagnostics: `stage: ${stage}\n${detail}`,
+    undeclaredName: null,
+  };
+}
+
+function renameFailure(
+  index: number,
+  path: string,
+  locator: Locator,
+  detail: string,
+): EditDslFailure {
+  return {
+    index,
+    path,
+    locator,
+    stage: "address",
+    cause: null,
+    diagnostics: detail.startsWith("stage:") ? detail : `stage: address\n${detail}`,
     undeclaredName: null,
   };
 }
@@ -228,11 +246,17 @@ export function resolveMultiEditor(
 ): MultiEditorResolution {
   const editors: Selection[] = [];
   const editorIndices: number[] = [];
+  const renames: { selection: Selection & { rename: RenameSpec }; index: number }[] = [];
   for (let index = 0; index < statements.length; index += 1) {
     const statement = statements[index];
     if (statement?.type === "editor") {
-      editors.push(statement.selection);
-      editorIndices.push(index);
+      const selection = statement.selection;
+      if (selection.rename !== undefined && selection.rename !== null) {
+        renames.push({ selection: { ...selection, rename: selection.rename }, index });
+      } else {
+        editors.push(selection);
+        editorIndices.push(index);
+      }
     }
   }
   const editorResolution = resolveEditDslReply(editors, deps, editorIndices);
@@ -243,6 +267,69 @@ export function resolveMultiEditor(
   const creates: MultiEditorFileMutation[] = [];
   const deletes: MultiEditorFileMutation[] = [];
   const reads: MultiEditorRead[] = [];
+
+  // Renames are semantic, not matcher edits: resolve each against its file's
+  // current source with the local-scope engine. A rename never produces a
+  // viewer; either its whole edit list becomes regions or it fails at address.
+  for (const { selection, index } of renames) {
+    const path = selection.locator.path;
+    if (!deps.isSafePath(path)) {
+      failures.push(
+        renameFailure(
+          index,
+          path,
+          selection.locator,
+          `the path ${JSON.stringify(path)} is outside the editable workspace`,
+        ),
+      );
+      continue;
+    }
+    if (!deps.fileExists(path)) {
+      failures.push(
+        renameFailure(
+          index,
+          path,
+          selection.locator,
+          `cannot rename ${JSON.stringify(selection.locator.name)} in ${JSON.stringify(path)}: the file does not exist`,
+        ),
+      );
+      continue;
+    }
+    let source: string;
+    try {
+      source = deps.sourceFor(path);
+    } catch (error) {
+      failures.push(
+        renameFailure(
+          index,
+          path,
+          selection.locator,
+          `cannot read ${JSON.stringify(path)}: ${error instanceof Error ? error.message : String(error)}`,
+        ),
+      );
+      continue;
+    }
+    const renamed = resolveLocalRename(source, path, selection.locator, selection.rename, {
+      space: selection.space,
+    });
+    if (!renamed.ok) {
+      failures.push(renameFailure(index, path, selection.locator, renamed.diagnostics));
+      continue;
+    }
+    for (const edit of renamed.edits) {
+      regions.push({
+        index,
+        path,
+        locator: selection.locator,
+        start: edit.start,
+        end: edit.end,
+        text: edit.text,
+        stage: "whole-symbol",
+        matcherKind: null,
+        create: false,
+      });
+    }
+  }
 
   // A delete cannot coexist with any other operation on the same path in one
   // reply; a create and a write/editor on one path are likewise ambiguous.

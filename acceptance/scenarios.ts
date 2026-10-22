@@ -346,6 +346,12 @@ const EDIT_DSL_PICK_EDIT = [
   "end",
 ].join("\n");
 const EDIT_DSL_CONFIRMATION = "Great! I resolve this problem!";
+const EDIT_DSL_RENAME_SELECT = ["select answer in src/helper.ts resolve value", "end"].join("\n");
+const EDIT_DSL_RENAME_EDIT = [
+  "select answer in src/helper.ts resolve value",
+  "rename answer to result",
+  "end",
+].join("\n");
 
 export const scenarios: Scenario[] = [
   {
@@ -379,6 +385,27 @@ export const scenarios: Scenario[] = [
       messageContains(2, "# modified text"),
       messageContains(2, "2 |   return 2;"),
       fileContains("src/helper.ts", "return 2;"),
+      fileEqualsOriginal("src/helper.test.ts"),
+    ],
+  },
+  {
+    id: "edit-dsl-rename",
+    title: "edit-dsl rename updates a declaration and its references",
+    fixture: "edit-dsl-rename",
+    issue: TEST_ISSUE,
+    protocolFormat: "edit-dsl",
+    responses: [EDIT_DSL_RENAME_SELECT, EDIT_DSL_RENAME_EDIT, EDIT_DSL_CONFIRMATION],
+    assertions: [
+      hasOk(true),
+      hasRecords(4),
+      recordOutcomes(["selected", "applied", "ok", "confirmed"]),
+      hasCallCount(3),
+      messageContains(1, "# details"),
+      messageContains(1, "export function answer"),
+      messageContains(2, "# modified text"),
+      messageContains(2, "function result"),
+      fileContains("src/helper.ts", "function result"),
+      fileContains("src/helper.ts", "return result();"),
       fileEqualsOriginal("src/helper.test.ts"),
     ],
   },

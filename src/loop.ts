@@ -181,7 +181,7 @@ function editDslParseDiagnostics(content: string, error: SelectionSyntaxError): 
 // straight back to the payload this mode rejects (the observed rep1
 // `address ↔ protocol` loop).
 const EDIT_DSL_PROTOCOL_CORRECTION =
-  "Reply with one or more `select … end` clauses or a file command (`create`, `delete`, `read`, `write`) as the entire response (`select <symbol> in <path> [ resolve <value|type|namespace> ] [ match (<snippet> | /regex/) ] [ [ pick <range> ] replace with <fence> ] end`, where the fence opens with 5 or more hyphens (for example `-----`) or 6 or more backticks; a `pick` requires `replace`); a JSON edit payload is not accepted in this mode.";
+  "Reply with one or more `select … end` clauses or a file command (`create`, `delete`, `read`, `write`) as the entire response (`select <symbol> in <path> [ resolve <value|type|namespace> ] [ match (<snippet> | /regex/) ] [ [ pick <range> ] replace with <fence> | rename <old> to <new> ] end`, where the fence opens with 5 or more hyphens (for example `-----`) or 6 or more backticks; a `pick` requires `replace`, and `rename` cannot be combined with either); a JSON edit payload is not accepted in this mode.";
 const EDIT_DSL_PROTOCOL_ESCALATION =
   "This attempt MUST reply with only `select … end` clauses or file commands — with no prose, no markdown fences, and no JSON edit payload.";
 
@@ -6355,6 +6355,7 @@ async function runEditDslLoop(options: LoopOptions): Promise<LoopResult> {
           source: string;
         } | null = null;
         let fsPick: { path: string; mode: "modify" | "create" } | null = null;
+        let renamePick: EditDslSelection | null = null;
         let fsReadFeedback: string | null = null;
         let fsReply = false;
         try {
@@ -6408,30 +6409,37 @@ async function runEditDslLoop(options: LoopOptions): Promise<LoopResult> {
             const selected = editorSelection;
             if (selected !== null) {
               candidate = selected.locator;
-              const pickSource = readFileIfExists(join(cwd, selected.locator.path)) ?? "";
-              const resolved = resolveCurrentEntry(
-                pickSource,
-                selected.locator.path,
-                selected.locator,
-                selected.space,
-              );
-              if (resolved.ok) {
-                editDslPick = {
-                  selection: selected,
-                  mode: "modify",
-                  entry: resolved.entry,
-                  source: pickSource,
-                };
-              } else if (resolved.undeclared || resolved.spaceMiss) {
-                editDslPick = {
-                  selection: selected,
-                  mode: "create",
-                  entry: null,
-                  source: pickSource,
-                };
+              if (selected.rename !== undefined && selected.rename !== null) {
+                // A first-turn rename has no index-resolvable declaration in
+                // many cases (locals, dotted members); pin the path and let the
+                // content exchange run the rename engine on the same reply.
+                renamePick = selected;
               } else {
-                diagnostic = resolved.diagnostics;
-                selectionStage = "address";
+                const pickSource = readFileIfExists(join(cwd, selected.locator.path)) ?? "";
+                const resolved = resolveCurrentEntry(
+                  pickSource,
+                  selected.locator.path,
+                  selected.locator,
+                  selected.space,
+                );
+                if (resolved.ok) {
+                  editDslPick = {
+                    selection: selected,
+                    mode: "modify",
+                    entry: resolved.entry,
+                    source: pickSource,
+                  };
+                } else if (resolved.undeclared || resolved.spaceMiss) {
+                  editDslPick = {
+                    selection: selected,
+                    mode: "create",
+                    entry: null,
+                    source: pickSource,
+                  };
+                } else {
+                  diagnostic = resolved.diagnostics;
+                  selectionStage = "address";
+                }
               }
             }
           } else if (editorCount === 0 && fsCount === 0) {
@@ -6545,6 +6553,38 @@ async function runEditDslLoop(options: LoopOptions): Promise<LoopResult> {
               kind: "exchange",
               exchange,
               locator,
+              replacement: null,
+              diagnostics: null,
+              outcome: "selected",
+              finishReason: response.finishReason,
+              toolCalls: response.toolCalls.length,
+            }),
+          );
+          messages.push({ role: "assistant", content: pinnedAssistantContent });
+          baseSource = source;
+          initialContentPrompt = buildEditDslCommandPrompt(
+            options.issue,
+            editDslIndexText,
+            path,
+            source,
+            specFiles,
+          );
+          prefetchedReply = response;
+          continue;
+        }
+        if (renamePick !== null) {
+          const path = renamePick.locator.path;
+          const source = readFileIfExists(join(cwd, path)) ?? "";
+          pinned = { mode: "modify", locator: renamePick.locator };
+          pinnedAddressJson = pinJson(pinned);
+          pinnedAssistantContent = (response.content ?? "").trim();
+          records.push(
+            recordRow({
+              row: records.length + 1,
+              iteration,
+              kind: "exchange",
+              exchange,
+              locator: renamePick.locator,
               replacement: null,
               diagnostics: null,
               outcome: "selected",
@@ -7413,7 +7453,9 @@ async function runEditDslLoop(options: LoopOptions): Promise<LoopResult> {
           return success(newSource);
         }
         const continues = confirmationSelections.some(
-          (selection) => selection.replacement !== null,
+          (selection) =>
+            selection.replacement !== null ||
+            (selection.rename !== undefined && selection.rename !== null),
         );
         if (continues) {
           if (exchange < MAX_EDIT_EXCHANGES) {

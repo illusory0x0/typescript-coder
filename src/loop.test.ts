@@ -8561,6 +8561,197 @@ describe("edit-dsl protocol (#111/#119)", () => {
     expect(helperSource(dir)).toContain("return 2;");
   }, 30000);
 
+  test("runLoop renames a declaration and its references without a tool call", async () => {
+    const dir = fixtureDir();
+    writeFileSync(
+      join(dir, "src", "helper.ts"),
+      [
+        "export function answer(): number {",
+        "  return 1;",
+        "}",
+        "",
+        "export function getAnswer(): number {",
+        "  return answer();",
+        "}",
+        "",
+      ].join("\n"),
+    );
+    writeFileSync(
+      join(dir, "src", "helper.test.ts"),
+      'import { expect, test } from "bun:test";\nimport { getAnswer } from "./helper";\n\ntest("getAnswer", () => {\n  expect(getAnswer()).toBe(1);\n});\n',
+    );
+    const provider = new ScriptedProvider([
+      editDslSelect("answer", "src/helper.ts", "value"),
+      editDslReply({
+        locator: { path: "src/helper.ts", name: "answer", kind: "function" },
+        space: "value",
+        matcher: null,
+        pick: null,
+        replacement: null,
+        rename: { from: "answer", to: "result" },
+      }),
+      "Great! I resolve this problem!",
+    ]);
+    const result = await runLoopBase({
+      cwd: dir,
+      issue: "rename answer to result",
+      provider,
+      checkCommand: TSC,
+      testCommand: ["bun", "test"],
+    });
+    expect(result.ok).toBe(true);
+    const helper = helperSource(dir);
+    expect(helper).toContain("function result");
+    expect(helper).toContain("return result();");
+    expect(provider.calls).toHaveLength(3);
+    expect(provider.toolsArgs.every((tools) => tools === undefined)).toBe(true);
+    expect(result.records.every((record) => record.toolCalls === 0)).toBe(true);
+  }, 30000);
+
+  test("a first-turn rename pins the path and applies without a second edit call", async () => {
+    const dir = fixtureDir();
+    writeFileSync(
+      join(dir, "src", "helper.ts"),
+      [
+        "export function answer(): number {",
+        "  return 1;",
+        "}",
+        "",
+        "export function getAnswer(): number {",
+        "  return answer();",
+        "}",
+        "",
+      ].join("\n"),
+    );
+    writeFileSync(
+      join(dir, "src", "helper.test.ts"),
+      'import { expect, test } from "bun:test";\nimport { getAnswer } from "./helper";\n\ntest("getAnswer", () => {\n  expect(getAnswer()).toBe(1);\n});\n',
+    );
+    const provider = new ScriptedProvider([
+      editDslReply({
+        locator: { path: "src/helper.ts", name: "answer", kind: "function" },
+        space: "value",
+        matcher: null,
+        pick: null,
+        replacement: null,
+        rename: { from: "answer", to: "result" },
+      }),
+      "Great! I resolve this problem!",
+    ]);
+    const result = await runLoopBase({
+      cwd: dir,
+      issue: "rename answer to result",
+      provider,
+      checkCommand: TSC,
+      testCommand: ["bun", "test"],
+    });
+    expect(result.ok).toBe(true);
+    expect(helperSource(dir)).toContain("function result");
+    expect(helperSource(dir)).toContain("return result();");
+    expect(provider.calls).toHaveLength(2);
+  }, 30000);
+
+  test("a mixed rename/write reply applies both when the rename succeeds", async () => {
+    const dir = fixtureDir();
+    writeFileSync(
+      join(dir, "src", "helper.ts"),
+      [
+        "export function answer(): number {",
+        "  return 1;",
+        "}",
+        "",
+        "export function getAnswer(): number {",
+        "  return answer();",
+        "}",
+        "",
+      ].join("\n"),
+    );
+    writeFileSync(
+      join(dir, "src", "helper.test.ts"),
+      'import { expect, test } from "bun:test";\nimport { getAnswer } from "./helper";\n\ntest("getAnswer", () => {\n  expect(getAnswer()).toBe(1);\n});\n',
+    );
+    const otherPath = join(dir, "src", "other.ts");
+    writeFileSync(otherPath, "export const untouched = 0;\n");
+    const mixedReply = [
+      editDslReply({
+        locator: { path: "src/helper.ts", name: "answer", kind: "function" },
+        space: null,
+        matcher: null,
+        pick: null,
+        replacement: null,
+        rename: { from: "answer", to: "result" },
+      }),
+      ["write src/other.ts with", "-----", "export const touched = 1;", "-----", "done"].join("\n"),
+    ].join("\n\n");
+    const provider = new ScriptedProvider([
+      editDslSelect("answer", "src/helper.ts", "value"),
+      mixedReply,
+      "Great! I resolve this problem!",
+    ]);
+    const result = await runLoopBase({
+      cwd: dir,
+      issue: "rename answer to result and update other.ts",
+      provider,
+      checkCommand: TSC,
+      testCommand: ["bun", "test"],
+    });
+    expect(result.ok).toBe(true);
+    const helper = helperSource(dir);
+    expect(helper).toContain("function result");
+    expect(helper).toContain("return result();");
+    expect(readFileSync(otherPath, "utf8")).toContain("export const touched = 1;");
+  }, 30000);
+
+  test("a mixed rename/write reply is atomic when the rename collides", async () => {
+    const dir = fixtureDir();
+    writeFileSync(
+      join(dir, "src", "helper.ts"),
+      [
+        "export function answer(): number {",
+        "  return 1;",
+        "}",
+        "",
+        "export function result(): number {",
+        "  return 3;",
+        "}",
+        "",
+      ].join("\n"),
+    );
+    const otherPath = join(dir, "src", "other.ts");
+    const originalOther = "export const untouched = 0;\n";
+    writeFileSync(otherPath, originalOther);
+    const collisionReply = [
+      editDslReply({
+        locator: { path: "src/helper.ts", name: "answer", kind: "function" },
+        space: null,
+        matcher: null,
+        pick: null,
+        replacement: null,
+        rename: { from: "answer", to: "result" },
+      }),
+      ["write src/other.ts with", "-----", "export const touched = 1;", "-----", "done"].join("\n"),
+    ].join("\n\n");
+    const provider = new ScriptedProvider([
+      editDslSelect("answer", "src/helper.ts", "value"),
+      collisionReply,
+      editDslReply(answerEditor("return 2;", { kind: "snippet", value: "return 1;" })),
+      "Great! I resolve this problem!",
+    ]);
+    const result = await runLoopBase({
+      cwd: dir,
+      issue: "make the answer test pass",
+      provider,
+      checkCommand: TSC,
+      testCommand: ["bun", "test"],
+    });
+    expect(result.ok).toBe(true);
+    expect(readFileSync(otherPath, "utf8")).toBe(originalOther);
+    expect(helperSource(dir)).toContain("return 2;");
+    expect(
+      result.records.some((record) => record.diagnostics?.includes("collision") === true),
+    ).toBe(true);
+  }, 30000);
+
   test("a duplicate top-level declaration is named in retry diagnostics and repairable by deletion", async () => {
     const dir = fixtureDir();
     writeFileSync(
@@ -8967,7 +9158,7 @@ describe("edit-dsl protocol (#111/#119)", () => {
     );
     expect(edit).toContain("A reply is one or more `select … end` clauses");
     expect(edit).toContain(
-      "a clause that stops before `replace` is a viewer that writes nothing unless it contains `pick`; `pick` requires `replace`",
+      "a clause with neither `replace` nor `rename` is a viewer that writes nothing unless it contains `pick`; `pick` requires `replace`",
     );
     // The four forms are rendered from the grammar's own serializer.
     expect(edit).toContain("select function f in src/x.ts resolve value");
@@ -10438,9 +10629,10 @@ describe("edit-dsl protocol (#111/#119)", () => {
     expect(prompt).toContain("`select <symbol> in <path> [ resolve <value|type|namespace> ]");
     expect(prompt).toContain("fence opens with 5 or more hyphens");
     expect(prompt).toContain(
-      "a clause that stops before `replace` is a viewer that locates and writes nothing unless it contains `pick`; `pick` requires `replace`",
+      "a clause with neither `replace` nor `rename` is a viewer that locates and writes nothing unless it contains `pick`; `pick` requires `replace`",
     );
-    expect(prompt).toContain("[ [ pick <range> ] replace with <fence> ]");
+    expect(prompt).toContain("[ [ pick <range> ] replace with <fence> | rename <old> to <new> ]");
+    expect(prompt).toContain("`rename <old> to <new>` renames the selected declaration");
     expect(prompt).toContain("renders the numbered declaration with `⁉️` on the matched lines");
     expect(prompt).not.toContain("select [kind]");
     expect(prompt).toContain(

@@ -30,20 +30,23 @@ context, selection resolution, gates). Protocol prompt text lives in
    naming a symbol-index entry, or file commands (`create`/`delete`/`read`/
    `write`) that pin their target. A viewer (no `replace`) pins the declaration
    and the harness sends a `# details` prompt with the declaration's source
-   numbered by file-absolute lines; an editor clause applies its own replacement.
-   A missing path, missing symbol, or space miss pins mode `create` and asks for
-   a create clause. Under explicit JSON, the model instead replies with a JSON
-   address `{mode, path, symbol, kind}` (`modify` | `create` | `delete`);
-   resolution is strict and there is no silent first-match. The first successful
-   selection is pinned for the run; later exchanges must echo it (a
+   numbered by file-absolute lines; an editor clause applies its own replacement
+   or rename. A missing path, missing symbol, or space miss pins mode `create`
+   and asks for a create clause. Under explicit JSON, the model instead replies
+   with a JSON address `{mode, path, symbol, kind}` (`modify` | `create` |
+   `delete`); resolution is strict and there is no silent first-match. The first
+   successful selection is pinned for the run; later exchanges must echo it (a
    verification-repair round may re-pin to a different declaration in the same
    file).
 4. **Edit.** The pinned declaration is shown with 1-based line numbers, and the
    model replies with one edit payload. Under edit-dsl that is one or more
-   `select … end` clauses with 5+ hyphen (or 6+ backtick) replacement fences,
-   optionally mixed with raw file commands; under JSON it is
-   an address, an optional `matcher` (snippet or 1-based `range`, the latter
-   winning), and a `replacement`. The optional multi-payload protocol lets one
+   `select … end` clauses with 5+ hyphen (or 6+ backtick) replacement fences or
+   a semantic `rename <old> to <new>`, optionally mixed with raw file commands;
+   under JSON it is an address, an optional `matcher` (snippet or 1-based
+   `range`, the latter winning), and a `replacement`. A rename updates the
+   declaration and every same-file reference that resolves to it, including
+   dotted namespace/member targets; shadowed bindings and collisions are
+   rejected at the address stage. The optional multi-payload protocol lets one
    JSON reply batch non-overlapping regions and/or multiple files, applied
    atomically.
 5. **Gates.** Before anything touches the disk, the candidate must pass, in
@@ -59,7 +62,8 @@ context, selection resolution, gates). Protocol prompt text lives in
 7. **Confirm (edit-dsl).** After an edit-dsl edit verifies, the harness sends a
    `# modified text` prompt with the edited declaration. `Great! I resolve this
    problem!` (or any non-editor reply) confirms and ends; an editor clause with
-   exchange room is applied and verified again. JSON has no confirmation turn.
+   `replace` or `rename` and exchange room is applied and verified again. JSON
+   has no confirmation turn.
 
 Each exchange and each verification is recorded as a row (`records`), which is
 what the result contract (`src/result.ts`) and the benchmark harnesses consume.

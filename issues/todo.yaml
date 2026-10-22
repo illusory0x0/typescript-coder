@@ -10,14 +10,6 @@
   parent: null
   deps: []
   file: 0016-run-tc-protocol-variants-in-one-concurrent-benchmark.md
-- id: 21
-  title: "Apply renames atomically in the edit-dsl loop and teach the grammar"
-  status: todo
-  priority: medium
-  milestone: null
-  parent: 17
-  deps: [19, 20]
-  file: 0021-apply-renames-atomically-in-the-edit-dsl-loop-and-teach-the-grammar.md
 - id: 17
   title: "Implement semantic rename in edit-dsl"
   status: todo

@@ -72,7 +72,7 @@ wrapper; it batches by sending more clauses.
 ## 2. The edit-dsl clause
 
 ```text
-select [kind] <symbol> in <path> [ resolve (value|type|namespace) ] [ match (<snippet> | /regex/) ] [ [ pick <range-or-set> ] replace with <fence> ] end
+select [kind] <symbol> in <path> [ resolve (value|type|namespace) ] [ match (<snippet> | /regex/) ] [ [ [ pick <range-or-set> ] replace with <fence> ] | rename <old> to <new> ] end
 ```
 
 A reply is one or more statements — `select` clauses or raw file commands
@@ -112,11 +112,19 @@ selection is never returned.
   run. The body may not contain a run of 3 or more of the fence's own delimiter.
   The serializer prefers five hyphens and falls back to six backticks when the
   body contains a hyphen run. An empty fence deletes the target.
+- **`rename <old> to <new>`**: the other editor form. It rewrites the selected
+  declaration name and every same-file reference that lexically resolves to it.
+  Shadowed bindings and out-of-scope names are untouched; dotted targets rename
+  the final segment for namespaces, enum members, and class fields (`this.field`
+  plus same-class static accesses). A collision with an existing binding at the
+  same scope or qualified path is an `address` failure, and a rename cannot be
+  combined with `pick` or `replace`.
 - **`end`** terminates the clause.
 
-A clause that stops before `replace` is a **viewer**: it locates and writes
-nothing (§4). A clause that stops after `pick` is not a viewer; `pick` requires
-`replace`.
+A clause with neither `replace` nor `rename` is a **viewer**: it locates and
+writes nothing (§4). A clause with `replace` is an editor (after `pick` when
+present); `pick` requires `replace`. A `rename` is always an editor, never a
+viewer.
 
 **Select first.** The first edit-dsl reply is exactly one clause. The harness
 renders its symbol index as top-level `select <name> in <path> [resolve <space>]`
@@ -125,9 +133,31 @@ they are not advertised in the index; an explicit test address still resolves.
 A viewer (no `replace`) pins the declaration and the harness answers with
 a `# details` prompt: the goal, the symbol index, and the declaration source
 numbered with file-absolute lines; the next reply is the edit clause. An editor
-clause (with `replace`) carries its own edit and is applied without a second
-model call. A missing path, a missing symbol, or a space miss pins mode
+clause (with `replace` or `rename`) carries its own edit and is applied without
+a second model call. A missing path, a missing symbol, or a space miss pins mode
 `create`, and the next prompt asks for a create clause.
+
+### Rename semantics
+
+A rename is resolved against the whole file before any splice is queued. The
+engine parses the file, builds lexical scopes, and rewrites the declaration
+identifier plus every reference with the same binding identity. Renaming a
+parameter does not touch an outer variable with that name; renaming an outer
+binding does not touch an inner shadow; references inside nested closures are
+included. Function, class, interface, and type-alias declarations rename their
+same-file references by value/type space.
+
+Dotted targets use the full locator path (`Color.Red`, `Widget.field`, `A.B`)
+and rename only the final segment. Qualified references are matched
+structurally: `X.A.B` and `A.B.Z` do not match target `A.B`, and a same-named
+member on another enum/class is untouched. Class field references are limited
+to `this.field` and same-class static accesses; arbitrary receiver-typed
+`obj.field` accesses are not rewritten.
+
+A rename failure (unresolved or ambiguous address, invalid new name, or a
+collision at the same scope/qualified path) is reported at the `address` stage
+and discards the entire reply. A rename mixed with other editor or file
+commands applies all regions or none, through the same atomic apply pipeline.
 
 ### Grammar
 
@@ -144,8 +174,11 @@ fs          = 'create', path, 'done'
 editor      = 'select', [ kind ], symbol, 'in', path,
               [ 'resolve', space ],
               [ 'match', ( snippet | regex ) ],
-              [ [ 'pick', multiRange ], 'replace', 'with', fence ],
+              [ replacer | renamer ],
               'end' ;
+
+replacer    = [ 'pick', multiRange ], 'replace', 'with', fence ;
+renamer     = 'rename', identifier, 'to', identifier ;
 
 multiRange  = '{', range, { ',', range }, '}'
             | range ;                                   (* single-range sugar *)
@@ -161,6 +194,7 @@ kind        = 'function' | 'const' | 'let' | 'var' | 'class'
 space       = 'value' | 'type' | 'namespace' ;
 path        = ? file path token ? ;
 symbol      = ? declared identifier ? ;
+identifier  = ? TypeScript identifier ? ;
 snippet     = ? '`' , verbatim source, '`' ? ;
 regex       = ? '/' , ECMA-262 pattern, no flags, '/' ? ;
 fence       = ? 5+ hyphens or 6+ backticks; body free of a run >= 3 of the

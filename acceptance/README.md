@@ -25,6 +25,7 @@ covered in [Live checks](#live-checks).
 | ---------------------- | ------------------------------------------------------------------ | ---- | ---- |
 | fix-answer             | failing test becomes green                                         | no   | no   |
 | edit-dsl-viewer-edit   | edit-dsl select viewer opens details then an edit lands            | no   | no   |
+| edit-dsl-rename        | edit-dsl rename updates a declaration and its references           | no   | no   |
 | live-fix-answer        | real model makes the failing test pass                             | no   | yes  |
 | keep-progress-retry    | type-invalid replacement stays and the next iteration builds on it | no   | no   |
 | persistent-failure     | exhausted Edit budget keeps the attempted state and explains       | no   | no   |

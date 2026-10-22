@@ -1,7 +1,7 @@
 ---
 id: 21
 title: "Apply renames atomically in the edit-dsl loop and teach the grammar"
-status: todo
+status: done
 priority: medium
 milestone: null
 parent: 17
@@ -58,3 +58,4 @@ just accept --all
   not tune against the held-out `csv-parser` fixture.
 - Do not remove the existing `rename` tool in this issue; removing tools is a
   separate decision.
+- Integrated rename into the edit-dsl loop: rename clauses bypass viewer resolution, resolve through the semantic engine, and apply as atomic whole-symbol regions; first-turn renames pin the path; confirmation accepts rename editors. Added prompt/docs teaching, loop tests for success/first-turn/mixed-success/mixed-failure/no-tool, and the offline `edit-dsl-rename` acceptance fixture. Verified `just typecheck`, `just test` (1221 pass, 0 fail), and `just accept --all` (8/8 pass). Known limitations: same-file references only; arbitrary receiver-typed `obj.field` and same-class bare field names are not rewritten; confirmation falls back to whole-file modified text when the old locator no longer resolves.
