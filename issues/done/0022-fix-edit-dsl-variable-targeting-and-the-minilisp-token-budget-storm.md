@@ -1,7 +1,7 @@
 ---
 id: 22
 title: "Fix edit-dsl variable targeting and the minilisp token-budget storm"
-status: todo
+status: done
 priority: high
 milestone: null
 parent: null
@@ -74,3 +74,4 @@ out of scope for this umbrella; the failing `builtins` target was indexed as a
 top-level `variable`. If local edit-dsl targets are needed later, file a
 separate issue.
 - Child ids: #23 (align variable kinds) and #24 (address-failure recovery). The body's #TBD placeholders refer to these.
+- Umbrella complete: #23 made `const`/`let`/`var` targets resolve against the internal `variable` index kind and stopped diagnostics from suggesting the grammar-invalid `variable` label; #24 added the repeated-address fallback (bare select or raw whole-file write) and regression coverage. Final verification: `just typecheck`; `just test` (1237 pass, 0 fail); `just accept --all` (8/8 pass). The optional live minilisp run was not used as a gate.
