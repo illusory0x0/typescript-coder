@@ -10,3 +10,27 @@
   parent: null
   deps: []
   file: 0016-run-tc-protocol-variants-in-one-concurrent-benchmark.md
+- id: 23
+  title: "Align variable kinds between the symbol index and the edit-dsl grammar"
+  status: todo
+  priority: high
+  milestone: null
+  parent: 22
+  deps: []
+  file: 0023-align-variable-kinds-between-the-symbol-index-and-the-edit-dsl-grammar.md
+- id: 24
+  title: "Offer a valid fallback after repeated edit-dsl address failures"
+  status: todo
+  priority: medium
+  milestone: null
+  parent: 22
+  deps: [23]
+  file: 0024-offer-a-valid-fallback-after-repeated-edit-dsl-address-failures.md
+- id: 22
+  title: "Fix edit-dsl variable targeting and the minilisp token-budget storm"
+  status: todo
+  priority: high
+  milestone: null
+  parent: null
+  deps: []
+  file: 0022-fix-edit-dsl-variable-targeting-and-the-minilisp-token-budget-storm.md

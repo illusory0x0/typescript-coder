@@ -26,6 +26,9 @@ digraph issues {
   "19" [label="#19 Rename local bindings and references by lexical scope"];
   "20" [label="#20 Resolve dotted and member rename targets"];
   "21" [label="#21 Apply renames atomically in the edit-dsl loop and teach the grammar"];
+  "22" [label="#22 Fix edit-dsl variable targeting and the minilisp token-budget storm"];
+  "23" [label="#23 Align variable kinds between the symbol index and the edit-dsl grammar"];
+  "24" [label="#24 Offer a valid fallback after repeated edit-dsl address failures"];
 
   // parent edges (parent -> child), solid
   "1" -> "2";
@@ -43,6 +46,8 @@ digraph issues {
   "17" -> "19";
   "17" -> "20";
   "17" -> "21";
+  "22" -> "23";
+  "22" -> "24";
 
   // dependency edges (blocker -> blocked), dashed
   "2" -> "3" [style=dashed, label="blocks"];
@@ -59,4 +64,5 @@ digraph issues {
   "19" -> "20" [style=dashed, label="blocks"];
   "19" -> "21" [style=dashed, label="blocks"];
   "20" -> "21" [style=dashed, label="blocks"];
+  "23" -> "24" [style=dashed, label="blocks"];
 }
