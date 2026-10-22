@@ -10,17 +10,11 @@ import {
 import { basename, dirname, isAbsolute, join, relative, resolve, sep } from "node:path";
 import { applyMatcherSplice, extractJsonObject, findMatcher, stripCodeFences } from "./matcher";
 import type { MatcherResult } from "./matcher";
-import {
-  END_OF_LINE_COLUMN,
-  parseSelection,
-  serializeSelections,
-  SelectionSyntaxError,
-} from "./selection";
+import { parseSelection, SelectionSyntaxError } from "./selection";
 import type { Selection as EditDslSelection } from "./selection";
 import {
   duplicateDeclarationNote,
   markedViewerLines,
-  markerGutter,
   renderViewerFeedback,
   resolveEditDslReply,
 } from "./edit-dsl";
@@ -52,14 +46,127 @@ import type {
   SymbolSpace,
   TolerantIndex,
 } from "./utility";
+import {
+  APPROACH_LIMIT,
+  CONTEXT_SYMBOL_LIMIT,
+  MAX_EDIT_EXCHANGES,
+  numberedSourceBlock,
+  RANGE_SELECTOR_NOTE,
+  SELF_CHECK_OFFER,
+  SPEC_FILE_LIMIT,
+  splitSourceLines,
+  TEST_FILE_SUFFIX,
+  truncateSource,
+} from "./prompts/shared";
+import {
+  buildEditDslCreatePrompt,
+  buildEditDslDetailsPrompt,
+  buildEditDslEditPrompt,
+  buildEditDslModifiedPrompt,
+  buildEditDslPinnedCreatePrompt,
+  buildEditDslSelectionContinuationPrompt,
+  buildEditDslSelectionRetryPrompt,
+  buildEditDslSymbolIndex,
+  buildEditDslSystemPrompt,
+  buildEditDslUserPrompt,
+  editDslContextBlock,
+  editDslCreateInstruction,
+  editDslInstruction,
+} from "./prompts/edit-dsl";
+import {
+  buildJsonCreatePrompt,
+  buildJsonEditPrompt,
+  buildJsonSystemPrompt,
+  buildSelectionContinuationPrompt,
+  buildSelectionRetryPrompt,
+  buildTargetsEditPrompt,
+  buildUserPrompt,
+} from "./prompts/json";
+
+export {
+  APPROACH_LIMIT,
+  MAX_EDIT_EXCHANGES,
+  numberedSourceBlock,
+  numberedSourceRange,
+  RANGE_SELECTOR_NOTE,
+  SELF_CHECK_OFFER,
+  SPEC_FILE_LIMIT,
+} from "./prompts/shared";
+export {
+  buildEditDslCreatePrompt,
+  buildEditDslDetailsPrompt,
+  buildEditDslModifiedPrompt,
+  buildEditDslSelectionContinuationPrompt,
+  buildEditDslSelectionRetryPrompt,
+  buildEditDslSymbolIndex,
+  buildEditDslUserPrompt,
+} from "./prompts/edit-dsl";
+export {
+  buildSelectionContinuationPrompt,
+  buildSelectionRetryPrompt,
+  buildTargetsEditPrompt,
+  buildUserPrompt,
+} from "./prompts/json";
+
+// Protocol dispatch (Phase 1): the protocol-specific prompt text lives in
+// `./prompts/{json,edit-dsl}.ts`; these keep the public signatures used by the
+// loop and tests.
+export function buildSystemPrompt(multiPayload = false, format: ProtocolFormat = "json"): string {
+  return format === "edit-dsl"
+    ? buildEditDslSystemPrompt(multiPayload)
+    : buildJsonSystemPrompt(multiPayload);
+}
+
+export function buildEditPrompt(
+  addressJson: string,
+  symbolSource: string,
+  multiPayload = false,
+  format: ProtocolFormat = "json",
+): string {
+  return format === "edit-dsl"
+    ? buildEditDslEditPrompt(addressJson, symbolSource)
+    : buildJsonEditPrompt(addressJson, symbolSource, multiPayload);
+}
+
+export function buildCreatePrompt(
+  addressJson: string,
+  path: string,
+  format: ProtocolFormat = "json",
+): string {
+  return format === "edit-dsl"
+    ? buildEditDslPinnedCreatePrompt(addressJson, path)
+    : buildJsonCreatePrompt(addressJson, path);
+}
 
 const SKIPPED_DIRECTORIES = new Set(["node_modules", ".git", "dist", "tmp"]);
-const CONTEXT_SYMBOL_LIMIT = 500;
 const SIGNATURE_LIMIT = 200;
-export const SPEC_FILE_LIMIT = 8000;
-const TEST_FILE_SUFFIX = ".test.ts";
 // Path-like tokens in the issue text, e.g. `src/lisp.ts` inside backticks.
 const ISSUE_PATH_PATTERN = /[\w./-]+\.ts\b/g;
+
+// #119: the protocol failure an edit-dsl round returns when the reply is not
+// a `select … end` clause. A JSON edit payload never matches the edit-dsl grammar,
+// so it is rejected here too.
+export const EDIT_DSL_FORCE_DIAGNOSTICS =
+  "stage: protocol\nthe reply must be one or more `select … end` clauses; a JSON edit payload is not accepted in this mode";
+
+// A JSON edit payload is a protocol rejection; any other unparseable reply names
+// its actual syntax error. Dropping the `SelectionSyntaxError` message made a
+// missing `end` look like a rejected JSON payload, sending the model back to the
+// payload form this mode forbids.
+function editDslParseDiagnostics(content: string, error: SelectionSyntaxError): string {
+  const trimmed = stripCodeFences(content).trimStart();
+  return trimmed.startsWith("{") ? EDIT_DSL_FORCE_DIAGNOSTICS : error.diagnostics;
+}
+
+// #117/#119: under the edit-dsl protocol a `protocol` rejection means the reply
+// was not `select … end` (usually a JSON edit payload). The retry must re-teach
+// the edit-dsl form; the JSON-flavored #56 correction would drive the model
+// straight back to the payload this mode rejects (the observed rep1
+// `address ↔ protocol` loop).
+const EDIT_DSL_PROTOCOL_CORRECTION =
+  "Reply with one or more `select … end` clauses as the entire response (`select <symbol> in <path> [ resolve <value|type|namespace> ] [ match (<snippet> | /regex/) ] [ [ pick <range> ] replace with <fence> ] end`, where the fence opens with 6 or more backticks; a `pick` requires `replace`); a JSON edit payload is not accepted in this mode.";
+const EDIT_DSL_PROTOCOL_ESCALATION =
+  "This attempt MUST reply with only `select … end` clauses — one or more, with no prose, no markdown fences, and no JSON edit payload.";
 
 function comparePaths(left: string, right: string): number {
   if (left === right) {
@@ -172,551 +279,6 @@ export function buildContextYaml(files: SourceFile[], build?: TolerantIndex): st
     lines.push("truncated: true");
   }
   return `${lines.join("\n")}\n`;
-}
-
-// EditDsl select-first index: one `select <name> in <path>` line per top-level
-// declaration, deduped by path+name, with a `resolve` space only when the
-// declaration occupies exactly one space (class/enum dual-space entries omit it).
-// Test files are omitted: they are specifications, and a from-scratch fixture
-// often contains only its test, whose helpers would otherwise be the sole anchor.
-// Capped like the YAML context; a truncation note is a plain comment line.
-export function buildEditDslSymbolIndex(index: SymbolIndex): string {
-  const seen = new Set<string>();
-  const lines: string[] = [];
-  let truncated = false;
-  for (const entry of index.entries) {
-    if (entry.locator.name.includes(".")) {
-      continue;
-    }
-    // Tests are specifications, not edit targets: a from-scratch fixture often
-    // contains only its test file, and advertising that file's helpers would
-    // anchor the first select on the wrong file. Explicit test addresses still
-    // resolve through the full index.
-    if (entry.locator.path.endsWith(TEST_FILE_SUFFIX)) {
-      continue;
-    }
-    const key = `${entry.locator.path}\u0000${entry.locator.name}`;
-    if (seen.has(key)) {
-      continue;
-    }
-    if (seen.size >= CONTEXT_SYMBOL_LIMIT) {
-      truncated = true;
-      break;
-    }
-    seen.add(key);
-    const spaces = declarationSpaces(entry);
-    const first = spaces[0];
-    const resolve = spaces.length === 1 && first !== undefined ? ` resolve ${first}` : "";
-    lines.push(`select ${entry.locator.name} in ${entry.locator.path}${resolve}`);
-  }
-  if (truncated) {
-    lines.push(`# symbol index truncated at ${CONTEXT_SYMBOL_LIMIT} entries`);
-  }
-  return lines.join("\n");
-}
-
-// Opt-in multi-payload protocol (#69): appended to the system prompt when the
-// variant is enabled, so the default prompt stays byte-identical.
-const MULTI_PAYLOAD_SYSTEM_PARAGRAPH =
-  'The multi-payload protocol is enabled: one edit reply may instead carry several edits as {"payloads": [{"path": ..., "symbol": ..., "kind": ..., "matcher": ..., "replacement": ...}, ...]} — different files and/or several non-overlapping regions of one file. The first entry echoes the pinned selection exactly, and every other entry names its own declaration (it must resolve uniquely in its file). Same-file entries must address non-overlapping regions; overlapping regions reject the exchange. The exchange applies atomically: if any entry fails its own guard or two same-file entries overlap, nothing is written and the exchange is rejected naming every failing entry\'s cause. A single edit may still be sent as one flat object, and "create"/"delete" selections never batch.';
-
-// #119 edit-dsl protocol (`--protocol-format=edit-dsl`, formerly the #117 forced
-// mode): the system prompt teaches `select … end` clauses in place of the JSON
-// edit rule, and the pick turn itself is a single select clause. The `json`
-// format never uses these paragraphs.
-const EDIT_DSL_SELECT_SYSTEM_PARAGRAPH =
-  "First you will be asked to select the target. Reply with ONLY one `select <symbol> in <path> [ resolve <value|type|namespace> ] end` clause naming one symbol-index entry; the clause is a viewer unless it carries `replace`, and a viewer leads to a `# details` prompt before the edit. Keep the reply to that one clause with no prose and no JSON.";
-const EDIT_DSL_EDIT_SYSTEM_PARAGRAPH =
-  "Then you will be asked to edit the selected symbol. Reply with ONLY one or more `select … end` clauses: `select <symbol> in <path> [ resolve <value|type|namespace> ] [ match (<snippet> | /regex/) ] [ [ pick <range> ] replace with <fence> ] end` (an optional declaration `kind` may precede the symbol). Clauses apply in document order and independently; a clause that stops before `replace` is a viewer that locates and writes nothing unless it contains `pick`; `pick` requires `replace` and is not a viewer form. `resolve value`, `resolve type`, or `resolve namespace` selects the TypeScript symbol space when the same name is declared in more than one, and a space miss names the available spaces instead of falling back. `match` locates a span inside the named declaration (narrow a tie with `pick <range>`, whose coordinates are the 1-based file-absolute positions of the numbered current-source block); a viewer renders the numbered declaration with `⁉️` on the matched lines. `replace with <fence>` rewrites the target, and the fence opens with 6 or more backticks and closes with the same run. A bare `select … replace with … end` with no `match` rewrites the whole declaration; an empty fence deletes it. Keep the same declaration kind and name unless the task requires otherwise. No markdown fences around the reply and no explanations, and no JSON edit payload — it is rejected.";
-const EDIT_DSL_CREATE_DELETE_SYSTEM_PARAGRAPH =
-  'A "create" selection asks for the COMPLETE declaration in the fence, which opens with 6 or more backticks; the harness appends it to the target file as a new top-level declaration, creating the file and any parent directories when needed. A complete top-level declaration is appended verbatim; otherwise the clause\'s `resolve` picks the wrapper: no `resolve` or `resolve value` wraps the body as `let <symbol> = <body>;`, `resolve type` as `type <symbol> = <body>;`, and `resolve namespace` as a `namespace <symbol> { … }` block. A "delete" selection carries no clause: the harness removes the declaration. To remove only part of a declaration, use `match` with an empty fence. The syntax gate discards any clause that leaves the file unparseable and writes nothing; the clauses that resolve apply independently.';
-const EDIT_DSL_ROUNDS_SYSTEM_PARAGRAPH =
-  "A round allows at most 3 exchanges: picking the target, writing the edit, and re-asking after a rejected edit share that budget. When an edit verifies, the run is done; when verification fails, the next round shows the current source and the failing diagnostics, and it may either revise the pinned declaration or re-pin to a different declaration in the same file by naming it in the clause's own `select` (the new address must resolve uniquely in the current source). A round that exhausts its 3 exchanges without a valid edit continues through a continuation prompt: reply `STOP` to end the run, or return a corrected edit (or, when no target is pinned, a corrected selection) to open a fresh round with a new 3-exchange budget; the run is capped at 32 rounds, after which it ends with the failure summary.";
-
-// #119: the protocol failure an edit-dsl round returns when the reply is not
-// a `select … end` clause. A JSON edit payload never matches the edit-dsl grammar,
-// so it is rejected here too.
-export const EDIT_DSL_FORCE_DIAGNOSTICS =
-  "stage: protocol\nthe reply must be one or more `select … end` clauses; a JSON edit payload is not accepted in this mode";
-
-// A JSON edit payload is a protocol rejection; any other unparseable reply names
-// its actual syntax error. Dropping the `SelectionSyntaxError` message made a
-// missing `end` look like a rejected JSON payload, sending the model back to the
-// payload form this mode forbids.
-function editDslParseDiagnostics(content: string, error: SelectionSyntaxError): string {
-  const trimmed = stripCodeFences(content).trimStart();
-  return trimmed.startsWith("{") ? EDIT_DSL_FORCE_DIAGNOSTICS : error.diagnostics;
-}
-
-// #117/#119: under the edit-dsl protocol a `protocol` rejection means the reply
-// was not `select … end` (usually a JSON edit payload). The retry must re-teach
-// the edit-dsl form; the JSON-flavored #56 correction would drive the model
-// straight back to the payload this mode rejects (the observed rep1
-// `address ↔ protocol` loop).
-const EDIT_DSL_PROTOCOL_CORRECTION =
-  "Reply with one or more `select … end` clauses as the entire response (`select <symbol> in <path> [ resolve <value|type|namespace> ] [ match (<snippet> | /regex/) ] [ [ pick <range> ] replace with <fence> ] end`, where the fence opens with 6 or more backticks; a `pick` requires `replace`); a JSON edit payload is not accepted in this mode.";
-const EDIT_DSL_PROTOCOL_ESCALATION =
-  "This attempt MUST reply with only `select … end` clauses — one or more, with no prose, no markdown fences, and no JSON edit payload.";
-
-export function buildSystemPrompt(multiPayload = false, format: ProtocolFormat = "json"): string {
-  const lines = [
-    "You are a TypeScript coding agent.",
-    "",
-    'First you will be asked to select the target. Reply with ONLY a JSON object {"mode": "modify", "path": ..., "symbol": ..., "kind": ...}: "mode" is "modify" (default), "create", or "delete"; the composite address {path, symbol, kind} must all match the symbol index exactly and "kind" is required.',
-    "",
-    'Then you will be asked to edit the selected symbol. Reply with ONLY one flat JSON object {"path": ..., "symbol": ..., "kind": ..., "matcher": ..., "replacement": ...}: the address {path, symbol, kind} must echo the pinned selection (a verification-repair round may re-pin to another declaration in the same file), and the optional "matcher" is a complete snippet copied from the current source that is structurally matched inside the symbol (omit it for a whole-symbol rewrite). As an alternative to "matcher", an optional "range" {line, column, endLine, endColumn} addresses the span by 1-based inclusive positions relative to the numbered current-source block shown in the prompt (the range must sit inside the declaration; when both are sent "range" wins). The replacement is a drop-in for the addressed range: keep leading keywords and modifiers consistent (do not re-add `export` the declaration omitted). Keep the same declaration kind and name unless the task requires otherwise. At most one matcher or range per response; multiple changes happen across edit rounds. No markdown fences and no explanations.',
-    "",
-    'A "create" selection asks for the COMPLETE declaration in "replacement"; the harness appends it to the target file, creating the file and any parent directories when needed. A "delete" selection carries no edit payload: the harness removes the declaration. To remove only part of a declaration, use "modify" with an empty "replacement". The syntax gate discards any edit that leaves the file unparseable and writes nothing.',
-    "",
-    "A round allows at most 3 exchanges: picking the target, writing the edit, and re-asking after a rejected edit share that budget. When an edit verifies, the run is done; when verification fails, the next round shows the current source and the failing diagnostics, and it may either revise the pinned declaration or re-pin to a different declaration in the same file by returning that declaration's own {path, symbol, kind} (the new address must resolve uniquely in the current source). A round that exhausts its 3 exchanges without a valid edit continues through a continuation prompt: reply `STOP` to end the run, or return a corrected edit (or, when no target is pinned, a corrected selection) to open a fresh round with a new 3-exchange budget; the run is capped at 32 rounds, after which it ends with the failure summary.",
-    "",
-  ];
-  // #119 the edit-dsl format teaches the select-first turn and the edit-dsl edit
-  // rule in place of the JSON rule; the json format never uses these paragraphs.
-  if (format === "edit-dsl") {
-    lines[2] = EDIT_DSL_SELECT_SYSTEM_PARAGRAPH;
-    lines[4] = EDIT_DSL_EDIT_SYSTEM_PARAGRAPH;
-    lines[6] = EDIT_DSL_CREATE_DELETE_SYSTEM_PARAGRAPH;
-    lines[8] = EDIT_DSL_ROUNDS_SYSTEM_PARAGRAPH;
-  }
-  if (multiPayload) {
-    lines.splice(lines.length - 1, 0, MULTI_PAYLOAD_SYSTEM_PARAGRAPH, "");
-  }
-  return lines.join("\n");
-}
-
-// Keep the head (declarations and early cases) and the tail (final assertions,
-// or the current source of the edited region) of an oversized source with an
-// explicit marker in between.
-function truncateSource(source: string): string {
-  if (source.length <= SPEC_FILE_LIMIT) {
-    return source;
-  }
-  const half = SPEC_FILE_LIMIT / 2;
-  const head = source.slice(0, half);
-  const tail = source.slice(source.length - half);
-  const truncated = source.length - SPEC_FILE_LIMIT;
-  return `${head}\n// ... [truncated ${truncated} characters] ...\n${tail}`;
-}
-
-function buildSpecSection(specFiles: readonly SourceFile[]): string {
-  const lines = [
-    "# Spec files",
-    "",
-    "These files are part of the specification; do not modify them.",
-  ];
-  for (const file of specFiles) {
-    const source = truncateSource(file.source);
-    const sourceLines = source.split("\n");
-    const fence = sourceLines.some((line) => line.startsWith("```")) ? "````" : "```";
-    lines.push("", `## ${file.path}`, "", `${fence}ts`, ...sourceLines, fence);
-  }
-  return lines.join("\n");
-}
-
-export function buildUserPrompt(
-  issue: string,
-  contextYaml: string,
-  specFiles: readonly SourceFile[] = [],
-): string {
-  const body = contextYaml === "" || contextYaml.endsWith("\n") ? contextYaml : `${contextYaml}\n`;
-  const prompt = `# Issue\n\n${issue}\n\n# Project context\n\n\`\`\`yaml\n${body}\`\`\`\n`;
-  if (specFiles.length === 0) {
-    return prompt;
-  }
-  return `${prompt}\n${buildSpecSection(specFiles)}\n`;
-}
-
-// Split a source into lines for rendering (a trailing newline does not add an
-// empty final line, so an empty source has no lines).
-function splitSourceLines(source: string): string[] {
-  const lines = source.split("\n");
-  if (lines.length > 0 && lines[lines.length - 1] === "") {
-    lines.pop();
-  }
-  return lines;
-}
-
-// Render the current-source block with 1-based line numbers so the optional
-// `range` selector (#72) can be derived from the prompt. Columns count the
-// source text after the `N | ` prefix.
-export function numberedSourceBlock(source: string): string {
-  const lines = splitSourceLines(source);
-  const width = String(lines.length).length;
-  return lines
-    .map((line, index) => `${String(index + 1).padStart(width, " ")} | ${line}`)
-    .join("\n");
-}
-
-// Render `source` with its file-absolute line numbers. `marked` is the set of
-// file-absolute lines intersected by a matched span; when it is null the output
-// carries no gutter at all (the bare viewer path), otherwise every line gets the
-// shared `⁉️  `/blank gutter.
-function numberLinesFrom(
-  source: string,
-  startLine: number,
-  marked: ReadonlySet<number> | null = null,
-): string {
-  const lines = splitSourceLines(source);
-  if (lines.length === 0) {
-    return "";
-  }
-  const width = String(startLine + lines.length - 1).length;
-  return lines
-    .map((line, index) => {
-      const lineNumber = startLine + index;
-      const gutter = marked === null ? "" : markerGutter(marked.has(lineNumber));
-      return `${gutter}${String(lineNumber).padStart(width, " ")} | ${line}`;
-    })
-    .join("\n");
-}
-
-// Render the declaration range with its FILE-absolute 1-based line numbers.
-export function numberedSourceRange(source: string, start: number, end: number): string {
-  const safeStart = Math.max(0, Math.min(start, source.length));
-  const safeEnd = Math.max(safeStart, Math.min(end, source.length));
-  const startLine = source.slice(0, safeStart).split("\n").length;
-  return numberLinesFrom(source.slice(safeStart, safeEnd), startLine);
-}
-
-function editDslGoal(issue: string, indexText: string): string {
-  return `# Goal\n\n${issue}\n\n# Symbol index\n\n${indexText}\n`;
-}
-
-// The Goal/index/details block shared by the edit-dsl retry and decision turns
-// (#B4/#9). `preRenderedSource` keeps the repair-context shrink's partial,
-// original-line-numbered view; otherwise `startLine` anchors the numbering.
-function editDslContextBlock(
-  context: { issue: string; indexText: string; startLine?: number },
-  currentSource: string,
-  preRenderedSource: string | undefined,
-): string {
-  const editDslNumbered =
-    preRenderedSource ?? numberLinesFrom(currentSource, context.startLine ?? 1);
-  return `# Goal
-
-${context.issue}
-
-# Symbol index
-
-${context.indexText}
-
-# details
-
-\`\`\`text
-${editDslNumbered}
-\`\`\``;
-}
-
-function appendEditDslSpecFiles(prompt: string, specFiles: readonly SourceFile[]): string {
-  if (specFiles.length === 0) {
-    return prompt;
-  }
-  return `${prompt}\n${buildSpecSection(specFiles)}\n`;
-}
-
-export function buildEditDslUserPrompt(
-  issue: string,
-  indexText: string,
-  specFiles: readonly SourceFile[] = [],
-): string {
-  return appendEditDslSpecFiles(editDslGoal(issue, indexText), specFiles);
-}
-
-// The first-turn content prompt pins the selected declaration. A match viewer
-// additionally passes the file-absolute lines its spans intersect, so the
-// `# details` block marks them exactly like the edit-phase viewer feedback; a
-// bare select viewer passes null and keeps the unmarked rendering.
-export function buildEditDslDetailsPrompt(
-  issue: string,
-  indexText: string,
-  symbolSource: string,
-  specFiles: readonly SourceFile[] = [],
-  startLine = 1,
-  markedLines: ReadonlySet<number> | null = null,
-  duplicateNote: string | null = null,
-): string {
-  const numbered = numberLinesFrom(symbolSource, startLine, markedLines);
-  const note = duplicateNote === null ? "" : `\n${duplicateNote}\n`;
-  const prompt = `${editDslGoal(issue, indexText)}\n# details\n\n\`\`\`text\n${numbered}\n\`\`\`\n${note}\n${editDslInstruction()}\n`;
-  return appendEditDslSpecFiles(prompt, specFiles);
-}
-
-export function buildEditDslCreatePrompt(
-  issue: string,
-  indexText: string,
-  path: string,
-  specFiles: readonly SourceFile[] = [],
-): string {
-  const prompt = `${editDslGoal(issue, indexText)}\nTarget file:\n\n\`\`\`\n${path}\n\`\`\`\n\n${editDslCreateInstruction()}\n`;
-  return appendEditDslSpecFiles(prompt, specFiles);
-}
-
-// EditDsl confirmation turn (#B3): the verified declaration, then the one-line
-// success offer. Deliberately concise — no few-shot examples here.
-export function buildEditDslModifiedPrompt(
-  issue: string,
-  indexText: string,
-  symbolSource: string,
-  startLine: number,
-  specFiles: readonly SourceFile[] = [],
-): string {
-  const numbered = numberLinesFrom(symbolSource, startLine);
-  const prompt = `${editDslGoal(issue, indexText)}\n# modified text\n\n\`\`\`text\n${numbered}\n\`\`\`\n\nReply \`Great! I resolve this problem!\` if the goal is met; otherwise return one or more \`select … end\` edit clauses.\n`;
-  return appendEditDslSpecFiles(prompt, specFiles);
-}
-
-// The optional `(line,column)` selector offered alongside `matcher` (#72).
-export const RANGE_SELECTOR_NOTE =
-  'Optionally locate the span by its 1-based inclusive "range" ({line, column, endLine, endColumn}) copied from the numbered current-source lines; when both are sent "range" takes precedence over "matcher".';
-
-// The bounded self-verification offer, added only to repair prompts (#73); the
-// fresh post-pick edit prompt never carries it, so the no-repair path is
-// byte-identical.
-export const SELF_CHECK_OFFER =
-  'Before editing, you may make at most one bounded self-verification request this round: reply with exactly {"request":"read"} (the pinned file\'s current source), {"request":"check"} (run the task\'s check command), or {"request":"test"} (run the task\'s test command); the harness runs it and returns a bounded result, then asks again.';
-
-// #111: the few-shot examples the fresh edit and modify-retry prompts carry
-// under the edit-dsl protocol (`--protocol-format=edit-dsl`). They show the §8
-// forms of `docs/edit-protocol.md` — a `resolve value` viewer, a bare
-// declaration replace, a `match` + `pick` edit, a `match` + `replace` rewrite,
-// a create (#117), and a viewer-then-editor multi-clause reply (#117) — built
-// with `serializeSelections` so the grammar stays the single source of truth.
-// Each form is labelled so the examples are unambiguously separate. The block
-// never appears under the `json` format.
-const EDIT_DSL_EXAMPLE_FORMS: { label: string; selections: EditDslSelection[] }[] = [
-  {
-    label: "1. Viewer: locates a matched span with `resolve value` and writes nothing.",
-    selections: [
-      {
-        locator: { path: "src/x.ts", name: "f", kind: "function" },
-        space: "value",
-        matcher: { kind: "snippet", value: "Number.isNaN" },
-        pick: null,
-        replacement: null,
-      },
-    ],
-  },
-  {
-    label: "2. Bare declaration replace: no `match` rewrites the whole declaration.",
-    selections: [
-      {
-        locator: { path: "src/x.ts", name: "MAX_TOKENS", kind: "const" },
-        space: null,
-        matcher: null,
-        pick: null,
-        replacement: "const MAX_TOKENS = 8192;",
-      },
-    ],
-  },
-  {
-    label: "3. `match` + `pick`: locate the candidates, then pick all of line 2 and edit it.",
-    selections: [
-      {
-        locator: { path: "src/x.ts", name: "answer", kind: "function" },
-        space: null,
-        matcher: { kind: "snippet", value: "return 1;" },
-        pick: [{ line: 2, column: 1, endLine: 2, endColumn: END_OF_LINE_COLUMN }],
-        replacement: "return 2;",
-      },
-    ],
-  },
-  {
-    label: "4. `match` + `replace`: rewrite the matched span inside the declaration.",
-    selections: [
-      {
-        locator: { path: "src/x.ts", name: "clamp", kind: "function" },
-        space: null,
-        matcher: { kind: "snippet", value: "Number.isNaN" },
-        pick: null,
-        replacement: "Number.isFinite",
-      },
-    ],
-  },
-  {
-    label:
-      "5. Create: a whole-declaration replace with no `match` appends the declaration when the symbol (or the file) is absent.",
-    selections: [
-      {
-        locator: { path: "src/new.ts", name: "make", kind: "function" },
-        space: null,
-        matcher: null,
-        pick: null,
-        replacement: "export function make(): number {\n  return 1;\n}",
-      },
-    ],
-  },
-  {
-    label:
-      "6. Viewer then editor: locate a span in one clause, then edit it in a second clause of the same reply.",
-    selections: [
-      {
-        locator: { path: "src/x.ts", name: "parse", kind: "function" },
-        space: null,
-        matcher: { kind: "snippet", value: "return null;" },
-        pick: null,
-        replacement: null,
-      },
-      {
-        locator: { path: "src/x.ts", name: "parse", kind: "function" },
-        space: null,
-        matcher: { kind: "snippet", value: "return null;" },
-        pick: null,
-        replacement: "return undefined;",
-      },
-    ],
-  },
-];
-
-// Render the labelled forms with the grammar's own serializer, one blank line
-// apart so the examples read as separate replies.
-function renderEditDslExamples(): string {
-  return EDIT_DSL_EXAMPLE_FORMS.map(
-    (form) => `${form.label}\n\n${serializeSelections(form.selections)}`,
-  ).join("\n\n");
-}
-
-/**
- * The edit-dsl edit instruction (#111): replaces the JSON instruction in the
- * fresh edit prompt and the modify retry prompt under the edit-dsl format. It
- * states the reply shape, the document-order/independent application, and the
- * viewer semantics, then shows the §8 examples (#117 adds the create and the
- * viewer-then-editor forms).
- */
-function editDslInstruction(): string {
-  return [
-    "A reply is one or more `select … end` clauses (see the examples below), with no markdown fences around the reply and no explanations. Clauses apply in document order and independently; a clause that stops before `replace` is a viewer that writes nothing unless it contains `pick`; `pick` requires `replace` and is not a viewer form.",
-    "",
-    "Each clause: `select <symbol> in <path>` names the declaration (an optional `kind` may precede the symbol), and `resolve <value|type|namespace>` selects the TypeScript symbol space when the name is declared in more than one. `match <snippet | /regex/>` locates a span inside it (narrow a tie with `pick <range>`, which requires `replace`); `replace with <fence>` rewrites the target, where the fence opens with 6 or more backticks and closes with the same run. Omit `match` for a whole-declaration rewrite; use an empty fence to delete. Coordinates are the 1-based file-absolute positions of the numbered source block.",
-    "",
-    "A viewer's next prompt carries one numbered declaration block per clause with `⁉️` in the gutter on the matched lines.",
-    "",
-    "Examples:",
-    "",
-    "```````",
-    renderEditDslExamples(),
-    "```````",
-  ].join("\n");
-}
-
-/**
- * The edit-dsl create instruction (#111): the create-mode counterpart of
- * `editDslInstruction()`. It teaches that a whole-declaration
- * `select … replace with <fence> end` clause becomes an *append* when the
- * symbol — or the whole file — is absent, and that such a create clause takes
- * neither `match` nor `pick`. A complete declaration is appended verbatim; any
- * other body is wrapped by the clause's `resolve` space (`let` by default).
- */
-function editDslCreateInstruction(): string {
-  return [
-    'The pinned selection uses mode "create", so reply with a create clause. A whole-declaration `select <symbol> in <path> [ resolve <value|type|namespace> ] replace with <fence> end` clause with a non-empty fence creates the declaration, where the fence opens with 6 or more backticks: when the symbol — or the whole file — is absent the harness appends the COMPLETE declaration in the fence as a new top-level declaration, creating the file and its parent directories if needed.',
-    "",
-    "A complete top-level declaration in the fence is appended verbatim. Any other body is wrapped by the clause's symbol space: no `resolve` or `resolve value` wraps it as `let <symbol> = <body>;`, `resolve type` as `type <symbol> = <body>;`, and `resolve namespace` as a `namespace <symbol> { … }` block.",
-    "",
-    "A create clause does not take `match` or `pick`. The replacement must keep the file parseable.",
-    "",
-    editDslInstruction(),
-  ].join("\n");
-}
-
-export function buildEditPrompt(
-  addressJson: string,
-  symbolSource: string,
-  multiPayload = false,
-  format: ProtocolFormat = "json",
-): string {
-  const numbered = numberedSourceBlock(symbolSource);
-  // #111: under the edit-dsl format the JSON instruction is replaced with the
-  // clause instruction and its few-shot examples. Under `json` this is exactly
-  // the pre-#111 string.
-  const instruction =
-    format === "edit-dsl"
-      ? editDslInstruction()
-      : multiPayload
-        ? `Output ONE flat JSON object {"path": ..., "symbol": ..., "kind": ..., "matcher": ..., "replacement": ...} for the pinned symbol, or a multi-payload object {"payloads": [ ... ]} that batches edits — different files and/or several non-overlapping regions of one file — with no markdown fences and no explanations.
-
-The first payload echoes the pinned address {path, symbol, kind}; every further payload names its own declaration, which must resolve to exactly one declaration in its file's current source. Same-file payloads must address non-overlapping regions. "matcher" is optional per payload: a complete snippet copied from the current source below; "replacement" replaces exactly the matched range. Omit "matcher" for a whole-symbol rewrite: "replacement" then replaces the whole declaration. ${RANGE_SELECTOR_NOTE} Keep leading keywords and modifiers consistent (do not re-add \`export\` the declaration omitted). Every replacement must keep its file parseable. The exchange applies atomically: if any payload fails its own guard or two same-file regions overlap, nothing is written and the exchange is rejected naming every failing payload.`
-        : `Output ONE flat JSON object {"path": ..., "symbol": ..., "kind": ..., "matcher": ..., "replacement": ...} for the pinned symbol, with no markdown fences and no explanations.
-
-Echo the pinned address {path, symbol, kind}. "matcher" is optional: a complete snippet copied from the current source below; "replacement" replaces exactly the matched range. Omit "matcher" for a whole-symbol rewrite: "replacement" then replaces the whole declaration. ${RANGE_SELECTOR_NOTE} Keep leading keywords and modifiers consistent (do not re-add \`export\` the declaration omitted). The replacement must keep the file parseable.`;
-  return `${instruction}
-
-Pinned selection:
-
-\`\`\`json
-${addressJson}
-\`\`\`
-
-Current source:
-
-Each line below is prefixed with its 1-based line number (the optional "range" coordinates; columns count the source text after the \`N | \` prefix).
-
-\`\`\`ts
-${numbered}\n\`\`\`
-`;
-}
-
-// Explicit-targets mode (#81): names the pending target addresses the model must
-// cover with a batch, one flat payload per file. Same-file targets are named one
-// at a time because they are sequenced across exchanges. The same lead is
-// repeated on a retry so a non-batch reply cannot pass.
-export function buildTargetsEditPrompt(
-  pinnedAddressJson: string,
-  symbolSource: string,
-  pending: readonly Locator[],
-): string {
-  const numbered = numberedSourceBlock(symbolSource);
-  const listed = pending
-    .map(
-      (target) =>
-        `- {"path": ${JSON.stringify(target.path)}, "symbol": ${JSON.stringify(target.name)}, "kind": ${JSON.stringify(target.kind)}}`,
-    )
-    .join("\n");
-  return `Output the edit(s) for the requested targets, with no markdown fences and no explanations. Reply with a {"payloads": [ ... ]} object carrying exactly one flat edit payload per file: the first payload echoes the pinned address below, and each further payload names one of the other requested addresses (a different file). A single target may still be sent as one flat object. Every payload's address must be one of the requested targets, and at most one target per file may appear in one exchange — same-file targets are addressed in successive exchanges.
-
-Requested targets:
-${listed}
-
-"matcher" is optional per payload: a complete snippet copied from the current source; omit it for a whole-symbol rewrite. ${RANGE_SELECTOR_NOTE} Keep leading keywords and modifiers consistent (do not re-add \`export\` the declaration omitted). Every replacement must keep its file parseable.
-
-Pinned selection:
-
-\`\`\`json
-${pinnedAddressJson}
-\`\`\`
-
-Current source:
-
-Each line below is prefixed with its 1-based line number (the optional "range" coordinates; columns count the source text after the \`N | \` prefix).
-
-\`\`\`ts
-${numbered}\n\`\`\`
-`;
-}
-
-export function buildCreatePrompt(
-  addressJson: string,
-  path: string,
-  format: ProtocolFormat = "json",
-): string {
-  const instruction =
-    format === "edit-dsl"
-      ? editDslCreateInstruction()
-      : `The pinned selection uses mode "create". Output ONE flat JSON object {"path": ..., "symbol": ..., "kind": ..., "replacement": ...} with no markdown fences and no explanations: echo the pinned address {path, symbol, kind}, put the COMPLETE declaration in "replacement", and omit "matcher" and "range". The target file may not exist yet; the declaration is appended to it. The replacement must keep the file parseable.`;
-  return `${instruction}
-
-Target file:
-
-\`\`\`
-${path}
-\`\`\`
-
-Pinned selection:
-
-\`\`\`json
-${addressJson}
-\`\`\`
-`;
 }
 
 /**
@@ -876,9 +438,6 @@ const DECISION_INSTRUCTION =
  */
 const DECISION_INSTRUCTION_EDIT_DSL =
   "This is a decision turn: reply with a short re-approach statement — name what you will change (the cause) and where — instead of another edit clause. Reply exactly `STOP` to end the run now, but only if the failing set cannot be resolved. Do not send an edit clause on this turn.";
-
-/** Bound on the carried re-approach statement (#75); clamped like the digest states. */
-export const APPROACH_LIMIT = 600;
 
 /**
  * True when a decision-turn reply still carries a structurally valid edit
@@ -1150,91 +709,6 @@ export function buildSummaryPrompt(
     "Do not output code.",
   );
   return lines.join("\n");
-}
-
-function selectionRetryBody(diagnostics: string): string {
-  return `Output ONLY a corrected selection JSON object {"mode": ..., "path": ..., "symbol": ..., "kind": ...}, with no markdown fences and no prose.
-
-Diagnostics:
-
-\`\`\`
-${diagnostics}
-\`\`\`
-`;
-}
-
-export function buildSelectionRetryPrompt(diagnostics: string): string {
-  return `The previous selection was rejected. ${selectionRetryBody(diagnostics)}`;
-}
-
-/** EditDsl selection retry (#B4): Goal + symbol index, then the rejection. */
-export function buildEditDslSelectionRetryPrompt(
-  issue: string,
-  indexText: string,
-  diagnostics: string,
-): string {
-  return `${editDslGoal(issue, indexText)}
-The previous selection was rejected.
-
-Diagnostics:
-
-\`\`\`
-${diagnostics}
-\`\`\`
-
-Reply with ONLY one \`select … end\` clause naming one symbol-index entry.
-`;
-}
-
-/**
- * Selection-side round continuation (#52): the exhausted round never pinned a
- * target, so the fresh round re-asks for the selection (or `STOP`); the
- * prior-attempts digest (#57) is appended after the diagnostics.
- */
-export function buildSelectionContinuationPrompt(input: {
-  round: number;
-  maxRounds: number;
-  diagnostics: string;
-  digest?: string;
-  /** Failure history (#71), appended after the diagnostics before the digest. */
-  failureHistory?: string;
-}): string {
-  const digestSection =
-    input.digest === undefined || input.digest.trim() === "" ? "" : `\n${input.digest}\n`;
-  const failureHistorySection =
-    input.failureHistory === undefined || input.failureHistory.trim() === ""
-      ? ""
-      : `\n${input.failureHistory}\n`;
-  return `Round ${input.round} of ${input.maxRounds} exhausted its ${MAX_EDIT_EXCHANGES}-exchange selection budget without a valid pick. Reply STOP to end the run, or return a corrected selection to continue with a fresh round.
-
-${selectionRetryBody(input.diagnostics)}${failureHistorySection}${digestSection}`;
-}
-
-/** EditDsl selection continuation (#B4): STOP or one select clause, same shape. */
-export function buildEditDslSelectionContinuationPrompt(input: {
-  round: number;
-  maxRounds: number;
-  issue: string;
-  indexText: string;
-  diagnostics: string;
-  digest?: string;
-  failureHistory?: string;
-}): string {
-  const digestSection =
-    input.digest === undefined || input.digest.trim() === "" ? "" : `\n${input.digest}\n`;
-  const failureHistorySection =
-    input.failureHistory === undefined || input.failureHistory.trim() === ""
-      ? ""
-      : `\n${input.failureHistory}\n`;
-  return `Round ${input.round} of ${input.maxRounds} exhausted its ${MAX_EDIT_EXCHANGES}-exchange selection budget without a valid selection. Reply STOP to end the run, or return one \`select … end\` clause naming a symbol-index entry.
-
-${editDslGoal(input.issue, input.indexText)}
-Diagnostics:
-
-\`\`\`
-${input.diagnostics}
-\`\`\`
-${failureHistorySection}${digestSection}`;
 }
 
 export { stripCodeFences };
@@ -1827,12 +1301,6 @@ export interface ProviderLike {
 
 export const DEFAULT_TOKEN_BUDGET = 120_000;
 /** Model exchanges per Run iteration, shared by target picking and content revision (#43). */
-export const MAX_EDIT_EXCHANGES = 3;
-/**
- * Hard cap on Run iterations (#52): a round that exhausts its ≤3 exchanges
- * below the cap continues through a continuation prompt; entering an iteration
- * beyond the cap terminates as `edit-exhausted` naming the cap.
- */
 export const MAX_RUN_ITERATIONS = 32;
 /**
  * No-progress decision point (#54): after this many consecutive
