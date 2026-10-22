@@ -195,10 +195,24 @@ function backoffMs(attempt: number): number {
   return RETRY_BASE_DELAY_MS * 2 ** attempt;
 }
 
+/**
+ * Stable per-process conversation id. The OpenCode Go gateway requires it in
+ * `x-opencode-session` for routing and prompt caching; other OpenAI-compatible
+ * gateways ignore the header. An enclosing OpenCode session wins when set.
+ */
+function sessionId(): string {
+  const fromEnv = process.env.OPENCODE_SESSION_ID;
+  if (fromEnv !== undefined && fromEnv !== "") {
+    return fromEnv;
+  }
+  return crypto.randomUUID();
+}
+
 export class OpenAIProvider {
   private readonly config: OpenAIConfig;
   private readonly fetchImpl: typeof fetch;
   private readonly sleep: (ms: number) => Promise<void>;
+  private readonly sessionId: string;
 
   constructor(
     config: OpenAIConfig,
@@ -220,6 +234,7 @@ export class OpenAIProvider {
     this.config = config;
     this.fetchImpl = fetchImpl;
     this.sleep = sleep;
+    this.sessionId = sessionId();
   }
 
   private async fetchWithTimeout(url: string, init: RequestInit): Promise<Response> {
@@ -276,6 +291,8 @@ export class OpenAIProvider {
       headers: {
         "content-type": "application/json",
         authorization: `Bearer ${this.config.apiKey}`,
+        "x-opencode-session": this.sessionId,
+        "user-agent": "tc/0.0.0",
       },
       body: JSON.stringify(body),
     };

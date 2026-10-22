@@ -222,6 +222,8 @@ test("posts chat completions to the configured endpoint with auth headers", asyn
   const headers = request?.init?.headers as Record<string, string>;
   expect(headers["content-type"]).toBe("application/json");
   expect(headers["authorization"]).toBe("Bearer test-key");
+  expect(typeof headers["x-opencode-session"]).toBe("string");
+  expect(headers["x-opencode-session"]?.length).toBeGreaterThan(0);
 
   const body = requestBody(request);
   expect(body["model"]).toBe("deepseek-v4.1-flash");
