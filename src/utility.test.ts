@@ -325,6 +325,32 @@ test("an empty lookup kind is a path-and-name wildcard", () => {
   expect(index.lookup({ path, name: "missing", kind: "" })).toHaveLength(0);
 });
 
+test("variable declarations resolve under const, let, and var", () => {
+  const path = "src/vars.ts";
+  const source = [
+    "const constant = 1;",
+    "let mutable = 2;",
+    "var legacy = 3;",
+    "class C { field = 4; }",
+  ].join("\n");
+  const index = buildIndex([{ path, source }]);
+  for (const [name, kind] of [
+    ["constant", "const"],
+    ["mutable", "let"],
+    ["legacy", "var"],
+  ] as const) {
+    const entries = index.lookup({ path, name, kind });
+    expect(entries).toHaveLength(1);
+    // The index keeps its internal `variable` label; only lookup is compatible.
+    expect(entries[0]?.locator.kind).toBe("variable");
+  }
+  // A bare select is still the empty-kind wildcard.
+  expect(index.lookup({ path, name: "constant", kind: "" })).toHaveLength(1);
+  // The JSON address (`kind: "variable"`) and class fields keep working.
+  expect(index.lookup({ path, name: "constant", kind: "variable" })).toHaveLength(1);
+  expect(index.lookup({ path, name: "C.field", kind: "variable" })).toHaveLength(1);
+});
+
 test("lookup filters declarations by TypeScript symbol space", () => {
   const path = "src/spaces.ts";
   const source = [

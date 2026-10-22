@@ -455,6 +455,32 @@ export interface Locator {
   kind: string;
 }
 
+/**
+ * The edit-dsl kinds that address an index entry whose internal declaration
+ * kind is `"variable"`. The index keeps `"variable"` for variable declarators,
+ * statements, and class fields (JSON addresses and utility tests depend on it),
+ * while the selection grammar admits only `const`, `let`, and `var` for them.
+ */
+const VARIABLE_LOCATOR_KINDS = ["const", "let", "var"] as const;
+
+/** True when a locator kind addresses an entry kind; `""` is the wildcard. */
+export function locatorKindMatches(locatorKind: string, entryKind: string): boolean {
+  if (locatorKind === "" || locatorKind === entryKind) {
+    return true;
+  }
+  return (
+    entryKind === "variable" && (VARIABLE_LOCATOR_KINDS as readonly string[]).includes(locatorKind)
+  );
+}
+
+/**
+ * The grammar-valid `select` kinds for an internal entry kind. A variable
+ * entry resolves as `const`, `let`, or `var`; every other kind keeps its label.
+ */
+export function grammarKindsForEntryKind(entryKind: string): readonly string[] {
+  return entryKind === "variable" ? VARIABLE_LOCATOR_KINDS : [entryKind];
+}
+
 export interface IndexEntry {
   locator: Locator;
   symbol: Symbol;
@@ -524,7 +550,9 @@ export class SymbolIndex {
 
   /**
    * Exact path/name/declaration-kind lookup. An empty `kind` is the edit-dsl
-   * protocol's wildcard: any declaration kind at that path and name. An
+   * protocol's wildcard: any declaration kind at that path and name. A
+   * `const`/`let`/`var` locator also matches an internal `"variable"` entry, so
+   * the grammar the model is taught addresses variable declarations. An
    * optional `space` filters by TypeScript symbol space (`resolve value|type|
    * namespace`); `null` accepts every space.
    */
@@ -533,7 +561,7 @@ export class SymbolIndex {
       (entry) =>
         entry.locator.path === locator.path &&
         entry.locator.name === locator.name &&
-        (locator.kind === "" || entry.locator.kind === locator.kind) &&
+        locatorKindMatches(locator.kind, entry.locator.kind) &&
         entryInSpace(entry, space),
     );
   }

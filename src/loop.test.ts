@@ -9237,6 +9237,82 @@ describe("edit-dsl protocol (#111/#119)", () => {
     expect(helperSource(dir)).toContain("return 2;");
   }, 30000);
 
+  test("under edit-dsl a top-level const resolves and edits with its keyword", async () => {
+    const dir = passingFixtureDir();
+    writeFileSync(join(dir, "src", "constants.ts"), "export const MAX_TOKENS = 1;\n");
+    const provider = new ScriptedProvider([
+      editDslSelect("MAX_TOKENS", "src/constants.ts", "value", "const"),
+      editDslReply({
+        locator: { path: "src/constants.ts", name: "MAX_TOKENS", kind: "const" },
+        space: "value",
+        matcher: { kind: "snippet", value: "1" },
+        pick: null,
+        replacement: "2",
+      }),
+      "Great! I resolve this problem!",
+    ]);
+    const result = await runLoop({
+      cwd: dir,
+      issue: "raise the token budget",
+      provider,
+      protocolFormat: "edit-dsl",
+      checkCommand: TSC,
+      testCommand: ["bun", "test"],
+    });
+    expect(result.ok).toBe(true);
+    expect(result.records.map((record) => record.outcome)).toEqual([
+      "selected",
+      "applied",
+      "ok",
+      "confirmed",
+    ]);
+    expect(result.locator).toEqual({
+      path: "src/constants.ts",
+      name: "MAX_TOKENS",
+      kind: "const",
+    });
+    expect(readFileSync(join(dir, "src", "constants.ts"), "utf8")).toContain(
+      "export const MAX_TOKENS = 2;",
+    );
+  }, 30000);
+
+  test("under edit-dsl a variable kind mismatch suggests only grammar kinds", async () => {
+    const dir = passingFixtureDir();
+    writeFileSync(join(dir, "src", "constants.ts"), "export const MAX_TOKENS = 1;\n");
+    const provider = new ScriptedProvider([
+      editDslSelect("MAX_TOKENS", "src/constants.ts", "value", "function"),
+      editDslSelect("MAX_TOKENS", "src/constants.ts", "value", "const"),
+      editDslReply({
+        locator: { path: "src/constants.ts", name: "MAX_TOKENS", kind: "const" },
+        space: "value",
+        matcher: { kind: "snippet", value: "1" },
+        pick: null,
+        replacement: "2",
+      }),
+      "Great! I resolve this problem!",
+    ]);
+    const result = await runLoop({
+      cwd: dir,
+      issue: "raise the token budget",
+      provider,
+      protocolFormat: "edit-dsl",
+      checkCommand: TSC,
+      testCommand: ["bun", "test"],
+    });
+    expect(result.ok).toBe(true);
+    const failed = result.records[0];
+    expect(failed?.outcome).toBe("address");
+    const diagnostics = failed?.diagnostics ?? "";
+    expect(diagnostics).toContain(
+      'in "src/constants.ts" the name exists as "const", "let", "var"; change "kind" to one of those, or omit "kind" for a bare select',
+    );
+    expect(diagnostics).not.toContain('"variable"');
+    expect(diagnostics).not.toContain(": variable ");
+    expect(readFileSync(join(dir, "src", "constants.ts"), "utf8")).toContain(
+      "export const MAX_TOKENS = 2;",
+    );
+  }, 30000);
+
   test("under edit-dsl a first-turn match viewer marks the matched line in # details", async () => {
     const dir = fixtureDir();
     const provider = new ScriptedProvider([

@@ -36,7 +36,7 @@ import {
 } from "./commit";
 import { LexError } from "./lexer";
 import { ParseError, Parser } from "./parser";
-import { buildIndexTolerant, declarationSpaces } from "./utility";
+import { buildIndexTolerant, declarationSpaces, grammarKindsForEntryKind } from "./utility";
 import { buildSignatureViewFromEntry } from "./scroll";
 import { checkTool, testTool } from "./tools";
 import { usageFromRaw } from "./replay-format";
@@ -2887,7 +2887,8 @@ function rangeUnshownDiagnostics(
 function describeEntry(entry: IndexEntry, sourceByPath: ReadonlyMap<string, string>): string {
   const source = sourceByPath.get(entry.locator.path) ?? "";
   const { line, column } = lineColumnAt(source, entry.node.start);
-  return `${entry.locator.path}: ${entry.locator.kind} ${JSON.stringify(entry.locator.name)} (line ${line}, column ${column})`;
+  const kind = grammarKindsForEntryKind(entry.locator.kind).join("/");
+  return `${entry.locator.path}: ${kind} ${JSON.stringify(entry.locator.name)} (line ${line}, column ${column})`;
 }
 
 function candidateLines(
@@ -2936,9 +2937,18 @@ function addressMissDiagnostics(
     ),
   ];
   if (kinds.length > 0) {
-    lines.push(
-      `in ${JSON.stringify(locator.path)} the name exists as ${kinds.map((kind) => JSON.stringify(kind)).join(", ")}; change "kind" to match`,
-    );
+    if (kinds.includes("variable")) {
+      // The internal `"variable"` label is not a grammar kind: name the
+      // const/let/var alternatives (plus the bare-select wildcard) instead.
+      const grammarKinds = [...new Set(kinds.flatMap((kind) => grammarKindsForEntryKind(kind)))];
+      lines.push(
+        `in ${JSON.stringify(locator.path)} the name exists as ${grammarKinds.map((kind) => JSON.stringify(kind)).join(", ")}; change "kind" to one of those, or omit "kind" for a bare select`,
+      );
+    } else {
+      lines.push(
+        `in ${JSON.stringify(locator.path)} the name exists as ${kinds.map((kind) => JSON.stringify(kind)).join(", ")}; change "kind" to match`,
+      );
+    }
   }
   if (space !== null) {
     const samePath = byName.filter((entry) => entry.locator.path === locator.path);
@@ -3468,7 +3478,9 @@ function createExistsDiagnostics(
   existing: readonly IndexEntry[],
   sourceByPath: ReadonlyMap<string, string>,
 ): string {
-  const kinds = [...new Set(existing.map((entry) => entry.locator.kind))];
+  const kinds = [
+    ...new Set(existing.flatMap((entry) => grammarKindsForEntryKind(entry.locator.kind))),
+  ];
   return [
     "stage: address",
     `the name ${JSON.stringify(locator.name)} already exists in ${JSON.stringify(locator.path)} as ${kinds

@@ -87,7 +87,9 @@ selection is never returned.
   is the symbol; two are `<kind> <symbol>`. The admitted kinds are `function`,
   `const`, `let`, `var`, `class`, `type`, `interface`, `enum`, and `namespace`,
   so any other leading token is a syntax error rather than a symbol name. The
-  declaration kind is the legacy disambiguator; omitted, it means any kind.
+  declaration kind is the legacy disambiguator; omitted, it means any kind. A
+  variable declaration resolves under its `const`, `let`, or `var` keyword; the
+  index's internal `variable` label is not a grammar kind.
 - **`resolve`**: optional, after the path. `resolve value`, `resolve type`, or
   `resolve namespace` filters the address to that TypeScript symbol space; it is
   the disambiguator when the same name is declared more than once. Omitted, any

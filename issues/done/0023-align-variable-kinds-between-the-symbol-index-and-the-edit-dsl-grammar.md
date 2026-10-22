@@ -1,7 +1,7 @@
 ---
 id: 23
 title: "Align variable kinds between the symbol index and the edit-dsl grammar"
-status: todo
+status: done
 priority: high
 milestone: null
 parent: 22
@@ -72,3 +72,4 @@ Do not change function/block scope indexing in this issue. The failing
 currently labelled `variable`; preserve their behavior or add a grammar-valid
 kind rather than making them unaddressable. Keep the fix at the address/kind
 layer; it must not depend on the rename engine.
+- Implemented the variable-kind alignment. `SymbolIndex.lookup` now treats `const`/`let`/`var` locators as compatible with the internal `variable` entry kind, while the empty kind remains the wildcard and `kind: "variable"` still works for JSON/class fields. Model-facing candidate lines and kind-mismatch/create-exists diagnostics now render grammar-valid kinds (`const`/`let`/`var`), never `variable`. Added lookup coverage for const/let/var and two loop tests: a top-level const edits end to end, and a kind mismatch suggests only grammar kinds. Docs note the legacy label. Verified: `just typecheck`; `just test` (1224 pass, 0 fail); `just accept --all` (8/8 pass). Awaiting sign-off.
