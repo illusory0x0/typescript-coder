@@ -20,6 +20,19 @@ import {
 } from "./edit-dsl";
 import type { EditDslFailure, EditDslRegion, EditDslResolution, EditDslViewer } from "./edit-dsl";
 import { formatSource } from "./editor";
+import {
+  applyResolvedRegions,
+  codeFrame,
+  duplicateDeclarationDiagnostics,
+  gateDiagnostics,
+  lineColumnAt,
+  NOOP_DIAGNOSTICS,
+  parseCheck,
+  prevBrokenDiagnostics,
+  sameAfterFormatting,
+  toLines,
+} from "./commit";
+import type { ParseCheck } from "./commit";
 import { LexError } from "./lexer";
 import { ParseError, Parser } from "./parser";
 import { buildIndexTolerant, declarationSpaces } from "./utility";
@@ -2710,19 +2723,6 @@ function writeTarget(cwd: string, path: string, source: string): void {
 
 const ADDRESS_CANDIDATE_LIMIT = 5;
 
-function lineColumnAt(source: string, offset: number): { line: number; column: number } {
-  const limit = Math.max(0, Math.min(offset, source.length));
-  let line = 1;
-  let lineStart = 0;
-  for (let index = 0; index < limit; index += 1) {
-    if (source[index] === "\n") {
-      line += 1;
-      lineStart = index + 1;
-    }
-  }
-  return { line, column: limit - lineStart + 1 };
-}
-
 // Map a 1-based (line, column) to an absolute offset inside `source`, walking
 // from `base` (the first character of the coordinate space) up to `limit` (one
 // past its last character). Returns null when the position does not exist in
@@ -3020,30 +3020,6 @@ type EntrySplice =
 // #59: an edit whose final spliced candidate is byte-identical to the current
 // source cannot change anything; it is rejected before the syntax/format gate
 // and verification instead of consuming a verification round-trip.
-const NOOP_DIAGNOSTICS =
-  "stage: no-op\nthe edit does not change the file: the replacement is identical to the text it replaces; change the code so the diagnostics are actually addressed";
-
-// Formatter-normalized no-op (#59 follow-up): the byte comparison in
-// `spliceEntryEdit` cannot see a replacement that re-includes the matched
-// span's copied leading indentation, which the format gate normalizes away.
-// `formattedCandidate` is the format gate's output; the on-disk source is not
-// assumed canonical (a run can start from an unformatted file), so a
-// non-byte-equal candidate formats the source once and compares canonical
-// forms. Only a provable match rejects; an unformattable baseline applies.
-async function sameAfterFormatting(
-  target: string,
-  sourceBefore: string,
-  formattedCandidate: string,
-): Promise<boolean> {
-  if (formattedCandidate === sourceBefore) {
-    return true;
-  }
-  try {
-    return (await formatSource(target, sourceBefore)) === formattedCandidate;
-  } catch {
-    return false;
-  }
-}
 
 // The indexed node range excludes a wrapping `export`; a matcher or a
 // whole-symbol replacement that still carries the declaration's existing
@@ -3470,152 +3446,6 @@ function multiOverlapDiagnostics(
   ].join("\n");
 }
 
-/** One region failed the shared per-file apply pipeline. */
-interface RegionFailureNote {
-  region: ResolvedRegion;
-  path: string;
-  stage: EditFailureStage;
-  diagnostics: string;
-  matcherCause?: MatcherCause;
-  formatMessage?: string;
-}
-
-/** The shared apply pipeline detected an overlap between two same-file regions. */
-type RegionOverlapNote = (path: string, earlier: ResolvedRegion, later: ResolvedRegion) => void;
-
-/**
- * Apply already-resolved regions, one pass per file: overlap rejection, the
- * prev-broken/gate/duplicate/format/no-op guards, and the final formatted write.
- * Used by both the JSON batch path (#69/#78) and edit-dsl replies (#111). A
- * per-file failure is reported through `noteFailure` for every region in that
- * file (the whole file is discarded) and the file is skipped; other files still
- * produce writes here. The edit-dsl caller then treats any reported failure as
- * whole-reply atomic and discards every returned write.
- */
-async function applyResolvedRegions(input: {
-  regions: readonly ResolvedRegion[];
-  fileSourceOf: (path: string) => string;
-  target: string;
-  prevCheck: ParseCheck;
-  noteFailure: (note: RegionFailureNote) => void;
-  noteOverlap: RegionOverlapNote;
-}): Promise<{ path: string; source: string }[]> {
-  // Group the resolved regions by file and apply each file in one pass.
-  const groups = new Map<string, ResolvedRegion[]>();
-  for (const region of input.regions) {
-    const group = groups.get(region.path);
-    if (group === undefined) {
-      groups.set(region.path, [region]);
-    } else {
-      group.push(region);
-    }
-  }
-  const writes: { path: string; source: string }[] = [];
-  for (const [path, group] of groups) {
-    const payloadSource = input.fileSourceOf(path);
-    const ordered = [...group].sort((left, right) => left.start - right.start);
-    // Overlap policy (#78): two regions share source text, so the whole
-    // exchange is discarded and both regions are named.
-    let overlapping: [ResolvedRegion, ResolvedRegion] | null = null;
-    // Zero-width inserts do not advance the sorted interval, so track every
-    // insertion offset seen: two inserts at one offset overlap even when a
-    // same-start non-zero region sorts between them (#13).
-    const insertsAt = new Map<number, ResolvedRegion>();
-    for (let i = 0; i < ordered.length; i += 1) {
-      const previous = ordered[i - 1];
-      const current = ordered[i];
-      if (previous !== undefined && current !== undefined && current.start < previous.end) {
-        overlapping = [previous, current];
-        break;
-      }
-      if (current === undefined || current.start !== current.end) {
-        continue;
-      }
-      const earlierInsert = insertsAt.get(current.start);
-      if (earlierInsert !== undefined) {
-        overlapping = [earlierInsert, current];
-        break;
-      }
-      insertsAt.set(current.start, current);
-    }
-    if (overlapping !== null) {
-      input.noteOverlap(path, overlapping[0], overlapping[1]);
-      continue;
-    }
-    // Apply the file's splices together, from the end as `applyEdits` does, so
-    // earlier offsets stay valid.
-    let spliced = payloadSource;
-    for (let i = ordered.length - 1; i >= 0; i -= 1) {
-      const region = ordered[i];
-      if (region === undefined) {
-        continue;
-      }
-      spliced = applyMatcherSplice(spliced, region.start, region.end, region.text);
-    }
-    const payloadCheck = path === input.target ? input.prevCheck : parseCheck(payloadSource);
-    if (!payloadCheck.ok) {
-      // Unreachable for extra files: a strict resolution succeeded, so the file
-      // parses.
-      for (const region of ordered) {
-        input.noteFailure({
-          region,
-          path,
-          stage: "address",
-          diagnostics: prevBrokenDiagnostics(path, payloadCheck.failure),
-        });
-      }
-      continue;
-    }
-    const gate = parseCheck(spliced);
-    if (!gate.ok) {
-      for (const region of ordered) {
-        input.noteFailure({
-          region,
-          path,
-          stage: "gate",
-          diagnostics: gateDiagnostics(region.start, region.replacement, gate.failure),
-        });
-      }
-      continue;
-    }
-    const duplicate = duplicateDeclarationDiagnostics(
-      payloadSource,
-      path,
-      payloadCheck.program,
-      gate.program,
-    );
-    if (duplicate !== null) {
-      for (const region of ordered) {
-        input.noteFailure({ region, path, stage: "duplicate", diagnostics: duplicate });
-      }
-      continue;
-    }
-    let formatted: string | null = null;
-    try {
-      formatted = await formatSource(path, spliced);
-    } catch (error) {
-      for (const region of ordered) {
-        input.noteFailure({
-          region,
-          path,
-          stage: "format",
-          diagnostics: `stage: format\n${errorMessage(error)}`,
-          formatMessage: errorMessage(error),
-        });
-      }
-      continue;
-    }
-    if (await sameAfterFormatting(path, payloadSource, formatted)) {
-      for (const region of ordered) {
-        input.noteFailure({ region, path, stage: "no-op", diagnostics: NOOP_DIAGNOSTICS });
-      }
-      continue;
-    }
-    writes.push({ path, source: formatted });
-  }
-  return writes;
-}
-
 function createExistsDiagnostics(
   locator: Locator,
   existing: readonly IndexEntry[],
@@ -3629,268 +3459,6 @@ function createExistsDiagnostics(
       .join(", ")}; use mode "modify" to change it instead of "create"`,
     ...candidateLines(existing, sourceByPath),
   ].join("\n");
-}
-
-interface ParseFailure {
-  message: string;
-  offset: number;
-  line: number;
-  column: number;
-}
-
-type ParseCheck = { ok: true; program: Program } | { ok: false; failure: ParseFailure };
-
-function parseCheck(source: string): ParseCheck {
-  try {
-    return { ok: true, program: new Parser(source).parseProgram() };
-  } catch (error) {
-    if (error instanceof ParseError || error instanceof LexError) {
-      return {
-        ok: false,
-        failure: {
-          message: error.message,
-          offset: error.offset,
-          line: error.line,
-          column: error.column,
-        },
-      };
-    }
-    throw error;
-  }
-}
-
-function prevBrokenDiagnostics(path: string, failure: ParseFailure): string {
-  return [
-    "stage: prev-broken",
-    `the current source of ${JSON.stringify(path)} does not parse; this is external modification or a harness bug, so the run stops instead of repairing silently`,
-    `${failure.message} (line ${failure.line}, column ${failure.column})`,
-  ].join("\n");
-}
-
-/** Top-level declaration kinds TypeScript rejects when duplicated (#48). */
-type DuplicateKind = "function" | "class" | "type";
-
-interface TopLevelDeclaration {
-  kind: DuplicateKind;
-  name: string;
-  offset: number;
-}
-
-// Counts the top-level declarations TypeScript rejects on duplicates: bodyful
-// functions, classes, and type aliases. Overload signatures (bodyless) and
-// interfaces/namespaces are deliberately not counted (#48).
-function topLevelDeclarations(program: Program): TopLevelDeclaration[] {
-  const declarations: TopLevelDeclaration[] = [];
-  const collect = (statement: Statement | Expression): void => {
-    switch (statement.kind) {
-      case "FunctionDeclaration":
-        if (statement.name !== null && statement.body !== null) {
-          declarations.push({
-            kind: "function",
-            name: statement.name.name,
-            offset: statement.start,
-          });
-        }
-        return;
-      case "ClassDeclaration":
-        if (statement.name !== null) {
-          declarations.push({ kind: "class", name: statement.name.name, offset: statement.start });
-        }
-        return;
-      case "TypeAliasDeclaration":
-        declarations.push({ kind: "type", name: statement.name.name, offset: statement.start });
-        return;
-      case "ExportNamedDeclaration":
-        if (statement.declaration !== null) {
-          collect(statement.declaration);
-        }
-        return;
-      case "ExportDefaultDeclaration":
-        collect(statement.declaration);
-        return;
-      default:
-        return;
-    }
-  };
-  for (const statement of program.body) {
-    collect(statement);
-  }
-  return declarations;
-}
-
-/**
- * Top-level declaration span used to name the declaration a diagnostic sits in
- * (#87). Unlike `topLevelDeclarations` (the #48 duplicate guard, limited to the
- * kinds TypeScript rejects on duplicates), this covers every kind a repair
- * prompt can point at, including type aliases and variable statements.
- */
-interface DeclarationSpan {
-  kind: string;
-  name: string;
-  startLine: number;
-  endLine: number;
-}
-
-function lineNumberAt(source: string, offset: number): number {
-  let line = 1;
-  const limit = Math.min(Math.max(offset, 0), source.length);
-  for (let index = 0; index < limit; index += 1) {
-    if (source.charCodeAt(index) === 10) {
-      line += 1;
-    }
-  }
-  return line;
-}
-
-// Parse `source` and return its top-level declaration spans in source order.
-// A parse failure yields no spans: annotation is best-effort and must never
-// throw out of the diagnostics renderer.
-function declarationSpans(source: string): DeclarationSpan[] {
-  let program: Program;
-  try {
-    program = new Parser(source).parseProgram();
-  } catch (error) {
-    if (error instanceof ParseError || error instanceof LexError) {
-      return [];
-    }
-    throw error;
-  }
-  const spans: DeclarationSpan[] = [];
-  const push = (node: Node, name: string, kind: string): void => {
-    spans.push({
-      name,
-      kind,
-      startLine: lineNumberAt(source, node.start),
-      // `end` is exclusive, so the last included character is `end - 1`.
-      endLine: lineNumberAt(source, Math.max(node.start, node.end - 1)),
-    });
-  };
-  // `wrapper` is the enclosing `export` statement whose span the annotation
-  // should cover, so a diagnostic on the modifier still maps to the name.
-  const collect = (statement: Statement | Expression, wrapper?: Node): void => {
-    const node = wrapper ?? statement;
-    switch (statement.kind) {
-      case "FunctionDeclaration":
-        if (statement.name !== null) {
-          push(node, statement.name.name, "function");
-        }
-        return;
-      case "ClassDeclaration":
-        if (statement.name !== null) {
-          push(node, statement.name.name, "class");
-        }
-        return;
-      case "InterfaceDeclaration":
-        push(node, statement.name.name, "interface");
-        return;
-      case "TypeAliasDeclaration":
-        push(node, statement.name.name, "type");
-        return;
-      case "EnumDeclaration":
-        push(node, statement.name.name, "enum");
-        return;
-      case "NamespaceDeclaration":
-        push(node, statement.name, "namespace");
-        return;
-      case "VariableStatement":
-        for (const declarator of statement.declarations) {
-          if (declarator.name.kind === "Identifier") {
-            push(node, declarator.name.name, statement.declarationKind);
-          }
-        }
-        return;
-      case "ExportNamedDeclaration":
-        if (statement.declaration !== null) {
-          collect(statement.declaration, statement);
-        }
-        return;
-      case "ExportDefaultDeclaration":
-        collect(statement.declaration, statement);
-        return;
-      default:
-        return;
-    }
-  };
-  for (const statement of program.body) {
-    collect(statement);
-  }
-  return spans;
-}
-
-// The first top-level span covering `line` (spans do not nest at top level, so
-// the order is deterministic).
-function enclosingDeclaration(
-  spans: readonly DeclarationSpan[],
-  line: number,
-): DeclarationSpan | null {
-  for (const span of spans) {
-    if (line >= span.startLine && line <= span.endLine) {
-      return span;
-    }
-  }
-  return null;
-}
-
-// Duplicate-declaration guard (#48): reject a candidate that raises the
-// top-level count of a (kind, name) TypeScript rejects on duplicates, naming
-// the existing declaration.
-function duplicateDeclarationDiagnostics(
-  sourceBefore: string,
-  target: string,
-  before: Program,
-  after: Program,
-): string | null {
-  const existing = topLevelDeclarations(before);
-  const counts = new Map<string, number>();
-  for (const declaration of existing) {
-    const key = `${declaration.kind}:${declaration.name}`;
-    counts.set(key, (counts.get(key) ?? 0) + 1);
-  }
-  const seen = new Map<string, number>();
-  for (const declaration of topLevelDeclarations(after)) {
-    const key = `${declaration.kind}:${declaration.name}`;
-    const occurrences = (seen.get(key) ?? 0) + 1;
-    seen.set(key, occurrences);
-    const beforeCount = counts.get(key) ?? 0;
-    // A name the file did not declare is new only on its first occurrence: two
-    // new declarations of the same (kind, name) in one pass are still a
-    // duplicate (#13), even though `before` has no line to point at.
-    if (occurrences <= Math.max(beforeCount, 1)) {
-      continue;
-    }
-    if (beforeCount === 0) {
-      return [
-        "stage: duplicate",
-        `the edit was discarded: it would add a second top-level ${declaration.kind} ${JSON.stringify(declaration.name)} in ${target}; a single exchange may declare a new name only once`,
-      ].join("\n");
-    }
-    const first = existing.find(
-      (candidate) => candidate.kind === declaration.kind && candidate.name === declaration.name,
-    );
-    const offset = first === undefined ? declaration.offset : first.offset;
-    const line = lineColumnAt(sourceBefore, offset).line;
-    return [
-      "stage: duplicate",
-      `the edit was discarded: it would add a second top-level ${declaration.kind} ${JSON.stringify(declaration.name)} (${target} already declares it at line ${line}); replace the existing declaration instead of adding another copy`,
-    ].join("\n");
-  }
-  return null;
-}
-
-// Map a gate parse error into the replacement when it falls inside the spliced
-// range, so the model can see which part of its own text broke the file.
-function gateDiagnostics(spliceStart: number, replacement: string, failure: ParseFailure): string {
-  const lines = [
-    "stage: gate",
-    "the edit was discarded because the resulting source does not parse; nothing was written",
-    `${failure.message} (line ${failure.line}, column ${failure.column})`,
-  ];
-  if (failure.offset >= spliceStart && failure.offset <= spliceStart + replacement.length) {
-    const { line, column } = lineColumnAt(replacement, failure.offset - spliceStart);
-    lines.push(`replacement line ${line}, column ${column}:`);
-    lines.push(...codeFrame(toLines(replacement), line));
-  }
-  return lines.join("\n");
 }
 
 // The index node excludes a wrapping `export`; deleting an exported
@@ -4185,14 +3753,6 @@ export interface LineRange {
   end: number;
 }
 
-function toLines(source: string): string[] {
-  const lines = source.split("\n");
-  if (lines[lines.length - 1] === "") {
-    lines.pop();
-  }
-  return lines;
-}
-
 // Line-based applied range, found by comparing both ends so it is agnostic to
 // whole-symbol replacements and to lines inserted or removed around the edit.
 export function editedRange(baseSource: string, newSource: string): LineRange {
@@ -4226,16 +3786,6 @@ export function editedRange(baseSource: string, newSource: string): LineRange {
 
 function inEditedRange(range: LineRange, line: number): boolean {
   return range.start > 0 && line >= range.start && line <= range.end;
-}
-
-function codeFrame(lines: readonly string[], line: number): string[] {
-  const first = Math.max(1, line - 1);
-  const last = Math.min(lines.length, line + 1);
-  const frame: string[] = [];
-  for (let current = first; current <= last; current += 1) {
-    frame.push(`  ${current} | ${lines[current - 1] ?? ""}`);
-  }
-  return frame;
 }
 
 function messageWithCode(diagnostic: CheckDiagnostic): string {
@@ -4288,6 +3838,113 @@ function testOutputTail(output: string): string {
   }
   const omitted = text.length - TEST_OUTPUT_TAIL_LIMIT;
   return `[${omitted} earlier characters omitted]\n${text.slice(omitted)}`;
+}
+
+interface DeclarationSpan {
+  kind: string;
+  name: string;
+  startLine: number;
+  endLine: number;
+}
+
+function lineNumberAt(source: string, offset: number): number {
+  let line = 1;
+  const limit = Math.min(Math.max(offset, 0), source.length);
+  for (let index = 0; index < limit; index += 1) {
+    if (source.charCodeAt(index) === 10) {
+      line += 1;
+    }
+  }
+  return line;
+}
+
+// Parse `source` and return its top-level declaration spans in source order.
+// A parse failure yields no spans: annotation is best-effort and must never
+// throw out of the diagnostics renderer.
+function declarationSpans(source: string): DeclarationSpan[] {
+  let program: Program;
+  try {
+    program = new Parser(source).parseProgram();
+  } catch (error) {
+    if (error instanceof ParseError || error instanceof LexError) {
+      return [];
+    }
+    throw error;
+  }
+  const spans: DeclarationSpan[] = [];
+  const push = (node: Node, name: string, kind: string): void => {
+    spans.push({
+      name,
+      kind,
+      startLine: lineNumberAt(source, node.start),
+      // `end` is exclusive, so the last included character is `end - 1`.
+      endLine: lineNumberAt(source, Math.max(node.start, node.end - 1)),
+    });
+  };
+  // `wrapper` is the enclosing `export` statement whose span the annotation
+  // should cover, so a diagnostic on the modifier still maps to the name.
+  const collect = (statement: Statement | Expression, wrapper?: Node): void => {
+    const node = wrapper ?? statement;
+    switch (statement.kind) {
+      case "FunctionDeclaration":
+        if (statement.name !== null) {
+          push(node, statement.name.name, "function");
+        }
+        return;
+      case "ClassDeclaration":
+        if (statement.name !== null) {
+          push(node, statement.name.name, "class");
+        }
+        return;
+      case "InterfaceDeclaration":
+        push(node, statement.name.name, "interface");
+        return;
+      case "TypeAliasDeclaration":
+        push(node, statement.name.name, "type");
+        return;
+      case "EnumDeclaration":
+        push(node, statement.name.name, "enum");
+        return;
+      case "NamespaceDeclaration":
+        push(node, statement.name, "namespace");
+        return;
+      case "VariableStatement":
+        for (const declarator of statement.declarations) {
+          if (declarator.name.kind === "Identifier") {
+            push(node, declarator.name.name, statement.declarationKind);
+          }
+        }
+        return;
+      case "ExportNamedDeclaration":
+        if (statement.declaration !== null) {
+          collect(statement.declaration, statement);
+        }
+        return;
+      case "ExportDefaultDeclaration":
+        collect(statement.declaration, statement);
+        return;
+      default:
+        return;
+    }
+  };
+  for (const statement of program.body) {
+    collect(statement);
+  }
+  return spans;
+}
+
+// The first top-level span covering `line` (spans do not nest at top level, so
+// the order is deterministic).
+function enclosingDeclaration(
+  spans: readonly DeclarationSpan[],
+  line: number,
+): DeclarationSpan | null {
+  for (const span of spans) {
+    if (line >= span.startLine && line <= span.endLine) {
+      return span;
+    }
+  }
+  return null;
 }
 
 export function formatDiagnostics(input: DiagnosticsInput): string {
