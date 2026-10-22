@@ -661,6 +661,15 @@ export function markerGutter(marked: boolean): string {
   return marked ? "⁉️  " : "    ";
 }
 
+/** Head/tail source lines kept when a prompt block folds. */
+export const FOLD_HEAD_LINES = 3;
+export const FOLD_TAIL_LINES = 3;
+
+/** The single line that replaces a folded source range. */
+export function foldMarker(startLine: number, endLine: number): string {
+  return `... // content folded, source range: ${startLine}-${endLine}`;
+}
+
 /**
  * The file-absolute lines a viewer's matched spans intersect. A bare viewer's
  * only occurrence is the declaration itself, so it marks nothing.
@@ -709,6 +718,10 @@ export function renderViewerFeedback(viewers: readonly EditDslViewer[]): string 
     const marked = markedViewerLines(viewer);
     const blocks = viewer.duplicates.length > 0 ? viewer.duplicates : [viewer.declaration];
     const width = String(Math.max(...blocks.map((block) => block.at(-1)?.line ?? 0))).length;
+    const renderBlockLine = (line: OccurrenceLine): string => {
+      const gutter = markerGutter(marked.has(line.line));
+      return `${gutter}${String(line.line).padStart(width)} | ${line.text}`;
+    };
     for (let blockIndex = 0; blockIndex < blocks.length; blockIndex += 1) {
       const block = blocks[blockIndex];
       if (block === undefined) {
@@ -717,9 +730,22 @@ export function renderViewerFeedback(viewers: readonly EditDslViewer[]): string 
       if (blockIndex > 0) {
         lines.push(`  duplicate declaration at ${viewer.path}:${block[0]?.line ?? 0}`);
       }
-      for (const line of block) {
-        const gutter = markerGutter(marked.has(line.line));
-        lines.push(`${gutter}${String(line.line).padStart(width)} | ${line.text}`);
+      if (block.length > FOLD_HEAD_LINES + FOLD_TAIL_LINES) {
+        for (const line of block.slice(0, FOLD_HEAD_LINES)) {
+          lines.push(renderBlockLine(line));
+        }
+        const hiddenStart = block[FOLD_HEAD_LINES]?.line ?? 0;
+        const hiddenEnd = block[block.length - FOLD_TAIL_LINES - 1]?.line ?? hiddenStart;
+        lines.push(
+          `${markerGutter(false)}${" ".repeat(width)} | ${foldMarker(hiddenStart, hiddenEnd)}`,
+        );
+        for (const line of block.slice(-FOLD_TAIL_LINES)) {
+          lines.push(renderBlockLine(line));
+        }
+      } else {
+        for (const line of block) {
+          lines.push(renderBlockLine(line));
+        }
       }
     }
     if (viewer.duplicateNote !== null) {

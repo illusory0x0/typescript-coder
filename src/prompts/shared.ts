@@ -1,4 +1,4 @@
-import { markerGutter } from "../edit-dsl";
+import { FOLD_HEAD_LINES, FOLD_TAIL_LINES, foldMarker, markerGutter } from "../edit-dsl";
 import type { SourceFile } from "../utility";
 
 export const SPEC_FILE_LIMIT = 8000;
@@ -117,19 +117,39 @@ export function numberLinesFrom(
   source: string,
   startLine: number,
   marked: ReadonlySet<number> | null = null,
+  fold = false,
 ): string {
   const lines = splitSourceLines(source);
   if (lines.length === 0) {
     return "";
   }
   const width = String(startLine + lines.length - 1).length;
-  return lines
-    .map((line, index) => {
-      const lineNumber = startLine + index;
-      const gutter = marked === null ? "" : markerGutter(marked.has(lineNumber));
-      return `${gutter}${String(lineNumber).padStart(width, " ")} | ${line}`;
-    })
-    .join("\n");
+  const renderLine = (line: string, index: number): string => {
+    const lineNumber = startLine + index;
+    const gutter = marked === null ? "" : markerGutter(marked.has(lineNumber));
+    return `${gutter}${String(lineNumber).padStart(width, " ")} | ${line}`;
+  };
+  if (!fold || lines.length <= FOLD_HEAD_LINES + FOLD_TAIL_LINES) {
+    return lines.map(renderLine).join("\n");
+  }
+  const rendered: string[] = [];
+  for (let index = 0; index < FOLD_HEAD_LINES; index += 1) {
+    const line = lines[index];
+    if (line !== undefined) {
+      rendered.push(renderLine(line, index));
+    }
+  }
+  const hiddenStart = startLine + FOLD_HEAD_LINES;
+  const hiddenEnd = startLine + lines.length - FOLD_TAIL_LINES - 1;
+  const gutter = marked === null ? "" : markerGutter(false);
+  rendered.push(`${gutter}${" ".repeat(width)} | ${foldMarker(hiddenStart, hiddenEnd)}`);
+  for (let index = lines.length - FOLD_TAIL_LINES; index < lines.length; index += 1) {
+    const line = lines[index];
+    if (line !== undefined) {
+      rendered.push(renderLine(line, index));
+    }
+  }
+  return rendered.join("\n");
 }
 
 // Render the declaration range with its FILE-absolute 1-based line numbers.

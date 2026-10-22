@@ -1,5 +1,5 @@
 import { describe, expect, test } from "bun:test";
-import { resolveMultiEditor } from "./multi-editor";
+import { renderReadFeedback, resolveMultiEditor } from "./multi-editor";
 import type { MultiEditorDeps } from "./multi-editor";
 import { parseMultiEditor } from "./selection";
 
@@ -55,6 +55,18 @@ describe("resolveMultiEditor file commands", () => {
 
     const selected = resolve("read src/a.ts within 2 done", files);
     expect(selected.reads[0]?.lines).toEqual([{ line: 2, text: "two" }]);
+  });
+
+  test("a huge read result folds to three head and three tail lines", () => {
+    const source = Array.from({ length: 10 }, (_, index) => `line ${index + 1}`).join("\n");
+    const read = resolve("read src/a.ts done", { "src/a.ts": source });
+    const feedback = renderReadFeedback(read.reads);
+    expect(feedback).toContain("1 | line 1");
+    expect(feedback).toContain("3 | line 3");
+    expect(feedback).toContain("... // content folded, source range: 4-7");
+    expect(feedback).toContain("8 | line 8");
+    expect(feedback).toContain("10 | line 10");
+    expect(feedback).not.toContain("4 | line 4");
   });
 
   test("write with no within replaces the whole file", () => {

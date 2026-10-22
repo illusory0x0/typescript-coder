@@ -1,4 +1,4 @@
-import { resolveEditDslReply } from "./edit-dsl";
+import { FOLD_HEAD_LINES, FOLD_TAIL_LINES, foldMarker, resolveEditDslReply } from "./edit-dsl";
 import type { EditDslDeps, EditDslFailure, EditDslRegion, EditDslViewer } from "./edit-dsl";
 import type { EditRange } from "./loop";
 import { resolveLocalRename } from "./rename";
@@ -45,8 +45,22 @@ export function renderReadFeedback(reads: readonly MultiEditorRead[]): string {
       lines.push("(empty file)");
     } else {
       const width = String(read.lines.at(-1)?.line ?? 0).length;
-      for (const line of read.lines) {
-        lines.push(`${String(line.line).padStart(width)} | ${line.text}`);
+      const renderLine = (line: MultiEditorLine): string =>
+        `${String(line.line).padStart(width)} | ${line.text}`;
+      if (read.lines.length > FOLD_HEAD_LINES + FOLD_TAIL_LINES) {
+        for (const line of read.lines.slice(0, FOLD_HEAD_LINES)) {
+          lines.push(renderLine(line));
+        }
+        const hiddenStart = read.lines[FOLD_HEAD_LINES]?.line ?? 0;
+        const hiddenEnd = read.lines[read.lines.length - FOLD_TAIL_LINES - 1]?.line ?? hiddenStart;
+        lines.push(`${" ".repeat(width)} | ${foldMarker(hiddenStart, hiddenEnd)}`);
+        for (const line of read.lines.slice(-FOLD_TAIL_LINES)) {
+          lines.push(renderLine(line));
+        }
+      } else {
+        for (const line of read.lines) {
+          lines.push(renderLine(line));
+        }
       }
     }
     lines.push("```");

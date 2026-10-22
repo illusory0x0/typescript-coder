@@ -77,6 +77,7 @@ import type { EditPayload, LoopRecord, ProviderLike, RetryPromptInput, StalledAs
 import type { ChatMessage, ChatOptions, ChatResponse, ToolDefinition } from "./openai";
 import { ChatContextOverflowError, ChatPayloadTooLargeError } from "./openai";
 import { Parser } from "./parser";
+import { buildEditDslCommandPrompt } from "./prompts/edit-dsl";
 import { END_OF_LINE_COLUMN, serializeSelections } from "./selection";
 import type { Selection as EditDslSelection } from "./selection";
 import { buildIndexTolerant } from "./utility";
@@ -9051,6 +9052,52 @@ describe("edit-dsl protocol (#111/#119)", () => {
     expect(prompt).toContain("8 |   return 2;");
     expect(prompt).toContain("Reply `Great! I resolve this problem!`");
     expect(prompt).not.toContain("Examples:");
+  });
+
+  test("edit-dsl details and modified prompts fold huge source blocks", () => {
+    const source = Array.from({ length: 10 }, (_, index) => `line ${index + 1}`).join("\n");
+    const details = buildEditDslDetailsPrompt("fold it", "select huge in src/a.ts", source, [], 1);
+    const modified = buildEditDslModifiedPrompt("fold it", "select huge in src/a.ts", source, 1);
+    const command = buildEditDslCommandPrompt(
+      "fold it",
+      "select huge in src/a.ts",
+      "src/a.ts",
+      source,
+    );
+    for (const prompt of [details, modified, command]) {
+      expect(prompt).toContain("1 | line 1");
+      expect(prompt).toContain("3 | line 3");
+      expect(prompt).toContain("... // content folded, source range: 4-7");
+      expect(prompt).toContain("8 | line 8");
+      expect(prompt).toContain("10 | line 10");
+      expect(prompt).not.toContain("4 | line 4");
+    }
+  });
+
+  test("an edit-dsl retry context folds huge current source", () => {
+    const source = Array.from({ length: 10 }, (_, index) => `line ${index + 1}`).join("\n");
+    const prompt = buildRetryPrompt({
+      exchangeNumber: 2,
+      maxExchanges: 3,
+      mode: "modify",
+      locatorJson: '{"path":"src/a.ts","symbol":"huge","kind":"function"}',
+      currentSource: source,
+      diagnostics: "stage: tests",
+      failure: "verification",
+      repin: false,
+      protocolFormat: "edit-dsl",
+      editDslContext: {
+        issue: "fold it",
+        indexText: "select huge in src/a.ts",
+        startLine: 1,
+      },
+    });
+    expect(prompt).toContain("1 | line 1");
+    expect(prompt).toContain("3 | line 3");
+    expect(prompt).toContain("... // content folded, source range: 4-7");
+    expect(prompt).toContain("8 | line 8");
+    expect(prompt).toContain("10 | line 10");
+    expect(prompt).not.toContain("4 | line 4");
   });
 
   test("an edit-dsl retry prompt uses Goal, index, and details without the JSON block", () => {

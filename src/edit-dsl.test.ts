@@ -646,6 +646,31 @@ describe("resolveEditDslReply (#111)", () => {
     );
   });
 
+  test("a huge viewer declaration folds to three head and three tail lines", () => {
+    const source = [
+      "export function huge(): number {",
+      "  const a = 1;",
+      "  const b = 2;",
+      "  const c = 3;",
+      "  const d = 4;",
+      "  const e = 5;",
+      "  const f = 6;",
+      "  const g = 7;",
+      "  const h = 8;",
+      "  return a + b + c + d + e + f + g + h;",
+      "}",
+    ].join("\n");
+    const selections = parseSelection("select function huge in a.ts end");
+    const result = resolveEditDslReply(selections, deps(source));
+    const feedback = renderViewerFeedback(result.viewers);
+    expect(feedback).toContain("1 | export function huge(): number {");
+    expect(feedback).toContain("3 |   const b = 2;");
+    expect(feedback).toContain("... // content folded, source range: 4-8");
+    expect(feedback).toContain("9 |   const h = 8;");
+    expect(feedback).toContain("11 | }");
+    expect(feedback).not.toContain("4 |   const c = 3;");
+  });
+
   test("a viewer with no occurrences keeps the empty marker and skips the block", () => {
     const selections = parseSelection("select function twice in a.ts\nmatch `return 9;`\nend");
     const result = resolveEditDslReply(selections, deps(TWICE));

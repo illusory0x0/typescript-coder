@@ -328,7 +328,12 @@ These guards run before any gate:
 
 An edit-dsl clause with no `replace` writes nothing and reports the declaration as
 the next prompt's `# details` block: the source is numbered with its
-file-absolute lines. A `match` viewer reports its candidate positions; the
+file-absolute lines. Source blocks longer than six lines keep the first three and
+last three lines; the middle is replaced with
+`... // content folded, source range: <first>-<last>` naming the hidden
+file-absolute lines. The same fold applies to viewer feedback, `read` feedback,
+command-pinned files, and the `# modified text` confirmation. A `match` viewer
+reports its candidate positions; the
 declaration block itself may be unmarked in this select-first pass. A bare
 viewer (no `match`) renders the whole declaration once — the same
 `str_search`-like top-level default as the editor path. Where an editor treats

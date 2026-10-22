@@ -94,7 +94,7 @@ export function editDslContextBlock(
   preRenderedSource: string | undefined,
 ): string {
   const editDslNumbered =
-    preRenderedSource ?? numberLinesFrom(currentSource, context.startLine ?? 1);
+    preRenderedSource ?? numberLinesFrom(currentSource, context.startLine ?? 1, null, true);
   return `# Goal
 
 ${context.issue}
@@ -135,7 +135,7 @@ export function buildEditDslDetailsPrompt(
   markedLines: ReadonlySet<number> | null = null,
   duplicateNote: string | null = null,
 ): string {
-  const numbered = numberLinesFrom(symbolSource, startLine, markedLines);
+  const numbered = numberLinesFrom(symbolSource, startLine, markedLines, true);
   const note = duplicateNote === null ? "" : `\n${duplicateNote}\n`;
   const prompt = `${editDslGoal(issue, indexText)}\n# details\n\n\`\`\`text\n${numbered}\n\`\`\`\n${note}\n${editDslInstruction()}\n`;
   return appendEditDslSpecFiles(prompt, specFiles);
@@ -159,7 +159,7 @@ export function buildEditDslCommandPrompt(
   source: string,
   specFiles: readonly SourceFile[] = [],
 ): string {
-  const body = source === "" ? "(empty file)" : numberLinesFrom(source, 1);
+  const body = source === "" ? "(empty file)" : numberLinesFrom(source, 1, null, true);
   const prompt = `${editDslGoal(issue, indexText)}\n# Target file\n\n\`\`\`\n${path}\n\`\`\`\n\n\`\`\`text\n${body}\n\`\`\`\n\nReply with the next \`select … end\` clause or file command.\n`;
   return appendEditDslSpecFiles(prompt, specFiles);
 }
@@ -203,7 +203,7 @@ export function buildEditDslModifiedPrompt(
   startLine: number,
   specFiles: readonly SourceFile[] = [],
 ): string {
-  const numbered = numberLinesFrom(symbolSource, startLine);
+  const numbered = numberLinesFrom(symbolSource, startLine, null, true);
   const prompt = `${editDslGoal(issue, indexText)}\n# modified text\n\n\`\`\`text\n${numbered}\n\`\`\`\n\nReply \`Great! I resolve this problem!\` if the goal is met; otherwise return one or more \`select … end\` edit clauses.\n`;
   return appendEditDslSpecFiles(prompt, specFiles);
 }
