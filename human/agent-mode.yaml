@@ -1,0 +1,170 @@
+version: 1
+kind: agent-mode
+title: typescript-coder agent loop and context management
+
+design-principle:
+  focus: what the current mode knows
+  discard: everything the mode does not expect to know
+
+natural-language-style:
+  - compact
+  - concise
+  - professional
+  - exact
+
+modes:
+  - planning
+  - execution
+
+protocols:
+  edit-action-dsl:
+    grain: fine
+    scale: micro-operation
+    covers: text or structural editing
+    excludes: semantic relationship
+  edit-task-dsl:
+    grain: coarse
+    scale: macro-picture
+    covers:
+      - where
+      - how
+    expresses: semantic explanation and task relationship
+
+dag:
+  name: edit-task-dag
+  alias: edit-action-dag
+  nodes: edit-task-dsl
+  language: natural
+  tracker: edit-action-tracker
+
+tools:
+  edit-action-tracker:
+    responsibility: manage DAG
+    owner: planning
+    consumer: execution
+
+context-manager:
+  roots: per-mode
+  ordering: stability-descending
+  policy:
+    - stable content first
+    - volatile content last
+    - discard and re-render volatile nodes only
+  prefix-cache:
+    unit: longest unchanged prefix
+    invalidate: volatile tail
+  prefix-tree:
+    root: mode
+    branch: stability
+    rule: append nodes by descending stability; never reorder by relevance
+  contexts:
+    
+    planning:
+      root: planning
+      order:
+        - role
+        - pm-requirement
+        - edit-task-dag
+        - editing-status
+      refresh: []
+
+    execution:
+      root: execution
+      order:
+        - role
+        - edit-task-dag
+        - diagnostics
+        - content-view
+      refresh:
+        - diagnostics
+        - content-view
+      notes:
+        diagnostics: tsc check; frequently discarded and refreshed
+        content-view: fresh view; placed last
+
+planning:
+  role: software-engineer
+  responsibility:
+    - understand requirement
+    - task decomposition
+  input:
+    - requirement: natural language
+  output:
+    - edit-task-dag: natural language
+  workflow:
+    simple: modify in place directly
+    complex:
+      - write new function
+      - delete old function
+      - rename to old function name
+  prefer-tools:
+    - semantic edit
+    - renamer
+    - refactor
+    - formatter
+    - semantic query for global picture
+  feedback-loop:
+    - after type check passing: run testing
+    - then: plan next edit-task-dag
+  reject:
+    - requirement too big: escalate to project manager
+    - vague requirement
+  knowledge-isolation:
+    exclude: complex typing rules
+    include: symbol reference
+
+execution:
+  role: coding-expert
+  responsibility:
+    - understand diagnostic message
+    - type inference
+    - scope lookup
+    - overloading
+    - language dynamic semantics
+  input:
+    - edit-task-dag: natural language
+  output:
+    - edit-dsl: precise action
+  feedback-loop:
+    - satisfy all edit-task-dag requirements
+    - allow edit-task-dag amendment only until type check passes
+  report:
+    planning-fail:
+      requires: diagnostic message
+    success:
+      requires:
+        - all syntax valid
+        - type check passing
+  reject:
+    - edit too many files
+    - edit too many contents
+    - not minimal but modify in need
+  auto-rule:
+    - fix typo on the way
+  knowledge-isolation:
+    exclude:
+      - algorithm
+      - requirement
+
+transitions:
+  - from: planning
+    to: execution
+    when: edit-task-dag ready
+
+  - from: execution
+    to: planning
+    when: planning fail reported
+    carries: diagnostic message
+  
+  - from: execution
+    to: done
+    when:
+      - all syntax valid
+      - type check passing
+  
+  - from: planning
+    to: planning
+    when:
+      - type check passing
+      - testing done
+    then: plan next edit-task-dag

@@ -1,0 +1,906 @@
+# Benchmark and test terminology used across this repository.
+#
+# Scope: unit tests (src/*.test.ts), the acceptance harness, in-loop
+# verification, the benchmark harness, its judge, metrics, ledger, provenance,
+# replay, and the generated artifacts they share.
+#
+# Every entry has a canonical `term` and a repository-specific `definition`.
+
+version: 1
+generated: "2026-10-23"
+
+categories:
+  - id: layers
+    title: Test and evaluation layers
+    terms:
+      - term: unit test
+        definition: >-
+          Colocated `src/*.test.ts` suites run by `bun test`. Root `bun test`
+          only discovers `src/` because `bunfig.toml` sets `root = "./src"`.
+      - term: typecheck
+        definition: >-
+          `bunx tsc --noEmit` over the source tree, run by `just typecheck`.
+          Strict mode plus `noUncheckedIndexedAccess` and `verbatimModuleSyntax`.
+      - term: acceptance
+        definition: >-
+          Scripted end-to-end scenarios that drive the real `runLoop` with a
+          `ScriptedProvider` (offline) or `OpenAIProvider` (live). Command:
+          `just accept`, which forwards flags to `bun run acceptance/run.ts`.
+      - term: benchmark
+        definition: >-
+          Token and USD comparison of the `tc` loop against the `oc` CLI on
+          identical fixture copies, prompts, and model. Command:
+          `bun run benchmark/run.ts`.
+      - term: replay
+        definition: >-
+          Offline re-execution of a recorded benchmark bundle through the
+          current loop with no network calls.
+      - term: judge golden
+        definition: >-
+          `src/judge-golden.test.ts` pins the four judge verdicts at zero API
+          cost: reference passes all nets, tsc-only failure, tests-only
+          failure, and fixture byte-equality failure.
+      - term: live evaluation
+        definition: >-
+          Any run that calls the real model (`just accept --live`,
+          `bun run benchmark/run.ts`). Not a development loop: reserve it for
+          the end of a change, when asked, or when the harness cannot answer.
+      - term: offline
+        definition: >-
+          No network access. Unit tests and default acceptance scenarios must
+          stay offline; live scenarios and the benchmark are opt-in.
+
+  - id: commands
+    title: Commands and configuration
+    terms:
+      - term: "just test"
+        definition: >-
+          Runs `bun test`. Single test: `bun test src/loop.test.ts -t "pattern"`.
+      - term: "just typecheck"
+        definition: Runs `bunx tsc --noEmit`.
+      - term: "just accept"
+        definition: Runs the acceptance harness; flags pass through, e.g. `just accept --live`.
+      - term: "just format"
+        definition: >-
+          Runs repo-wide `bunx oxfmt`, which rewrites `human/`. Do not run it
+          repo-wide; format only changed files outside `human/`.
+      - term: bunfig root
+        definition: >-
+          `[test] root = "./src"` in `bunfig.toml`. Root `bun test` never sees
+          acceptance or benchmark fixtures.
+      - term: ACCEPT_TSC
+        definition: Environment override for the tsc binary used by acceptance fixtures.
+      - term: ACCEPT_MODEL
+        definition: Environment override for the live acceptance model id.
+      - term: OPENCODE_BIN
+        definition: Environment override for the oc-side CLI binary.
+      - term: test name filter
+        definition: The `-t "pattern"` flag passed to `bun test` selects tests by name.
+
+  - id: unit-tests
+    title: Unit tests and specification files
+    terms:
+      - term: colocated test
+        definition: A `*.test.ts` file next to the implementation it exercises, e.g. `src/loop.test.ts`.
+      - term: test file as specification
+        definition: >-
+          In fixtures, `src/*.test.ts` is the specification and a read-only
+          edit target; an explicit test address still resolves.
+      - term: skipIf
+        definition: >-
+          Bun test guard used by benchmark-aware suites so the self-host copy
+          (which only copies `src/`) skips instead of failing to resolve
+          `benchmark/`.
+      - term: self-host smoke
+        definition: >-
+          Acceptance `self-host` scenario: the agent edits this repository's own
+          `src/`, then the copied suite must stay green.
+      - term: self-host fixture target
+        definition: >-
+          `src/index.ts` (`greet`) is kept as the self-host fixture target;
+          do not clean it up.
+      - term: reference round-trip
+        definition: >-
+          `src/reference-roundtrip.test.ts`: canonical printed output of each
+          fixture parser must re-parse to an equal AST.
+      - term: computed specifier
+        definition: >-
+          Dynamic `import(pathToFileURL(...))` of `benchmark/run.ts` so `tsc`
+          does not pin `benchmark/`; preserves the self-host trick.
+
+  - id: acceptance
+    title: Acceptance harness
+    terms:
+      - term: scenario
+        definition: >-
+          One acceptance case: id, title, fixture, optional slow/live flags,
+          protocolFormat, issue, scripted responses, optional prepare hook, and
+          assertions.
+      - term: ScriptedProvider
+        definition: >-
+          Fake ProviderLike that replies from a fixed response list and records
+          every request in `calls`; makes offline scenarios deterministic.
+      - term: ScriptedResponse
+        definition: Either a string reply or a `ScriptedToolCall` (`{name, arguments}`).
+      - term: scenario fixture
+        definition: >-
+          `acceptance/fixtures/<id>/` template copied into a fresh temp dir per
+          run. `self-host` has no fixture and uses a `prepare` hook instead.
+      - term: scenario assertion
+        definition: >-
+          `{name, check}` evaluated against `ScenarioArtifacts` (dir, result,
+          provider, calls, originals, finals).
+      - term: hasOk
+        definition: Asserts `result.ok` equals the expected boolean.
+      - term: hasRecords
+        definition: Asserts `result.records.length`.
+      - term: recordOutcomes
+        definition: Asserts the ordered `outcome` values of all records.
+      - term: hasTerminationReason
+        definition: Asserts the exact `result.terminationReason`.
+      - term: hasCallCount
+        definition: Asserts the number of captured provider calls.
+      - term: fileContains
+        definition: Asserts a final workspace file contains a substring.
+      - term: fileEqualsOriginal
+        definition: Asserts a final file is byte-identical to its pre-run content.
+      - term: fileDiffersFromOriginal
+        definition: Asserts a final file differs from its pre-run content.
+      - term: messageContains
+        definition: Asserts the last message of a given provider call contains a substring.
+      - term: explanation assertions
+        definition: >-
+          `explanationEquals` asserts the final LLM summary text;
+          `explanationIsNull` asserts that no summary was recorded.
+      - term: diagnosticsContains
+        definition: Asserts `result.diagnostics` contains a substring.
+      - term: scenario status
+        definition: >-
+          `passed`, `failed`, or `error`; `error` means `runLoop` threw, not
+          that an assertion failed.
+      - term: skipped
+        definition: Count of scenarios not selected; reported in `totals` only.
+      - term: accept --all
+        definition: Also runs `slow` scenarios such as `self-host`.
+      - term: accept --live
+        definition: >-
+          Includes scenarios that call the real model. Live scenarios are
+          excluded from default runs, `--all`, and `bun test`.
+      - term: accept --only
+        definition: >-
+          Runs one scenario by id. Selecting a live scenario without `--live`
+          exits 2 with a usage error.
+      - term: accept --keep
+        definition: Keeps per-scenario temp dirs and prints their paths.
+      - term: accept --induce-failure
+        definition: >-
+          Adds a synthetic failing assertion to prove the harness exits
+          non-zero; a meta-check of the harness itself.
+      - term: acceptance report
+        definition: >-
+          `acceptance/report.json` (gitignored): generatedAt, bunVersion, all,
+          only, overall, totals, scenarios. Live entries carry `live: true` and
+          the model id.
+      - term: LIVE_TIMEOUT_MS
+        definition: 90-second timeout wrapping each live request; live loop runs at temperature 0.
+
+  - id: loop-verification
+    title: In-loop verification
+    terms:
+      - term: runLoop
+        definition: >-
+          `src/loop.ts` dispatcher. The default route is `runEditDslLoop`;
+          explicit-targets mode and `--protocol-format=json` route to
+          `runJsonLoop`.
+      - term: checkCommand
+        definition: The type-check command run during verification; default `bunx tsc --noEmit`.
+      - term: testCommand
+        definition: The test command run during verification; default `bun test`.
+      - term: checkTool
+        definition: >-
+          Runs the check command and returns `{ok, exitCode, output}` plus
+          parsed `CheckDiagnostic[]`.
+      - term: testTool
+        definition: Runs the test command and returns `{ok, exitCode, output}`.
+      - term: parseDiagnostics
+        definition: Parses `TS####` diagnostics into file/line/column/code/message.
+      - term: commandTimeoutMs
+        definition: 120-second bound on check/test commands, not on provider requests.
+      - term: round / iteration
+        definition: >-
+          One Edit to Verification cycle. Each round grants at most 3 model
+          exchanges, shared by target picking, editing, and retries.
+      - term: exchange
+        definition: One model call inside an Edit round; recorded as one row.
+      - term: records
+        definition: >-
+          Ordered per-run rows, one per exchange or verification. `steps` on the
+          tc side is the number of records.
+      - term: verification
+        definition: Harness-run check plus test command after an applied edit; no model call involved.
+      - term: keep-progress
+        definition: >-
+          A failed verification leaves the attempted state on disk; diagnostics
+          open the next round and the model builds on the kept state. There is
+          no rollback.
+      - term: rejection retry
+        definition: >-
+          The same round is re-asked with the failure class turned into a
+          correction sentence; repeating the same class escalates.
+      - term: round continuation
+        definition: >-
+          A round that spends its 3 exchanges without a valid edit continues
+          through a STOP continuation prompt with a checkpoint and a fresh
+          budget, rather than ending the run.
+      - term: no-progress ask
+        definition: >-
+          After 8 consecutive failed rounds (then every 4), the model must
+          change the cause or reply STOP. From the second ask it becomes
+          decision-only.
+      - term: STOP
+        definition: The model's only non-editor escape in a continuation or no-progress ask.
+      - term: hard caps
+        definition: 32 rounds, 3 consecutive output-length truncations, and a 120k default token budget.
+      - term: summary call
+        definition: >-
+          Exactly one LLM summary at the end of a termination-matrix run:
+          Accomplished / Failed and why / Remaining / Next step.
+      - term: self-check
+        definition: >-
+          A bounded `{"request":"read" | "check" | "test"}` exchange that may
+          inspect source or run the task commands; it writes nothing.
+      - term: parse gate
+        definition: A file that parsed before an edit must still parse after it, or the edit is discarded.
+      - term: duplicate-declaration guard
+        definition: A top-level function/class/type name may not be added twice.
+      - term: formatter gate
+        definition: The candidate must survive oxfmt; a formatter rejection is a `format` failure.
+      - term: post-format no-op check
+        definition: A candidate that differs only by formatting is rejected as a no-op.
+      - term: explicit-targets mode
+        definition: >-
+          The caller supplies addresses; the JSON driver skips picking, forces
+          the batch shape, and sequences same-file targets across exchanges.
+          JSON-only.
+      - term: provided targets
+        definition: "`LoopOptions.targets`, one Locator per desired declaration."
+
+  - id: outcomes
+    title: Outcomes, rejection causes, and termination
+    terms:
+      - term: ExchangeOutcome
+        definition: >-
+          `selected`, `applied`, `stopped`, `self-check`, `viewer`, `confirmed`,
+          plus rejection stages `protocol`, `address`, `echo`, `matcher`,
+          `range`, `no-op`, `repeat`, `duplicate`, `gate`, `format`, `truncated`,
+          `prev-broken`.
+      - term: VerificationOutcome
+        definition: "`ok`, `tsc`, `tests`, `gate`, `format`, `prev-broken`."
+      - term: AttemptOutcome
+        definition: Union of ExchangeOutcome and VerificationOutcome.
+      - term: failure stage
+        definition: >-
+          `syntax` (edit-dsl only), `protocol`, `echo`, `address`, `matcher`,
+          `range`, `no-op`, `repeat`, `duplicate`, `gate`, `format`. Every
+          rejection carries a `stage:` tag and costs one exchange.
+      - term: syntax stage
+        definition: Edit-dsl only; the reply does not parse as `select ... end`.
+      - term: RejectionCause
+        definition: >-
+          One class per rejection so retry policy and records never string-sniff
+          diagnostics: `protocol`, `echo`, `address`, `matcher-unparseable`,
+          `matcher-not-found`, `matcher-ambiguous`, `regex-invalid`,
+          `range-invalid`, `no-op`, `repeat`, `duplicate`, `gate`, `format`,
+          `format-export-duplication`, `truncated`, `multi-protocol`,
+          `multi-duplicate`.
+      - term: classifyRejection
+        definition: Maps a structured stage plus matcher cause and formatter message to one RejectionCause.
+      - term: format-export-duplication
+        definition: >-
+          Harness-side formatter fault detected by oxfmt's
+          `modifier already seen` signature; terminates as `harness-fault`.
+      - term: TerminationReason
+        definition: >-
+          `token-budget`, `edit-exhausted`, `delete-verification-failed`,
+          `prev-broken`, `harness-fault`, `output-limit`. A run ending through
+          this matrix ends with one summary call.
+      - term: token-budget
+        definition: >-
+          Accumulated provider tokens strictly exceed the budget (default
+          120000). The in-flight response is not applied or verified.
+      - term: edit-exhausted
+        definition: The run cannot produce a valid edit within the round/iteration caps.
+      - term: delete-verification-failed
+        definition: A deletion fails verification.
+      - term: prev-broken
+        definition: The pinned target stops parsing.
+      - term: harness-fault
+        definition: A harness-side fault such as the duplicate-modifier format rejection.
+      - term: output-limit
+        definition: Three consecutive truncated completions end the run.
+      - term: LoopRecord
+        definition: >-
+          `row`, `iteration`, `kind` (`exchange` or `verification`), `exchange`,
+          `outcome`, `locator`, `replacement`, `diagnostics`,
+          `diagnosticsHead`, `replacementChars`, `finishReason`, `payloads`,
+          `toolCalls`, `appliedLocators`, `selectors`, `stages`,
+          `matcherKinds`.
+      - term: LoopResult
+        definition: >-
+          `ok`, `mode`, `locator`, `filePath`, `editedSource`, `records`,
+          `diagnostics`, `explanation`, `messages`, `skipped`,
+          `terminationReason`, `tokens`, `appliedTargets`.
+      - term: subagent result
+        definition: >-
+          `typescript-coder-result@1`, printed by `--format json`: format,
+          status, verified, files, targets, records, tokens,
+          terminationReason, diagnostics.
+
+  - id: protocol
+    title: Edit protocol vocabulary
+    terms:
+      - term: ProtocolFormat
+        definition: "`json` (flat JSON payload) or `edit-dsl` (`select ... end`). Explicit-targets mode stays JSON."
+      - term: compact
+        definition: >-
+          Deprecated alias for `edit-dsl`, kept for old flags, replay bundles,
+          and ledger rows. Reading `compact` normalizes to `edit-dsl`.
+      - term: json payload
+        definition: >-
+          One flat object `{"path","symbol","kind","matcher"?,"range"?,
+          "replacement"}` whose address echoes the pinned selection.
+      - term: edit-dsl clause
+        definition: >-
+          `select ... [resolve ...] [match ...] [pick ...] replace with <fence>
+          | rename <old> to <new> end`; one or more statements per reply.
+      - term: viewer
+        definition: An edit-dsl clause with neither `replace` nor `rename`; locates and writes nothing.
+      - term: editor
+        definition: An edit-dsl clause carrying `replace` or `rename`.
+      - term: select clause
+        definition: The first edit-dsl clause naming a symbol-index entry or a file command.
+      - term: resolve clause
+        definition: Optional `value` / `type` / `namespace` filter on a select clause.
+      - term: match clause
+        definition: Exactly one locator, a backtick snippet compared structurally or a `/regex/`.
+      - term: pick clause
+        definition: One range or a `{a, b, ...}` set; requires `replace`.
+      - term: replace with fence
+        definition: 5+ hyphens or 6+ backticks; an empty fence deletes the target.
+      - term: rename clause
+        definition: >-
+          Rewrites a declaration name and every same-file reference that
+          lexically resolves to it; collisions are address failures.
+      - term: cascade
+        definition: Address, then Match, then Pick, then Rewrite.
+      - term: address stage
+        definition: The address must land on exactly one declaration; a miss or ambiguity is staged.
+      - term: export tolerance
+        definition: A rewrite starting at the declaration start keeps exactly one wrapping `export`.
+      - term: matcher cause
+        definition: "`matcher-unparseable`, `matcher-not-found`, `matcher-ambiguous`, `regex-invalid`."
+      - term: range-invalid
+        definition: A range or pick that is out of bounds, empty, inverted, or outside the declaration.
+      - term: selector adoption
+        definition: Per-run counts of `range`, `matcher`, and `whole-symbol` selectors, summed in aggregates.
+      - term: cascade stage adoption
+        definition: Per-run counts of `whole-symbol`, `match`, and `pick`, summed in aggregates.
+      - term: matcher-kind adoption
+        definition: Per-run counts of `snippet` and `regex`.
+      - term: multi-payload
+        definition: >-
+          Opt-in batch `{"payloads": [...]}` for `modify`; same-file entries must
+          not overlap and the exchange is atomic.
+      - term: implicit create
+        definition: An edit-dsl clause whose miss pins mode `create` and asks for a create clause.
+
+  - id: benchmark-run
+    title: Benchmark run model
+    terms:
+      - term: tc
+        definition: The typescript-coder side. Abbreviated `tc` in flags, labels, and tables.
+      - term: oc
+        definition: >-
+          The opencode CLI side. Historical artifacts may label it differently;
+          replay bundles recorded before the rename carry `side: "ts"` but stay
+          readable.
+      - term: TaskName
+        definition: "`json-parser`, `sexp-parser`, `minilisp`, `csv-parser`."
+      - term: tuned fixtures
+        definition: The first three tasks; prompt and loop changes may be iterated against them.
+      - term: held-out task
+        definition: >-
+          `csv-parser`. Never a target of prompt or loop iteration; it gates
+          only claims that a change generalizes, and is reported in a row's
+          Notes rather than as a tuned column.
+      - term: fixture
+        definition: Frozen task copy under `benchmark/fixtures/<task>/`, copied into each run's workspace.
+      - term: reference implementation
+        definition: >-
+          Working solution under `benchmark/references/{json,sexp,lisp,csv}.ts`,
+          used by the benchmark self-check and the judge golden corpus.
+      - term: TASK_ISSUES
+        definition: One frozen issue string per task in `benchmark/run.ts`, used verbatim by both sides.
+      - term: TASK_REFERENCE_BASENAMES
+        definition: Maps each task to its short reference filename (json, sexp, lisp, csv).
+      - term: run
+        definition: One task times side times rep execution; kept in `report.runs` whatever its outcome.
+      - term: rep
+        definition: Repetition count; default 3. The series treats n=3 as samples, not a distribution.
+      - term: pilot
+        definition: >-
+          `--pilot` forces 1 rep per task and side and writes
+          `benchmark/results/pilot-<date>.json`.
+      - term: reps flag
+        definition: "`--reps <n>` sets repetitions; default 3."
+      - term: concurrency
+        definition: >-
+          `--concurrency <n>` bounds the worker pool; default 4. Each job keeps
+          its own workspace, git repo, session, and logs.
+      - term: run matrix
+        definition: task times side times rep, extended by one tc job per selected protocol variant.
+      - term: workspace
+        definition: >-
+          Fresh `tmp/benchmark/<stamp>/` fixture copy with its own git repo, so
+          the agent cannot reach this repository's `benchmark/references/`.
+      - term: benchmark --keep
+        definition: Keeps the run workspace for inspection.
+      - term: benchmark --side
+        definition: "`--side tc|oc|both` selects the measured side(s)."
+      - term: benchmark --model
+        definition: Model id; default `deepseek-v4.1-flash`.
+      - term: benchmark --oc-model
+        definition: Optional oc-side model override; when absent the oc side uses `model`.
+      - term: benchmark --json
+        definition: Result JSON path; a sibling Markdown report is written next to it.
+      - term: benchmark --replay-dir
+        definition: >-
+          tc side only: writes one replay bundle per run to
+          `<path>/<task>-tc-rep<n>.json` (or with the protocol in the name for a
+          multi-variant run).
+      - term: benchmark --token-budget
+        definition: >-
+          tc side only: aborts a run once accumulated provider tokens strictly
+          exceed n; default 120000.
+      - term: benchmark --effort
+        definition: >-
+          tc side only: forces `reasoning_effort` on every Edit-loop call,
+          overriding the default `none`.
+      - term: benchmark --protocol-format
+        definition: >-
+          tc side: one value or a comma-separated list of `json` and
+          `edit-dsl`; order is canonicalized and duplicates collapse.
+      - term: benchmark --multi-payload
+        definition: Opt-in batched edit payloads on the tc side.
+      - term: report mode
+        definition: "`pilot` or `full`, recorded in the report."
+      - term: pilot reference
+        definition: Path of the pilot report a full run references, or none.
+      - term: infraErrors
+        definition: Infrastructure-error list; non-empty forces a non-zero exit.
+      - term: OPENCODE_TIMEOUT_MS
+        definition: 25-minute bound on one oc run.
+      - term: CHAT_TIMEOUT_MS
+        definition: 10-minute bound on one tc provider request.
+      - term: JUDGE_TIMEOUT_MS
+        definition: 240-second bound on each judge command.
+
+  - id: benchmark-judge
+    title: Benchmark judge
+    terms:
+      - term: judgeWorkspace
+        definition: >-
+          Runs the three verdicts on the final workspace: fixture byte-equality,
+          `tsc --noEmit`, and `bun test`, then returns ok/testsOk/tscOk/
+          fixtureOk/detail/log.
+      - term: fixtureOk
+        definition: >-
+          The fixture's `tsconfig.json` and `src/*.test.ts` are byte-identical
+          to the frozen copies; failures are reported as missing or modified.
+      - term: tscOk
+        definition: The judge's `bun <tscBin> --noEmit` command exits 0.
+      - term: testsOk
+        definition: The judge's `bun test` command exits 0.
+      - term: judge ok
+        definition: "`fixtureOk && tscOk && testsOk`; the run's `ok` additionally requires no termination reason."
+      - term: sideOk
+        definition: The side's own `result.ok`, which can be false even when the judge passes or true when it fails.
+      - term: coarse judge
+        definition: >-
+          The judge looks only at the final workspace; any implementation the
+          frozen tests accept passes.
+      - term: tracked fixture files
+        definition: >-
+          The files whose byte-equality the judge enforces: `tsconfig.json`
+          plus `src/*.test.ts`.
+      - term: byte-equality
+        definition: Exact file comparison between the fixture copy and the workspace, not a semantic diff.
+      - term: judge detail
+        definition: Human-readable failure summary naming modified/missing files and failing command output.
+      - term: golden corpus
+        definition: >-
+          The four-row table in `src/judge-golden.test.ts` that pins the judge's
+          verdicts at zero API cost.
+      - term: reference solution row
+        definition: Golden row where the reference implementation must pass every net.
+      - term: type-error candidate
+        definition: Golden row that type-checks badly but runs correctly, isolating the tsc verdict.
+      - term: tests-failure candidate
+        definition: Golden row that type-checks but returns a wrong value, isolating the tests verdict.
+      - term: fixture-tamper candidate
+        definition: Golden row that modifies a read-only fixture file to prove byte-equality fails.
+
+  - id: metrics
+    title: Per-run metrics
+    terms:
+      - term: tokens.input
+        definition: Prompt tokens as reported by the side's usage payload.
+      - term: tokens.output
+        definition: Completion tokens as reported by the side's usage payload.
+      - term: tokens.cacheRead
+        definition: Cache-hit input tokens; null when the side did not report them.
+      - term: tokens.cacheWrite
+        definition: Cache-write tokens; null when not reported.
+      - term: tokens.reasoning
+        definition: >-
+          Reasoning tokens when reported: a subset of output on the OpenAI side,
+          a separate counter on the oc side.
+      - term: tokens.total
+        definition: >-
+          Reported total when available, otherwise input plus output plus
+          reasoning; cache counters are not added in.
+      - term: billable tokens
+        definition: >-
+          The cache-excluded, like-for-like triple used by reports: `in` is
+          cache-miss input, `out` is output including reasoning, and
+          `total = in + out`.
+      - term: normalizeBuckets
+        definition: >-
+          Shared normalization in `src/benchmark-pricing.ts` that converts each
+          side's raw buckets to the same cache-excluded basis.
+      - term: cache-excluded
+        definition: Cache-hit input is excluded from comparison totals but kept in each run's raw buckets.
+      - term: usageSource
+        definition: >-
+          Where usage came from: `chat-completions` for tc, `session-export` or
+          `stats-project` for oc.
+      - term: rawUsage
+        definition: The verbatim usage payload; null fields mean the side did not report them.
+      - term: steps
+        definition: >-
+          tc: number of recorded loop rows (exchanges plus verifications).
+          oc: assistant messages in the session export; null when unavailable.
+      - term: record summary
+        definition: >-
+          Per-row `row`, `iteration`, `kind`, `exchange`, `outcome`, `cause`,
+          `diagnosticsHead`, `replacementChars`, and `finishReason`.
+      - term: diagnosticsHead
+        definition: Bounded head of a row's diagnostics (at most 200 characters, whitespace collapsed).
+      - term: replacementChars
+        definition: Character count of the replacement a row carried.
+      - term: finishReason
+        definition: The provider's finish reason for the reply that produced the row.
+      - term: exchangeStats
+        definition: >-
+          Per-run rejected-versus-applied exchange counts plus command/tool-call
+          volume: turns, payloads, toolCalls, applied, rejected, selected,
+          stopped, selector/stage/matcher-kind counts, and creates.
+      - term: payloads
+        definition: >-
+          Number of payload objects an exchange carried: 1 for a classic edit,
+          N for a batch, 0 for none.
+      - term: toolCalls
+        definition: Provider tool calls in the reply that produced the row.
+      - term: creates
+        definition: Edit-dsl implicit-create clauses carried by the run's replies, summed in aggregates.
+      - term: loopDiagnostics
+        definition: >-
+          The loop's final run-level diagnostic: a termination-matrix reason
+          plus staged diagnostics, or a provider error that ended the run before
+          any record.
+      - term: terminationReason metric
+        definition: >-
+          The run's termination reason when it ended through the matrix; null on
+          success, provider errors, and the oc side.
+      - term: failure artifact
+        definition: >-
+          `failures/<ISO-stamp>-<reason>.md` written by a terminated run:
+          reason, pinned target, staged diagnostics, and the LLM summary.
+      - term: archiveFailureArtifacts
+        definition: >-
+          Before a benchmark matrix starts, rotates old `failures/` artifacts
+          into `tmp/failures-archive/<ISO-stamp>/`; CLI single runs never rotate.
+      - term: durationMs
+        definition: Model work time only; judge time is not counted.
+      - term: startedAt / finishedAt
+        definition: ISO wall clock of the same model work, the window used for pricing.
+      - term: cost
+        definition: >-
+          USD for the run's buckets at the DeepSeek V4.1-Flash peak/off-peak
+          rates for its window; null when the side reported no usage.
+      - term: rateClass
+        definition: "`peak`, `off-peak`, or `mixed` when the run window crosses a rate boundary."
+      - term: run ok
+        definition: >-
+          Judge verdict, forced to false when a termination reason is present.
+          Terminated runs count as failures in aggregates.
+      - term: infraError
+        definition: >-
+          Infrastructure failure kept separate from ordinary run failures;
+          infraErrors are listed and force a non-zero exit.
+
+  - id: aggregation-pricing
+    title: Aggregation, success, and pricing
+    terms:
+      - term: success
+        definition: >-
+          A judged pass (tsc, tests, and fixture byte-equality) with no
+          termination-matrix ending. A terminated run is a failure even if the
+          state it left judges green.
+      - term: successRate
+        definition: "`ok / runs` for the selected rows."
+      - term: usageRuns
+        definition: Runs whose `tokens.total` is non-null; the only runs that contribute to token sums.
+      - term: costPerSuccess
+        definition: >-
+          Summed USD of selected runs that carry a cost, failed runs included,
+          divided by the number of successes; null when there are none.
+      - term: tokensPerSuccess
+        definition: Usage-run token sums divided by the same success count.
+      - term: byTaskSide
+        definition: Aggregate rows for each task and side, split by tc protocol.
+      - term: bySide
+        definition: Aggregate rows per side, split by tc protocol.
+      - term: overall
+        definition: >-
+          One row per side and tc protocol. Two tc protocols are never pooled
+          into one comparison row.
+      - term: AggregateRow
+        definition: >-
+          runs, ok, failed, successRate, usageRuns, tokens{in,out,total}, cost,
+          durationMsMean, stepsMean, tokensPerSuccess, costPerSuccess, selector
+          and stage counts, matcher-kind counts, and creates.
+      - term: token multiplier
+        definition: >-
+          Cache-excluded total of the higher side divided by the lower side,
+          reported overall and per task.
+      - term: RateCard
+        definition: Per-million-token price table for the benchmark model.
+      - term: peak / off-peak
+        definition: >-
+          Peak is Monday-Friday 01:00-04:00 and 06:00-10:00 UTC, excluding
+          Chinese public holidays; every other hour is off-peak.
+      - term: rateClassForInstant
+        definition: Classifies one instant as peak or off-peak.
+      - term: splitWindowByRateClass
+        definition: Splits a run window at rate boundaries for mixed-rate pricing.
+      - term: CN_2026_PUBLIC_HOLIDAYS
+        definition: >-
+          2026-only fixed holiday list; for another year it matches nothing, so
+          a holiday weekday prices as peak until updated.
+      - term: calculator estimate
+        definition: >-
+          USD figures are a calculator estimate, not provider billing; runs are
+          served through a relay that does not bill on DeepSeek's schedule.
+      - term: decision-only
+        definition: USD remains recorded for decisions but is not the headline comparison metric.
+      - term: cache-miss input
+        definition: >-
+          tc miss equals input minus cacheRead; oc miss equals input. Only this
+          component counts toward the comparison total.
+
+  - id: ledger-provenance
+    title: Ledger and provenance
+    terms:
+      - term: consumption ledger
+        definition: >-
+          `benchmark/results/consumption.md`, the canonical before/after
+          efficiency view; one row per measured result with a source file.
+      - term: ledger row
+        definition: >-
+          One measurement entry under `## Rows`; compared only against rows
+          with the same protocol and measured inputs.
+      - term: ledger columns
+        definition: >-
+          Date, Change set, the three tuned tasks, Overall, Source, Notes, and
+          Protocol.
+      - term: Overall column
+        definition: tc-side totals across all four tasks, including the held-out task.
+      - term: Protocol column
+        definition: >-
+          The tc edit protocol the row measured (`compact` or `json`
+          historically, `edit-dsl` going forward); different values are not
+          comparable.
+      - term: Source column
+        definition: Repository-relative path of the result JSON the row was copied from.
+      - term: Notes column
+        definition: Caveats, cross-side reference values, and the held-out result.
+      - term: baseline
+        definition: A reference row such as the fresh compact-era baseline, used for before/after comparisons.
+      - term: series
+        definition: A sequence of comparable rows measured under the same protocol and inputs.
+      - term: durable set
+        definition: >-
+          Result JSONs plus their Markdown reports cited by a ledger row or an
+          issue; they are source-of-truth artifacts and belong in version control.
+      - term: prunable artifacts
+        definition: >-
+          Unreferenced one-off artifacts such as superseded variants, smokes,
+          and ad-hoc sweeps; replay bundles under `tmp/` are prunable by
+          construction.
+      - term: checkLedger
+        definition: >-
+          Re-derives each row's per-task and overall costPerSuccess and ok/runs
+          from the cited source JSON, rounding to five decimals, and fails on a
+          mismatch or missing file.
+      - term: zero-API ledger pass
+        definition: >-
+          `bun benchmark/check.ts`, which validates fixtures and the ledger
+          without calling a model.
+      - term: fresh / stale / FAIL
+        definition: >-
+          fresh: recorded provenance matches the tree; stale: hashes differ or
+          are absent (warning only); FAIL: a re-derived number does not match.
+      - term: ledger override
+        definition: "`--ledger <path>` points the ledger pass at another copy, used to prove a corrupted row fails."
+      - term: provenance block
+        definition: >-
+          Top-level `provenance` object on every result JSON:
+          `inputs`, `inputHash`, and `computedAt`.
+      - term: provenance inputs
+        definition: >-
+          Digests for `model`, `taskIssue`, `fixture`, `systemPrompt`,
+          `loopConfig`, and `pricing`.
+      - term: inputHash
+        definition: sha256 over the stable JSON encoding of the digest object.
+      - term: computeInputHashes
+        definition: Computes the digest object from an explicitly supplied measured input.
+      - term: currentInputHashes
+        definition: Recomputes the digests from the current tree, used by the ledger pass.
+      - term: provenanceByProtocol
+        definition: >-
+          Multi-variant report map from protocol to provenance, so each ledger
+          row is checked against the prompt its protocol measured.
+      - term: invalidated row
+        definition: >-
+          A row becomes stale when fixture text, model-facing prompt, loop
+          config, or pricing changes; it must be re-measured before comparison.
+      - term: normalizeText / stableStringify
+        definition: >-
+          Text pieces are newline-normalized to `\n`; objects use recursively
+          key-sorted JSON so insertion order never changes a hash.
+      - term: storm
+        definition: Informal ledger term for a run that burns to the token budget through repeated failures.
+      - term: residual
+        definition: A tracked leftover issue referenced from the benchmark notes.
+      - term: sample
+        definition: Informal label for one measurement batch in the efficiency series.
+
+  - id: replay
+    title: Replay
+    terms:
+      - term: replay bundle
+        definition: >-
+          Versioned JSON written by `--replay-dir`, one per run, named
+          `<task>-tc-rep<n>.json` or with the protocol inserted for a
+          multi-variant run.
+      - term: typescript-coder-replay@1
+        definition: The replay bundle format version string.
+      - term: bundle side
+        definition: Bundles are tc-only; older bundles may carry the legacy side label `ts`.
+      - term: bundle protocolFormat
+        definition: >-
+          The protocol recorded with the bundle (`json` or `edit-dsl`); an
+          absent or unknown value replays as `json`.
+      - term: ReplayRecorder
+        definition: Records request messages, response content, tool calls, finishReason, and usage per call.
+      - term: ReplayCall
+        definition: One recorded chat call inside a bundle.
+      - term: replay runner
+        definition: >-
+          `bun run benchmark/replay.ts <bundle.json> [--keep]`; copies the
+          fixture to `tmp/replay/<stamp>/` and makes no network calls.
+      - term: prompt mismatches
+        definition: >-
+          Differences between the current prompts and those recorded in the
+          bundle; the runner validates mechanics, not model behavior under new
+          prompts.
+      - term: replay exit codes
+        definition: 0 loop ok, 1 loop failed, 2 usage or IO error.
+      - term: replay backward compatibility
+        definition: >-
+          Legacy `@1` bundles without the protocol field, or with an unknown
+          value, replay under `json`.
+
+  - id: report-artifacts
+    title: Reports, checks, and generated artifacts
+    terms:
+      - term: writeMarkdownReport
+        definition: Emits the dated Markdown report next to the result JSON.
+      - term: Frozen task specs section
+        definition: Report section printing each verbatim issue plus its fixture and reference paths.
+      - term: Token and cost accounting section
+        definition: Report section explaining the cache-excluded, like-for-like basis for both sides.
+      - term: Per-task results section
+        definition: Aggregate table per task and side.
+      - term: Overall comparison section
+        definition: Aggregate table across tasks, one row per side and protocol.
+      - term: Selector adoption section
+        definition: Report section reporting range/matcher/whole-symbol and stage usage.
+      - term: Anomalies section
+        definition: Report section listing unusual runs and explanations.
+      - term: Raw runs section
+        definition: Per-run raw rows including rateClass, steps, tokens, cost, and judge detail.
+      - term: benchmark check
+        definition: >-
+          `bun benchmark/check.ts` validates every fixture is initially red,
+          turns green after the reference implementation, and type-checks, then
+          runs the ledger pass.
+      - term: check red / check green
+        definition: >-
+          Red means `bun test` fails with `Cannot find module './<task>'` before
+          the reference is applied; green means it passes after.
+      - term: check PASS / FAIL
+        definition: Per-fixture console verdict from the benchmark self-check.
+      - term: benchmark results directory
+        definition: >-
+          `benchmark/results/`: dated `<date>.json` results plus `.md` reports,
+          and the consumption ledger.
+      - term: benchmark tmp directories
+        definition: >-
+          Generated working areas: `tmp/benchmark/`, `tmp/replay/`,
+          `tmp/benchmark-check/`, `tmp/judge-golden/`, and
+          `tmp/failures-archive/`.
+      - term: failures directory
+        definition: Repository-root `failures/` holding failure artifacts from terminated runs.
+      - term: generated artifacts
+        definition: >-
+          `benchmark/results/`, `failures/`, `tmp/`, and `acceptance/report.json`;
+          do not commit unless the ledger cites them.
+
+  - id: caveats
+    title: Cross-cutting caveats
+    terms:
+      - term: compact versus edit-dsl
+        definition: >-
+          `compact` is the legacy name for `edit-dsl`; new reports and ledger
+          rows use `edit-dsl`, while historical rows may say `compact`.
+      - term: ts versus tc
+        definition: >-
+          Old replay bundles say `side: "ts"`; current code and reports say `tc`.
+      - term: termination list drift
+        definition: >-
+          The benchmark README lists five termination reasons; `src/loop.ts`
+          defines six, adding `output-limit`.
+      - term: ok versus sideOk
+        definition: >-
+          `ok` is the judge verdict with termination forcing false; `sideOk` is
+          the side's own result.
+      - term: total versus billable total
+        definition: >-
+          `tokens.total` may include cache or be derived; `tokens.billable.total`
+          is the report's comparison basis.
+      - term: duration versus window
+        definition: >-
+          `durationMs` covers model work only; `startedAt`/`finishedAt` define
+          the pricing window.
+      - term: keep semantics
+        definition: >-
+          `--keep` preserves the harness workspace in all three harnesses, but
+          a benchmark CLI single run does not rotate `failures/`.
+      - term: held-out discipline
+        definition: >-
+          `csv-parser` may be measured and included in Overall, but it is never
+          prompt-fit evidence and never tuned against.
+      - term: benchmark excluded from tsc
+        definition: >-
+          `benchmark/` and its fixtures are outside `tsc`; benchmark-aware tests
+          import `benchmark/run.ts` dynamically to preserve the self-host copy.
+      - term: live checks cost tokens
+        definition: >-
+          `just accept --live` and `bun run benchmark/run.ts` call the real
+          model; do not run them unprompted or as an iteration loop.
+      - term: prompt sensitivity
+        definition: >-
+          The model-facing prompt is a literal in `src/loop.ts`; prompt text is
+          benchmark-sensitive and is part of the measured-input hash.
