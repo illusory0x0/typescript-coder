@@ -23,10 +23,14 @@ export function assembleSystemPrompt(
     rounds: string;
   },
   multiPayload: boolean,
+  role = "You are a TypeScript coding agent.",
+  intro: readonly string[] = [],
 ): string {
-  const lines = [
-    "You are a TypeScript coding agent.",
-    "",
+  const lines = [role, ""];
+  for (const paragraph of intro) {
+    lines.push(paragraph, "");
+  }
+  lines.push(
     paragraphs.select,
     "",
     paragraphs.edit,
@@ -35,7 +39,7 @@ export function assembleSystemPrompt(
     "",
     paragraphs.rounds,
     "",
-  ];
+  );
   if (multiPayload) {
     lines.splice(lines.length - 1, 0, MULTI_PAYLOAD_SYSTEM_PARAGRAPH, "");
   }
@@ -118,6 +122,7 @@ export function numberLinesFrom(
   startLine: number,
   marked: ReadonlySet<number> | null = null,
   fold = false,
+  foldPath?: string,
 ): string {
   const lines = splitSourceLines(source);
   if (lines.length === 0) {
@@ -142,7 +147,9 @@ export function numberLinesFrom(
   const hiddenStart = startLine + FOLD_HEAD_LINES;
   const hiddenEnd = startLine + lines.length - FOLD_TAIL_LINES - 1;
   const gutter = marked === null ? "" : markerGutter(false);
-  rendered.push(`${gutter}${" ".repeat(width)} | ${foldMarker(hiddenStart, hiddenEnd)}`);
+  rendered.push(
+    `${gutter}${" ".repeat(width)} | ${foldMarker(hiddenStart, hiddenEnd, lines.length, foldPath)}`,
+  );
   for (let index = lines.length - FOLD_TAIL_LINES; index < lines.length; index += 1) {
     const line = lines[index];
     if (line !== undefined) {

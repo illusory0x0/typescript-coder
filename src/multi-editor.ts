@@ -30,6 +30,8 @@ export interface MultiEditorResolution {
   regions: EditDslRegion[];
   viewers: EditDslViewer[];
   failures: EditDslFailure[];
+  /** Read-only failures: they never discard the reply's writes (#25). */
+  readFailures: EditDslFailure[];
   creates: MultiEditorFileMutation[];
   deletes: MultiEditorFileMutation[];
   reads: MultiEditorRead[];
@@ -40,20 +42,31 @@ export function renderReadFeedback(reads: readonly MultiEditorRead[]): string {
   const lines = ["Read results (read commands write nothing):"];
   for (const read of reads) {
     const label = read.ranges === null ? "whole file" : "selected lines";
-    lines.push("", `${read.path} (${label}):`, "```text");
+    // A whole-file read is the token storm the fold exists for. An explicit
+    // `within` range is the expansion command: return it unfolded, otherwise
+    // following the fold marker would fold the same lines again.
+    const folded = read.ranges === null && read.lines.length > FOLD_HEAD_LINES + FOLD_TAIL_LINES;
+    const header = folded
+      ? `${read.path} (${label}, ${read.lines.length} lines; showing ${FOLD_HEAD_LINES + FOLD_TAIL_LINES}):`
+      : read.lines.length > FOLD_HEAD_LINES + FOLD_TAIL_LINES
+        ? `${read.path} (${label}, ${read.lines.length} lines):`
+        : `${read.path} (${label}):`;
+    lines.push("", header, "```text");
     if (read.lines.length === 0) {
       lines.push("(empty file)");
     } else {
       const width = String(read.lines.at(-1)?.line ?? 0).length;
       const renderLine = (line: MultiEditorLine): string =>
         `${String(line.line).padStart(width)} | ${line.text}`;
-      if (read.lines.length > FOLD_HEAD_LINES + FOLD_TAIL_LINES) {
+      if (folded) {
         for (const line of read.lines.slice(0, FOLD_HEAD_LINES)) {
           lines.push(renderLine(line));
         }
         const hiddenStart = read.lines[FOLD_HEAD_LINES]?.line ?? 0;
         const hiddenEnd = read.lines[read.lines.length - FOLD_TAIL_LINES - 1]?.line ?? hiddenStart;
-        lines.push(`${" ".repeat(width)} | ${foldMarker(hiddenStart, hiddenEnd)}`);
+        lines.push(
+          `${" ".repeat(width)} | ${foldMarker(hiddenStart, hiddenEnd, read.lines.length, read.path)}`,
+        );
         for (const line of read.lines.slice(-FOLD_TAIL_LINES)) {
           lines.push(renderLine(line));
         }
@@ -66,6 +79,23 @@ export function renderReadFeedback(reads: readonly MultiEditorRead[]): string {
     lines.push("```");
   }
   return lines.join("\n");
+}
+
+/**
+ * Render failed `read` commands as feedback (#25). A `read` writes nothing, so a
+ * bad range must not discard the reply's edits; the error rides the next prompt
+ * beside the successful read output instead.
+ */
+export function renderReadFailureFeedback(failures: readonly EditDslFailure[]): string {
+  if (failures.length === 0) {
+    return "";
+  }
+  return [
+    "Read failed (read commands write nothing):",
+    ...failures.map(
+      (failure) => `- clause ${failure.index + 1}: ${failure.diagnostics.split("\n").join("\n  ")}`,
+    ),
+  ].join("\n");
 }
 
 export interface MultiEditorDeps extends EditDslDeps {
@@ -281,6 +311,7 @@ export function resolveMultiEditor(
   const creates: MultiEditorFileMutation[] = [];
   const deletes: MultiEditorFileMutation[] = [];
   const reads: MultiEditorRead[] = [];
+  const readFailures: EditDslFailure[] = [];
 
   // Renames are semantic, not matcher edits: resolve each against its file's
   // current source with the local-scope engine. A rename never produces a
@@ -438,7 +469,7 @@ export function resolveMultiEditor(
       }
       case "read": {
         if (!deps.isSafePath(fs.path)) {
-          failures.push(
+          readFailures.push(
             fsFailure(
               index,
               fs.path,
@@ -449,7 +480,7 @@ export function resolveMultiEditor(
           continue;
         }
         if (!deps.fileExists(fs.path)) {
-          failures.push(
+          readFailures.push(
             fsFailure(
               index,
               fs.path,
@@ -462,7 +493,7 @@ export function resolveMultiEditor(
         const source = deps.sourceFor(fs.path);
         const lines = readLines(source, fs.ranges);
         if (typeof lines === "string") {
-          failures.push(fsFailure(index, fs.path, "range", lines));
+          readFailures.push(fsFailure(index, fs.path, "range", lines));
           continue;
         }
         reads.push({ index, path: fs.path, ranges: fs.ranges, lines });
@@ -523,5 +554,5 @@ export function resolveMultiEditor(
     }
   }
 
-  return { regions, viewers, failures, creates, deletes, reads };
+  return { regions, viewers, failures, readFailures, creates, deletes, reads };
 }

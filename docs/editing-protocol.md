@@ -80,8 +80,9 @@ A reply is one or more statements — `select` clauses or raw file commands
 tolerated) and no prose. The grammar is read by a hand-written
 recursive-descent reader in which whitespace between tokens is
 insignificant, except inside a fence body and a `/regex/`. Any malformed input
-throws a `stage: syntax` diagnostic naming the offending field, and a partial
-selection is never returned.
+throws a `stage: syntax` diagnostic naming the offending field; the loop
+renders it with the failing line, column, and a short excerpt so the retry can
+see exactly where the reply stopped. A partial selection is never returned.
 
 - **Header**: `select`, then one or two bare tokens, then `in <path>`. One token
   is the symbol; two are `<kind> <symbol>`. The admitted kinds are `function`,
@@ -111,9 +112,10 @@ selection is never returned.
   resolution; overlapping ranges are a `stage: range` failure).
 - **`replace with <fence>`**: 5 or more hyphens (for example `-----`) or 6 or
   more backticks on their own line, a raw body, and a closing line of the same
-  run. The body may not contain a run of 3 or more of the fence's own delimiter.
-  The serializer prefers five hyphens and falls back to six backticks when the
-  body contains a hyphen run. An empty fence deletes the target.
+  run. Only a body line whose delimiter run equals the opening run closes the
+  fence, so a shorter run such as a `---` divider stays ordinary body text. The
+  serializer prefers five hyphens and falls back to six backticks when the body
+  contains a hyphen run. An empty fence deletes the target.
 - **`rename <old> to <new>`**: the other editor form. It rewrites the selected
   declaration name and every same-file reference that lexically resolves to it.
   Shadowed bindings and out-of-scope names are untouched; dotted targets rename
@@ -199,8 +201,8 @@ symbol      = ? declared identifier ? ;
 identifier  = ? TypeScript identifier ? ;
 snippet     = ? '`' , verbatim source, '`' ? ;
 regex       = ? '/' , ECMA-262 pattern, no flags, '/' ? ;
-fence       = ? 5+ hyphens or 6+ backticks; body free of a run >= 3 of the
-                fence's own delimiter; closing run matches ? ;
+fence       = ? 5+ hyphens or 6+ backticks; only a line whose run equals the
+                opening run closes it; closing run matches ? ;
 ```
 
 A coordinate is digits only: `0` parses as a `line`/`column` but is rejected as
@@ -242,7 +244,10 @@ write  <path> [ within <selecters> ] with <fence> done
 - **`read`** is a viewer: it returns the file (or the selected lines) and writes
   nothing. A missing path is an `address` failure. A `read` always sees the
   source as it was before the current reply, even when the same reply also
-  writes that file.
+  writes that file. A failed `read` reports its error as feedback and does not
+  discard the reply's editing statements. A whole-file result is folded (§4):
+  the marker names the hidden range and line counts, and
+  `read <path> within <start>-<end> done` returns that range unfolded.
 - **`write`** replaces the whole file when `within` is absent, or the selected
   text when it is present, and creates the file if it does not exist. The
   replacement goes through the same parse gate, duplicate guard, formatter, and
@@ -252,9 +257,10 @@ write  <path> [ within <selecters> ] with <fence> done
 (`12`, `12:3`, `12:3-14`, `12:3-14:5`, or a `{…}` set). Multiple selecters are
 separate regions and must not overlap. A reply may mix editors and file
 commands after the first target is pinned; the first reply is either exactly one
-`select` clause or file commands, not both. All statements apply atomically.
-Two creates that append at the same offset are applied in clause order; two
-creates of the same declaration still fail at the duplicate guard.
+`select` clause or file commands, not both. The editing statements apply
+atomically; a failed `read`, which writes nothing, is feedback rather than a
+rejection. Two creates that append at the same offset are applied in clause
+order; two creates of the same declaration still fail at the duplicate guard.
 
 ## 3. Resolution: the cascade
 
@@ -330,9 +336,13 @@ An edit-dsl clause with no `replace` writes nothing and reports the declaration 
 the next prompt's `# details` block: the source is numbered with its
 file-absolute lines. Source blocks longer than six lines keep the first three and
 last three lines; the middle is replaced with
-`... // content folded, source range: <first>-<last>` naming the hidden
-file-absolute lines. The same fold applies to viewer feedback, `read` feedback,
-command-pinned files, and the `# modified text` confirmation. A `match` viewer
+`... // content folded, source range: <first>-<last> (<hidden> of <total> lines hidden); expand with read <path> within <first>-<last> done`,
+naming the hidden file-absolute lines, how many of the block's lines they hide,
+and the command that expands exactly that range. The same fold applies to viewer
+feedback, command-pinned files, and the `# modified text` confirmation; a
+whole-file `read` is folded the same way. A `read within` is the expansion and
+returns its selected lines unfolded, so the marker's command shows exactly the
+hidden range. A `match` viewer
 reports its candidate positions; the
 declaration block itself may be unmarked in this select-first pass. A bare
 viewer (no `match`) renders the whole declaration once — the same
@@ -385,14 +395,16 @@ The formats differ in what a batch means:
   the end so earlier offsets stay valid, and if any guard fails the whole
   exchange is discarded. Overlapping same-file regions discard the exchange and
   name both regions.
-- **Edit-dsl replies are atomic across the whole reply.** Every statement
-  resolves against its file's current source; if any statement fails
+- **Edit-dsl replies are atomic across the editing statements.** Every statement
+  resolves against its file's current source; if any editing statement fails
   resolution, or the apply pipeline reports any guard/overlap failure, the whole
   reply is discarded and nothing is written — no file, including creates,
-  deletes, and raw writes. Only a reply with no failures writes every resolved
-  region and file command. Multiple creates that append at the same end offset
-  are applied in clause order; duplicate creates of the same declaration still
-  fail at the duplicate guard. A mixed viewer+editor reply that fails
+  deletes, and raw writes. Only a reply with no editing failures writes every
+  resolved region and file command. Multiple creates that append at the same end
+  offset are applied in clause order; duplicate creates of the same declaration
+  still fail at the duplicate guard. A failed `read` is the one exception: it
+  writes nothing by construction, so its error rides the next prompt without
+  discarding the other statements. A mixed viewer+editor reply that fails
   writes nothing but still carries the viewer feedback. A failing reply is a
   retry-driving rejection, and the retry must carry the full corrected reply
   (there is no "already applied" list).

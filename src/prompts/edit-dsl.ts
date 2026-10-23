@@ -23,7 +23,29 @@ export const EDIT_DSL_EDIT_SYSTEM_PARAGRAPH =
 export const EDIT_DSL_CREATE_DELETE_SYSTEM_PARAGRAPH =
   'A "create" selection asks for the COMPLETE declaration in the fence, which opens with 5 or more hyphens (for example `-----`) or 6 or more backticks; the harness appends it to the target file as a new top-level declaration, creating the file and any parent directories when needed. A complete top-level declaration is appended verbatim; otherwise the clause\'s `resolve` picks the wrapper: no `resolve` or `resolve value` wraps the body as `let <symbol> = <body>;`, `resolve type` as `type <symbol> = <body>;`, and `resolve namespace` as a `namespace <symbol> { … }` block. A "delete" selection carries no clause: the harness removes the declaration. To remove only part of a declaration, use `match` with an empty fence. The syntax gate discards any clause that leaves the file unparseable and writes nothing; the clauses that resolve apply independently.';
 export const EDIT_DSL_FS_SYSTEM_PARAGRAPH =
-  "Raw file commands may accompany or replace the select workflow: `create <path> done` creates an empty file (it must not already exist), `delete <path> done` removes it, `read <path> [within <selecters>] done` shows the file or selected lines without writing, and `write <path> [within <selecters>] with <fence> done` writes the whole file or replaces the selected lines (creating the file when absent). A path that does not exist is created by `write`; a missing symbol in an editor still appends. A reply may carry several statements; they apply atomically, and a `read` sees the source as it was before the reply. File commands and a `select` may not be mixed in the first reply; after the first target is pinned they may be mixed.";
+  "Raw file commands may accompany or replace the select workflow: `create <path> done` creates an empty file (it must not already exist), `delete <path> done` removes it, `read <path> [within <selecters>] done` shows the file or selected lines without writing, and `write <path> [within <selecters>] with <fence> done` writes the whole file or replaces the selected lines (creating the file when absent). A path that does not exist is created by `write`; a missing symbol in an editor still appends. A reply may carry several statements; the editing statements apply atomically, while a failed `read` only reports its error and never discards them. A `read` sees the source as it was before the reply. File commands and a `select` may not be mixed in the first reply; after the first target is pinned they may be mixed.";
+
+// #25: why this protocol, then a one-line map from intent to tool. The clause
+// syntax follows in the four paragraphs; few-shot examples stay in
+// `editDslInstruction()` so read turns do not pay for them.
+export const EDIT_DSL_ROLE =
+  "You are a TypeScript expert using this edit protocol to modify source code.";
+export const EDIT_DSL_MOTIVATION =
+  "This protocol keeps edits small and addressable: a clause names one declaration or span instead of resending a whole file. Viewers and `read` locate source and never write. The editing clauses of one reply apply atomically — if any editing clause fails, nothing is written. A failed `read` only reports its error and writes nothing. Every write passes the parse gate, the formatter, and verification before it lands.";
+export const EDIT_DSL_TOOLS_MAPPING =
+  "Tools: `select … end` with no `replace` is a viewer that locates code and writes nothing; `select … replace with … end` is an editor that rewrites the named span or declaration; `rename <old> to <new>` rewrites a declaration name and its same-file references; `read` shows a file or selected lines; `write` replaces a whole file or selected lines; `create` and `delete` add or remove a file.";
+
+// The one detailed fold explanation (system prompt). The read/command prompts
+// carry only the short hint below; the edit instruction teaches the workflow.
+export const EDIT_DSL_FOLD_DETAIL =
+  "A source block longer than 6 lines keeps only its first 3 and last 3 lines. The folded line is `... // content folded, source range: N-M (H of T lines hidden); expand with read <path> within N-M done`: it names the hidden file-absolute lines, how many of the block's lines are hidden, and the command that expands exactly that range. A whole-file `read` is folded the same way, so repeating it returns the same six lines; a `read within` is the expansion and returns the selected lines unfolded (`within {a-b, c-d}` expands several ranges). When a repair spans several declarations, or repeated localized edits keep introducing new tsc/test errors, use a whole-file `write <path> with <fence> done` instead of more local edits.";
+
+export const EDIT_DSL_WORKFLOW_SUMMARY =
+  "Workflow: pin one target with `select` (or a raw command), inspect it, then edit the smallest span with `match`/`pick`; on a verification failure repair the same declaration; escalate to a whole-file `write` when the repair outgrows one declaration or localized edits keep adding errors; if no operation fits, explore with `read`/`select` viewers first.";
+
+// #25: read turns are the token storm, so they carry only this terse hint.
+export const EDIT_DSL_FOLD_HINT =
+  "A folded block names its hidden range and line counts; a whole-file `read` is folded the same way. Expand it with `read <path> within <start>-<end> done`, which returns those lines unfolded, instead of repeating the read; when a repair outgrows one declaration, use `write <path> with <fence> done`.";
 
 export const EDIT_DSL_ROUNDS_SYSTEM_PARAGRAPH =
   "A round allows at most 3 exchanges: picking the target, writing the edit, and re-asking after a rejected edit share that budget. When an edit verifies, the run is done; when verification fails, the next round shows the current source and the failing diagnostics, and it may either revise the pinned declaration or re-pin to a different declaration in the same file by naming it in the clause's own `select` (the new address must resolve uniquely in the current source). A round that exhausts its 3 exchanges without a valid edit continues through a continuation prompt: reply `STOP` to end the run, or return a corrected edit (or, when no target is pinned, a corrected selection) to open a fresh round with a new 3-exchange budget; the run is capped at 32 rounds, after which it ends with the failure summary.";
@@ -33,10 +55,12 @@ export function buildEditDslSystemPrompt(multiPayload = false): string {
     {
       select: EDIT_DSL_SELECT_SYSTEM_PARAGRAPH,
       edit: EDIT_DSL_EDIT_SYSTEM_PARAGRAPH,
-      createDelete: `${EDIT_DSL_CREATE_DELETE_SYSTEM_PARAGRAPH}\n\n${EDIT_DSL_FS_SYSTEM_PARAGRAPH}`,
+      createDelete: `${EDIT_DSL_CREATE_DELETE_SYSTEM_PARAGRAPH}\n\n${EDIT_DSL_FS_SYSTEM_PARAGRAPH}\n\n${EDIT_DSL_FOLD_DETAIL}\n\n${EDIT_DSL_WORKFLOW_SUMMARY}`,
       rounds: EDIT_DSL_ROUNDS_SYSTEM_PARAGRAPH,
     },
     multiPayload,
+    EDIT_DSL_ROLE,
+    [EDIT_DSL_MOTIVATION, EDIT_DSL_TOOLS_MAPPING],
   );
 }
 
@@ -159,8 +183,8 @@ export function buildEditDslCommandPrompt(
   source: string,
   specFiles: readonly SourceFile[] = [],
 ): string {
-  const body = source === "" ? "(empty file)" : numberLinesFrom(source, 1, null, true);
-  const prompt = `${editDslGoal(issue, indexText)}\n# Target file\n\n\`\`\`\n${path}\n\`\`\`\n\n\`\`\`text\n${body}\n\`\`\`\n\nReply with the next \`select … end\` clause or file command.\n`;
+  const body = source === "" ? "(empty file)" : numberLinesFrom(source, 1, null, true, path);
+  const prompt = `${editDslGoal(issue, indexText)}\n# Target file\n\n\`\`\`\n${path}\n\`\`\`\n\n\`\`\`text\n${body}\n\`\`\`\n\n${EDIT_DSL_FOLD_HINT}\n\nReply with the next \`select … end\` clause or file command.\n`;
   return appendEditDslSpecFiles(prompt, specFiles);
 }
 
@@ -171,7 +195,7 @@ export function buildEditDslReadPrompt(
   feedback: string,
   specFiles: readonly SourceFile[] = [],
 ): string {
-  const prompt = `${editDslGoal(issue, indexText)}\n# read\n\n${feedback}\n\nReply with the next \`select … end\` clause or file command.\n`;
+  const prompt = `${editDslGoal(issue, indexText)}\n# read\n\n${feedback}\n\n${EDIT_DSL_FOLD_HINT}\n\nReply with the next \`select … end\` clause or file command.\n`;
   return appendEditDslSpecFiles(prompt, specFiles);
 }
 
@@ -216,7 +240,11 @@ export function buildEditDslModifiedPrompt(
 // with `serializeSelections` so the grammar stays the single source of truth.
 // Each form is labelled so the examples are unambiguously separate. The block
 // never appears under the `json` format.
-export const EDIT_DSL_EXAMPLE_FORMS: { label: string; selections: EditDslSelection[] }[] = [
+export type EditDslExampleForm =
+  | { label: string; selections: EditDslSelection[] }
+  | { label: string; raw: string };
+
+export const EDIT_DSL_EXAMPLE_FORMS: EditDslExampleForm[] = [
   {
     label: "1. Viewer: locates a matched span with `resolve value` and writes nothing.",
     selections: [
@@ -298,22 +326,47 @@ export const EDIT_DSL_EXAMPLE_FORMS: { label: string; selections: EditDslSelecti
       },
     ],
   },
+  {
+    label:
+      "7. Folded view: a large file shows only six lines; the marker names the exact range, and `read … within …` returns those lines unfolded.",
+    raw: [
+      "... // content folded, source range: 4-335 (332 of 338 lines hidden); expand with read <path> within 4-335 done",
+      "",
+      "read src/lisp.ts within 4-335 done",
+    ].join("\n"),
+  },
+  {
+    label:
+      "8. Whole-file repair: when a repair spans several declarations, send one whole-file write instead of more local edits.",
+    raw: [
+      "write src/lisp.ts with",
+      "-----",
+      "// ... the complete repaired file ...",
+      "-----",
+      "done",
+    ].join("\n"),
+  },
 ];
 
 // Render the labelled forms with the grammar's own serializer, one blank line
-// apart so the examples read as separate replies.
+// apart so the examples read as separate replies. Raw commands are shown with
+// their own text, since the serializer only speaks `select … end`.
 export function renderEditDslExamples(): string {
-  return EDIT_DSL_EXAMPLE_FORMS.map(
-    (form) => `${form.label}\n\n${serializeSelections(form.selections)}`,
+  return EDIT_DSL_EXAMPLE_FORMS.map((form) =>
+    "raw" in form
+      ? `${form.label}\n\n${form.raw}`
+      : `${form.label}\n\n${serializeSelections(form.selections)}`,
   ).join("\n\n");
 }
 
 /**
  * The edit-dsl edit instruction (#111): replaces the JSON instruction in the
  * fresh edit prompt and the modify retry prompt under the edit-dsl format. It
- * states the reply shape, the document-order/independent application, and the
- * viewer semantics, then shows the §8 examples (#117 adds the create and the
- * viewer-then-editor forms).
+ * states the reply shape and clause semantics, shows the §8 examples (#117 adds
+ * the create and viewer-then-editor forms; #25 adds fold expansion and the
+ * whole-file `write` fallback), then teaches the ordered micro-operation
+ * workflow. The fold explanation itself stays in the system prompt so read
+ * turns do not repeat it.
  */
 export function editDslInstruction(): string {
   return [
@@ -328,6 +381,15 @@ export function editDslInstruction(): string {
     "```````",
     renderEditDslExamples(),
     "```````",
+    "",
+    "Workflow — choose the smallest micro-operation that fits:",
+    "",
+    "1. Pin one target with `select … end` (or pin a file with a raw command).",
+    "2. Inspect before editing: a block that shows `... // content folded ...` is large, and a whole-file `read` is folded the same way. Expand the hidden range with `read <path> within <start>-<end> done`, whose selected lines come back unfolded; never repeat the same whole-file `read`, because it returns the same folded view.",
+    "3. Localized repair: use `match` (add `pick` when a tie remains) to change the smallest span; use a bare declaration `replace` only when rewriting the whole declaration.",
+    "4. Verification failure: use the diagnostics to repair the same declaration; do not resend an identical edit.",
+    "5. Escalation: when a repair spans several declarations, or repeated localized edits keep introducing new tsc/test errors, switch to a whole-file `write <path> with <fence> done`.",
+    "6. No listed micro-operation fits: explore autonomously with `read`/`select` viewers (narrow reads first), then edit; do not burn exchanges repeating a read you already made.",
   ].join("\n");
 }
 

@@ -77,7 +77,12 @@ import type { EditPayload, LoopRecord, ProviderLike, RetryPromptInput, StalledAs
 import type { ChatMessage, ChatOptions, ChatResponse, ToolDefinition } from "./openai";
 import { ChatContextOverflowError, ChatPayloadTooLargeError } from "./openai";
 import { Parser } from "./parser";
-import { buildEditDslCommandPrompt } from "./prompts/edit-dsl";
+import {
+  buildEditDslCommandPrompt,
+  buildEditDslReadPrompt,
+  editDslInstruction,
+  renderEditDslExamples,
+} from "./prompts/edit-dsl";
 import { END_OF_LINE_COLUMN, serializeSelections } from "./selection";
 import type { Selection as EditDslSelection } from "./selection";
 import { buildIndexTolerant } from "./utility";
@@ -9100,6 +9105,98 @@ describe("edit-dsl protocol (#111/#119)", () => {
     expect(prompt).not.toContain("4 | line 4");
   });
 
+  test("edit-dsl prompts teach the fold marker, its expansion, and the write fallback (#25)", () => {
+    const source = Array.from({ length: 10 }, (_, index) => `line ${index + 1}`).join("\n");
+    const indexText = "select huge in src/a.ts";
+    const marker = "... // content folded, source range: 4-7";
+    const retryInput: RetryPromptInput = {
+      exchangeNumber: 2,
+      maxExchanges: 3,
+      mode: "modify",
+      locatorJson: '{"path":"src/a.ts","symbol":"huge","kind":"function"}',
+      currentSource: source,
+      diagnostics: "stage: tests",
+      failure: "verification",
+      repin: false,
+      protocolFormat: "edit-dsl",
+      editDslContext: { issue: "fold it", indexText, startLine: 1 },
+    };
+    const system = buildSystemPrompt(false, "edit-dsl");
+    const read = buildEditDslReadPrompt("fold it", indexText, `Read results:\n${marker}`);
+    const details = buildEditDslDetailsPrompt("fold it", indexText, source, [], 1);
+    const command = buildEditDslCommandPrompt("fold it", indexText, "src/a.ts", source);
+    const retry = buildRetryPrompt(retryInput);
+    const instruction = editDslInstruction();
+    const examples = renderEditDslExamples();
+
+    // The role names the expert and the motivation explains why the protocol.
+    expect(
+      system.startsWith(
+        "You are a TypeScript expert using this edit protocol to modify source code.",
+      ),
+    ).toBe(true);
+    expect(system).toContain("This protocol keeps edits small and addressable");
+    expect(system).toContain("Viewers and `read` locate source and never write");
+    expect(system).toContain("Tools: `select … end` with no `replace` is a viewer");
+    expect(system).toContain("`write` replaces a whole file or selected lines");
+
+    // The one detailed fold explanation lives in the system prompt.
+    expect(system).toContain(
+      "... // content folded, source range: N-M (H of T lines hidden); expand with read <path> within N-M done",
+    );
+    expect(system).toContain("whole-file `read` is folded the same way");
+    expect(system).toContain("returns the selected lines unfolded");
+    expect(system).toContain("write <path> with <fence> done");
+    expect(system).toContain("When a repair spans several declarations");
+
+    // Every edit-phase and read prompt teaches the expansion and its caveat.
+    for (const prompt of [read, details, command, retry]) {
+      expect(prompt).toContain("read <path> within <start>-<end> done");
+      expect(prompt).toContain("whole-file `read` is folded the same way");
+      expect(prompt).toContain("write <path> with <fence> done");
+    }
+    for (const prompt of [read, command]) {
+      expect(prompt).toContain("returns those lines unfolded");
+    }
+    expect(details).toContain("selected lines come back unfolded");
+    expect(retry).toContain("selected lines come back unfolded");
+    // The read prompt surfaces the concrete folded result and the real path.
+    expect(read).toContain(marker);
+    expect(command).toContain("expand with read src/a.ts within 4-7 done");
+
+    // The instruction carries the ordered workflow and its triggers.
+    expect(instruction).toContain("a block that shows `... // content folded ...` is large");
+    expect(instruction).toContain(
+      "Expand the hidden range with `read <path> within <start>-<end> done`",
+    );
+    expect(instruction).toContain("never repeat the same whole-file `read`");
+    expect(instruction).toContain(
+      "when a repair spans several declarations, or repeated localized edits keep introducing new tsc/test errors",
+    );
+    expect(instruction).toContain("switch to a whole-file `write <path> with <fence> done`");
+    expect(instruction).toContain("No listed micro-operation fits");
+    expect(instruction).toContain("explore autonomously");
+    expect(instruction).toContain("do not burn exchanges repeating a read you already made");
+
+    // The examples pair each trigger with the concrete command form.
+    expect(examples).toContain("Folded view");
+    expect(examples).toContain("(332 of 338 lines hidden)");
+    expect(examples).toContain("read src/lisp.ts within 4-335 done");
+    expect(examples).toContain("Whole-file repair");
+    expect(examples).toContain("write src/lisp.ts with");
+    expect(instruction).toContain("read src/lisp.ts within 4-335 done");
+
+    // The JSON protocol prompts stay byte-identical: no fold guidance leaks in.
+    const jsonSystem = buildSystemPrompt(false, "json");
+    const jsonRetry = buildRetryPrompt({ ...retryInput, protocolFormat: "json" });
+    expect(jsonSystem).not.toContain("content folded");
+    expect(jsonSystem).not.toContain("A folded block");
+    expect(jsonRetry).not.toContain("content folded");
+    expect(jsonRetry).not.toContain("A folded block");
+    expect(jsonSystem).not.toBe(system);
+    expect(jsonRetry).not.toBe(retry);
+  });
+
   test("an edit-dsl retry prompt uses Goal, index, and details without the JSON block", () => {
     const prompt = buildRetryPrompt({
       exchangeNumber: 2,
@@ -10006,6 +10103,30 @@ describe("edit-dsl protocol (#111/#119)", () => {
     expect(rejected?.diagnostics).toContain("stage: edit-dsl");
   }, 30000);
 
+  test("a syntax rejection names the failing line, column, and excerpt (#25)", async () => {
+    const dir = fixtureDir();
+    const provider = new ScriptedProvider([
+      editDslSelect("answer", "src/helper.ts", "value"),
+      ["select answer in src/helper.ts", "replace with", "-----", "return 2;", "-----"].join("\n"),
+      editDslReply(answerEditor("return 2;", { kind: "snippet", value: "return 1;" })),
+      "Great! I resolve this problem!",
+    ]);
+    const result = await runLoop({
+      cwd: dir,
+      issue: "make the answer test pass",
+      provider,
+      protocolFormat: "edit-dsl",
+      checkCommand: TSC,
+      testCommand: ["bun", "test"],
+    });
+    expect(result.ok).toBe(true);
+    const rejected = result.records.find(
+      (record) => record.outcome === "protocol" && record.diagnostics?.includes("at line") === true,
+    );
+    expect(rejected?.diagnostics).toContain("expected `end`");
+    expect(rejected?.diagnostics).toContain("^");
+  }, 30000);
+
   // An edit-dsl clause over a `pair.ts` declaration, for the multi-clause atomic
   // application tests below.
   function pairEditor(
@@ -10072,6 +10193,59 @@ describe("edit-dsl protocol (#111/#119)", () => {
     expect(rejected?.diagnostics).toContain("the whole edit-dsl reply is discarded");
     expect(rejected?.diagnostics).not.toContain("already applied (do not resend):");
     expect(rejected?.stages).toEqual([]);
+  }, 30000);
+
+  test("a failed read does not discard the same reply's edits (#25)", async () => {
+    const dir = sameFileFixtureDir();
+    const original = pairSource(dir);
+    const provider = new ScriptedProvider([
+      editDslSelect("one", "src/pair.ts"),
+      [
+        editDslReply(
+          pairEditor("one", "return 2;", { kind: "snippet", value: "return 1;" }),
+          pairEditor("two", "return 3;", { kind: "snippet", value: "return 1;" }),
+        ),
+        "read src/pair.ts within 99 done",
+      ].join("\n\n"),
+      "Great! I resolve this problem!",
+    ]);
+    const result = await runLoop({
+      cwd: dir,
+      issue: "make both declarations satisfy the pair test",
+      provider,
+      protocolFormat: "edit-dsl",
+      checkCommand: TSC,
+      testCommand: ["bun", "test"],
+    });
+    expect(result.ok).toBe(true);
+    expect(pairSource(dir)).not.toBe(original);
+    expect(pairSource(dir)).toContain("return 2;");
+    expect(pairSource(dir)).toContain("return 3;");
+    expect(result.records.some((record) => record.outcome === "range")).toBe(false);
+  }, 30000);
+
+  test("a reply that only issues an invalid read is still a rejected read (#25)", async () => {
+    const dir = sameFileFixtureDir();
+    const provider = new ScriptedProvider([
+      editDslSelect("one", "src/pair.ts"),
+      "read src/pair.ts within 99 done",
+      editDslReply(
+        pairEditor("one", "return 2;", { kind: "snippet", value: "return 1;" }),
+        pairEditor("two", "return 3;", { kind: "snippet", value: "return 1;" }),
+      ),
+      "Great! I resolve this problem!",
+    ]);
+    const result = await runLoop({
+      cwd: dir,
+      issue: "make both declarations satisfy the pair test",
+      provider,
+      protocolFormat: "edit-dsl",
+      checkCommand: TSC,
+      testCommand: ["bun", "test"],
+    });
+    expect(result.ok).toBe(true);
+    const rejected = result.records.find((record) => record.outcome === "range");
+    expect(rejected?.diagnostics).toContain("Read failed");
   }, 30000);
 
   test("two overlapping edit-dsl clauses write nothing and the retry applies both", async () => {

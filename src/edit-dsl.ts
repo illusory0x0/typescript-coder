@@ -665,9 +665,26 @@ export function markerGutter(marked: boolean): string {
 export const FOLD_HEAD_LINES = 3;
 export const FOLD_TAIL_LINES = 3;
 
-/** The single line that replaces a folded source range. */
-export function foldMarker(startLine: number, endLine: number): string {
-  return `... // content folded, source range: ${startLine}-${endLine}`;
+/**
+ * The single line that replaces a folded source range. It names the hidden
+ * file-absolute range, how many of the block's lines that hides, and the exact
+ * command that expands exactly that range, so a repeated whole-file `read`
+ * cannot look like the only way to see more.
+ */
+export function foldMarker(
+  startLine: number,
+  endLine: number,
+  totalLines?: number,
+  path?: string,
+): string {
+  // The hidden count is the block's line count minus the six kept lines, so a
+  // `read within` with gaps between selecters still reports the true number.
+  const hidden =
+    totalLines === undefined
+      ? endLine - startLine + 1
+      : Math.max(0, totalLines - FOLD_HEAD_LINES - FOLD_TAIL_LINES);
+  const counts = totalLines === undefined ? "" : ` (${hidden} of ${totalLines} lines hidden)`;
+  return `... // content folded, source range: ${startLine}-${endLine}${counts}; expand with read ${path ?? "<path>"} within ${startLine}-${endLine} done`;
 }
 
 /**
@@ -737,7 +754,7 @@ export function renderViewerFeedback(viewers: readonly EditDslViewer[]): string 
         const hiddenStart = block[FOLD_HEAD_LINES]?.line ?? 0;
         const hiddenEnd = block[block.length - FOLD_TAIL_LINES - 1]?.line ?? hiddenStart;
         lines.push(
-          `${markerGutter(false)}${" ".repeat(width)} | ${foldMarker(hiddenStart, hiddenEnd)}`,
+          `${markerGutter(false)}${" ".repeat(width)} | ${foldMarker(hiddenStart, hiddenEnd, block.length, viewer.path)}`,
         );
         for (const line of block.slice(-FOLD_TAIL_LINES)) {
           lines.push(renderBlockLine(line));

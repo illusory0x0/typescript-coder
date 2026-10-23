@@ -1,5 +1,5 @@
 import { describe, expect, test } from "bun:test";
-import { renderReadFeedback, resolveMultiEditor } from "./multi-editor";
+import { renderReadFailureFeedback, renderReadFeedback, resolveMultiEditor } from "./multi-editor";
 import type { MultiEditorDeps } from "./multi-editor";
 import { parseMultiEditor } from "./selection";
 
@@ -61,12 +61,33 @@ describe("resolveMultiEditor file commands", () => {
     const source = Array.from({ length: 10 }, (_, index) => `line ${index + 1}`).join("\n");
     const read = resolve("read src/a.ts done", { "src/a.ts": source });
     const feedback = renderReadFeedback(read.reads);
+    expect(feedback).toContain("src/a.ts (whole file, 10 lines; showing 6):");
     expect(feedback).toContain("1 | line 1");
     expect(feedback).toContain("3 | line 3");
     expect(feedback).toContain("... // content folded, source range: 4-7");
+    expect(feedback).toContain("(4 of 10 lines hidden)");
+    expect(feedback).toContain("expand with read src/a.ts within 4-7 done");
     expect(feedback).toContain("8 | line 8");
     expect(feedback).toContain("10 | line 10");
     expect(feedback).not.toContain("4 | line 4");
+  });
+
+  test("a selected-lines read is the expansion and comes back unfolded", () => {
+    const source = Array.from({ length: 40 }, (_, index) => `line ${index + 1}`).join("\n");
+    const read = resolve("read src/a.ts within 1-20 done", { "src/a.ts": source });
+    const feedback = renderReadFeedback(read.reads);
+    expect(feedback).toContain("src/a.ts (selected lines, 20 lines):");
+    expect(feedback).toContain("1 | line 1");
+    expect(feedback).toContain("20 | line 20");
+    expect(feedback).not.toContain("content folded");
+    expect(feedback).not.toContain("showing 6");
+  });
+
+  test("a short read keeps the quiet header shape", () => {
+    const read = resolve("read src/a.ts done", { "src/a.ts": "one\ntwo\nthree\n" });
+    const feedback = renderReadFeedback(read.reads);
+    expect(feedback).toContain("src/a.ts (whole file):");
+    expect(feedback).not.toContain("showing 6");
   });
 
   test("write with no within replaces the whole file", () => {
@@ -127,5 +148,30 @@ describe("resolveMultiEditor file commands", () => {
     );
     expect(result.regions).toEqual([]);
     expect(result.failures[0]?.diagnostics).toContain("overlap");
+  });
+
+  test("a failed read is feedback and does not discard the reply's write (#25)", () => {
+    const result = resolve(
+      ["write src/a.ts with", "-----", "two", "-----", "done", "read src/a.ts within 99 done"].join(
+        "\n",
+      ),
+      { "src/a.ts": "one\n" },
+    );
+    expect(result.failures).toEqual([]);
+    expect(result.regions).toHaveLength(1);
+    expect(result.reads).toEqual([]);
+    expect(result.readFailures).toHaveLength(1);
+    expect(result.readFailures[0]?.diagnostics).toContain("stage: range");
+    expect(renderReadFailureFeedback(result.readFailures)).toContain("clause 2");
+  });
+
+  test("a read-only reply keeps successful reads beside the failed one", () => {
+    const result = resolve(
+      ["read src/a.ts within 1 done", "read src/a.ts within 99 done"].join("\n"),
+      { "src/a.ts": "one\ntwo\n" },
+    );
+    expect(result.reads).toHaveLength(1);
+    expect(result.readFailures).toHaveLength(1);
+    expect(result.failures).toEqual([]);
   });
 });

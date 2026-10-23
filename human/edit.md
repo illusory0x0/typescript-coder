@@ -19,7 +19,7 @@ fs = 'create', path, done             |    (* create new file *)
      
      'read',  path,                        (* read file *)
      ['within', selecters, ]               (* if missing, read the whole file *)
-      done                            |    
+      done                            |    (* a failed read is feedback, not a write rejection *)
 
      'write', path,                        (* write file *)
      ['within', selecters, ]               (* if missing, write the whole file *)
@@ -67,9 +67,11 @@ snippet     = ? '`' , verbatim source, '`' ? ;
 regex       = ? '/' , ECMA-262 pattern, no flags, '/' ? ;
 fence       = 
   '``````'
-    ? body can not contains '```' ? 
-    ? open and close '`' must matched ?
-    ? '`' length should >= 6 ?
+    ? opening run: 5+ hyphens or 6+ backticks on its own line ?
+    ? closing line: the same delimiter repeated the opening length ?
+    ? only a line whose run equals the opener closes the fence, so a shorter
+      run (for example a '---' divider) is ordinary body text ?
+    ? an empty body deletes the target ?
   '``````';
 ````
 

@@ -1,5 +1,5 @@
 import { describe, expect, test } from "bun:test";
-import { renderViewerFeedback, resolveEditDslReply } from "./edit-dsl";
+import { foldMarker, renderViewerFeedback, resolveEditDslReply } from "./edit-dsl";
 import type { EditDslDeps } from "./edit-dsl";
 import { parseSelection } from "./selection";
 import { buildIndexTolerant, declarationSpaces } from "./utility";
@@ -646,6 +646,15 @@ describe("resolveEditDslReply (#111)", () => {
     );
   });
 
+  test("the fold marker stays self-describing with or without a total", () => {
+    expect(foldMarker(4, 7)).toBe(
+      "... // content folded, source range: 4-7; expand with read <path> within 4-7 done",
+    );
+    expect(foldMarker(4, 7, 10, "src/a.ts")).toBe(
+      "... // content folded, source range: 4-7 (4 of 10 lines hidden); expand with read src/a.ts within 4-7 done",
+    );
+  });
+
   test("a huge viewer declaration folds to three head and three tail lines", () => {
     const source = [
       "export function huge(): number {",
@@ -666,6 +675,8 @@ describe("resolveEditDslReply (#111)", () => {
     expect(feedback).toContain("1 | export function huge(): number {");
     expect(feedback).toContain("3 |   const b = 2;");
     expect(feedback).toContain("... // content folded, source range: 4-8");
+    expect(feedback).toContain("(5 of 11 lines hidden)");
+    expect(feedback).toContain("expand with read a.ts within 4-8 done");
     expect(feedback).toContain("9 |   const h = 8;");
     expect(feedback).toContain("11 | }");
     expect(feedback).not.toContain("4 |   const c = 3;");

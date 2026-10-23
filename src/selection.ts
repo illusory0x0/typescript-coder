@@ -108,12 +108,22 @@ const SELECTION_SPACES: ReadonlySet<string> = new Set(["value", "type", "namespa
 export class SelectionSyntaxError extends Error {
   readonly stage: "syntax" = "syntax";
   readonly diagnostics: string;
+  readonly detail: string;
+  /** Reader offset where the failure was detected, or null outside a parse. */
+  readonly offset: number | null;
 
-  constructor(detail: string) {
+  constructor(detail: string, offset: number | null = null) {
     const diagnostics = `stage: syntax\n${detail}`;
     super(diagnostics);
     this.name = "SelectionSyntaxError";
     this.diagnostics = diagnostics;
+    this.detail = detail;
+    this.offset = offset;
+  }
+
+  /** Return the same diagnostic with the reader position attached. */
+  withOffset(offset: number): SelectionSyntaxError {
+    return this.offset === null ? new SelectionSyntaxError(this.detail, offset) : this;
   }
 }
 
@@ -201,6 +211,22 @@ class SelectionReader {
   }
 
   parse(): Selection[] {
+    try {
+      return this.parseClauses();
+    } catch (error) {
+      this.located(error);
+    }
+  }
+
+  /** Attach the reader offset to a syntax failure; rethrow anything else. */
+  private located(error: unknown): never {
+    if (error instanceof SelectionSyntaxError) {
+      throw error.withOffset(this.pos);
+    }
+    throw error;
+  }
+
+  private parseClauses(): Selection[] {
     const selections: Selection[] = [];
     for (;;) {
       this.skipWhitespace();
@@ -219,6 +245,14 @@ class SelectionReader {
   }
 
   parseMultiEditor(): EditStatement[] {
+    try {
+      return this.parseStatements();
+    } catch (error) {
+      this.located(error);
+    }
+  }
+
+  private parseStatements(): EditStatement[] {
     const statements: EditStatement[] = [];
     for (;;) {
       this.skipWhitespace();
@@ -608,11 +642,10 @@ class SelectionReader {
         } else if (body.endsWith("\n") || body.endsWith("\r")) {
           body = body.slice(0, -1);
         }
-        if (longestRun(body, fenceChar) >= 3) {
-          throw new SelectionSyntaxError(
-            `fence body contains a run of 3 or more ${fenceChar === "`" ? "backticks" : "hyphens"}`,
-          );
-        }
+        // Only a line whose delimiter run equals the opener closes the fence
+        // (see `isClosingFence`), so a shorter run such as a `---` divider is
+        // ordinary body text. Rejecting it forced a full retry over a
+        // harmless markdown separator (#25).
         this.pos = end >= this.length ? this.length : end + 1;
         return body;
       }

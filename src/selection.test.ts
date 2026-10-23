@@ -401,11 +401,11 @@ describe("parseSelection failures", () => {
     expectSyntax(`select foo in a.ts\nreplace with\n${DASH_FENCE}\nx\n------\nend`, "fence");
   });
 
-  test("rejects a hyphen fence body with three hyphens", () => {
-    expectSyntax(
+  test("accepts a hyphen fence body with three hyphens (#25)", () => {
+    const [selection] = parseSelection(
       `select foo in a.ts\nreplace with\n${DASH_FENCE}\na---b\n${DASH_FENCE}\nend`,
-      "fence",
     );
+    expect(selection?.replacement).toBe("a---b");
   });
 
   test("rejects a closing run that differs from the opening", () => {
@@ -413,9 +413,12 @@ describe("parseSelection failures", () => {
     expectSyntax(`select foo in a.ts\nreplace with\n${FENCE}\nx\n${seven}\nend`, "fence");
   });
 
-  test("rejects a fence body with three backticks", () => {
+  test("accepts a fence body with three backticks (#25)", () => {
     const body = `a${"`".repeat(3)}b`;
-    expectSyntax(`select foo in a.ts\nreplace with\n${FENCE}\n${body}\n${FENCE}\nend`, "fence");
+    const [selection] = parseSelection(
+      `select foo in a.ts\nreplace with\n${FENCE}\n${body}\n${FENCE}\nend`,
+    );
+    expect(selection?.replacement).toBe(body);
   });
 
   test("rejects a non-1-based pick coordinate", () => {
@@ -790,6 +793,34 @@ describe("parseMultiEditor", () => {
     expect(() =>
       parseMultiEditor(["write src/a.ts", DASH_FENCE, "x", DASH_FENCE, "done"].join("\n")),
     ).toThrow(/with/);
+  });
+
+  test("a shorter delimiter run inside the fence body is ordinary text (#25)", () => {
+    const [statement] = parseMultiEditor(
+      ["write src/a.ts with", DASH_FENCE, "one", "---", "two", DASH_FENCE, "done"].join("\n"),
+    );
+    expect(statement).toEqual({
+      type: "fs",
+      statement: {
+        op: "write",
+        path: "src/a.ts",
+        ranges: null,
+        replacement: "one\n---\ntwo",
+      },
+    });
+  });
+
+  test("a syntax error carries the reader offset (#25)", () => {
+    try {
+      parseMultiEditor(["select f in src/a.ts", "replace with", "x"].join("\n"));
+      throw new Error("expected a syntax error");
+    } catch (error) {
+      expect(error).toBeInstanceOf(SelectionSyntaxError);
+      const syntax = error as SelectionSyntaxError;
+      expect(syntax.offset).not.toBeNull();
+      expect(syntax.offset ?? 0).toBeGreaterThan(0);
+      expect(syntax.detail).toContain("fence");
+    }
   });
 
   test("rejects an unknown statement keyword", () => {

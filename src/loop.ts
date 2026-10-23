@@ -12,7 +12,7 @@ import { applyMatcherSplice, extractJsonObject, findMatcher, stripCodeFences } f
 import type { MatcherResult } from "./matcher";
 import { parseMultiEditor, parseSelection, SelectionSyntaxError } from "./selection";
 import type { EditStatement, FileStatement, Selection as EditDslSelection } from "./selection";
-import { renderReadFeedback, resolveMultiEditor } from "./multi-editor";
+import { renderReadFailureFeedback, renderReadFeedback, resolveMultiEditor } from "./multi-editor";
 import type { MultiEditorDeps, MultiEditorResolution } from "./multi-editor";
 import {
   duplicateDeclarationNote,
@@ -169,10 +169,50 @@ export const EDIT_DSL_FORCE_DIAGNOSTICS =
 // A JSON edit payload is a protocol rejection; any other unparseable reply names
 // its actual syntax error. Dropping the `SelectionSyntaxError` message made a
 // missing `end` look like a rejected JSON payload, sending the model back to the
-// payload form this mode forbids.
+// payload form this mode forbids. The reader's offset turns the message into a
+// line/column excerpt, so a retry can see the exact spot instead of guessing
+// (#25: three of rep2's six rejections were pure syntax).
+function syntaxExcerpt(text: string, offset: number | null): string {
+  if (offset === null || text === "") {
+    return "";
+  }
+  const clamped = Math.max(0, Math.min(offset, text.length));
+  const before = text.slice(0, clamped);
+  const rows = before.split("\n");
+  const line = rows.length;
+  const column = (rows.at(-1)?.length ?? 0) + 1;
+  const all = text.split("\n");
+  const from = Math.max(1, line - 2);
+  const to = Math.min(all.length, line + 1);
+  const width = String(to).length;
+  // Cap a long line: show a window around the failure instead of a caret
+  // hundreds of columns to the right of a 5k-character reply line.
+  const maxWidth = 200;
+  const windowStart = Math.max(0, Math.min(column - 1, 80));
+  const rendered: string[] = [];
+  for (let row = from; row <= to; row += 1) {
+    const value = all[row - 1] ?? "";
+    const start = row === line ? windowStart : 0;
+    const slice = value.slice(start, start + maxWidth);
+    const prefix = start > 0 ? "…" : "";
+    const suffix = start + maxWidth < value.length ? "…" : "";
+    rendered.push(`${String(row).padStart(width)} | ${prefix}${slice}${suffix}`);
+    if (row === line) {
+      const caret = prefix.length + (column - 1 - start);
+      rendered.push(`${" ".repeat(width)} | ${" ".repeat(Math.max(0, caret))}^`);
+    }
+  }
+  return `at line ${line}, column ${column}:\n${rendered.join("\n")}`;
+}
+
 function editDslParseDiagnostics(content: string, error: SelectionSyntaxError): string {
-  const trimmed = stripCodeFences(content).trimStart();
-  return trimmed.startsWith("{") ? EDIT_DSL_FORCE_DIAGNOSTICS : error.diagnostics;
+  const text = stripCodeFences(content);
+  if (text.trimStart().startsWith("{")) {
+    return EDIT_DSL_FORCE_DIAGNOSTICS;
+  }
+  // The reader parsed this exact string, so its offset indexes `text`.
+  const excerpt = syntaxExcerpt(text, error.offset);
+  return excerpt === "" ? error.diagnostics : `${error.diagnostics}\n\n${excerpt}`;
 }
 
 // #117/#119: under the edit-dsl protocol a `protocol` rejection means the reply
@@ -6440,8 +6480,20 @@ async function runEditDslLoop(options: LoopOptions): Promise<LoopResult> {
               const first = resolution.failures[0];
               diagnostic = first?.diagnostics ?? "stage: protocol\nthe file command was rejected";
               selectionStage = first?.stage === "address" ? "address" : "protocol";
+            } else if (resolution.readFailures.length > 0 && resolution.reads.length === 0) {
+              // A reply that only tried to read and failed has nothing to pin;
+              // retry with the read error. In a mixed reply the mutation still
+              // pins and the read error is dropped (#25).
+              const first = resolution.readFailures[0];
+              diagnostic = first?.diagnostics ?? "stage: protocol\nthe read command was rejected";
+              selectionStage = first?.stage === "address" ? "address" : "protocol";
             } else if (readsOnly) {
-              fsReadFeedback = renderReadFeedback(resolution.reads);
+              fsReadFeedback = [
+                renderReadFeedback(resolution.reads),
+                renderReadFailureFeedback(resolution.readFailures),
+              ]
+                .filter((block) => block !== "")
+                .join("\n\n");
               candidate = {
                 path: resolution.reads[0]?.path ?? "",
                 name: "",
@@ -7258,12 +7310,35 @@ async function runEditDslLoop(options: LoopOptions): Promise<LoopResult> {
         }
         const readFeedback =
           editDslResolution.reads.length === 0 ? null : renderReadFeedback(editDslResolution.reads);
+        const readErrorFeedback = renderReadFailureFeedback(editDslResolution.readFailures);
+        // A failed `read` writes nothing, so it is feedback rather than a
+        // rejection. Only a reply whose sole content was failing reads has no
+        // work to show; surface that as the retry-driving failure (#25).
+        const onlyFailedReads =
+          failure === null &&
+          blocks.length === 0 &&
+          editDslResolution.failures.length === 0 &&
+          regions.length === 0 &&
+          fsCreates.length === 0 &&
+          editDslDeletes.length === 0 &&
+          editDslResolution.reads.length === 0 &&
+          editDslResolution.viewers.length === 0 &&
+          readErrorFeedback !== "";
+        if (onlyFailedReads) {
+          failure = readErrorFeedback;
+          failureStage = "range";
+        }
+        // Once the read error is the failure itself, do not also append it to the
+        // viewer feedback (the retry would show it twice).
+        const feedbackReadErrors = onlyFailedReads ? "" : readErrorFeedback;
         const viewerFeedback =
           editDslResolution.viewers.length === 0
             ? null
             : renderViewerFeedback(editDslResolution.viewers);
-        if (viewerFeedback !== null || readFeedback !== null) {
-          editDslViewerFeedback = [viewerFeedback, readFeedback].filter(Boolean).join("\n\n");
+        if (viewerFeedback !== null || readFeedback !== null || feedbackReadErrors !== "") {
+          editDslViewerFeedback = [viewerFeedback, readFeedback, feedbackReadErrors || null]
+            .filter((block): block is string => block !== null && block !== "")
+            .join("\n\n");
         }
       }
       // A viewer locate turn (#111): a reply that carried only viewers writes
