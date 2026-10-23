@@ -24,6 +24,15 @@ Run before finishing: format only the files you changed (`bunx oxfmt <files>`), 
 `human/`; see Boundaries. Tests are colocated `src/*.test.ts`; single test:
 `bun test src/loop.test.ts -t "pattern"`.
 
+## Evaluation
+
+Live evaluation is not a development loop. Do not run `just accept --live` or
+`bun run benchmark/run.ts` frequently: the human can predict most outcomes from
+engineering intuition, and repeated runs only burn tokens. Prefer improving the
+harness — deterministic tests, offline acceptance scenarios, replay fixtures,
+diagnostics — and reserve a targeted live run for the end of a change, when a
+human asks for it or the harness cannot answer the question.
+
 ## Layout / entrypoints
 
 - `src/main.ts` — CLI entry (`#!/usr/bin/env bun`, piped-stdin contract `tc < task.txt`; a TTY stdin prints help).
@@ -41,7 +50,7 @@ Run before finishing: format only the files you changed (`bunx oxfmt <files>`), 
 - `bun test` at root only sees `src/` (`bunfig.toml` `root = "./src"`); acceptance/benchmark run their own commands.
 - `benchmark/` is excluded from `tsc` (`benchmark/fixtures`), and `judge-golden.test.ts` imports it through a computed specifier so the self-host copy of just `src/` stays green — preserve that trick when touching `benchmark/`.
 - `tsconfig` is strict + `noUncheckedIndexedAccess` + `verbatimModuleSyntax`: use `import type`, handle possibly-undefined index results (code style follows this: `const x = arr[i]; if (x === undefined) …`).
-- Live checks cost tokens: `just accept --live` and `bun run benchmark/run.ts` call the real model (default `deepseek-v4.1-flash`). Don't run them unprompted.
+- Live checks cost tokens: `just accept --live` and `bun run benchmark/run.ts` call the real model (default `deepseek-v4.1-flash`). Don't run them unprompted, and don't use them as an iteration loop — see Evaluation.
 - `csv-parser` benchmark fixture is held out — never tune prompts or code against it.
 - Benchmark artifacts (`benchmark/results/`, `failures/`, `tmp/`, `acceptance/report.json`) are generated; don't commit unless the ledger (`consumption.md`) cites them.
 - Commits are titled by topic (`resolve-issue: …`, `Land #80: …`) and reference tracker issue numbers in comments as `(#NN)`; the tracker is the local coding-skills set, not GitHub.
