@@ -382,6 +382,8 @@ export const scenarios: Scenario[] = [
         tasks: [
           {
             id: 1,
+            root: 1,
+            verify: "test",
             loc: { path: "src/helper.ts", symbol: "answer", kind: "value" },
             deps: [],
             action: "modify",

@@ -32,6 +32,7 @@ interface AggregateLike {
   runs: number;
   ok: number;
   tokens: { in: TokenStatsLike; out: TokenStatsLike; total: TokenStatsLike };
+  cache?: { read: TokenStatsLike; hitRate: number | null };
   tokensPerSuccess: { in: number | null; out: number | null; total: number | null };
   selectors: { range: number; matcher: number; wholeSymbol: number };
   stages: { wholeSymbol: number; match: number; pick: number };
@@ -93,9 +94,11 @@ interface RunModule {
     mean: number | null;
     vsOc: number | null;
     vsJson: number | null;
+    cacheHitRate: number | null;
     tasks: number;
   }[];
   fourWaySavingsSentence(rows: unknown): string | null;
+  cacheBalanceWarning(rows: readonly AggregateLike[]): string | null;
   tokenMultiplierSentence(
     bySide: readonly AggregateLike[],
     byTaskSide: readonly AggregateLike[],
@@ -131,6 +134,7 @@ interface RunModule {
     side: string;
     protocolFormats: string[];
     agentModes: string[];
+    reps: number;
   };
   opencodeModelFor(model: string, ocModel: string | null): string;
 }
@@ -365,7 +369,9 @@ describe("rendered report (#89)", () => {
         expect(markdown).toContain("decision-only");
         // json-parser tc: in 200, out 500, total 700 (no protocol on this
         // synthetic legacy record).
-        expect(markdown).toContain("| json-parser | tc | n/a | edit | 1/1 | 200 | 500 | 700 |");
+        expect(markdown).toContain(
+          "| json-parser | tc | n/a | edit | 1/1 | 200 | 80.0% | 500 | 700 |",
+        );
         expect(markdown).toContain("oc 1.56x tc overall");
         expect(markdown).toContain("json-parser oc 1.86x tc");
         // #101: adoption surfaces per task/side and per side.
@@ -480,10 +486,49 @@ describe("resolved stage and matcher-kind aggregates (#110)", () => {
   );
 });
 
+describe("cache balance", () => {
+  test.skipIf(!runModulePresent)(
+    "reports per-variant hit rates and warns on a large spread",
+    async () => {
+      const { computeAggregates, cacheBalanceWarning } = await loadRunModule();
+      const runs = [
+        makeRun(
+          "json-parser",
+          "tc",
+          { input: 1000, output: 100, cacheRead: 900 },
+          null,
+          "edit-dsl",
+          "edit",
+        ),
+        makeRun(
+          "json-parser",
+          "tc",
+          { input: 1000, output: 100, cacheRead: 100 },
+          null,
+          "edit-dsl",
+          "plan-exec",
+        ),
+      ];
+      const aggregates = computeAggregates(
+        runs,
+        ["json-parser"],
+        ["tc"],
+        ["edit-dsl"],
+        ["edit", "plan-exec"],
+      );
+      expect(aggregates.bySide.map((row) => row.cache?.hitRate)).toEqual([0.9, 0.1]);
+      const warning = cacheBalanceWarning(aggregates.bySide);
+      expect(warning).toContain("cache hit rates span");
+      expect(warning).toContain("80 points");
+    },
+  );
+});
+
 describe("oc model override (--oc-model)", () => {
   test.skipIf(!runModulePresent)("defaults to the tc side and rejects frozen oc runs", async () => {
     const { parseArgs, frozenDimensionError } = await loadRunModule();
     expect(parseArgs([]).side).toBe("tc");
+    expect(parseArgs([]).reps).toBe(5);
     expect(parseArgs(["--side", "tc"]).side).toBe("tc");
     expect(frozenDimensionError("oc", ["edit-dsl"])).toContain(
       "the oc side is frozen (benchmark/results/oc-baseline.json)",
@@ -844,7 +889,7 @@ describe("concurrent protocol variants (#16)", () => {
   );
 
   test.skipIf(!runModulePresent)(
-    "renders the four-way section with two baseline columns",
+    "withholds the four-way section when the baseline spec hash is stale",
     async () => {
       const { computeAggregates, writeMarkdownReport } = await loadRunModule();
       const tasks = ["json-parser"];
@@ -890,17 +935,10 @@ describe("concurrent protocol variants (#16)", () => {
         writeMarkdownReport(md, report);
         const markdown = readFileSync(md, "utf8");
         expect(markdown).toContain("- agent modes: edit, plan-exec");
-        expect(markdown).toContain(
-          "## Four-way comparison (oc / tc json / tc edit / tc plan-exec)",
-        );
-        expect(markdown).toContain(
-          "| Task | Variant | Mean total | vs oc baseline | vs tc json baseline |",
-        );
-        expect(markdown).toContain("| json-parser | oc baseline |");
-        expect(markdown).toContain("| json-parser | tc json baseline |");
-        expect(markdown).toContain("| json-parser | tc edit |");
-        expect(markdown).toContain("| json-parser | tc plan-exec |");
-        expect(markdown).toContain("Four-way savings (cache-excluded total): vs oc");
+        expect(markdown).toContain("````\n# Task: JSON parser");
+        expect(markdown).toContain("## Baseline comparison unavailable");
+        expect(markdown).toContain("different task-spec text");
+        expect(markdown).not.toContain("## Four-way comparison");
       } finally {
         rmSync(dir, { recursive: true, force: true });
       }

@@ -34,6 +34,8 @@ The planner replies with one JSON object, no markdown fences, no prose:
   "tasks": [
     {
       "id": 1,
+      "root": 1,
+      "verify": "test",
       "loc": { "path": "src/helper.ts", "symbol": "answer", "kind": "value" },
       "deps": [],
       "action": "modify",
@@ -48,8 +50,10 @@ The planner replies with one JSON object, no markdown fences, no prose:
 ```ts
 type Task = {
   id: number;
+  root: number; // root task id; a root task names itself
+  verify?: "tsc" | "test"; // required exactly on a root task
+  related?: Loc[]; // optional same-file migration targets (modify only)
   loc: Loc;
-  parent?: number; // grouping only; never orders execution
   deps: number[]; // execution order
   action: "modify" | "create" | "delete" | "rename";
   instruction: string; // self-contained; the executor sees no requirement text
@@ -69,6 +73,7 @@ type LLM_Output = {
 };
 
 type Status = "todo" | "in-progress" | "done" | "failed";
+type RootStatus = "pending" | "passed" | "failed";
 ```
 
 `kind` is a **symbol space**, not a declaration keyword. It matches the
@@ -88,25 +93,28 @@ todo". `readPlan` parses a re-plan reply (done/failed echoes are legitimate);
 accept:
 
 - top-level keys other than `tasks`, `todo`, `status`; task keys other than
-  `id`, `loc`, `parent`, `deps`, `action`, `instruction`, `renameTo`; loc keys
-  other than `path`, `symbol`, `kind`;
+  `id`, `root`, `verify`, `related`, `loc`, `deps`, `action`, `instruction`,
+  `renameTo`; loc keys other than `path`, `symbol`, `kind`;
 - non-positive/duplicate ids, more than 64 tasks, empty instruction or one over
   4,000 characters;
 - a symbol space other than `value|type|namespace`; empty path/symbol;
 - unsafe paths (absolute, `..`, empty/`.` segments, hidden/build directories,
   `human/`);
-- unknown `parent`/`deps`, self references, duplicate deps, a dependency or
-  parent cycle;
+- unknown `root`/`deps`, self references, duplicate deps, a dependency cycle,
+  a root task without `verify`, a non-root task with `verify`, a root whose
+  final gate is not `test`, or a dependency on a task in a later root;
+- `related` on a non-modify task, a related loc outside the task's file, or a
+  duplicate related target;
 - `renameTo` on a non-rename, missing/unchanged/invalid `renameTo` on a rename;
 - status keys that are not exactly the task ids, unknown status values, a
   planning reply claiming `in-progress`, or a `done` task with pending deps;
-- `todo` entries that are not ids, are duplicated, are not `todo`, or are not
-  on the ready frontier; a ready task omitted from `todo`.
+- `todo` entries that are not ids, are duplicated, or are not `todo`; the
+  harness normalizes `todo` to the active root's ready frontier.
 
 Initial-plan-only rules:
 
 - every task is `todo`;
-- `todo` equals the ready frontier (the root set).
+- `todo` is normalized to the ready frontier of the first root.
 
 Re-plan rules (`mergeReplan`):
 
@@ -115,29 +123,35 @@ Re-plan rules (`mergeReplan`):
   even when the planner's echo is stale;
 - a `todo` task may be amended or removed if nothing still depends on it;
 - a `failed` task may be kept failed unchanged, or reset to `todo` only when its
-  definition changed (loc/action/instruction/deps/parent/renameTo). Re-emitting
-  the same failing task as `todo` is rejected: "retrying it requires a changed
-  definition";
+  definition changed (root/verify/related/loc/action/instruction/deps/renameTo).
+  Re-emitting the same failing task as `todo` is rejected: "retrying it requires
+  a changed definition";
 - a new task starts `todo` and uses an id unused by the current DAG;
+- a passed root is closed; a failed root reopens when repair tasks are added or
+  amended, and its gate reruns after they finish;
 - `todo` is recomputed by the harness after the merge. A stale entry (an
   already-done task, or an omitted newly-ready task) is corrected; a **blocked**
   entry (deps not done) is a rejection.
 
 ### 1.2 Scheduling
 
-`readyFrontier` returns tasks whose status is `todo` and whose deps are all
-`done`, in task order. The driver:
+Roots run in plan order. `readyFrontier` returns the `todo` tasks of the first
+**pending** root whose deps are done, in task order. The driver:
 
-1. runs the frontier in order;
-2. after each task completes, appends newly ready tasks to the same wave;
-3. a failed task ends the wave and triggers a re-plan;
-4. when every task is done, runs the test command once;
-5. test pass → success; test fail → re-plan with the test output;
-6. a frontier that is empty without every task done is a blocked plan and is
-   re-planned with the blocking chain named.
+1. runs the active root's frontier in order;
+2. after each micro-task, appends newly ready tasks in that root;
+3. a failed micro-task ends the wave and triggers a re-plan;
+4. when every micro-task in the root is done, runs the root gate: `tsc` runs the
+   check; `test` runs the check and then the test suite;
+5. gate pass → root `passed`; move to the next pending root;
+6. gate fail → root `failed`; re-plan with the gate diagnostics. The planner may
+   add repair micro-tasks to that root (reopening it) or add a new root;
+7. the final root must be a `test` gate, so success means the test suite passed;
+8. a root with no ready micro-task is a blocked plan and is re-planned with the
+   blocking chain named.
 
-`todo` in a plan is an ordering hint validated against this frontier, never the
-scheduler's source of truth.
+`todo` in a plan is an ordering hint; the harness normalizes it to this
+frontier and never trusts the planner's list as scheduler truth.
 
 ## 2. Mode contexts
 
@@ -150,7 +164,8 @@ volatile content last, per-mode roots.
 2. user: `# Requirement`, `# Symbol index` (signature-bearing YAML from
    `buildContextYaml`), spec files;
 3. re-plan: append `# Edit-task DAG`, `# Status`, `# Failed tasks and
-   diagnostics`, `# Test results` / `# Blocked`, then the amendment delta.
+   diagnostics`, `# Failed root gates and diagnostics`, `# Gate results` /
+   `# Blocked`, then the amendment delta.
 
 The planning conversation persists across re-plans: the previous plan and the
 rejection diagnostics stay in history, so the planner sees what it tried.
@@ -161,8 +176,9 @@ rejection diagnostics stay in history, so the planner sees what it tried.
    the DAG);
 2. user: `# Edit-task DAG` in wire JSON, once per DAG;
 3. per task turn: `# Task`, `# Project status`, optional `# Context`,
-   `# Diagnostics` / `# Type check failed`, `# Content view` (numbered
-   declaration), then the reply instruction.
+   `# Diagnostics`, `# Content view` (numbered declaration), then the reply
+   instruction. The executor lands the edit and stops; it does not run tsc or
+   tests.
 
 Every task turn is seeded from the stable system + DAG messages; the task,
 status, diagnostics, and content view are the volatile tail. The DAG block is
@@ -176,7 +192,8 @@ also does not receive algorithm explanations or typing lessons.
 
 ### 3.1 Target guard
 
-A task owns exactly one address. Before the reply is applied:
+A task owns one main address plus an optional same-file `related` list. Before
+the reply is applied:
 
 - the path must be safe and writable (`human/` and ignored directories are
   rejected);
@@ -184,22 +201,22 @@ A task owns exactly one address. Before the reply is applied:
 - `modify`, `delete`, `rename` need the declaration to resolve in the task's
   symbol space;
 - `create` needs the symbol absent in that space (existing → "use modify");
-- every editor clause that writes must name the task's path and symbol;
+- every editor clause that writes must name the task's target or a related loc;
   off-target writes reject the whole reply;
 - writing file commands (`create`/`delete`/`write`) are rejected; `read` and
   viewer clauses are allowed and only produce feedback.
 
 ### 3.2 Action forms
 
-| Action   | Required reply                                                                                                                                                                                                                                         |
-| -------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
-| `modify` | At least one `replace with <fence>` clause on the target (a viewer alone is rejected).                                                                                                                                                                 |
-| `create` | A whole-declaration `replace with <fence>` with no `match`/`pick`; a complete declaration is appended, any other body is wrapped by the task's space (`value` → `let`, `type` → `type`, `namespace` → `namespace`); the created name/space must match. |
-| `delete` | A whole-declaration empty fence, no `match`/`pick`.                                                                                                                                                                                                    |
-| `rename` | `rename <current> to <renameTo>`, no `replace`; the new name must equal `renameTo`.                                                                                                                                                                    |
+| Action   | Required reply                                                                                                                                                                                                                                                                           |
+| -------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `modify` | At least one `replace with <fence>` clause on the target or a related loc (a viewer alone is rejected).                                                                                                                                                                                  |
+| `create` | A whole-declaration `replace with <fence>` with no `match`/`pick`; the fence must contain exactly one top-level declaration, the target. Any other body is wrapped by the task's space (`value` → `let`, `type` → `type`, `namespace` → `namespace`); the created name/space must match. |
+| `delete` | A whole-declaration empty fence, no `match`/`pick`.                                                                                                                                                                                                                                      |
+| `rename` | `rename <current> to <renameTo>`, no `replace`; the new name must equal `renameTo`.                                                                                                                                                                                                      |
 
-A caller update is its own task. The executor never edits a second declaration
-as part of a task.
+A caller update is its own task. The one exception is a `modify` task's
+`related` list, which exists for atomic type/representation migrations.
 
 Variable entries point at their `VariableDeclarator`, so a whole-symbol rewrite
 or delete is expanded to the enclosing `VariableStatement` (including an
@@ -218,40 +235,48 @@ the exported shape.
 3. Apply with `applyResolvedRegions`: overlap, parse gate, duplicate guard,
    formatter, post-format no-op.
 4. Write only after every guard passes; nothing is written on a rejection.
-5. Run the check command (`tsc --noEmit` by default).
-6. Pass → task `done`. Fail → the source stays on disk, the diagnostics open the
-   next task round.
+5. An applied edit marks the micro-task `done` immediately; there is no per-task
+   type check.
+6. After every micro-task in the root is done, run the root gate. A gate fail
+   records diagnostics and triggers a re-plan; the planner may reopen the root with repair tasks.
 
-A rejected reply or a read-only viewer costs one exchange; an applied edit that
-fails the type check ends the round. Per task: at most 3 exchanges per round and
-2 rounds. Exhaustion marks the task `failed` and triggers a re-plan.
+A rejected reply or a read-only viewer costs one exchange. Per task: at most 3
+exchanges. Exhaustion marks the task `failed` and triggers a re-plan.
 
 The executor may make **one** bounded self-check per task:
 `{"request":"read"}` returns the numbered target source; any other request is
 refused. This mirrors the existing bounded self-check without opening a file
 command surface.
 
-### 3.4 Tests
+### 3.4 Root gates and tests
 
-The test command runs **once**, after every task is done and the type check is
-green. A failure is fed to the planner as `# Test results`; the planner adds
-tasks (new ids) rather than editing done ones.
+Every root has a gate that runs **once**, after all micro-tasks in that root are
+done:
 
-This cadence matches the mode design: execution owns syntax/type correctness,
-planning uses the suite to decide the next DAG.
+- `verify: "tsc"` runs the check command (default `bunx tsc --noEmit`);
+- `verify: "test"` runs the check command and then the test suite.
+
+A gate failure records its diagnostics and closes the root; the planner gets
+`# Failed root gates and diagnostics` and adds repair work to that root or a new root. The
+final root must be a `test` gate, so a successful run ends with the suite green.
+There is no implicit whole-DAG test outside the root gates.
+
+This cadence is deliberate: micro-tasks may leave the file temporarily
+type-broken, but a root's gate sees the completed batch.
 
 ## 4. Re-planning and termination
 
 The planner is re-invoked when:
 
-- a task fails after its exchange/round budget;
-- all tasks are done but the suite fails;
-- no task is ready (blocked/failed graph).
+- a micro-task fails after its exchange budget;
+- a root gate fails (tsc or tests);
+- no micro-task is ready (blocked graph).
 
-Each re-plan gets the full DAG, harness status, failed-task diagnostics, and the
-test output or blocked chain. The amendment delta states the rules: done tasks
-immutable, failed tasks changed before retry, new ids for new work, `todo` is the
-ready frontier.
+Each re-plan gets the full DAG, root/task status, failed-task diagnostics,
+failed-root gate diagnostics, and the symbol index or blocked chain. The
+amendment delta states the rules: done tasks immutable, failed tasks changed
+before retry, new ids for new work, failed roots reopen for repair, passed roots closed, new roots for
+repairs, final root `test`, `todo` is the active root's ready frontier.
 
 Caps:
 
@@ -259,16 +284,17 @@ Caps:
 | --------------------------- | ------------------ |
 | Tasks per DAG               | 64                 |
 | Instruction length          | 4,000 chars        |
-| Exchanges per task round    | 3                  |
-| Rounds per task             | 2                  |
+| Related locs per task       | 16                 |
+| Exchanges per task          | 3                  |
 | Planning DAGs per run       | 8                  |
 | Planning attempts per turn  | 3                  |
 | Consecutive length finishes | 3 (`output-limit`) |
 | Token budget                | 120,000 default    |
 
-A run ends `ok` only when every task is `done` and the suite passes. Failure
-paths use the existing termination matrix plus `task-exhausted`; the run still
-makes one summary call. Provider errors keep their own path.
+A run ends `ok` only when every root is closed, the final root's `test` gate
+passed, and every task is `done`. Failure paths use the existing termination
+matrix plus `task-exhausted`; the run still makes one summary call. Provider
+errors keep their own path.
 
 ## 5. CLI and result
 
@@ -286,30 +312,28 @@ tc --agent-mode plan-exec < issue.txt   # alias
 - Text stdout names the completed task/file summary; `--format json` keeps the
   `typescript-coder-result@1` contract, and `files` aggregates the applied
   locators from the records.
-- `LoopResult.tasks` carries the final per-task summary (`id`, `action`, path,
-  symbol, space, status). `terminationReason` can be `task-exhausted`.
+- `LoopResult.tasks` carries the final per-task summary (`id`, `root`, optional
+  `verify`, `action`, path, symbol, space, status). `terminationReason` can be
+  `task-exhausted`.
 
 ## 6. Limitations (v1)
 
 - **Multi-declarator variables.** `const a = 1, b = 2;` cannot be a whole-symbol
   task target; split the statement first (a matcher edit on one binding is
   still possible).
-- **One writable address per task.** A cross-file change is multiple tasks. The
-  planner must order them so each boundary type-checks; a truly atomic
-  cross-file edit is not expressible.
+- **One file per task.** A task's main target plus `related` must share a file;
+  cross-file changes are multiple tasks. Micro-task boundaries need not
+  type-check; the enclosing root gate does.
 - **Rename is same-file.** It inherits the existing renamer's scope (declaration
   plus same-file references). Cross-file renames need caller tasks first, or
   escalation.
 - **No planning tools.** The planner sees the signature index and spec files,
   not declaration bodies. A requirement that needs inspection must be expressed
   as a coarse task the executor can inspect (a viewer/read is available there).
-- **No benchmark/replay integration.** The new mode is opt-in and its replay
-  metadata is not recorded yet; the frozen `json`/`oc` baselines and the
-  edit-dsl benchmark are untouched.
-- **Intermediate type errors are task failures.** If a legitimate refactor
-  cannot keep tsc green between tasks, the plan must add a compatibility step;
-  the documented fallback is to fail a task only when diagnostics point into
-  its own file (deferring later tasks' diagnostics to the DAG-end check).
+- **Passed roots are immutable.** A failed root reopens for repair; a passed
+  root cannot be extended, so later work goes in a new root.
+- **Intermediate type errors are expected.** A micro-task boundary may leave
+  the file type-broken; the enclosing root gate is the type-correct boundary.
 - **Test-file edits are allowed but discouraged.** The planner prompt treats
   `*.test.ts` as specification; a requirement that asks for test changes still
   needs them.

@@ -1,0 +1,725 @@
+{
+  "generatedAt": "2026-10-24T12:28:12.180Z",
+  "date": "2026-10-24",
+  "mode": "full",
+  "tasks": [
+    "minilisp"
+  ],
+  "sides": [
+    "tc"
+  ],
+  "reps": 1,
+  "concurrency": 1,
+  "model": "deepseek-flash",
+  "ocModel": null,
+  "effort": null,
+  "multiPayload": false,
+  "protocolFormat": "edit-dsl",
+  "protocolFormats": [
+    "edit-dsl"
+  ],
+  "agentModes": [
+    "plan-exec"
+  ],
+  "tokenBudget": null,
+  "bunVersion": "1.3.13",
+  "opencodeVersion": null,
+  "pilotReference": null,
+  "infraErrors": [],
+  "runs": [
+    {
+      "task": "minilisp",
+      "side": "tc",
+      "protocol": "edit-dsl",
+      "agentMode": "plan-exec",
+      "rep": 1,
+      "ok": false,
+      "sideOk": false,
+      "tokens": {
+        "input": 120728,
+        "output": 11743,
+        "cacheRead": 92544,
+        "cacheWrite": null,
+        "reasoning": 89,
+        "total": 132471,
+        "billable": {
+          "in": 28184,
+          "out": 11832,
+          "total": 40016
+        }
+      },
+      "usageAvailable": true,
+      "usageSource": "chat-completions",
+      "rawUsage": [
+        {
+          "prompt_tokens": 2482,
+          "completion_tokens": 898,
+          "total_tokens": 3380,
+          "prompt_tokens_details": {
+            "cached_tokens": 2304
+          },
+          "prompt_cache_hit_tokens": 2304,
+          "prompt_cache_miss_tokens": 178
+        },
+        {
+          "prompt_tokens": 2022,
+          "completion_tokens": 39,
+          "total_tokens": 2061,
+          "prompt_tokens_details": {
+            "cached_tokens": 640
+          },
+          "prompt_cache_hit_tokens": 640,
+          "prompt_cache_miss_tokens": 1382
+        },
+        {
+          "prompt_tokens": 2901,
+          "completion_tokens": 2117,
+          "total_tokens": 5018,
+          "prompt_tokens_details": {
+            "cached_tokens": 2048
+          },
+          "prompt_cache_hit_tokens": 2048,
+          "prompt_cache_miss_tokens": 853
+        },
+        {
+          "prompt_tokens": 5945,
+          "completion_tokens": 2099,
+          "total_tokens": 8044,
+          "prompt_tokens_details": {
+            "cached_tokens": 4992
+          },
+          "prompt_cache_hit_tokens": 4992,
+          "prompt_cache_miss_tokens": 953
+        },
+        {
+          "prompt_tokens": 9254,
+          "completion_tokens": 106,
+          "total_tokens": 9360,
+          "prompt_tokens_details": {
+            "cached_tokens": 7936
+          },
+          "prompt_cache_hit_tokens": 7936,
+          "prompt_cache_miss_tokens": 1318
+        },
+        {
+          "prompt_tokens": 10388,
+          "completion_tokens": 44,
+          "total_tokens": 10432,
+          "prompt_tokens_details": {
+            "cached_tokens": 9344
+          },
+          "prompt_cache_hit_tokens": 9344,
+          "prompt_cache_miss_tokens": 1044
+        },
+        {
+          "prompt_tokens": 11460,
+          "completion_tokens": 110,
+          "total_tokens": 11570,
+          "prompt_tokens_details": {
+            "cached_tokens": 10368
+          },
+          "prompt_cache_hit_tokens": 10368,
+          "prompt_cache_miss_tokens": 1092
+        },
+        {
+          "prompt_tokens": 4684,
+          "completion_tokens": 832,
+          "total_tokens": 5516,
+          "prompt_tokens_details": {
+            "cached_tokens": 3328
+          },
+          "prompt_cache_hit_tokens": 3328,
+          "prompt_cache_miss_tokens": 1356
+        },
+        {
+          "prompt_tokens": 5559,
+          "completion_tokens": 912,
+          "total_tokens": 6471,
+          "prompt_tokens_details": {
+            "cached_tokens": 5376
+          },
+          "prompt_cache_hit_tokens": 5376,
+          "prompt_cache_miss_tokens": 183
+        },
+        {
+          "prompt_tokens": 2661,
+          "completion_tokens": 109,
+          "total_tokens": 2770,
+          "prompt_tokens_details": {
+            "cached_tokens": 768
+          },
+          "prompt_cache_hit_tokens": 768,
+          "prompt_cache_miss_tokens": 1893
+        },
+        {
+          "prompt_tokens": 3768,
+          "completion_tokens": 5,
+          "total_tokens": 3773,
+          "prompt_tokens_details": {
+            "cached_tokens": 2688
+          },
+          "prompt_cache_hit_tokens": 2688,
+          "prompt_cache_miss_tokens": 1080
+        },
+        {
+          "prompt_tokens": 4861,
+          "completion_tokens": 2558,
+          "total_tokens": 7419,
+          "prompt_tokens_details": {
+            "cached_tokens": 3712
+          },
+          "prompt_cache_hit_tokens": 3712,
+          "prompt_cache_miss_tokens": 1149
+        },
+        {
+          "prompt_tokens": 8415,
+          "completion_tokens": 109,
+          "total_tokens": 8524,
+          "prompt_tokens_details": {
+            "cached_tokens": 7296
+          },
+          "prompt_cache_hit_tokens": 7296,
+          "prompt_cache_miss_tokens": 1119
+        },
+        {
+          "prompt_tokens": 9522,
+          "completion_tokens": 55,
+          "total_tokens": 9577,
+          "prompt_tokens_details": {
+            "cached_tokens": 8448
+          },
+          "prompt_cache_hit_tokens": 8448,
+          "prompt_cache_miss_tokens": 1074
+        },
+        {
+          "prompt_tokens": 7897,
+          "completion_tokens": 1077,
+          "total_tokens": 8974,
+          "prompt_tokens_details": {
+            "cached_tokens": 6400
+          },
+          "prompt_cache_hit_tokens": 6400,
+          "prompt_cache_miss_tokens": 1497
+        },
+        {
+          "prompt_tokens": 3005,
+          "completion_tokens": 125,
+          "total_tokens": 3130,
+          "prompt_tokens_details": {
+            "cached_tokens": 1536
+          },
+          "prompt_cache_hit_tokens": 1536,
+          "prompt_cache_miss_tokens": 1469
+        },
+        {
+          "prompt_tokens": 4307,
+          "completion_tokens": 5,
+          "total_tokens": 4312,
+          "prompt_tokens_details": {
+            "cached_tokens": 3072
+          },
+          "prompt_cache_hit_tokens": 3072,
+          "prompt_cache_miss_tokens": 1235
+        },
+        {
+          "prompt_tokens": 5596,
+          "completion_tokens": 125,
+          "total_tokens": 5721,
+          "prompt_tokens_details": {
+            "cached_tokens": 4224
+          },
+          "prompt_cache_hit_tokens": 4224,
+          "prompt_cache_miss_tokens": 1372
+        },
+        {
+          "prompt_tokens": 6898,
+          "completion_tokens": 110,
+          "total_tokens": 7008,
+          "prompt_tokens_details": {
+            "cached_tokens": 5632
+          },
+          "prompt_cache_hit_tokens": 5632,
+          "prompt_cache_miss_tokens": 1266
+        },
+        {
+          "prompt_tokens": 9103,
+          "completion_tokens": 308,
+          "total_tokens": 9411,
+          "prompt_tokens_details": {
+            "cached_tokens": 2432
+          },
+          "completion_tokens_details": {
+            "reasoning_tokens": 89
+          },
+          "prompt_cache_hit_tokens": 2432,
+          "prompt_cache_miss_tokens": 6671
+        }
+      ],
+      "durationMs": 60950,
+      "startedAt": "2026-10-24T12:28:12.195Z",
+      "finishedAt": "2026-10-24T12:29:13.145Z",
+      "cost": 0.011604432,
+      "rateClass": "off-peak",
+      "steps": 15,
+      "records": [
+        {
+          "row": 1,
+          "iteration": 1,
+          "kind": "exchange",
+          "exchange": 1,
+          "outcome": "applied",
+          "diagnosticsHead": null,
+          "replacementChars": 140,
+          "finishReason": "stop",
+          "cause": null,
+          "payloads": 1,
+          "toolCalls": 0,
+          "selectors": null,
+          "stages": null,
+          "matcherKinds": null
+        },
+        {
+          "row": 2,
+          "iteration": 1,
+          "kind": "verification",
+          "exchange": null,
+          "outcome": "ok",
+          "diagnosticsHead": null,
+          "replacementChars": null,
+          "finishReason": null,
+          "cause": null,
+          "payloads": 0,
+          "toolCalls": 0,
+          "selectors": null,
+          "stages": null,
+          "matcherKinds": null
+        },
+        {
+          "row": 3,
+          "iteration": 2,
+          "kind": "exchange",
+          "exchange": 1,
+          "outcome": "duplicate",
+          "diagnosticsHead": "stage: duplicate the edit was discarded: it would add a second top-level type \"LispValue\" (src/lisp.ts already declares it at line 1); replace the existing declaration instead of adding another copy",
+          "replacementChars": 7388,
+          "finishReason": "stop",
+          "cause": null,
+          "payloads": 0,
+          "toolCalls": 0,
+          "selectors": null,
+          "stages": null,
+          "matcherKinds": null
+        },
+        {
+          "row": 4,
+          "iteration": 2,
+          "kind": "exchange",
+          "exchange": 2,
+          "outcome": "applied",
+          "diagnosticsHead": null,
+          "replacementChars": 7327,
+          "finishReason": "stop",
+          "cause": null,
+          "payloads": 1,
+          "toolCalls": 0,
+          "selectors": null,
+          "stages": null,
+          "matcherKinds": null
+        },
+        {
+          "row": 5,
+          "iteration": 2,
+          "kind": "verification",
+          "exchange": null,
+          "outcome": "tsc",
+          "diagnosticsHead": "stage: tsc replacement line 31: TS2677: A type predicate's type must be assignable to its parameter's type. Type 'Callable' is not assignable to type 'LispValue'. Type 'Builtin' is not assignable to t",
+          "replacementChars": null,
+          "finishReason": null,
+          "cause": null,
+          "payloads": 0,
+          "toolCalls": 0,
+          "selectors": null,
+          "stages": null,
+          "matcherKinds": null
+        },
+        {
+          "row": 6,
+          "iteration": 2,
+          "kind": "exchange",
+          "exchange": 1,
+          "outcome": "address",
+          "diagnosticsHead": "stage: address task #2 (create) targets value \"run\" in \"src/lisp.ts\": the declaration already exists, so a create task cannot add it (use modify)",
+          "replacementChars": 378,
+          "finishReason": "stop",
+          "cause": null,
+          "payloads": 0,
+          "toolCalls": 0,
+          "selectors": null,
+          "stages": null,
+          "matcherKinds": null
+        },
+        {
+          "row": 7,
+          "iteration": 2,
+          "kind": "exchange",
+          "exchange": 2,
+          "outcome": "address",
+          "diagnosticsHead": "stage: address task #2 (create) targets value \"run\" in \"src/lisp.ts\": the declaration already exists, so a create task cannot add it (use modify)",
+          "replacementChars": 169,
+          "finishReason": "stop",
+          "cause": null,
+          "payloads": 0,
+          "toolCalls": 0,
+          "selectors": null,
+          "stages": null,
+          "matcherKinds": null
+        },
+        {
+          "row": 8,
+          "iteration": 2,
+          "kind": "exchange",
+          "exchange": 3,
+          "outcome": "address",
+          "diagnosticsHead": "stage: address task #2 (create) targets value \"run\" in \"src/lisp.ts\": the declaration already exists, so a create task cannot add it (use modify)",
+          "replacementChars": 406,
+          "finishReason": "stop",
+          "cause": null,
+          "payloads": 0,
+          "toolCalls": 0,
+          "selectors": null,
+          "stages": null,
+          "matcherKinds": null
+        },
+        {
+          "row": 9,
+          "iteration": 3,
+          "kind": "exchange",
+          "exchange": 1,
+          "outcome": "no-op",
+          "diagnosticsHead": "clause 1 of 1 (src/lisp.ts): stage: no-op the edit does not change the file: the replacement is identical to the text it replaces; change the code so the diagnostics are actually addressed",
+          "replacementChars": 399,
+          "finishReason": "stop",
+          "cause": null,
+          "payloads": 0,
+          "toolCalls": 0,
+          "selectors": null,
+          "stages": null,
+          "matcherKinds": null
+        },
+        {
+          "row": 10,
+          "iteration": 3,
+          "kind": "exchange",
+          "exchange": 3,
+          "outcome": "duplicate",
+          "diagnosticsHead": "stage: duplicate the edit was discarded: it would add a second top-level function \"isPair\" (src/lisp.ts already declares it at line 28); replace the existing declaration instead of adding another copy",
+          "replacementChars": 8830,
+          "finishReason": "stop",
+          "cause": null,
+          "payloads": 0,
+          "toolCalls": 0,
+          "selectors": null,
+          "stages": null,
+          "matcherKinds": null
+        },
+        {
+          "row": 11,
+          "iteration": 3,
+          "kind": "exchange",
+          "exchange": 1,
+          "outcome": "no-op",
+          "diagnosticsHead": "clause 1 of 1 (src/lisp.ts): stage: no-op the edit does not change the file: the replacement is identical to the text it replaces; change the code so the diagnostics are actually addressed",
+          "replacementChars": 399,
+          "finishReason": "stop",
+          "cause": null,
+          "payloads": 0,
+          "toolCalls": 0,
+          "selectors": null,
+          "stages": null,
+          "matcherKinds": null
+        },
+        {
+          "row": 12,
+          "iteration": 3,
+          "kind": "exchange",
+          "exchange": 2,
+          "outcome": "applied",
+          "diagnosticsHead": null,
+          "replacementChars": 212,
+          "finishReason": "stop",
+          "cause": null,
+          "payloads": 1,
+          "toolCalls": 0,
+          "selectors": null,
+          "stages": null,
+          "matcherKinds": null
+        },
+        {
+          "row": 13,
+          "iteration": 3,
+          "kind": "verification",
+          "exchange": null,
+          "outcome": "tsc",
+          "diagnosticsHead": "stage: tsc elsewhere in file: src/lisp.ts(32,41): error TS2677: A type predicate's type must be assignable to its parameter's type. Type 'Callable' is not assignable to type 'LispValue'. Type 'Builtin",
+          "replacementChars": null,
+          "finishReason": null,
+          "cause": null,
+          "payloads": 0,
+          "toolCalls": 0,
+          "selectors": null,
+          "stages": null,
+          "matcherKinds": null
+        },
+        {
+          "row": 14,
+          "iteration": 4,
+          "kind": "exchange",
+          "exchange": 1,
+          "outcome": "no-op",
+          "diagnosticsHead": "clause 1 of 1 (src/lisp.ts): stage: no-op the edit does not change the file: the replacement is identical to the text it replaces; change the code so the diagnostics are actually addressed",
+          "replacementChars": 473,
+          "finishReason": "stop",
+          "cause": null,
+          "payloads": 0,
+          "toolCalls": 0,
+          "selectors": null,
+          "stages": null,
+          "matcherKinds": null
+        },
+        {
+          "row": 15,
+          "iteration": 4,
+          "kind": "exchange",
+          "exchange": 3,
+          "outcome": "no-op",
+          "diagnosticsHead": "clause 1 of 1 (src/lisp.ts): stage: no-op the edit does not change the file: the replacement is identical to the text it replaces; change the code so the diagnostics are actually addressed",
+          "replacementChars": 473,
+          "finishReason": "stop",
+          "cause": null,
+          "payloads": 0,
+          "toolCalls": 0,
+          "selectors": null,
+          "stages": null,
+          "matcherKinds": null
+        }
+      ],
+      "exchangeStats": {
+        "turns": 12,
+        "payloads": 3,
+        "toolCalls": 0,
+        "applied": 3,
+        "rejected": 9,
+        "selected": 0,
+        "stopped": 0,
+        "selfChecks": 0,
+        "range": 0,
+        "matcher": 0,
+        "wholeSymbol": 0,
+        "stageWholeSymbol": 0,
+        "stageMatch": 0,
+        "stagePick": 0,
+        "snippet": 0,
+        "regex": 0,
+        "creates": 0
+      },
+      "loopDiagnostics": "token-budget: accumulated 123060 tokens exceeded the 120000 token budget",
+      "terminationReason": "token-budget",
+      "model": "deepseek-flash",
+      "workspace": "tmp/benchmark/2026-10-24T12-28-12-185Z-8d907f23/minilisp-tc-plan-exec-rep1",
+      "logs": {
+        "side": "tmp/benchmark/2026-10-24T12-28-12-185Z-8d907f23/logs/minilisp-tc-plan-exec-rep1/side.log",
+        "judge": "tmp/benchmark/2026-10-24T12-28-12-185Z-8d907f23/logs/minilisp-tc-plan-exec-rep1/judge.log",
+        "session": null,
+        "stats": null
+      },
+      "versions": {
+        "bun": "1.3.13",
+        "opencode": null
+      },
+      "judge": {
+        "testsOk": false,
+        "tscOk": false,
+        "fixtureOk": true,
+        "detail": "tsc failed: src/lisp.ts(32,41): error TS2677: A type predicate's type must be assignable to its parameter's type.\n  Type 'Callable' is not assignable to type 'LispValue'.\n    Type 'Builtin' is not assignable to type 'LispValue'.\nsrc/lisp.ts(136,39): error TS2677: A type predicate's type must be assignable to its parameter's type.\n  Type '{ kind: \"symbol\"; name: string; }' is not assignable to type 'LispValue'...; bun test failed: bun test v1.3.13 (bf2e2cec)\n\nsrc/lisp.test.ts:\n217 |   if (!isCallable(fn)) {\n218 |     throw new Error(\"Not a function\");\n219 |   }\n220 |   if (fn.kind === \"builtin\") {\n221 |     if (args.length !== 2) {\n222 |       throw new Error(\"Builtin expects exactly 2 arguments\");\n                                                                 ^\nerror: Builtin expects exactly 2 arguments\n      at evalForm..."
+      },
+      "error": null,
+      "infraError": null
+    }
+  ],
+  "aggregates": {
+    "byTaskSide": [
+      {
+        "task": "minilisp",
+        "side": "tc",
+        "protocol": "edit-dsl",
+        "agentMode": "plan-exec",
+        "runs": 1,
+        "ok": 0,
+        "failed": 1,
+        "successRate": 0,
+        "usageRuns": 1,
+        "tokens": {
+          "in": {
+            "mean": 28184,
+            "total": 28184
+          },
+          "out": {
+            "mean": 11832,
+            "total": 11832
+          },
+          "total": {
+            "mean": 40016,
+            "total": 40016
+          }
+        },
+        "cost": {
+          "mean": 0.011604432,
+          "total": 0.011604432
+        },
+        "durationMsMean": 60950,
+        "stepsMean": 15,
+        "tokensPerSuccess": {
+          "in": null,
+          "out": null,
+          "total": null
+        },
+        "costPerSuccess": null,
+        "selectors": {
+          "range": 0,
+          "matcher": 0,
+          "wholeSymbol": 0
+        },
+        "stages": {
+          "wholeSymbol": 0,
+          "match": 0,
+          "pick": 0
+        },
+        "matcherKinds": {
+          "snippet": 0,
+          "regex": 0
+        },
+        "creates": 0
+      }
+    ],
+    "bySide": [
+      {
+        "task": null,
+        "side": "tc",
+        "protocol": "edit-dsl",
+        "agentMode": "plan-exec",
+        "runs": 1,
+        "ok": 0,
+        "failed": 1,
+        "successRate": 0,
+        "usageRuns": 1,
+        "tokens": {
+          "in": {
+            "mean": 28184,
+            "total": 28184
+          },
+          "out": {
+            "mean": 11832,
+            "total": 11832
+          },
+          "total": {
+            "mean": 40016,
+            "total": 40016
+          }
+        },
+        "cost": {
+          "mean": 0.011604432,
+          "total": 0.011604432
+        },
+        "durationMsMean": 60950,
+        "stepsMean": 15,
+        "tokensPerSuccess": {
+          "in": null,
+          "out": null,
+          "total": null
+        },
+        "costPerSuccess": null,
+        "selectors": {
+          "range": 0,
+          "matcher": 0,
+          "wholeSymbol": 0
+        },
+        "stages": {
+          "wholeSymbol": 0,
+          "match": 0,
+          "pick": 0
+        },
+        "matcherKinds": {
+          "snippet": 0,
+          "regex": 0
+        },
+        "creates": 0
+      }
+    ],
+    "overall": [
+      {
+        "task": null,
+        "side": "tc",
+        "protocol": "edit-dsl",
+        "agentMode": "plan-exec",
+        "runs": 1,
+        "ok": 0,
+        "failed": 1,
+        "successRate": 0,
+        "usageRuns": 1,
+        "tokens": {
+          "in": {
+            "mean": 28184,
+            "total": 28184
+          },
+          "out": {
+            "mean": 11832,
+            "total": 11832
+          },
+          "total": {
+            "mean": 40016,
+            "total": 40016
+          }
+        },
+        "cost": {
+          "mean": 0.011604432,
+          "total": 0.011604432
+        },
+        "durationMsMean": 60950,
+        "stepsMean": 15,
+        "tokensPerSuccess": {
+          "in": null,
+          "out": null,
+          "total": null
+        },
+        "costPerSuccess": null,
+        "selectors": {
+          "range": 0,
+          "matcher": 0,
+          "wholeSymbol": 0
+        },
+        "stages": {
+          "wholeSymbol": 0,
+          "match": 0,
+          "pick": 0
+        },
+        "matcherKinds": {
+          "snippet": 0,
+          "regex": 0
+        },
+        "creates": 0
+      }
+    ]
+  },
+  "provenance": {
+    "inputs": {
+      "model": "7d963f65d1ede1bd9416a5f55575efe0d202e0a00519ef04e47dae20c3180445",
+      "taskIssue": "377474aaaf634fe28c8e9bb36bbd63f2186151931b7bba8b7379fb4533a5b43d",
+      "fixture": "77c8545d1e0cc5eb7af124dc04e77e0d44fe9b8b92d3e85a35f49dff71f9cd1b",
+      "systemPrompt": "a4f3cfb289585bb57fc0c5a9949ffdebf9034e34a9665e85b78c8bafa279957b",
+      "loopConfig": "365b3a2a98c9b6b7cdbc3a737fca12d13b70e3735b15334656e58d5b92b93f78",
+      "pricing": "aab6f45ac055bdc46329be2c46279a8ce322bfa62c0c61f0ef177d8b67766560"
+    },
+    "inputHash": "aabcdc3a17cbb49108d2a8348a32c3c295e1f8518716c5327d0000bcfdf0e86b",
+    "computedAt": "2026-10-24T12:28:12.180Z"
+  }
+}

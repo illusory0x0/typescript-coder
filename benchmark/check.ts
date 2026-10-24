@@ -2,7 +2,7 @@ import { cpSync, existsSync, mkdirSync, readFileSync, rmSync } from "node:fs";
 import { isAbsolute, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 import { checkLedger, currentInputHashes, normalizeProtocolFormat } from "../src/provenance";
-import { TASK_ISSUES } from "./run";
+import { TASK_SPECS } from "./run";
 
 interface FixtureTask {
   readonly name: string;
@@ -150,7 +150,7 @@ function checkLedgerFile(ledgerPath: string, repoRoot: string): LedgerOutcome {
       try {
         return currentInputHashes(repoRoot, {
           tasks,
-          taskIssues: TASK_ISSUES,
+          taskIssues: TASK_SPECS,
           model,
           multiPayload,
           protocolFormat,

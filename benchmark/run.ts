@@ -1,4 +1,4 @@
-import { randomUUID } from "node:crypto";
+import { createHash, randomUUID } from "node:crypto";
 import {
   cpSync,
   existsSync,
@@ -12,7 +12,8 @@ import {
 import { dirname, isAbsolute, join, relative, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 import { archiveFailureArtifacts, writeFailureArtifact } from "../src/failure-artifact";
-import { exchangeStats, runLoop } from "../src/loop";
+import { buildSystemPrompt, exchangeStats, runLoop } from "../src/loop";
+import { buildTaskExecutionSystemPrompt, buildTaskPlanningSystemPrompt } from "../src/prompts/task";
 import { OpenAIProvider, readConfigFromEnv } from "../src/openai";
 import type { AgentMode, ProviderLike, ProtocolFormat, RejectionCause } from "../src/loop";
 import { ReplayRecorder, usageFromRaw } from "../src/replay-format";
@@ -22,7 +23,7 @@ import {
   billableTokens,
   runCost,
 } from "../src/benchmark-pricing";
-import { currentInputHashes } from "../src/provenance";
+import { currentInputHashes, normalizeText, stableStringify } from "../src/provenance";
 import type { BillableTokens, RateClass } from "../src/benchmark-pricing";
 import type { RecordedProvenance } from "../src/provenance";
 import type { ChatMessage, ChatResponse, ReasoningEffort, ToolDefinition } from "../src/openai";
@@ -211,6 +212,17 @@ interface TokenStats {
   total: number | null;
 }
 
+/** One stable-prefix cache warm-up; excluded from the measured aggregates. */
+export interface WarmupRecord {
+  readonly agentMode: AgentMode;
+  readonly kind: "edit" | "planning" | "execution";
+  readonly promptChars: number;
+  readonly tokens: TokenUsage;
+  readonly usageAvailable: boolean;
+  readonly durationMs: number;
+  readonly error: string | null;
+}
+
 export interface AggregateRow {
   task: TaskName | null;
   side: Side | null;
@@ -227,6 +239,12 @@ export interface AggregateRow {
   tokens: { in: TokenStats; out: TokenStats; total: TokenStats };
   /** USD cost stats over runs that carry a cost (same shape as tokens). */
   cost: TokenStats;
+  /**
+   * Provider cache counters. `hitRate` is cacheRead / raw prompt tokens, where
+   * tc's raw input already includes hits and oc's input excludes them. It is
+   * the mean of the per-run ratios over usage runs.
+   */
+  cache: { read: TokenStats; hitRate: number | null };
   durationMsMean: number | null;
   stepsMean: number | null;
   tokensPerSuccess: { in: number | null; out: number | null; total: number | null };
@@ -283,6 +301,10 @@ export interface Report {
   opencodeVersion: string | null;
   pilotReference: string | null;
   infraErrors: string[];
+  /** Stable-prefix warm-ups; excluded from every measured token/cost table. */
+  warmups?: WarmupRecord[];
+  /** Set when variant cache-hit rates are far apart. */
+  cacheWarning?: string | null;
   runs: RunRecord[];
   aggregates: Aggregates;
   /**
@@ -342,47 +364,44 @@ const TASKS: readonly TaskSpec[] = [
   { name: "csv-parser" },
 ];
 
-// One issue string per task, used verbatim by both sides (G1 is quoted from
-// the benchmark issue; G2/G3 are analogous with their exported names).
-export const TASK_ISSUES: Record<TaskName, string> = {
-  "json-parser": [
-    "Implement src/json.ts exporting JsonValue and parseJson(text: string): JsonValue",
-    "so that src/json.test.ts passes and `bunx tsc --noEmit` stays clean.",
-    "Create or modify only src/json.ts - no other files, no scratch files;",
-    "src/json.test.ts and tsconfig.json are read-only.",
-    "The fixture contains only those files - nothing else to explore.",
-    "The test file is the specification; implement what it requires, nothing more.",
-    "Verify with `bun test` and `bunx tsc --noEmit` only.",
-  ].join("\n"),
-  "sexp-parser": [
-    "Implement src/sexp.ts exporting Sexp and parseSexp(text: string): Sexp",
-    "so that src/sexp.test.ts passes and `bunx tsc --noEmit` stays clean.",
-    "Create or modify only src/sexp.ts - no other files, no scratch files;",
-    "src/sexp.test.ts and tsconfig.json are read-only.",
-    "The fixture contains only those files - nothing else to explore.",
-    "The test file is the specification; implement what it requires, nothing more.",
-    "Verify with `bun test` and `bunx tsc --noEmit` only.",
-  ].join("\n"),
-  minilisp: [
-    "Implement src/lisp.ts exporting LispValue and run(program: string): LispValue",
-    "so that src/lisp.test.ts passes and `bunx tsc --noEmit` stays clean.",
-    "Create or modify only src/lisp.ts - no other files, no scratch files;",
-    "src/lisp.test.ts and tsconfig.json are read-only.",
-    "The fixture contains only those files - nothing else to explore.",
-    "The test file is the specification; implement what it requires, nothing more.",
-    "Verify with `bun test` and `bunx tsc --noEmit` only.",
-  ].join("\n"),
+/**
+ * The benchmark input is a standalone spec, not a one-line issue. Keeping the
+ * text in `benchmark/specs/<task>.md` makes the product contract reviewable
+ * without reading the fixture tests (which remain the acceptance check).
+ */
+function readTaskSpec(task: TaskName): string {
+  return readFileSync(fileURLToPath(new URL(`./specs/${task}.md`, import.meta.url)), "utf8").trim();
+}
+
+export const TASK_SPECS: Record<TaskName, string> = {
+  "json-parser": readTaskSpec("json-parser"),
+  "sexp-parser": readTaskSpec("sexp-parser"),
+  minilisp: readTaskSpec("minilisp"),
   // Held-out task (#67): never a target of prompt or loop iteration.
-  "csv-parser": [
-    "Implement src/csv.ts exporting parseCsv(text: string): string[][]",
-    "so that src/csv.test.ts passes and `bunx tsc --noEmit` stays clean.",
-    "Create or modify only src/csv.ts - no other files, no scratch files;",
-    "src/csv.test.ts and tsconfig.json are read-only.",
-    "The fixture contains only those files - nothing else to explore.",
-    "The test file is the specification; implement what it requires, nothing more.",
-    "Verify with `bun test` and `bunx tsc --noEmit` only.",
-  ].join("\n"),
+  "csv-parser": readTaskSpec("csv-parser"),
 };
+
+/** Historical name kept for provenance/checking code; it is the spec text. */
+export const TASK_ISSUES: Record<TaskName, string> = TASK_SPECS;
+
+/**
+ * Same text hash the provenance record uses for `taskIssue`. Frozen baselines
+ * were measured against the old one-line issues; comparing their token totals
+ * to spec-input runs would be apples-to-oranges.
+ */
+const TASK_SPEC_HASH = createHash("sha256")
+  .update(
+    normalizeText(
+      stableStringify(
+        Object.fromEntries(
+          (Object.keys(TASK_SPECS) as TaskName[])
+            .sort()
+            .map((task) => [task, normalizeText(TASK_SPECS[task])]),
+        ),
+      ),
+    ),
+  )
+  .digest("hex");
 
 // Reference implementations live in benchmark/references/ under short names
 // rather than task names (json.ts, sexp.ts, lisp.ts today).
@@ -394,7 +413,7 @@ const TASK_REFERENCE_BASENAMES: Record<TaskName, string> = {
 };
 
 const DEFAULT_MODEL = "deepseek-flash";
-const DEFAULT_REPS = 3;
+const DEFAULT_REPS = 5;
 const DEFAULT_CONCURRENCY = 4;
 const PILOT_REPS = 1;
 const OPENCODE_PROVIDER = "honghong";
@@ -442,7 +461,7 @@ function printUsage(): void {
 Options:
   --task <json-parser|sexp-parser|minilisp|csv-parser>  run a single task (default: all)
   --all                                      run all tasks (default)
-  --reps <n>                                 repetitions per task and side (default: 3)
+  --reps <n>                                 repetitions per task and side (default: 5; minimum 5, pilot uses 1)
   --concurrency <n>                          max parallel runs (default: ${DEFAULT_CONCURRENCY})
   --pilot                                    force 1 rep per task and side and write
                                              benchmark/results/pilot-<date>.json
@@ -787,6 +806,9 @@ export function parseArgs(argv: string[]): CliArgs {
     if (frozen !== null) {
       failUsage(frozen);
     }
+    if (!args.pilot && args.reps < 5) {
+      failUsage("--reps must be at least 5 for a measured run; use --pilot for one smoke rep");
+    }
   }
   return args;
 }
@@ -984,6 +1006,118 @@ class RecordingProvider implements ProviderLike {
     this.#recorder?.record(messages, response);
     return response;
   }
+}
+
+/**
+ * Warm only the cache-stable system prefixes: the edit system prompt, or the
+ * planning and execution system prompts for plan-exec. Task-specific user
+ * prompts are deliberately not warmed. These calls are recorded separately and
+ * never enter the measured aggregates.
+ */
+async function warmStablePrefixes(options: {
+  model: string;
+  multiPayload: boolean;
+  protocols: readonly ProtocolFormat[];
+  agentModes: readonly AgentMode[];
+}): Promise<WarmupRecord[]> {
+  const entries: { agentMode: AgentMode; kind: WarmupRecord["kind"]; prompt: string }[] = [];
+  for (const agentMode of options.agentModes) {
+    if (agentMode === "edit") {
+      for (const protocol of options.protocols) {
+        entries.push({
+          agentMode,
+          kind: "edit",
+          prompt: buildSystemPrompt(options.multiPayload, protocol),
+        });
+      }
+      continue;
+    }
+    entries.push({
+      agentMode,
+      kind: "planning",
+      prompt: buildTaskPlanningSystemPrompt(),
+    });
+    entries.push({
+      agentMode,
+      kind: "execution",
+      prompt: buildTaskExecutionSystemPrompt(),
+    });
+  }
+
+  const records: WarmupRecord[] = [];
+  for (const entry of entries) {
+    const started = performance.now();
+    let error: string | null = null;
+    let usage: TokenUsage = NULL_USAGE;
+    try {
+      const provider = new OpenAIProvider(
+        { ...readConfigFromEnv(options.model), timeoutMs: CHAT_TIMEOUT_MS },
+        fetchWithTimeout as typeof fetch,
+      );
+      const response = await provider.chat(
+        [
+          { role: "system", content: entry.prompt },
+          { role: "user", content: "Reply with exactly OK." },
+        ],
+        undefined,
+        { temperature: 0 },
+      );
+      usage = withDerivedTotal(tokenUsageFromOpenAi(response.raw));
+    } catch (caught) {
+      error = errorMessage(caught);
+    }
+    const record: WarmupRecord = {
+      agentMode: entry.agentMode,
+      kind: entry.kind,
+      promptChars: entry.prompt.length,
+      tokens: usage,
+      usageAvailable: usageReported(usage),
+      durationMs: Math.round(performance.now() - started),
+      error,
+    };
+    records.push(record);
+    process.stdout.write(
+      `warm ${entry.agentMode}/${entry.kind}: ${entry.prompt.length} chars${
+        error === null ? "" : ` (error: ${error})`
+      }\n`,
+    );
+  }
+  return records;
+}
+
+/** Set when cache-hit rates across variants differ by 20+ points. */
+export function cacheBalanceWarning(rows: readonly AggregateRow[]): string | null {
+  const groups = new Map<string, number[]>();
+  for (const row of rows) {
+    if (row.runs === 0 || row.cache.hitRate === null) {
+      continue;
+    }
+    const key = row.task ?? "all tasks";
+    const rates = groups.get(key) ?? [];
+    rates.push(row.cache.hitRate);
+    groups.set(key, rates);
+  }
+  const warnings: string[] = [];
+  for (const [task, rates] of groups) {
+    if (rates.length < 2) {
+      continue;
+    }
+    const min = Math.min(...rates);
+    const max = Math.max(...rates);
+    if (max - min < 0.2) {
+      continue;
+    }
+    warnings.push(
+      `${task}: ${formatPercent(min)}–${formatPercent(max)} (${Math.round(
+        (max - min) * 100,
+      )} points)`,
+    );
+  }
+  return warnings.length === 0
+    ? null
+    : `cache hit rates span ${warnings.join(
+        "; ",
+      )} across variants; billable token means may be distorted by cold-cache runs. Warm the stable prefix and repeat before comparing.`;
 }
 
 async function runTypescriptCoderSide(options: {
@@ -1459,7 +1593,7 @@ async function runOnce(job: BenchmarkJob, context: RunContext): Promise<RunRecor
   cpSync(fixtureDir, workspace, { recursive: true });
   initWorkspaceGit(workspace);
 
-  const issue = TASK_ISSUES[task];
+  const issue = TASK_SPECS[task];
   const replayPath =
     side === "tc" && context.replayDir !== null ? join(context.replayDir, `${runName}.json`) : null;
   let outcome: SideOutcome;
@@ -1596,6 +1730,29 @@ function writeReport(path: string, report: Report): void {
 // passing runs (judge-passing and not aborted at the token budget; null when
 // there were no successes). `cost` (USD, decision-only) stats cover runs that
 // carry a USD cost.
+/**
+ * Cache-hit share of a run's raw prompt tokens. tc's `input` already includes
+ * cached tokens; oc's export reports `input` as misses and `cacheRead`
+ * separately. Unknown usage stays null.
+ */
+function cacheHitRateForRun(run: RunRecord): number | null {
+  const read = run.tokens.cacheRead;
+  const input = run.tokens.input;
+  if (read === null || input === null) {
+    return null;
+  }
+  const raw = run.side === "tc" ? input : input + read;
+  return raw > 0 ? Math.min(1, read / raw) : null;
+}
+
+function numberStats(values: readonly number[]): TokenStats {
+  if (values.length === 0) {
+    return { mean: null, total: null };
+  }
+  const total = values.reduce((left, right) => left + right, 0);
+  return { mean: total / values.length, total };
+}
+
 export function aggregateRuns(
   runs: readonly RunRecord[],
   task: TaskName | null,
@@ -1640,6 +1797,19 @@ export function aggregateRuns(
     costValues.length === 0
       ? { mean: null, total: null }
       : { mean: costTotal / costValues.length, total: costTotal };
+  const cacheReadValues = selected
+    .map((run) => run.tokens.cacheRead)
+    .filter((value): value is number => value !== null);
+  const cacheHitRates = selected
+    .map((run) => cacheHitRateForRun(run))
+    .filter((value): value is number => value !== null);
+  const cache = {
+    read: numberStats(cacheReadValues),
+    hitRate:
+      cacheHitRates.length === 0
+        ? null
+        : cacheHitRates.reduce((left, right) => left + right, 0) / cacheHitRates.length,
+  };
   const perSuccess = (stats: TokenStats): number | null =>
     ok === 0 || stats.total === null ? null : stats.total / ok;
   // Selector adoption: sum the per-run exchange counts (#101); runs without
@@ -1690,6 +1860,7 @@ export function aggregateRuns(
     usageRuns: usageRuns.length,
     tokens,
     cost,
+    cache,
     durationMsMean:
       selected.length === 0
         ? null
@@ -1805,6 +1976,10 @@ function formatSteps(value: number | null): string {
 
 function formatPercent(value: number): string {
   return `${(value * 100).toFixed(1)}%`;
+}
+
+function formatCacheHit(value: number | null): string {
+  return value === null ? "n/a" : formatPercent(value);
 }
 
 function formatOneLine(text: string, limit = 160): string {
@@ -2088,7 +2263,21 @@ interface FrozenBaseline {
   readonly date: string | null;
   readonly model: string | null;
   readonly reps: number | null;
+  /** Hash of the task-spec text the baseline was measured against. */
+  readonly specHash: string | null;
   readonly byTaskSide: AggregateRow[];
+}
+
+/** Name the stale-spec condition once; reports must not compare these totals. */
+function staleBaselineSpec(
+  oc: FrozenBaseline,
+  json: FrozenBaseline,
+): { oc: string | null; json: string | null } | null {
+  const stale = {
+    oc: oc.specHash === TASK_SPEC_HASH ? null : oc.specHash,
+    json: json.specHash === TASK_SPEC_HASH ? null : json.specHash,
+  };
+  return stale.oc === null && stale.json === null ? null : stale;
 }
 
 /** Read one fixed baseline report, or null when it is missing/unreadable. */
@@ -2113,12 +2302,16 @@ function loadFrozenBaseline(repoRoot: string, relativePath: string): FrozenBasel
   const model = parsed["model"];
   const ocModel = parsed["ocModel"];
   const reps = parsed["reps"];
+  const provenance = parsed["provenance"];
+  const inputs = isRecord(provenance) ? provenance["inputs"] : null;
+  const specHash = isRecord(inputs) ? inputs["taskIssue"] : null;
   const label = typeof ocModel === "string" ? ocModel : model;
   return {
     path: relativePath,
     date: typeof date === "string" ? date : null,
     model: typeof label === "string" ? label : null,
     reps: typeof reps === "number" ? reps : null,
+    specHash: typeof specHash === "string" ? specHash : null,
     byTaskSide: rows as AggregateRow[],
   };
 }
@@ -2149,6 +2342,8 @@ export interface FourWayRow {
   readonly vsOc: number | null;
   /** Frozen tc json mean / this row's mean; >1 means fewer tokens. */
   readonly vsJson: number | null;
+  /** Mean provider cache-hit share for this variant. */
+  readonly cacheHitRate: number | null;
   /** Tasks summed into an overall row; 1 for a task row. */
   readonly tasks: number;
 }
@@ -2172,6 +2367,19 @@ function meanFor(
     const mean = row.tokens.total.mean;
     if (mean !== null && mean > 0) {
       return mean;
+    }
+  }
+  return null;
+}
+
+function cacheHitFor(
+  rows: readonly AggregateRow[],
+  task: TaskName | null,
+  predicate: (row: AggregateRow) => boolean,
+): number | null {
+  for (const row of rows) {
+    if (row.task === task && predicate(row)) {
+      return row.cache?.hitRate ?? null;
     }
   }
   return null;
@@ -2225,13 +2433,43 @@ export function fourWayComparison(
         (row.protocol ?? "edit-dsl") === "edit-dsl" &&
         row.agentMode === "plan-exec",
     );
-    const values: [FourWayVariant, number | null][] = [
-      ["oc", oc],
-      ["tc-json", json],
-      ["tc-edit", edit],
-      ["tc-plan-exec", plan],
+    const values: [FourWayVariant, number | null, number | null][] = [
+      ["oc", oc, cacheHitFor(ocBaselineByTaskSide, task, (row) => row.side === "oc")],
+      [
+        "tc-json",
+        json,
+        cacheHitFor(
+          jsonBaselineByTaskSide,
+          task,
+          (row) => row.side === "tc" && (row.protocol ?? "json") === "json",
+        ),
+      ],
+      [
+        "tc-edit",
+        edit,
+        cacheHitFor(
+          currentByTaskSide,
+          task,
+          (row) =>
+            row.side === "tc" &&
+            (row.protocol ?? "edit-dsl") === "edit-dsl" &&
+            (row.agentMode ?? "edit") === "edit",
+        ),
+      ],
+      [
+        "tc-plan-exec",
+        plan,
+        cacheHitFor(
+          currentByTaskSide,
+          task,
+          (row) =>
+            row.side === "tc" &&
+            (row.protocol ?? "edit-dsl") === "edit-dsl" &&
+            row.agentMode === "plan-exec",
+        ),
+      ],
     ];
-    for (const [variant, mean] of values) {
+    for (const [variant, mean, cacheHitRate] of values) {
       if (mean === null) {
         continue;
       }
@@ -2242,6 +2480,7 @@ export function fourWayComparison(
         mean,
         vsOc: variant === "oc" ? 1 : fourWayFactor(mean, oc),
         vsJson: variant === "tc-json" ? 1 : fourWayFactor(mean, json),
+        cacheHitRate,
         tasks: 1,
       });
     }
@@ -2265,13 +2504,45 @@ export function fourWayComparison(
   const jsonSum = sumFor((row) => row.variant === "tc-json");
   const editSum = sumFor((row) => row.variant === "tc-edit");
   const planSum = sumFor((row) => row.variant === "tc-plan-exec");
-  const overall: [FourWayVariant, number, number | null, number | null][] = [
-    ["oc", ocSum, 1, fourWayFactor(ocSum, jsonSum)],
-    ["tc-json", jsonSum, fourWayFactor(jsonSum, ocSum), 1],
-    ["tc-edit", editSum, fourWayFactor(editSum, ocSum), fourWayFactor(editSum, jsonSum)],
-    ["tc-plan-exec", planSum, fourWayFactor(planSum, ocSum), fourWayFactor(planSum, jsonSum)],
+  const cacheAverage = (predicate: (row: FourWayRow) => boolean): number | null => {
+    const values = rows
+      .filter(
+        (row) =>
+          row.task !== null &&
+          shared.includes(row.task) &&
+          predicate(row) &&
+          row.cacheHitRate !== null,
+      )
+      .map((row) => row.cacheHitRate as number);
+    return values.length === 0
+      ? null
+      : values.reduce((left, right) => left + right, 0) / values.length;
+  };
+  const overall: [FourWayVariant, number, number | null, number | null, number | null][] = [
+    ["oc", ocSum, 1, fourWayFactor(ocSum, jsonSum), cacheAverage((row) => row.variant === "oc")],
+    [
+      "tc-json",
+      jsonSum,
+      fourWayFactor(jsonSum, ocSum),
+      1,
+      cacheAverage((row) => row.variant === "tc-json"),
+    ],
+    [
+      "tc-edit",
+      editSum,
+      fourWayFactor(editSum, ocSum),
+      fourWayFactor(editSum, jsonSum),
+      cacheAverage((row) => row.variant === "tc-edit"),
+    ],
+    [
+      "tc-plan-exec",
+      planSum,
+      fourWayFactor(planSum, ocSum),
+      fourWayFactor(planSum, jsonSum),
+      cacheAverage((row) => row.variant === "tc-plan-exec"),
+    ],
   ];
-  for (const [variant, mean, vsOc, vsJson] of overall) {
+  for (const [variant, mean, vsOc, vsJson, cacheHitRate] of overall) {
     rows.push({
       task: null,
       variant,
@@ -2279,6 +2550,7 @@ export function fourWayComparison(
       mean: mean > 0 ? mean : null,
       vsOc,
       vsJson,
+      cacheHitRate,
       tasks: shared.length,
     });
   }
@@ -2321,6 +2593,15 @@ function resolveReferencePath(repoRoot: string, task: TaskName): string {
   return candidates[0] ?? "benchmark/references";
 }
 
+/** Use a fence longer than any run of backticks inside the spec. */
+function codeFenceFor(text: string): string {
+  const longestRun = (text.match(/`+/g) ?? []).reduce(
+    (longest, run) => Math.max(longest, run.length),
+    0,
+  );
+  return "`".repeat(Math.max(3, longestRun + 1));
+}
+
 export function writeMarkdownReport(mdPath: string, report: Report): void {
   const repoRoot = fileURLToPath(new URL("..", import.meta.url));
   const { aggregates } = report;
@@ -2361,12 +2642,13 @@ export function writeMarkdownReport(mdPath: string, report: Report): void {
   lines.push("## Frozen task specs", "");
   for (const task of report.tasks) {
     lines.push(`### ${task}`, "");
+    const fence = codeFenceFor(TASK_SPECS[task]);
     lines.push(
-      "Issue (verbatim, identical for both sides):",
+      "Spec (verbatim, identical for both sides):",
       "",
-      "```",
-      TASK_ISSUES[task],
-      "```",
+      fence,
+      TASK_SPECS[task],
+      fence,
       "",
     );
     lines.push(
@@ -2374,6 +2656,28 @@ export function writeMarkdownReport(mdPath: string, report: Report): void {
       `- reference: ${resolveReferencePath(repoRoot, task)}`,
       "",
     );
+  }
+
+  if ((report.warmups ?? []).length > 0) {
+    lines.push("## Cache warm-up", "");
+    lines.push(
+      "Only the cache-stable system prefixes were warmed; task-specific user prompts were not. These calls are excluded from every measured token/cost table.",
+      "",
+      "| Agent mode | Prefix | Prompt chars | Raw in | Cache read | Cache hit | Duration (s) | Error |",
+      "| --- | --- | ---: | ---: | ---: | ---: | ---: | --- |",
+    );
+    for (const warmup of report.warmups ?? []) {
+      const input = warmup.tokens.input;
+      const read = warmup.tokens.cacheRead;
+      lines.push(
+        `| ${warmup.agentMode} | ${warmup.kind} | ${warmup.promptChars} | ${formatTokenCount(
+          input,
+        )} | ${formatTokenCount(read)} | ${formatCacheHit(
+          input !== null && input > 0 && read !== null ? Math.min(1, read / input) : null,
+        )} | ${formatSeconds(warmup.durationMs)} | ${warmup.error ?? "none"} |`,
+      );
+    }
+    lines.push("");
   }
 
   lines.push("## Token and cost accounting", "");
@@ -2407,14 +2711,16 @@ export function writeMarkdownReport(mdPath: string, report: Report): void {
 
   lines.push("## Per-task results", "");
   lines.push(
-    "| Task | Side | Protocol | Agent mode | Success | Mean in (no cache) | Mean out | Mean total | Mean $ | $/success | Mean dur (s) | Mean steps |",
-    "| --- | --- | --- | --- | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: |",
+    "| Task | Side | Protocol | Agent mode | Success | Mean in (no cache) | Cache hit | Mean out | Mean total | Mean $ | $/success | Mean dur (s) | Mean steps |",
+    "| --- | --- | --- | --- | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: |",
   );
   for (const row of aggregates.byTaskSide) {
     lines.push(
       `| ${row.task ?? "all"} | ${row.side ?? "all"} | ${row.protocol ?? "n/a"} | ${row.agentMode ?? "n/a"} | ${row.ok}/${row.runs} | ${formatTokenCount(
         row.tokens.in.mean,
-      )} | ${formatTokenCount(row.tokens.out.mean)} | ${formatTokenCount(
+      )} | ${formatCacheHit(row.cache.hitRate)} | ${formatTokenCount(
+        row.tokens.out.mean,
+      )} | ${formatTokenCount(
         row.tokens.total.mean,
       )} | ${formatUsd(row.cost?.mean ?? null)} | ${formatUsd(row.costPerSuccess)} | ${formatSeconds(
         row.durationMsMean,
@@ -2425,14 +2731,14 @@ export function writeMarkdownReport(mdPath: string, report: Report): void {
 
   lines.push("## Overall comparison", "");
   lines.push(
-    "| Side | Protocol | Agent mode | Success | Mean in (no cache) | Mean out | Mean total | Total tokens | Mean $ | Total $ | $/success | Mean dur (s) | Mean steps |",
-    "| --- | --- | --- | --- | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: |",
+    "| Side | Protocol | Agent mode | Success | Mean in (no cache) | Cache hit | Mean out | Mean total | Total tokens | Mean $ | Total $ | $/success | Mean dur (s) | Mean steps |",
+    "| --- | --- | --- | --- | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: |",
   );
   for (const row of aggregates.bySide) {
     lines.push(
       `| ${row.side ?? "all"} | ${row.protocol ?? "n/a"} | ${row.agentMode ?? "n/a"} | ${row.ok}/${row.runs} | ${formatTokenCount(
         row.tokens.in.mean,
-      )} | ${formatTokenCount(row.tokens.out.mean)} | ${formatTokenCount(
+      )} | ${formatCacheHit(row.cache.hitRate)} | ${formatTokenCount(row.tokens.out.mean)} | ${formatTokenCount(
         row.tokens.total.mean,
       )} | ${formatTokenCount(row.tokens.total.total)} | ${formatUsd(
         row.cost?.mean ?? null,
@@ -2457,6 +2763,24 @@ export function writeMarkdownReport(mdPath: string, report: Report): void {
     );
   }
   lines.push("");
+  lines.push("## Cache hit balance", "");
+  lines.push(
+    "Cache hit = cacheRead / raw prompt tokens (tc input includes hits; oc input excludes them).",
+    "",
+    "| Side | Protocol | Agent mode | Cache hit | Cache-read tokens |",
+    "| --- | --- | --- | ---: | ---: |",
+  );
+  for (const row of aggregates.bySide) {
+    lines.push(
+      `| ${row.side ?? "all"} | ${row.protocol ?? "n/a"} | ${row.agentMode ?? "n/a"} | ${formatCacheHit(
+        row.cache.hitRate,
+      )} | ${formatTokenCount(row.cache.read.mean)} |`,
+    );
+  }
+  lines.push("");
+  if (report.cacheWarning !== null && report.cacheWarning !== undefined) {
+    lines.push(`> **Cache warning:** ${report.cacheWarning}`, "");
+  }
   lines.push(successRateSentence(aggregates.bySide), "");
   lines.push(tokenMultiplierSentence(aggregates.bySide, aggregates.byTaskSide), "");
   // The oc and tc-json sides are measured once; tc-only reports compare against
@@ -2464,7 +2788,18 @@ export function writeMarkdownReport(mdPath: string, report: Report): void {
   const ranOpencode = aggregates.bySide.some((row) => row.side === "oc");
   const ocBaseline = ranOpencode ? null : loadOcBaseline(repoRoot);
   const jsonBaseline = ranOpencode ? null : loadJsonBaseline(repoRoot);
-  if (ocBaseline !== null && jsonBaseline !== null) {
+  const staleSpecs =
+    ocBaseline !== null && jsonBaseline !== null
+      ? staleBaselineSpec(ocBaseline, jsonBaseline)
+      : null;
+  if (staleSpecs !== null) {
+    lines.push(
+      "## Baseline comparison unavailable",
+      "",
+      "The frozen oc/tc-json baselines were measured with a different task-spec text and are not token-comparable to these spec runs. Re-freeze the baselines against `benchmark/specs/` before using the four-way table.",
+      "",
+    );
+  } else if (ocBaseline !== null && jsonBaseline !== null) {
     const rows = fourWayComparison(
       aggregates.byTaskSide,
       ocBaseline.byTaskSide,
@@ -2484,15 +2819,17 @@ export function writeMarkdownReport(mdPath: string, report: Report): void {
         "",
       );
       lines.push(
-        "| Task | Variant | Mean total | vs oc baseline | vs tc json baseline |",
-        "| --- | --- | ---: | ---: | ---: |",
+        "| Task | Variant | Mean total | Cache hit | vs oc baseline | vs tc json baseline |",
+        "| --- | --- | ---: | ---: | ---: | ---: |",
       );
       const factor = (value: number | null): string =>
         value === null ? "n/a" : `${value.toFixed(2)}x`;
       for (const row of rows) {
         const task = row.task === null ? `**all ${row.tasks} tasks**` : row.task;
         lines.push(
-          `| ${task} | ${row.label} | ${formatTokenCount(row.mean)} | ${factor(row.vsOc)} | ${factor(row.vsJson)} |`,
+          `| ${task} | ${row.label} | ${formatTokenCount(row.mean)} | ${formatCacheHit(
+            row.cacheHitRate,
+          )} | ${factor(row.vsOc)} | ${factor(row.vsJson)} |`,
         );
       }
       const sentence = fourWaySavingsSentence(rows);
@@ -2822,7 +3159,7 @@ async function main(): Promise<number> {
   const provenanceFor = (protocol: ProtocolFormat, agentMode: AgentMode): RecordedProvenance => ({
     ...currentInputHashes(repoRoot, {
       tasks,
-      taskIssues: TASK_ISSUES,
+      taskIssues: TASK_SPECS,
       model: args.model,
       multiPayload: args.multiPayload,
       protocolFormat: protocol,
@@ -2908,6 +3245,17 @@ async function main(): Promise<number> {
     return 2;
   }
 
+  // Warm only the stable system prefixes; task-specific user prompts stay out
+  // of the cache warm-up so the measured runs still exercise cold user turns.
+  if (sides.includes("tc")) {
+    report.warmups = await warmStablePrefixes({
+      model: args.model,
+      multiPayload: args.multiPayload,
+      protocols,
+      agentModes: args.agentModes,
+    });
+  }
+
   // Rotate the previous round's artifacts (#51) once runs are certain to
   // execute; CLI single runs keep writing into `failures/` without rotating.
   const archived = archiveFailureArtifacts({ rootDir: repoRoot });
@@ -2970,6 +3318,10 @@ async function main(): Promise<number> {
   }
 
   report.aggregates = computeAggregates(report.runs, tasks, sides, protocols, args.agentModes);
+  report.cacheWarning = cacheBalanceWarning([
+    ...report.aggregates.byTaskSide,
+    ...report.aggregates.bySide,
+  ]);
   writeReport(jsonPath, report);
   writeMarkdownReport(markdownPathFor(jsonPath), report);
   const ranOpencode = report.aggregates.bySide.some((row) => row.side === "oc");
@@ -2977,15 +3329,21 @@ async function main(): Promise<number> {
     const ocBaseline = loadOcBaseline(repoRoot);
     const jsonBaseline = loadJsonBaseline(repoRoot);
     if (ocBaseline !== null && jsonBaseline !== null) {
-      const rows = fourWayComparison(
-        report.aggregates.byTaskSide,
-        ocBaseline.byTaskSide,
-        jsonBaseline.byTaskSide,
-        report.tasks,
-      );
-      const sentence = fourWaySavingsSentence(rows);
-      if (sentence !== null) {
-        process.stdout.write(`${sentence}\n`);
+      if (staleBaselineSpec(ocBaseline, jsonBaseline) !== null) {
+        process.stdout.write(
+          "baseline: frozen oc/tc-json baselines use a different task spec; four-way factors withheld\n",
+        );
+      } else {
+        const rows = fourWayComparison(
+          report.aggregates.byTaskSide,
+          ocBaseline.byTaskSide,
+          jsonBaseline.byTaskSide,
+          report.tasks,
+        );
+        const sentence = fourWaySavingsSentence(rows);
+        if (sentence !== null) {
+          process.stdout.write(`${sentence}\n`);
+        }
       }
     } else if (ocBaseline !== null) {
       const savings = savingsVsOcBaseline(report.aggregates.byTaskSide, ocBaseline.byTaskSide);

@@ -65,12 +65,12 @@ import {
   buildTaskTurnPrompt,
   MAX_TASK_EXCHANGES,
   MAX_TASK_PLAN_ROUNDS,
-  MAX_TASK_ROUNDS,
   renderTaskContentView,
   replanDelta,
 } from "./prompts/task";
 import {
-  allTasksDone,
+  activeRoot,
+  allRootsPassed,
   formatTaskLoc,
   initialState,
   isSafeTaskPath,
@@ -79,6 +79,10 @@ import {
   parseTaskPlan,
   readPlan,
   readyFrontier,
+  renderFailedRoots,
+  rootOrder,
+  rootTasksDone,
+  rootTaskOf,
   summaryOf,
 } from "./tasks";
 import type { EditTask, TaskId, TaskPlan, TaskRunState, TaskStatus } from "./tasks";
@@ -216,10 +220,23 @@ function writeRecord(
 // ---------------------------------------------------------------------------
 // Target guards: the plan declares one action per task; the reply must carry it.
 
-type TargetGuard = { ok: true; entry: IndexEntry | null } | { ok: false; diagnostics: string };
+type TargetGuard =
+  | { ok: true; entry: IndexEntry | null; related: IndexEntry[] }
+  | { ok: false; diagnostics: string };
 
 function taskLabel(task: EditTask): string {
   return `task #${task.id} (${task.action}) targets ${formatTaskLoc(task.loc)}`;
+}
+
+/** The addresses a migration task may edit: its target plus related locs. */
+function taskLocs(
+  task: EditTask,
+): readonly { path: string; symbol: string; kind: EditTask["loc"]["kind"] }[] {
+  return [task.loc, ...(task.related ?? [])];
+}
+
+function locatorOfLoc(loc: EditTask["loc"]): Locator {
+  return { path: loc.path, name: loc.symbol, kind: "" };
 }
 
 /** The current workspace files (paths and sources) for address resolution. */
@@ -230,11 +247,13 @@ function workspaceIndex(workspace: Workspace): SymbolIndex {
 
 function guardTarget(workspace: Workspace, task: EditTask): TargetGuard {
   const cwd = workspace.cwd;
-  if (!isSafeTaskPath(task.loc.path) || safeMutablePath(cwd, task.loc.path) === null) {
-    return {
-      ok: false,
-      diagnostics: `stage: address\n${taskLabel(task)}: the path is not a writable repo-relative path (no absolute path, "..", hidden/build segment, or human/)`,
-    };
+  for (const loc of taskLocs(task)) {
+    if (!isSafeTaskPath(loc.path) || safeMutablePath(cwd, loc.path) === null) {
+      return {
+        ok: false,
+        diagnostics: `stage: address\ntask #${task.id}: ${formatTaskLoc(loc)} is not a writable repo-relative path (no absolute path, "..", hidden/build segment, or human/)`,
+      };
+    }
   }
   const source = readTarget(cwd, task.loc.path);
   if (readFileIfExists(join(cwd, task.loc.path)) !== null) {
@@ -254,25 +273,37 @@ function guardTarget(workspace: Workspace, task: EditTask): TargetGuard {
     }
     // A name declared only in another symbol space is a legal create in this
     // one; only an entry in the requested space blocks the task.
-    return { ok: true, entry: null };
+    return { ok: true, entry: null, related: [] };
   }
   const existing = resolveCurrentEntry(source, task.loc.path, locatorOf(task), task.loc.kind);
   if (!existing.ok) {
     return { ok: false, diagnostics: `${existing.diagnostics}\n${taskLabel(task)}` };
   }
-  return { ok: true, entry: existing.entry };
+  const related: IndexEntry[] = [];
+  for (const loc of task.related ?? []) {
+    const resolved = resolveCurrentEntry(source, loc.path, locatorOfLoc(loc), loc.kind);
+    if (!resolved.ok) {
+      return {
+        ok: false,
+        diagnostics: `stage: address\ntask #${task.id} related target ${formatTaskLoc(loc)}: ${resolved.diagnostics}`,
+      };
+    }
+    related.push(resolved.entry);
+  }
+  return { ok: true, entry: existing.entry, related };
 }
 
-/** Statement indices of the task's own editor clauses: same path and symbol. */
+/** Statement indices allowed for the task's target and its related locs. */
 function ownStatementIndices(task: EditTask, statements: readonly EditStatement[]): Set<number> {
+  const keys = new Set(taskLocs(task).map((loc) => `${loc.path}\u0000${loc.symbol}`));
   const allowed = new Set<number>();
   for (let index = 0; index < statements.length; index += 1) {
     const statement = statements[index];
-    if (
-      statement?.type === "editor" &&
-      statement.selection.locator.path === task.loc.path &&
-      statement.selection.locator.name === task.loc.symbol
-    ) {
+    if (statement?.type !== "editor") {
+      continue;
+    }
+    const locator = statement.selection.locator;
+    if (keys.has(`${locator.path}\u0000${locator.name}`)) {
       allowed.add(index);
     }
   }
@@ -280,7 +311,11 @@ function ownStatementIndices(task: EditTask, statements: readonly EditStatement[
 }
 
 function targetMismatch(task: EditTask): string {
-  return `stage: address\n${taskLabel(task)}: the reply must edit only that declared target; re-address the task's own symbol`;
+  const related =
+    task.related === undefined || task.related.length === 0
+      ? ""
+      : ` or one of its related targets (${task.related.map((loc) => formatTaskLoc(loc)).join(", ")})`;
+  return `stage: address\n${taskLabel(task)}: the reply must edit only that declared target${related}; re-address the task's own symbols`;
 }
 
 /** True when the create fence declares exactly the task's symbol in its space. */
@@ -291,6 +326,9 @@ function createBodyCheck(task: EditTask, body: string): string | null {
   } catch {
     // Not a declaration list: the harness wraps the body in the task's space.
     return null;
+  }
+  if (program.body.length !== 1) {
+    return `stage: address\na create fence must contain exactly one top-level declaration (the task target); it carried ${program.body.length}. Put helper declarations in their own micro-tasks.`;
   }
   const binder = new Binder(program);
   const symbols = binder.rootScope.resolveLocal(task.loc.symbol);
@@ -489,10 +527,8 @@ async function applyTaskReply(
       appliedLocators: [],
     };
   }
-  const selections: EditDslSelection[] = [];
   for (const statement of statements) {
     if (statement.type === "editor") {
-      selections.push(statement.selection);
       continue;
     }
     if (statement.statement.op === "read") {
@@ -505,32 +541,56 @@ async function applyTaskReply(
       appliedLocators: [],
     };
   }
+  const own = ownStatementIndices(task, statements);
   const guarded = guardTarget(context.workspace, task);
   if (!guarded.ok) {
     return { ok: false, diagnostics: guarded.diagnostics, viewerOnly: false, appliedLocators: [] };
   }
   const sourceBefore = readTarget(context.cwd, task.loc.path);
-  const own = ownStatementIndices(task, statements);
   const normalized = new Map<number, EditDslSelection>();
+  const entryByIndex = new Map<number, IndexEntry | null>();
+  const locs = taskLocs(task);
   for (let index = 0; index < statements.length; index += 1) {
     const statement = statements[index];
-    if (statement?.type !== "editor" || !own.has(index)) {
+    if (statement?.type !== "editor") {
       continue;
     }
     const selection = statement.selection;
-    if (selection.space !== null && selection.space !== task.loc.kind) {
+    if (!own.has(index)) {
+      continue;
+    }
+    const matching = locs.filter(
+      (loc) =>
+        loc.path === selection.locator.path &&
+        loc.symbol === selection.locator.name &&
+        (selection.space === null || selection.space === loc.kind),
+    );
+    const loc = matching[0];
+    if (loc === undefined || matching.length !== 1) {
+      const sameName = locs.filter(
+        (candidate) =>
+          candidate.path === selection.locator.path && candidate.symbol === selection.locator.name,
+      );
       return {
         ok: false,
-        diagnostics: `stage: address\n${taskLabel(task)}: the clause resolves ${JSON.stringify(
-          selection.space,
-        )} but the task's loc.kind is ${JSON.stringify(task.loc.kind)}; use resolve ${task.loc.kind} or omit it`,
+        diagnostics:
+          sameName.length > 0
+            ? `stage: address\n${taskLabel(task)}: the clause resolves ${JSON.stringify(
+                selection.space,
+              )} but the task target is ${JSON.stringify(sameName[0]?.kind)}; use the matching symbol space or omit resolve`
+            : `stage: address\n${taskLabel(task)}: the clause resolves an address that is neither the target nor one of its related declarations`,
         viewerOnly: false,
         appliedLocators: [],
       };
     }
+    const entry =
+      loc === task.loc
+        ? guarded.entry
+        : (guarded.related[task.related?.indexOf(loc) ?? -1] ?? null);
+    entryByIndex.set(index, entry);
     normalized.set(
       index,
-      withExportModifier({ ...selection, space: task.loc.kind }, sourceBefore, guarded.entry),
+      withExportModifier({ ...selection, space: loc.kind }, sourceBefore, entry),
     );
   }
   const resolution = resolveMultiEditor(
@@ -546,10 +606,13 @@ async function applyTaskReply(
     return { ok: false, diagnostics: targetMismatch(task), viewerOnly: false, appliedLocators: [] };
   }
 
-  const renames = selections.filter(
+  const ownSelections = statements.flatMap((statement, index) =>
+    statement.type === "editor" && own.has(index) ? [statement.selection] : [],
+  );
+  const renames = ownSelections.filter(
     (selection) => selection.rename !== undefined && selection.rename !== null,
   );
-  const replacements = selections.filter((selection) => selection.replacement !== null);
+  const replacements = ownSelections.filter((selection) => selection.replacement !== null);
   const actionFailure = (detail: string): ReplyOutcome => ({
     ok: false,
     diagnostics: `stage: address\n${taskLabel(task)}: ${detail}`,
@@ -557,7 +620,7 @@ async function applyTaskReply(
     appliedLocators: [],
   });
   if (task.action === "rename") {
-    if (renames.length === 0 || renames.length !== selections.length) {
+    if (renames.length === 0 || renames.length !== ownSelections.length) {
       return actionFailure(
         `a rename task replies with exactly the rename clause(s) to ${JSON.stringify(task.renameTo)}; every clause must be \`rename <current> to <new>\`, never \`replace\``,
       );
@@ -599,7 +662,7 @@ async function applyTaskReply(
       );
     }
     if (task.action === "modify") {
-      for (const selection of selections) {
+      for (const selection of ownSelections) {
         if (
           selection.rename === undefined &&
           selection.replacement?.trim() === "" &&
@@ -613,8 +676,9 @@ async function applyTaskReply(
       }
     }
     if (task.action === "create") {
-      const created = resolution.regions.filter((region) => region.create);
-      if (created.length === 0 || created.length !== resolution.regions.length) {
+      const ownRegions = resolution.regions.filter((region) => own.has(region.index));
+      const created = ownRegions.filter((region) => region.create);
+      if (ownRegions.length > 0 && (created.length === 0 || created.length !== ownRegions.length)) {
         return actionFailure(
           "a create task adds the absent declaration with a whole-declaration clause (no `match`, no `pick`)",
         );
@@ -644,7 +708,8 @@ async function applyTaskReply(
       expandedRegions.push(region);
       continue;
     }
-    const expanded = expandVariableRegion(sourceBefore, guarded.entry as IndexEntry, region);
+    const entry = entryByIndex.get(region.index) ?? null;
+    const expanded = entry === null ? region : expandVariableRegion(sourceBefore, entry, region);
     if ("error" in expanded) {
       return { ok: false, diagnostics: expanded.error, viewerOnly: false, appliedLocators: [] };
     }
@@ -725,6 +790,15 @@ async function applyTaskReply(
 /** The declaration (or whole file for create) and its 1-based start line. */
 function declarationView(cwd: string, task: EditTask): { view: string; startLine: number } {
   const source = readTarget(cwd, task.loc.path);
+  if (task.related !== undefined && task.related.length > 0) {
+    // A migration task needs the whole file because related declarations can be
+    // far apart; the numbered view keeps their file-absolute line numbers.
+    const lines = source.split("\n");
+    if (lines.length > 0 && lines[lines.length - 1] === "") {
+      lines.pop();
+    }
+    return { view: lines.join("\n"), startLine: 1 };
+  }
   const entry = resolveCurrentEntry(source, task.loc.path, locatorOf(task), task.loc.kind);
   const startOffset = entry.ok ? entry.entry.node.start : 0;
   const endOffset = entry.ok ? entry.entry.node.end : source.length;
@@ -746,10 +820,14 @@ interface TaskExecution {
   messages: ChatMessage[];
 }
 
-/** Run the check command and record the verification row. */
-async function verifyTask(
+/**
+ * Run one root gate after every micro-task in that root is done. A `tsc` gate
+ * runs the type check; a `test` gate also runs the test suite. The gate is the
+ * only place a type/test failure is turned into planner diagnostics.
+ */
+async function verifyRoot(
   context: ExecutionContext,
-  task: EditTask,
+  rootTask: EditTask,
   baseSource: string,
 ): Promise<{ ok: boolean; diagnostics: string | null }> {
   const check = await checkTool(
@@ -757,36 +835,39 @@ async function verifyTask(
     context.options.checkCommand,
     context.options.commandTimeoutMs,
   );
-  const diagnostics = check.ok
-    ? null
-    : formatDiagnostics({
-        check,
-        test: { ok: true, exitCode: 0, output: "" },
-        targetPath: task.loc.path,
-        baseSource,
-        newSource: readTarget(context.cwd, task.loc.path),
-      });
+  const test =
+    check.ok && rootTask.verify === "test"
+      ? await testTool(context.cwd, context.options.testCommand, context.options.commandTimeoutMs)
+      : { ok: true, exitCode: 0, output: "" };
+  const diagnostics =
+    check.ok && test.ok
+      ? null
+      : formatDiagnostics({
+          check,
+          test,
+          targetPath: rootTask.loc.path,
+          baseSource,
+          newSource: readTarget(context.cwd, rootTask.loc.path),
+          sourceFor: (path) => readTarget(context.cwd, path),
+        });
   writeRecord(context.records, {
     iteration: context.iteration,
     kind: "verification",
     exchange: null,
-    task,
-    outcome: check.ok ? "ok" : "tsc",
+    task: rootTask,
+    outcome: check.ok ? (test.ok ? "ok" : "tests") : "tsc",
     replacement: null,
     diagnostics,
     finishReason: null,
   });
-  return { ok: check.ok, diagnostics };
+  return { ok: check.ok && test.ok, diagnostics };
 }
 
 /**
- * Run one task to its tsc verdict. Within the task: at most
- * `MAX_TASK_EXCHANGES` exchanges per round and `MAX_TASK_ROUNDS` rounds. The
- * first applied edit runs the type check; a pass is the task's success, a
- * failure is the next round's diagnostics. A reply that does not arrive at the
- * target (a viewer, an address miss, a wrong action form) only consumes an
- * exchange — but an applied edit that leaves the type check failing ends a
- * round, because the source changed and the repair prompt must show it.
+ * Carry out one micro-task. There is no per-task type check: the executor just
+ * lands the edit, and the root gate runs after every sibling micro-task has
+ * completed. Protocol/address failures still consume one of the bounded
+ * exchanges.
  */
 async function executeTask(
   context: ExecutionContext,
@@ -794,156 +875,132 @@ async function executeTask(
   task: EditTask,
 ): Promise<TaskExecution> {
   let diagnostics: string | undefined;
-  let repair = false;
-  let lastApplied: string | null = null;
   let consecutiveLength = 0;
   let selfCheckUsed = false;
+  let formatHelp = false;
 
-  for (let round = 1; round <= MAX_TASK_ROUNDS; round += 1) {
-    // The repair renderer maps diagnostics against the source this round
-    // started from, not the pre-task state.
-    const roundBase = readTarget(context.cwd, task.loc.path);
-    for (let exchange = 1; exchange <= MAX_TASK_EXCHANGES; exchange += 1) {
-      // The previous turn's user prompt is replaced when it was the base one;
-      // otherwise the turn is appended so the conversation keeps its history.
-      const view = declarationView(context.cwd, task);
-      const prompt = buildTaskTurnPrompt({
-        state: context.runState,
-        task,
-        contentView: renderTaskContentView(view.view, view.startLine),
-        startLine: view.startLine,
-        diagnostics,
-        repair,
-        context: `This is task #${task.id} (${task.action})${repair ? `, round ${round} of ${MAX_TASK_ROUNDS}` : ""}. Do not change other declarations or files.`,
-      });
-      const last = chat.messages[chat.messages.length - 1];
-      if (last?.role === "user" && (last.content ?? "").startsWith("# Task")) {
-        chat.messages[chat.messages.length - 1] = { role: "user", content: prompt };
-      } else {
-        chat.messages.push({ role: "user", content: prompt });
-      }
-      let response: ChatResponse;
-      try {
-        response = await callModel(chat, context.options.provider, context.options);
-      } catch (error) {
-        return { ok: false, diagnostics: providerErrorDiagnostics(error), messages: chat.messages };
-      }
-      const budget = context.options.tokenBudget ?? DEFAULT_TOKEN_BUDGET;
-      if (overBudget(chat, budget)) {
+  for (let exchange = 1; exchange <= MAX_TASK_EXCHANGES; exchange += 1) {
+    const view = declarationView(context.cwd, task);
+    const prompt = buildTaskTurnPrompt({
+      state: context.runState,
+      task,
+      contentView: renderTaskContentView(view.view, view.startLine),
+      startLine: view.startLine,
+      diagnostics,
+      help: formatHelp,
+      context: `This is task #${task.id} (${task.action}) in root #${task.root}. Do not change declarations outside this task's target and related list.`,
+    });
+    const last = chat.messages[chat.messages.length - 1];
+    if (last?.role === "user" && (last.content ?? "").startsWith("# Task")) {
+      chat.messages[chat.messages.length - 1] = { role: "user", content: prompt };
+    } else {
+      chat.messages.push({ role: "user", content: prompt });
+    }
+    let response: ChatResponse;
+    try {
+      response = await callModel(chat, context.options.provider, context.options);
+    } catch (error) {
+      return { ok: false, diagnostics: providerErrorDiagnostics(error), messages: chat.messages };
+    }
+    const budget = context.options.tokenBudget ?? DEFAULT_TOKEN_BUDGET;
+    if (overBudget(chat, budget)) {
+      return {
+        ok: false,
+        diagnostics: tokenBudgetDiagnostics(chat.consumed, budget),
+        messages: chat.messages,
+      };
+    }
+    const content = response.content ?? "";
+    chat.messages.push({ role: "assistant", content });
+    if (response.finishReason === "length") {
+      consecutiveLength += 1;
+      if (consecutiveLength >= MAX_CONSECUTIVE_LENGTH) {
         return {
           ok: false,
-          diagnostics: tokenBudgetDiagnostics(chat.consumed, budget),
+          diagnostics: `output-limit: the completion hit the output limit ${MAX_CONSECUTIVE_LENGTH} times in a row`,
           messages: chat.messages,
         };
       }
-      const content = response.content ?? "";
-      chat.messages.push({ role: "assistant", content });
-      if (response.finishReason === "length") {
-        consecutiveLength += 1;
-        if (consecutiveLength >= MAX_CONSECUTIVE_LENGTH) {
-          return {
-            ok: false,
-            diagnostics: `output-limit: the completion hit the output limit ${MAX_CONSECUTIVE_LENGTH} times in a row`,
-            messages: chat.messages,
-          };
-        }
+    } else {
+      consecutiveLength = 0;
+    }
+    const request = parseSelfCheckRequest(content);
+    if (request.kind === "error") {
+      diagnostics = request.diagnostics;
+      formatHelp = true;
+      continue;
+    }
+    if (request.kind === "ok") {
+      if (selfCheckUsed) {
+        diagnostics =
+          "stage: protocol\nthe task already used its one read; return the edit clauses now";
+        formatHelp = true;
       } else {
-        consecutiveLength = 0;
+        selfCheckUsed = true;
+        diagnostics =
+          request.request === "read"
+            ? `Self-check (read): current source of ${formatTaskLoc(task.loc)}.\n\n${renderTaskContentView(view.view, view.startLine)}`
+            : `Self-check (${request.request}): a task turn edits code; \`read\` is the only self-check accepted here.`;
+        formatHelp = request.request !== "read";
       }
-      // Bounded self-check: read-only, once per task, so the executor can reread
-      // its target without listing files or choosing commands.
-      const request = parseSelfCheckRequest(content);
-      if (request.kind === "error") {
-        diagnostics = request.diagnostics;
-        repair = false;
-        continue;
-      }
-      if (request.kind === "ok") {
-        if (selfCheckUsed) {
-          diagnostics =
-            "stage: protocol\nthe task already used its one read; return the edit clauses now";
-        } else {
-          selfCheckUsed = true;
-          diagnostics =
-            request.request === "read"
-              ? `Self-check (read): current source of ${formatTaskLoc(task.loc)}.\n\n${renderTaskContentView(view.view, view.startLine)}`
-              : `Self-check (${request.request}): a task turn edits code; \`read\` is the only self-check accepted here.`;
-        }
-        repair = false;
-        continue;
-      }
-      const doneWord = /^TASK[ _-]?DONE\b/i.test(
-        stripCodeFences(content)
-          .replace(/[.!]+$/, "")
-          .trim(),
-      );
-      if (doneWord) {
-        if (lastApplied === null) {
-          diagnostics = `stage: protocol\nTASK_DONE ends a task that applied an edit; this task has not changed ${formatTaskLoc(task.loc)} yet, so reply with the edit clauses`;
-          writeRecord(context.records, {
-            iteration: context.iteration,
-            kind: "exchange",
-            exchange,
-            task,
-            outcome: "protocol",
-            replacement: content,
-            diagnostics,
-            finishReason: response.finishReason,
-          });
-          continue;
-        }
-        const recheck = await verifyTask(context, task, roundBase);
-        if (recheck.ok) {
-          return { ok: true, diagnostics: null, messages: chat.messages };
-        }
-        diagnostics = recheck.diagnostics ?? "stage: tsc\nthe check command failed";
-        repair = true;
-        break;
-      }
-      const outcome = await applyTaskReply(context, task, content);
-      if (!outcome.ok) {
-        diagnostics = outcome.diagnostics ?? "stage: protocol\nthe edit was rejected";
-        writeRecord(context.records, {
-          iteration: context.iteration,
-          kind: "exchange",
-          exchange,
-          task,
-          outcome: outcome.viewerOnly ? "viewer" : outcomeOf(stageOf(diagnostics)),
-          replacement: content,
-          diagnostics,
-          finishReason: response.finishReason,
-        });
-        repair = false;
-        continue;
-      }
-      lastApplied = content;
+      continue;
+    }
+    const doneWord = /^TASK[ _-]?DONE\b/i.test(
+      stripCodeFences(content)
+        .replace(/[.!]+$/, "")
+        .trim(),
+    );
+    if (doneWord) {
+      diagnostics = `stage: protocol\nTASK_DONE ends a task that applied an edit; this task has not changed ${formatTaskLoc(task.loc)} yet, so reply with the edit clauses`;
+      formatHelp = true;
       writeRecord(context.records, {
         iteration: context.iteration,
         kind: "exchange",
         exchange,
         task,
-        outcome: "applied",
+        outcome: "protocol",
         replacement: content,
-        diagnostics: outcome.diagnostics,
+        diagnostics,
         finishReason: response.finishReason,
-        payloads: 1,
-        appliedLocators: outcome.appliedLocators,
       });
-      const check = await verifyTask(context, task, roundBase);
-      if (check.ok) {
-        return { ok: true, diagnostics: null, messages: chat.messages };
-      }
-      diagnostics = check.diagnostics ?? `stage: tsc\nthe check command failed`;
-      repair = true;
-      break;
+      continue;
     }
-    if (diagnostics === undefined) {
-      diagnostics = "stage: protocol\nthe task ran out of exchanges without an edit";
+    const outcome = await applyTaskReply(context, task, content);
+    if (!outcome.ok) {
+      diagnostics = outcome.diagnostics ?? "stage: protocol\nthe edit was rejected";
+      formatHelp =
+        outcome.viewerOnly ||
+        /^stage: (protocol|syntax|address|matcher|range|no-op)/.test(diagnostics);
+      writeRecord(context.records, {
+        iteration: context.iteration,
+        kind: "exchange",
+        exchange,
+        task,
+        outcome: outcome.viewerOnly ? "viewer" : outcomeOf(stageOf(diagnostics)),
+        replacement: content,
+        diagnostics,
+        finishReason: response.finishReason,
+      });
+      continue;
     }
+    formatHelp = false;
+    writeRecord(context.records, {
+      iteration: context.iteration,
+      kind: "exchange",
+      exchange,
+      task,
+      outcome: "applied",
+      replacement: content,
+      diagnostics: outcome.diagnostics,
+      finishReason: response.finishReason,
+      payloads: 1,
+      appliedLocators: outcome.appliedLocators,
+    });
+    return { ok: true, diagnostics: null, messages: chat.messages };
   }
   return {
     ok: false,
-    diagnostics: `stage: task-failed\n${taskLabel(task)} did not reach a passing type check within ${MAX_TASK_EXCHANGES} exchanges × ${MAX_TASK_ROUNDS} rounds\n\n${diagnostics}`,
+    diagnostics: `stage: task-failed\n${taskLabel(task)} did not land an edit within ${MAX_TASK_EXCHANGES} exchanges\n\n${diagnostics ?? "the task ran out of exchanges without an edit"}`,
     messages: chat.messages,
   };
 }
@@ -956,14 +1013,16 @@ function fingerprintPlan(tasks: readonly EditTask[]): string {
     .map((task) =>
       [
         task.id,
+        task.root,
+        task.verify ?? "",
         task.action,
         task.loc.path,
         task.loc.symbol,
         task.loc.kind,
         task.instruction,
         task.deps.join(","),
+        (task.related ?? []).map((loc) => `${loc.path}:${loc.kind}:${loc.symbol}`).join(","),
         task.renameTo ?? "",
-        task.parent ?? "",
       ].join("|"),
     )
     .join("\n");
@@ -975,7 +1034,15 @@ function dagWire(state: TaskRunState): string {
   for (const task of state.tasks) {
     status[String(task.id)] = state.status.get(task.id) ?? "todo";
   }
-  return JSON.stringify({ tasks: state.tasks, todo: readyFrontier(state), status }, null, 2);
+  const rootStatus: Record<string, string> = {};
+  for (const root of rootOrder(state.tasks)) {
+    rootStatus[String(root)] = state.rootStatus.get(root) ?? "pending";
+  }
+  return JSON.stringify(
+    { tasks: state.tasks, todo: readyFrontier(state), status, rootStatus },
+    null,
+    2,
+  );
 }
 
 /**
@@ -1003,6 +1070,7 @@ export async function runTaskLoop(options: LoopOptions): Promise<LoopResult> {
   };
   const records: LoopRecord[] = [];
   const failures = new Map<TaskId, string>();
+  const rootFailures = new Map<TaskId, string>();
   let iteration = 0;
   let current: TaskRunState | null = null;
 
@@ -1129,7 +1197,7 @@ export async function runTaskLoop(options: LoopOptions): Promise<LoopResult> {
   let planningRounds = 1;
 
   const replan = async (
-    testDiagnostics: string | undefined,
+    gateDiagnostics: string | undefined,
     blocked: string | undefined,
   ): Promise<TaskRunState | LoopResult> => {
     const state = current as TaskRunState;
@@ -1142,16 +1210,19 @@ export async function runTaskLoop(options: LoopOptions): Promise<LoopResult> {
     const failedIds = state.tasks
       .filter((task) => state.status.get(task.id) === "failed")
       .map((task) => task.id);
+    const currentFiles = discoverSourceFiles(cwd);
     planningMessages.push({
       role: "user",
       content: buildTaskReplanPrompt({
         state,
         failures,
-        testDiagnostics,
+        rootFailures,
+        gateDiagnostics,
         blocked,
+        symbolIndex: buildContextYaml(currentFiles),
         delta: replanDelta({
           failedIds,
-          testsFailed: testDiagnostics !== undefined,
+          testsFailed: gateDiagnostics !== undefined,
           blocked: blocked !== undefined,
         }),
       }),
@@ -1207,39 +1278,76 @@ export async function runTaskLoop(options: LoopOptions): Promise<LoopResult> {
     return chat;
   };
 
+  /** Sources at the moment a root became active, for mapping gate diagnostics. */
+  const rootBases = new Map<TaskId, Map<string, string>>();
+  const baseSourcesFor = (state: TaskRunState, root: TaskId): Map<string, string> => {
+    const existing = rootBases.get(root);
+    if (existing !== undefined) {
+      return existing;
+    }
+    const bases = new Map<string, string>();
+    for (const task of state.tasks.filter((candidate) => candidate.root === root)) {
+      bases.set(task.loc.path, readTarget(cwd, task.loc.path));
+    }
+    rootBases.set(root, bases);
+    return bases;
+  };
+
   for (;;) {
     const state = current as TaskRunState;
-    const queue = readyFrontier(state);
-    if (queue.length === 0) {
-      if (allTasksDone(state)) {
-        const test = await testTool(cwd, options.testCommand, options.commandTimeoutMs);
-        const diagnostics = test.ok
-          ? null
-          : `stage: tests\ntests failed:\n${test.output.trim() === "" ? "(no output)" : test.output.trim()}`;
-        const firstTask = state.tasks[0];
-        if (firstTask !== undefined) {
-          writeRecord(records, {
-            iteration,
-            kind: "verification",
-            exchange: null,
-            task: firstTask,
-            outcome: test.ok ? "ok" : "tests",
-            replacement: null,
-            diagnostics,
-            finishReason: null,
-          });
-        }
-        if (test.ok) {
-          return success(state);
-        }
-        const merged = await replan(diagnostics ?? "stage: tests\ntests failed", undefined);
-        if ("ok" in merged) {
-          return merged;
-        }
+    if (allRootsPassed(state)) {
+      return success(state);
+    }
+    const root = activeRoot(state);
+    if (root === null) {
+      const merged = await replan(
+        undefined,
+        "No root is pending; add a new root (with a final test gate) for the remaining work.",
+      );
+      if ("ok" in merged) {
+        return merged;
+      }
+      continue;
+    }
+    const rootTask = rootTaskOf(state, root);
+    if (rootTask === undefined) {
+      return terminated("task-exhausted", `task-exhausted: root #${root} has no root task`);
+    }
+    const bases = baseSourcesFor(state, root);
+
+    if (rootTasksDone(state, root)) {
+      iteration += 1;
+      const context: ExecutionContext = {
+        cwd,
+        workspace,
+        options,
+        records,
+        runState: state,
+        iteration,
+      };
+      const gate = await verifyRoot(
+        context,
+        rootTask,
+        bases.get(rootTask.loc.path) ?? readTarget(cwd, rootTask.loc.path),
+      );
+      if (gate.ok) {
+        state.rootStatus.set(root, "passed");
+        rootFailures.delete(root);
         continue;
       }
+      state.rootStatus.set(root, "failed");
+      rootFailures.set(root, gate.diagnostics ?? "stage: root-gate\nthe root gate failed");
+      const merged = await replan(gate.diagnostics ?? undefined, undefined);
+      if ("ok" in merged) {
+        return merged;
+      }
+      continue;
+    }
+
+    const queue = readyFrontier(state);
+    if (queue.length === 0) {
       const blocked = state.tasks
-        .filter((task) => state.status.get(task.id) === "todo")
+        .filter((task) => task.root === root && state.status.get(task.id) === "todo")
         .map(
           (task) =>
             `#${task.id} waits on ${task.deps
@@ -1247,7 +1355,10 @@ export async function runTaskLoop(options: LoopOptions): Promise<LoopResult> {
               .join(", ")}`,
         )
         .join("; ");
-      const merged = await replan(undefined, `No task is ready: ${blocked}`);
+      const merged = await replan(
+        undefined,
+        `Root #${root} has no ready micro-task: ${blocked || "the root has no todo tasks"}`,
+      );
       if ("ok" in merged) {
         return merged;
       }
@@ -1255,7 +1366,9 @@ export async function runTaskLoop(options: LoopOptions): Promise<LoopResult> {
     }
 
     const chat = executionChat(state);
-    const baseMessages = chat.messages;
+    // Every micro-task starts from the stable system + DAG prefix; task turns
+    // are volatile and must not leak into the next task.
+    const baseMessages = [...chat.messages];
     let failedThisWave = false;
     let visits = 0;
     const maxVisits = Math.max(MAX_TASKS * 4, state.tasks.length * 4);
@@ -1274,7 +1387,7 @@ export async function runTaskLoop(options: LoopOptions): Promise<LoopResult> {
       }
       iteration += 1;
       state.status.set(id, "in-progress");
-      chat.messages = baseMessages;
+      chat.messages = [...baseMessages];
       const context: ExecutionContext = {
         cwd,
         workspace,
@@ -1295,6 +1408,22 @@ export async function runTaskLoop(options: LoopOptions): Promise<LoopResult> {
       if (!outcome.ok) {
         state.status.set(id, "failed");
         failures.set(id, outcome.diagnostics ?? "the task failed");
+        // A root cannot reach its gate after one of its micro-tasks failed;
+        // close it until a re-plan adds or amends repair work.
+        state.rootStatus.set(root, "failed");
+        for (const sibling of state.tasks) {
+          if (
+            sibling.root === root &&
+            sibling.id !== id &&
+            state.status.get(sibling.id) === "todo"
+          ) {
+            state.status.set(sibling.id, "failed");
+            failures.set(
+              sibling.id,
+              `root #${root} closed because task #${id} failed before the root gate`,
+            );
+          }
+        }
         failedThisWave = true;
         break;
       }
@@ -1313,14 +1442,8 @@ export async function runTaskLoop(options: LoopOptions): Promise<LoopResult> {
       }
       continue;
     }
-    // The ready frontier drained. Tasks whose deps are now done were queued
-    // in-wave; a non-empty frontier here means the plan's todo order was
-    // broader than the deps, which readyFrontier already normalizes.
-    const remaining = readyFrontier(state);
-    if (remaining.length > 0) {
-      queue.push(...remaining);
-    }
+    // The root's micro-tasks are done; the next iteration runs its gate.
   }
 }
 
-export { MAX_TASK_EXCHANGES, MAX_TASK_ROUNDS, MAX_TASK_PLAN_ROUNDS };
+export { MAX_TASK_EXCHANGES, MAX_TASK_PLAN_ROUNDS };

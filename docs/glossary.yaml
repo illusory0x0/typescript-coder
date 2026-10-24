@@ -419,20 +419,25 @@ categories:
         definition: >-
           Working solution under `benchmark/references/{json,sexp,lisp,csv}.ts`,
           used by the benchmark self-check and the judge golden corpus.
+      - term: TASK_SPECS
+        definition: >-
+          One frozen spec per task under `benchmark/specs/<task>.md`, loaded as
+          `TASK_SPECS` in `benchmark/run.ts` and used verbatim by both sides.
+          `TASK_ISSUES` remains as a historical alias.
       - term: TASK_ISSUES
-        definition: One frozen issue string per task in `benchmark/run.ts`, used verbatim by both sides.
+        definition: Historical alias for `TASK_SPECS`; the value is now spec text, not a one-line issue.
       - term: TASK_REFERENCE_BASENAMES
         definition: Maps each task to its short reference filename (json, sexp, lisp, csv).
       - term: run
         definition: One task times side times rep execution; kept in `report.runs` whatever its outcome.
       - term: rep
-        definition: Repetition count; default 3. The series treats n=3 as samples, not a distribution.
+        definition: Repetition count; default 5. The series treats n=5 as samples, not a distribution.
       - term: pilot
         definition: >-
           `--pilot` forces 1 rep per task and side and writes
           `benchmark/results/pilot-<date>.json`.
       - term: reps flag
-        definition: "`--reps <n>` sets repetitions; default 3."
+        definition: "`--reps <n>` sets repetitions; default 5."
       - term: concurrency
         definition: >-
           `--concurrency <n>` bounds the worker pool; default 4. Each job keeps
@@ -818,7 +823,7 @@ categories:
       - term: writeMarkdownReport
         definition: Emits the dated Markdown report next to the result JSON.
       - term: Frozen task specs section
-        definition: Report section printing each verbatim issue plus its fixture and reference paths.
+        definition: Report section printing each verbatim task spec plus its fixture and reference paths.
       - term: Token and cost accounting section
         definition: Report section explaining the cache-excluded, like-for-like basis for both sides.
       - term: Per-task results section

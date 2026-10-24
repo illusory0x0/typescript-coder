@@ -10,6 +10,8 @@
  *   "tasks": [
  *     {
  *       "id": 1,
+ *       "root": 1,
+ *       "verify": "test",
  *       "loc": { "path": "src/helper.ts", "symbol": "answer", "kind": "value" },
  *       "deps": [],
  *       "action": "modify",
@@ -38,6 +40,14 @@ export type TaskAction = (typeof TASK_ACTIONS)[number];
 export const TASK_STATUSES = ["todo", "in-progress", "done", "failed"] as const;
 export type TaskStatus = (typeof TASK_STATUSES)[number];
 
+/** The verification gate a root runs after all of its micro-tasks finish. */
+export const ROOT_VERIFIES = ["tsc", "test"] as const;
+export type RootVerify = (typeof ROOT_VERIFIES)[number];
+
+/** Harness-owned gate state for one root. */
+export const ROOT_STATUSES = ["pending", "passed", "failed"] as const;
+export type RootStatus = (typeof ROOT_STATUSES)[number];
+
 export interface TaskLoc {
   /** Repo-relative path, inside the workspace. */
   path: string;
@@ -49,9 +59,19 @@ export interface TaskLoc {
 
 export interface EditTask {
   id: TaskId;
+  /**
+   * The root task this micro-task belongs to. A root task names itself
+   * (`root === id`) and carries `verify`; every other task points at one.
+   */
+  root: TaskId;
+  /** Verification gate, required exactly on a root task. */
+  verify?: RootVerify;
+  /**
+   * Additional same-file declarations a migration task may edit atomically.
+   * Allowed only with action `modify`.
+   */
+  related?: TaskLoc[];
   loc: TaskLoc;
-  /** Organizational grouping only; never orders execution. Omitted = root. */
-  parent?: TaskId;
   /** Execution-order edges. Every dependency must finish first. */
   deps: TaskId[];
   action: TaskAction;
@@ -70,20 +90,24 @@ export interface TaskPlan {
   status: ReadonlyMap<TaskId, TaskStatus>;
 }
 
-/** The scheduling state: the DAG plus the harness-owned status map. */
+/** The scheduling state: the DAG plus the harness-owned task and root status. */
 export interface TaskRunState {
   tasks: EditTask[];
   status: Map<TaskId, TaskStatus>;
+  rootStatus: Map<TaskId, RootStatus>;
 }
 
 /** Caps the contract enforces before a plan can drive a run. */
 export const MAX_TASKS = 64;
 export const MAX_INSTRUCTION_LENGTH = 4_000;
+export const MAX_RELATED_LOCS = 16;
 
 const TASK_KEYS: ReadonlySet<string> = new Set([
   "id",
+  "root",
+  "verify",
+  "related",
   "loc",
-  "parent",
   "deps",
   "action",
   "instruction",
@@ -93,6 +117,7 @@ const LOC_KEYS: ReadonlySet<string> = new Set(["path", "symbol", "kind"]);
 const PLAN_KEYS: ReadonlySet<string> = new Set(["tasks", "todo", "status"]);
 const SPACES: ReadonlySet<string> = new Set(["value", "type", "namespace"]);
 const STATUS_SET: ReadonlySet<string> = new Set(TASK_STATUSES);
+const ROOT_VERIFY_SET: ReadonlySet<string> = new Set(ROOT_VERIFIES);
 
 /**
  * Directories the harness never edits (`src/loop.ts` `SKIPPED_DIRECTORIES`),
@@ -154,12 +179,49 @@ export function isSafeTaskPath(path: string): boolean {
   return true;
 }
 
+/** Root task ids in plan order (the phase order the scheduler follows). */
+export function rootOrder(tasks: readonly EditTask[]): TaskId[] {
+  return tasks.filter((task) => task.root === task.id).map((task) => task.id);
+}
+
+/** The root task with this id, or undefined if the plan is malformed. */
+export function rootTaskOf(state: TaskRunState, root: TaskId): EditTask | undefined {
+  return state.tasks.find((task) => task.id === root && task.root === root);
+}
+
+/** True when every task belonging to `root` is done. */
+export function rootTasksDone(state: TaskRunState, root: TaskId): boolean {
+  return state.tasks
+    .filter((task) => task.root === root)
+    .every((task) => state.status.get(task.id) === "done");
+}
+
 /**
- * The tasks whose dependencies are all `done` and whose own status is `todo`,
- * in task order (the plan's priority). This is the only execution frontier:
- * a `todo` list the planner emits is validated against it, never trusted.
+ * The first root that still needs work. Passed roots are closed; a failed root
+ * is skipped until a re-plan reopens it with repair tasks. Otherwise the next
+ * pending root is the current phase.
+ */
+export function activeRoot(state: TaskRunState): TaskId | null {
+  for (const root of rootOrder(state.tasks)) {
+    if (state.rootStatus.get(root) === "pending") {
+      return root;
+    }
+  }
+  return null;
+}
+
+/**
+ * The tasks whose dependencies are all `done` and whose own status is `todo`
+ * inside the active root, in task order (the plan's priority). This is the
+ * only execution frontier: a `todo` list the planner emits is validated
+ * against it, never trusted. Micro-tasks in later roots wait for the current
+ * root gate.
  */
 export function readyFrontier(state: TaskRunState): TaskId[] {
+  const active = activeRoot(state);
+  if (active === null) {
+    return [];
+  }
   const done = new Set<TaskId>();
   for (const task of state.tasks) {
     if (state.status.get(task.id) === "done") {
@@ -168,7 +230,10 @@ export function readyFrontier(state: TaskRunState): TaskId[] {
   }
   return state.tasks
     .filter(
-      (task) => state.status.get(task.id) === "todo" && task.deps.every((dep) => done.has(dep)),
+      (task) =>
+        task.root === active &&
+        state.status.get(task.id) === "todo" &&
+        task.deps.every((dep) => done.has(dep)),
     )
     .map((task) => task.id);
 }
@@ -176,6 +241,26 @@ export function readyFrontier(state: TaskRunState): TaskId[] {
 /** True when every task is `done`. */
 export function allTasksDone(state: TaskRunState): boolean {
   return state.tasks.every((task) => state.status.get(task.id) === "done");
+}
+
+/**
+ * True when every root is closed and the last root passed. Earlier failed
+ * roots are allowed because a later repair root can supersede them; the final
+ * root is always the test gate, so a passed final root is the success signal.
+ */
+export function allRootsPassed(state: TaskRunState): boolean {
+  const roots = rootOrder(state.tasks);
+  const last = roots[roots.length - 1];
+  if (last === undefined || state.rootStatus.get(last) !== "passed") {
+    return false;
+  }
+  return (
+    roots.every((root) => state.rootStatus.get(root) !== "pending") &&
+    state.tasks.every((task) => {
+      const status = state.status.get(task.id);
+      return status === "done" || status === "failed";
+    })
+  );
 }
 
 /** The highest id in the DAG, or 0 for an empty one. */
@@ -188,46 +273,66 @@ export function maxTaskId(state: TaskRunState): TaskId {
 }
 
 /**
- * Render the stable DAG structure: one line per task with its action, space,
- * address, deps, and instruction. Children are indented under their parent
- * (any depth). Status is deliberately absent so this block can stay in the
+ * Render the stable DAG structure: roots in phase order, with every micro-task
+ * under its root. Status is deliberately absent so this block can stay in the
  * cache-stable prefix.
  */
 export function renderTaskDag(tasks: readonly EditTask[]): string {
   const lines: string[] = [];
-  const byId = new Map(tasks.map((task) => [task.id, task]));
-  const rendered = new Set<TaskId>();
-  const render = (task: EditTask, indent: string): void => {
-    if (rendered.has(task.id)) {
-      return;
+  for (const root of rootOrder(tasks)) {
+    const rootTask = tasks.find((task) => task.id === root);
+    if (rootTask === undefined) {
+      continue;
     }
-    rendered.add(task.id);
-    const dep = task.deps.length === 0 ? "none" : task.deps.join(", ");
-    const rename = task.renameTo === undefined ? "" : ` renameTo=${quote(task.renameTo)}`;
-    lines.push(
-      `${indent}- #${task.id} ${task.action} ${task.loc.kind} ${quote(task.loc.symbol)} in ${quote(task.loc.path)} (deps: ${dep})${rename}`,
-    );
-    lines.push(`${indent}  ${task.instruction.replace(/\s*\n\s*/g, " ").trim()}`);
-    for (const child of tasks.filter((candidate) => candidate.parent === task.id)) {
-      render(child, `${indent}  `);
+    lines.push(`@root #${root} verify=${rootTask.verify ?? "?"}`);
+    for (const task of tasks.filter((candidate) => candidate.root === root)) {
+      const dep = task.deps.length === 0 ? "none" : task.deps.join(", ");
+      const rename = task.renameTo === undefined ? "" : ` renameTo=${quote(task.renameTo)}`;
+      const related =
+        task.related === undefined || task.related.length === 0
+          ? ""
+          : ` related=[${task.related
+              .map((loc) => `${loc.kind} ${quote(loc.symbol)}`)
+              .join(", ")}]`;
+      lines.push(
+        `- #${task.id} ${task.action} ${task.loc.kind} ${quote(task.loc.symbol)} in ${quote(task.loc.path)} (deps: ${dep})${rename}${related}`,
+      );
+      lines.push(`  ${task.instruction.replace(/\s*\n\s*/g, " ").trim()}`);
     }
-  };
-  for (const task of tasks) {
-    if (task.parent === undefined || !byId.has(task.parent)) {
-      render(task, "");
-    }
-  }
-  // A malformed plan is never rendered, but a partial merge may leave a child
-  // whose parent is absent; show it rather than losing it.
-  for (const task of tasks) {
-    render(task, "");
   }
   return lines.join("\n");
 }
 
-/** Render `#<id> <status>` for every task, in task order. */
+/** Render task and root statuses in phase order. */
 export function renderTaskStatus(state: TaskRunState): string {
-  return state.tasks.map((task) => `#${task.id} ${state.status.get(task.id) ?? "todo"}`).join("\n");
+  const lines: string[] = [];
+  for (const root of rootOrder(state.tasks)) {
+    lines.push(`@root #${root} ${state.rootStatus.get(root) ?? "pending"}`);
+    for (const task of state.tasks.filter((candidate) => candidate.root === root)) {
+      lines.push(`#${task.id} ${state.status.get(task.id) ?? "todo"}`);
+    }
+  }
+  return lines.join("\n");
+}
+
+/** Render failed root gates with their diagnostics. */
+export function renderFailedRoots(
+  state: TaskRunState,
+  failures: ReadonlyMap<TaskId, string>,
+): string {
+  const lines: string[] = [];
+  for (const root of rootOrder(state.tasks)) {
+    if (state.rootStatus.get(root) !== "failed") {
+      continue;
+    }
+    const rootTask = rootTaskOf(state, root);
+    lines.push(
+      `@root #${root} (${rootTask?.verify ?? "tsc"} gate) failed after its tasks completed:`,
+    );
+    const diagnostics = failures.get(root);
+    lines.push(diagnostics === undefined ? "  (no diagnostics recorded)" : indent(diagnostics));
+  }
+  return lines.join("\n");
 }
 
 /** Render the failed tasks with the diagnostics that failed them. */
@@ -293,12 +398,16 @@ function readTask(loc: TaskLoc, raw: unknown, index: number, problems: string[])
   const extra = Object.keys(raw).filter((key) => !TASK_KEYS.has(key));
   if (extra.length > 0) {
     problems.push(
-      `${where} carries unexpected key(s) ${extra.map(quote).join(", ")}; allowed keys are id, loc, parent, deps, action, instruction, renameTo`,
+      `${where} carries unexpected key(s) ${extra.map(quote).join(", ")}; allowed keys are id, root, verify, related, loc, deps, action, instruction, renameTo`,
     );
     return null;
   }
   const id = readId(raw["id"], `${where}.id`, problems);
   if (id === null) {
+    return null;
+  }
+  const root = readId(raw["root"], `${where}.root`, problems);
+  if (root === null) {
     return null;
   }
   const rawDeps = raw["deps"];
@@ -310,13 +419,42 @@ function readTask(loc: TaskLoc, raw: unknown, index: number, problems: string[])
     }
     deps = read;
   }
-  let parent: TaskId | undefined;
-  if (raw["parent"] !== undefined && raw["parent"] !== null) {
-    const read = readId(raw["parent"], `${where}.parent`, problems);
-    if (read === null) {
+  let verify: RootVerify | undefined;
+  if (raw["verify"] !== undefined) {
+    const value = raw["verify"];
+    if (typeof value !== "string" || !ROOT_VERIFY_SET.has(value)) {
+      problems.push(
+        `${where}.verify must be one of ${ROOT_VERIFIES.map(quote).join(", ")} when present (got ${JSON.stringify(value)})`,
+      );
       return null;
     }
-    parent = read;
+    verify = value as RootVerify;
+  }
+  let related: TaskLoc[] | undefined;
+  if (raw["related"] !== undefined) {
+    const rawRelated = raw["related"];
+    if (!Array.isArray(rawRelated)) {
+      problems.push(`${where}.related must be an array of loc objects`);
+      return null;
+    }
+    if (rawRelated.length > MAX_RELATED_LOCS) {
+      problems.push(
+        `${where}.related carries ${rawRelated.length} entries; keep it at most ${MAX_RELATED_LOCS}`,
+      );
+      return null;
+    }
+    const readRelated: TaskLoc[] = [];
+    for (let relatedIndex = 0; relatedIndex < rawRelated.length; relatedIndex += 1) {
+      const relatedLoc = readLoc(
+        rawRelated[relatedIndex],
+        `${where}.related[${relatedIndex}]`,
+        problems,
+      );
+      if (relatedLoc !== null) {
+        readRelated.push(relatedLoc);
+      }
+    }
+    related = readRelated;
   }
   const action = raw["action"];
   if (typeof action !== "string" || !(TASK_ACTIONS as readonly string[]).includes(action)) {
@@ -347,8 +485,10 @@ function readTask(loc: TaskLoc, raw: unknown, index: number, problems: string[])
   }
   return {
     id,
+    root,
+    ...(verify === undefined ? {} : { verify }),
+    ...(related === undefined ? {} : { related }),
     loc,
-    ...(parent === undefined ? {} : { parent }),
     deps,
     action: action as TaskAction,
     instruction: instruction.trim(),
@@ -424,9 +564,8 @@ interface DagIssue {
 }
 
 /**
- * Structural graph checks: duplicate ids, reference integrity, and acyclicity
- * of both the `deps` graph and the `parent` graph. `extraIds` names ids a
- * merge requires but the plan does not declare (reported by the caller).
+ * Structural graph checks: duplicate ids, root reference integrity, root
+ * phase ordering, final-test coverage, and dependency acyclicity.
  */
 function graphIssues(tasks: readonly EditTask[]): DagIssue[] {
   const issues: DagIssue[] = [];
@@ -449,18 +588,55 @@ function graphIssues(tasks: readonly EditTask[]): DagIssue[] {
     if (new Set(task.deps).size !== task.deps.length) {
       issues.push({ task, problem: `#${task.id} lists the same dependency more than once` });
     }
-    if (task.parent === task.id) {
-      issues.push({ task, problem: `#${task.id} is its own parent` });
-    } else if (task.parent !== undefined && !byId.has(task.parent)) {
-      issues.push({ task, problem: `#${task.id} has parent #${task.parent}, which is not a task` });
+    const rootTask = byId.get(task.root);
+    if (rootTask === undefined) {
+      issues.push({ task, problem: `#${task.id} names root #${task.root}, which is not a task` });
+    } else if (rootTask.root !== rootTask.id) {
+      issues.push({
+        task,
+        problem: `#${task.id} names root #${task.root}, but #${task.root} is not a root task (its root is #${rootTask.root})`,
+      });
+    }
+    if (task.root === task.id) {
+      if (task.verify === undefined) {
+        issues.push({ task, problem: `root task #${task.id} must carry verify: "tsc" or "test"` });
+      }
+    } else if (task.verify !== undefined) {
+      issues.push({
+        task,
+        problem: `#${task.id} carries verify but is not a root task (root is #${task.root})`,
+      });
     }
   }
   issues.push(...cycleIssues(tasks, byId, "dependency", (task) => task.deps));
-  issues.push(
-    ...cycleIssues(tasks, byId, "parent", (task) =>
-      task.parent === undefined ? [] : [task.parent],
-    ),
-  );
+  const roots = rootOrder(tasks);
+  const rootIndex = new Map(roots.map((root, index) => [root, index]));
+  for (const task of tasks) {
+    for (const dep of task.deps) {
+      const depTask = byId.get(dep);
+      if (depTask === undefined) {
+        continue;
+      }
+      const taskRoot = rootIndex.get(task.root);
+      const depRoot = rootIndex.get(depTask.root);
+      if (taskRoot !== undefined && depRoot !== undefined && depRoot > taskRoot) {
+        issues.push({
+          task,
+          problem: `#${task.id} (root #${task.root}) depends on #${dep} in later root #${depTask.root}; roots run in phase order`,
+        });
+      }
+    }
+  }
+  if (roots.length > 0) {
+    const last = roots[roots.length - 1];
+    const lastTask = last === undefined ? undefined : byId.get(last);
+    if (lastTask !== undefined && lastTask.verify !== "test") {
+      issues.push({
+        task: lastTask,
+        problem: `the final root #${last} must verify "test" so the run ends with the test suite, not only tsc`,
+      });
+    }
+  }
   return issues;
 }
 
@@ -529,45 +705,26 @@ function locProblems(task: EditTask): string | null {
   } else if (task.renameTo !== undefined) {
     return `#${task.id} carries renameTo but its action is ${quote(task.action)}; renameTo is allowed only with action "rename"`;
   }
+  if (task.related !== undefined) {
+    if (task.action !== "modify") {
+      return `#${task.id} carries related; only a modify task may migrate several declarations atomically`;
+    }
+    const seen = new Set<string>([`${task.loc.kind}\u0000${task.loc.symbol}`]);
+    for (const loc of task.related) {
+      if (loc.path !== task.loc.path) {
+        return `#${task.id} related target ${formatTaskLoc(loc)} is not in the task's file ${quote(task.loc.path)}; split cross-file work into separate tasks`;
+      }
+      if (!isSafeTaskPath(loc.path)) {
+        return `#${task.id} related target ${formatTaskLoc(loc)} is not a writable repo-relative path`;
+      }
+      const key = `${loc.kind}\u0000${loc.symbol}`;
+      if (seen.has(key)) {
+        return `#${task.id} lists ${formatTaskLoc(loc)} more than once as a task or related target`;
+      }
+      seen.add(key);
+    }
+  }
   return null;
-}
-
-function checkTodo(
-  todo: readonly TaskId[],
-  status: ReadonlyMap<TaskId, TaskStatus>,
-  frontier: readonly TaskId[],
-  problems: string[],
-): void {
-  const seen = new Set<TaskId>();
-  for (const id of todo) {
-    if (seen.has(id)) {
-      problems.push(`todo lists #${id} more than once`);
-      return;
-    }
-    seen.add(id);
-    const taskStatus = status.get(id);
-    if (taskStatus !== "todo") {
-      problems.push(
-        `todo lists #${id}, whose status is ${taskStatus === undefined ? "missing" : quote(taskStatus)}; todo may list only todo tasks`,
-      );
-      return;
-    }
-  }
-  const frontierSet = new Set(frontier);
-  for (const id of frontier) {
-    if (!seen.has(id)) {
-      problems.push(
-        `todo omits #${id}, whose dependencies are all done; todo must be exactly the ready frontier (${frontier.join(", ")})`,
-      );
-      return;
-    }
-  }
-  for (const id of todo) {
-    if (!frontierSet.has(id)) {
-      problems.push(`todo lists #${id} before its dependencies are done`);
-      return;
-    }
-  }
 }
 
 // ---------------------------------------------------------------------------
@@ -575,9 +732,9 @@ function checkTodo(
 
 /**
  * Parse one planning reply without judging it as a first plan: the wire shape,
- * ids, dep/parent references, acyclicity, locs, action/rename pairing, and
- * status coverage. Both the initial plan and a re-plan come through here; the
- * initial-plan-only rules (every task starts `todo`) live in `readInitialPlan`.
+ * ids, root references, dependency acyclicity, locs, action/rename pairing,
+ * related targets, and status coverage. Both the initial plan and a re-plan
+ * come through here; the initial-plan-only rules live in `parseTaskPlan`.
  */
 export function readPlan(content: string): TaskPlanParse {
   let parsed: unknown;
@@ -697,28 +854,32 @@ export function parseTaskPlan(content: string): TaskPlanParse {
     }
     initial.set(task.id, "todo");
   }
-  if (problems.length === 0) {
-    checkTodo(todo, initial, readyFrontier({ tasks, status: initial }), problems);
-  }
   if (problems.length > 0) {
     return dag(problems.map((problem) => `- ${problem}`).join("\n"));
   }
-  return { ok: true, plan: { tasks, todo, status: initial } };
+  const rootStatus = new Map<TaskId, RootStatus>(
+    rootOrder(tasks).map((root) => [root, "pending" as RootStatus]),
+  );
+  const normalizedTodo = readyFrontier({ tasks, status: initial, rootStatus });
+  return { ok: true, plan: { tasks, todo: normalizedTodo, status: initial } };
 }
 
-/** Build the run state from a freshly parsed plan (every task starts `todo`). */
+/** Build the run state from a freshly parsed plan (every task and root starts pending). */
 export function initialState(plan: TaskPlan): TaskRunState {
   return {
     tasks: plan.tasks,
     status: new Map(plan.tasks.map((task) => [task.id, "todo" as TaskStatus])),
+    rootStatus: new Map(rootOrder(plan.tasks).map((root) => [root, "pending" as RootStatus])),
   };
 }
 
-function signatureOf(task: EditTask, parent: TaskId | undefined): string {
+function signatureOf(task: EditTask): string {
   return JSON.stringify({
     id: task.id,
+    root: task.root,
+    verify: task.verify,
+    related: task.related,
     loc: task.loc,
-    parent,
     deps: [...task.deps],
     action: task.action,
     instruction: task.instruction,
@@ -747,7 +908,6 @@ export function mergeReplan(previous: TaskRunState, plan: TaskPlan): TaskPlanMer
   const nextIds = new Set(plan.tasks.map((task) => task.id));
   const nextStatus = new Map<TaskId, TaskStatus>();
   const nextTasks: EditTask[] = [];
-  const staleEchoes: TaskId[] = [];
 
   for (const task of plan.tasks) {
     const before = previousById.get(task.id);
@@ -761,15 +921,12 @@ export function mergeReplan(previous: TaskRunState, plan: TaskPlan): TaskPlanMer
       continue;
     }
     const beforeStatus = previous.status.get(before.id) ?? "todo";
-    const changed = signatureOf(before, before.parent) !== signatureOf(task, task.parent);
+    const changed = signatureOf(before) !== signatureOf(task);
     if (beforeStatus === "done") {
       if (changed) {
         problems.push(`#${task.id} is done and its definition cannot change`);
       }
       // The harness status is authoritative; a stale echo is tolerated.
-      if (echo !== "done") {
-        staleEchoes.push(task.id);
-      }
       nextTasks.push(changed ? before : task);
       nextStatus.set(before.id, "done");
       continue;
@@ -844,7 +1001,61 @@ export function mergeReplan(previous: TaskRunState, plan: TaskPlan): TaskPlanMer
     }
   }
 
-  const state: TaskRunState = { tasks: nextTasks, status: nextStatus };
+  const nextRootStatus = new Map<TaskId, RootStatus>();
+  for (const root of rootOrder(nextTasks)) {
+    const previousGate = previous.rootStatus.get(root);
+    if (previousGate === "passed") {
+      const previousMembers = new Set(
+        previous.tasks.filter((task) => task.root === root).map((task) => task.id),
+      );
+      const newMembers = nextTasks.filter(
+        (task) => task.root === root && !previousMembers.has(task.id),
+      );
+      if (newMembers.length > 0) {
+        problems.push(
+          `root #${root} already passed; add repair work in a new root instead of extending a passed root`,
+        );
+      }
+      for (const member of nextTasks.filter((task) => task.root === root)) {
+        const before = previousById.get(member.id);
+        if (before !== undefined && signatureOf(before) !== signatureOf(member)) {
+          problems.push(
+            `#${member.id} belongs to passed root #${root}; keep it unchanged and put repair work in a new root`,
+          );
+        }
+      }
+      nextRootStatus.set(root, "passed");
+    } else {
+      // A failed root is reopened only by actual repair work; an unchanged
+      // failed root stays closed so a new root can run.
+      const changed = nextTasks.some((task) => {
+        if (task.root !== root) {
+          return false;
+        }
+        const before = previousById.get(task.id);
+        return before === undefined || signatureOf(before) !== signatureOf(task);
+      });
+      nextRootStatus.set(root, previousGate === "failed" && !changed ? "failed" : "pending");
+    }
+  }
+
+  // Existing phases keep their order; a repair root is appended after them.
+  const previousRoots = rootOrder(previous.tasks);
+  const nextRoots = rootOrder(nextTasks);
+  const keptRoots = nextRoots.filter((root) => previousRoots.includes(root));
+  const previousKept = previousRoots.filter((root) => nextRoots.includes(root));
+  if (keptRoots.join(",") !== previousKept.join(",")) {
+    problems.push("existing roots must keep their plan order");
+  }
+  const firstNewRoot = nextRoots.findIndex((root) => !previousRoots.includes(root));
+  if (
+    firstNewRoot !== -1 &&
+    nextRoots.slice(firstNewRoot).some((root) => previousRoots.includes(root))
+  ) {
+    problems.push("new roots must be appended after existing roots");
+  }
+
+  const state: TaskRunState = { tasks: nextTasks, status: nextStatus, rootStatus: nextRootStatus };
   if (problems.length === 0) {
     for (const issue of graphIssues(nextTasks)) {
       problems.push(issue.problem);
@@ -856,33 +1067,11 @@ export function mergeReplan(previous: TaskRunState, plan: TaskPlan): TaskPlanMer
       }
     }
     if (problems.length === 0) {
-      // Receiving a plan is what makes work runnable: tasks that already sit on
-      // the frontier after a merge are the plan's own todo tasks. The harness
-      // recomputes the frontier, so a stale todo list (an omitted ready task or
-      // an already-done one) is corrected rather than rejected. Only a *blocked*
-      // id — one whose dependencies are not done — is a real contradiction.
-      const ready = new Set(readyFrontier(state));
-      for (const id of plan.todo) {
-        if (nextStatus.get(id) !== "todo") {
-          continue;
-        }
-        if (!ready.has(id)) {
-          const task = state.tasks.find((candidate) => candidate.id === id);
-          problems.push(
-            `todo lists #${id} before its dependencies are done (${
-              task?.deps
-                .filter((dep) => nextStatus.get(dep) !== "done")
-                .map((dep) => `#${dep} is ${nextStatus.get(dep) ?? "todo"}`)
-                .join(", ") ?? "unknown"
-            })`,
-          );
-          break;
-        }
-      }
-      if (problems.length === 0) {
-        plan.todo.length = 0;
-        plan.todo.push(...readyFrontier(state));
-      }
+      // `todo` is only a priority hint. The harness owns the active-root
+      // frontier, so a planner that lists a later root's task (or omits a ready
+      // one) is corrected rather than rejected.
+      plan.todo.length = 0;
+      plan.todo.push(...readyFrontier(state));
     }
   }
   if (problems.length > 0) {
@@ -891,25 +1080,16 @@ export function mergeReplan(previous: TaskRunState, plan: TaskPlan): TaskPlanMer
       diagnostics: `stage: task-dag\n${problems.map((problem) => `- ${problem}`).join("\n")}`,
     };
   }
-  // A plan that only repeated an outdated status is accepted with the
-  // harness's status; a todo list that named such a task is corrected by the
-  // frontier recomputation above. Anything else is a real contradiction.
-  if (staleEchoes.length > 0) {
-    const badTodo = plan.todo.filter((id) => nextStatus.get(id) !== "todo");
-    if (badTodo.length > 0) {
-      return {
-        ok: false,
-        stale: true,
-        diagnostics: `stage: task-dag\n- todo lists ${badTodo.map((id) => `#${id}`).join(", ")}, whose harness status is not "todo"; todo is the ready frontier after a merge`,
-      };
-    }
-  }
+  // A stale done/failed echo is harmless: the harness status above is
+  // authoritative and the todo list has been recomputed.
   return { ok: true, state };
 }
 
 /** The per-task result summary a plan/execute run reports. */
 export interface TaskSummary {
   id: TaskId;
+  root: TaskId;
+  verify?: RootVerify;
   action: EditTask["action"];
   path: string;
   symbol: string;
@@ -921,6 +1101,8 @@ export interface TaskSummary {
 export function summaryOf(state: TaskRunState): TaskSummary[] {
   return state.tasks.map((task) => ({
     id: task.id,
+    root: task.root,
+    ...(task.verify === undefined ? {} : { verify: task.verify }),
     action: task.action,
     path: task.loc.path,
     symbol: task.loc.symbol,

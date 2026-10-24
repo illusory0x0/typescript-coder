@@ -5,7 +5,7 @@ opencode CLI (`oc`) on identical fixture copies, prompts, and model.
 
 Sides are abbreviated `tc` (typescript-coder) and `oc` (opencode) in flags, labels, and tables; historical artifacts keep their original labels, and replay bundles recorded before the rename carry `side: "ts"` but stay readable.
 
-Each task has one frozen issue string (`TASK_ISSUES` in `run.ts`), used verbatim by both sides and rendered into every report's `Frozen task specs` section.
+Each task has one frozen spec under `benchmark/specs/<task>.md`, loaded as `TASK_SPECS` in `run.ts` (the historical `TASK_ISSUES` export is an alias). The same spec text is used verbatim by both sides and rendered into every report's `Frozen task specs` section.
 
 `results/consumption.md` is the canonical before/after efficiency view across the
 series (USD per success; the dated reports keep the token columns). Every row
@@ -18,10 +18,10 @@ an edit-dsl row.
 ## Usage
 
     bun run benchmark/run.ts --all --pilot
-    bun run benchmark/run.ts --task json-parser --side tc --reps 2 --keep
-    bun run benchmark/run.ts --all --side tc --agent-mode both --reps 3
+    bun run benchmark/run.ts --task json-parser --side tc --reps 5 --keep
+    bun run benchmark/run.ts --all --side tc --agent-mode both --reps 5
 
-Flags: `--task`, `--all` (default), `--reps <n>` (default 3), `--concurrency
+Flags: `--task`, `--all` (default), `--reps <n>` (default 5; measured runs require at least 5), `--concurrency
 <n>` (default 4, max parallel runs), `--pilot` (1 rep per task and side, writes
 `benchmark/results/pilot-<date>.json`), `--side tc` (the only allowed value; oc
 is frozen), `--model`
@@ -54,6 +54,12 @@ They are reference points, not a development loop: the benchmark **rejects**
 `--side oc` and `--protocol-format json` outright, so a change can never move
 them. Do not ask for an exception. tc reports run `--side tc` with the default
 `edit-dsl` protocol.
+
+The baselines were measured against the old one-line task issue. Because the
+benchmark input is now a standalone spec, a report whose `taskIssue` hash does
+not match the baseline's withholds the four-way table instead of comparing
+different inputs. Re-freeze both baselines against `benchmark/specs/` before
+using the four-way factors again.
 
 A tc-only report loads **both** frozen baselines and renders a
 `## Four-way comparison (oc / tc json / tc edit / tc plan-exec)` section when
@@ -92,7 +98,7 @@ frozen and `oc` is frozen. The live variant dimension is the tc loop mode
 Four frozen fixtures live under `benchmark/fixtures/`: `json-parser`,
 `sexp-parser`, `minilisp`, and the **held-out** task `csv-parser`. Each fixture
 is frozen by #61's discipline: its model-facing issue text is fixed in
-`TASK_ISSUES` (`benchmark/run.ts`) and only same-text runs are compared.
+`TASK_SPECS` (`benchmark/run.ts`, from `benchmark/specs/<task>.md`) and only same-text runs are compared.
 
 **`csv-parser` is held out (#67):** it is never the target of prompt or loop
 iteration. Prompt/loop changes must not be tuned against it, and a held-out
@@ -199,6 +205,14 @@ together with reasoning; `cacheWrite` is priced at the cache-miss rate (no
 current data reports it). The `opencode session export` payload's own `cost`
 stays in `rawUsage` and matches the computed value to within 1e-9 relative on the
 recorded baselines.
+
+Before a measured run, the benchmark warms only the cache-stable system prompts
+(the edit system prompt, or the planning and execution system prompts for
+plan-exec); task-specific user prompts are not warmed. Warm-up usage is recorded
+under `warmups` and excluded from every measured table. Reports also print a
+per-variant cache-hit ratio (`cacheRead / raw prompt tokens`) and emit a
+`Cache warning` when any task or the overall ratios span 20 or more percentage
+points, so a cold-cache run is not mistaken for a prompt regression.
 
 The report's token totals are **cache-excluded and like-for-like** (#89):
 `total = cache-miss input + output` (reasoning counted as output), normalized
@@ -325,13 +339,13 @@ The measured metric set supports three readings:
 
 Weak spots a reader should not assume away:
 
-- **n = 3 reps per task** (`--reps` default 3; every ledger row) — samples, not
+- **n = 5 reps per task** (`--reps` default 5; every ledger row) — samples, not
   a distribution; no spread or significance testing.
 - **One model** (`deepseek-v4.1-flash`) at the uniform `none` effort policy
   since v2 (the 2026-10-18 effort sweep).
-- **Three frozen fixtures** (`json-parser`, `sexp-parser`, `minilisp`; frozen
-  `TASK_ISSUES` in `run.ts`) and no held-out task, so a prompt-shaped win is not
-  distinguishable from a general one (#67).
+- **Three tuned fixtures** (`json-parser`, `sexp-parser`, `minilisp`) plus the
+  held-out `csv-parser`, all with frozen `TASK_SPECS` from `benchmark/specs/`;
+  the held-out task gates only generalization claims (#67).
 - **A coarse judge**: `tsc --noEmit` + `bun test` + byte-equality of the
   fixture's `src/*.test.ts` and `tsconfig.json`, on the final workspace only;
   any implementation the frozen tests accept passes.
@@ -416,7 +430,7 @@ hash. The ledger has no mode column yet, so a multi-mode row is not selected by
 | Digest         | What it covers                                                                        | Computation point                                                         |
 | -------------- | ------------------------------------------------------------------------------------- | ------------------------------------------------------------------------- |
 | `model`        | the gateway model id                                                                  | `report.model`                                                            |
-| `taskIssue`    | the frozen task text of every task in the report, keyed by task                       | `TASK_ISSUES` (`run.ts`)                                                  |
+| `taskIssue`    | the task spec text of every task in the report, keyed by task                         | `TASK_SPECS` (`benchmark/specs/<task>.md`)                                |
 | `fixture`      | the on-disk content of `benchmark/fixtures/<task>/`, keyed by task and relative path  | current tree                                                              |
 | `systemPrompt` | the model-facing system + protocol text (plan-exec hashes planning+execution prompts) | `buildSystemPrompt` / task prompts (`src/loop.ts`, `src/prompts/task.ts`) |
 | `loopConfig`   | token budget, edit/iteration/stall caps, `effort`, `reps`, `multiPayload`             | loop constants + run flags                                                |

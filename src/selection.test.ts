@@ -209,6 +209,13 @@ describe("parseSelection", () => {
     expect(first(text).replacement).toBe(body);
   });
 
+  test("accepts `end` on the closing fence line", () => {
+    const text = ["select foo in a.ts replace with", DASH_FENCE, "x", `${DASH_FENCE} end`].join(
+      "\n",
+    );
+    expect(first(text).replacement).toBe("x");
+  });
+
   test("accepts a body with one or two backticks", () => {
     const text = ["select foo in a.ts", "replace with", FENCE, "a``b", FENCE, "end"].join("\n");
     expect(first(text).replacement).toBe("a``b");

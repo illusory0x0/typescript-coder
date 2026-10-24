@@ -8,16 +8,17 @@ import {
   buildTaskTurnPrompt,
   replanDelta,
   renderTaskContentView,
+  taskEditDslHelp,
   TASK_PLAN_COMPLEX_EXAMPLE,
   TASK_PLAN_EXAMPLE,
-  TASK_PLAN_PARALLEL_EXAMPLE,
-  TASK_REPLAN_EXAMPLE,
 } from "./task";
 import { initialState, parseTaskPlan, readPlan } from "../tasks";
 import type { EditTask, TaskRunState } from "../tasks";
 
 const TASK: EditTask = {
   id: 1,
+  root: 1,
+  verify: "test",
   loc: { path: "src/helper.ts", symbol: "answer", kind: "value" },
   deps: [],
   action: "modify",
@@ -39,12 +40,14 @@ function stateOf(tasks: EditTask[] = [TASK]): TaskRunState {
 }
 
 describe("planning prompts", () => {
-  test("the system prompt teaches every field, the invariants, and both examples", () => {
+  test("the system prompt teaches every field and the invariants with one minimal example", () => {
     const prompt = buildTaskPlanningSystemPrompt();
     for (const field of [
       '"id"',
+      '"root"',
+      '"verify"',
+      '"related"',
       '"loc"',
-      '"parent"',
       '"deps"',
       '"action"',
       '"instruction"',
@@ -55,20 +58,17 @@ describe("planning prompts", () => {
       expect(prompt).toContain(field);
     }
     expect(prompt).toContain("symbol space");
-    expect(prompt).toContain("type-correct");
+    expect(prompt).toContain("root gate");
     expect(prompt).toContain("Reply with ONLY one bare JSON object");
     expect(prompt).toContain('"kind": "value"');
-    // Both JSON examples survive verbatim so a planner can copy their shape.
+    // The initial prompt carries only the minimal shape; the larger example is
+    // reserved for the retry/help path.
     expect(prompt).toContain(TASK_PLAN_EXAMPLE);
-    expect(prompt).toContain(TASK_PLAN_COMPLEX_EXAMPLE);
-    expect(prompt).toContain(TASK_PLAN_PARALLEL_EXAMPLE);
-    // The minimal example is front-loaded, before the field reference.
-    expect(prompt.indexOf(TASK_PLAN_EXAMPLE)).toBeLessThan(prompt.indexOf("Fields:"));
+    expect(prompt).not.toContain(TASK_PLAN_COMPLEX_EXAMPLE);
+    expect(prompt.indexOf(TASK_PLAN_EXAMPLE)).toBeLessThan(prompt.indexOf('- "tasks"'));
     expect(prompt).not.toContain("```json");
-    // And they are themselves valid plans for the parser.
     expect(parseTaskPlan(TASK_PLAN_EXAMPLE).ok).toBe(true);
     expect(parseTaskPlan(TASK_PLAN_COMPLEX_EXAMPLE).ok).toBe(true);
-    expect(parseTaskPlan(TASK_PLAN_PARALLEL_EXAMPLE).ok).toBe(true);
   });
 
   test("the first user prompt carries the requirement and the index", () => {
@@ -78,8 +78,11 @@ describe("planning prompts", () => {
     expect(prompt).toContain("complete task plan JSON");
   });
 
-  test("the retry prompt names the rejection", () => {
-    expect(buildTaskPlanRetryPrompt("stage: task-dag\n- bad")).toContain("stage: task-dag");
+  test("the retry prompt names the rejection and appends help", () => {
+    const prompt = buildTaskPlanRetryPrompt("stage: task-dag\n- bad");
+    expect(prompt).toContain("stage: task-dag");
+    expect(prompt).toContain(TASK_PLAN_COMPLEX_EXAMPLE);
+    expect(buildTaskPlanRetryPrompt("bad", false)).not.toContain(TASK_PLAN_COMPLEX_EXAMPLE);
   });
 
   test("a re-plan prompt carries the DAG, status, failures, and tests", () => {
@@ -88,7 +91,8 @@ describe("planning prompts", () => {
     const prompt = buildTaskReplanPrompt({
       state,
       failures: new Map([[1, "stage: tsc\nTS2322"]]),
-      testDiagnostics: "expected 2, got 1",
+      gateDiagnostics: "expected 2, got 1",
+      symbolIndex: 'files:\n  - path: "src/helper.ts"\n',
       delta: replanDelta({ failedIds: [1], testsFailed: false, blocked: false }),
     });
     expect(prompt).toContain("# Edit-task DAG");
@@ -97,9 +101,12 @@ describe("planning prompts", () => {
     expect(prompt).toContain("#1 failed");
     expect(prompt).toContain("TS2322");
     expect(prompt).toContain("expected 2, got 1");
+    expect(prompt).toContain("# Current symbol index");
+    expect(prompt).toContain("src/helper.ts");
     expect(prompt).toContain("The failed task(s) #1 could not be carried out.");
-    expect(prompt).toContain("A failed task may be retried only by changing its definition");
-    expect(prompt).toContain(TASK_REPLAN_EXAMPLE);
+    expect(prompt).toContain("A failed task may be retried by changing its definition");
+    expect(prompt).toContain("Use related same-file locs");
+    expect(prompt).not.toContain("Shape of a valid amendment");
   });
 
   test("a test-failure re-plan names the test verdict", () => {
@@ -108,10 +115,10 @@ describe("planning prompts", () => {
     const prompt = buildTaskReplanPrompt({
       state,
       failures: new Map(),
-      testDiagnostics: "1 test failed",
+      gateDiagnostics: "1 test failed",
       delta: replanDelta({ failedIds: [], testsFailed: true, blocked: false }),
     });
-    expect(prompt).toContain("the test suite fails");
+    expect(prompt).toContain("A root gate failed after its micro-tasks completed.");
   });
 
   test("a blocked re-plan asks for graph repair", () => {
@@ -135,15 +142,27 @@ describe("planning prompts", () => {
 });
 
 describe("execution prompts", () => {
-  test("the system prompt teaches the edit-action grammar and the task report word", () => {
+  test("the system prompt teaches the edit-action grammar and the root gate", () => {
     const prompt = buildTaskExecutionSystemPrompt();
     expect(prompt).toContain("select … end");
-    expect(prompt).toContain("TASK_DONE");
+    expect(prompt).toContain("root gate");
+    expect(prompt).not.toContain("TASK_DONE");
     expect(prompt).toContain("Reply shape: `select <symbol> in <path>");
-    expect(prompt).toContain("Action-specific rules:");
-    for (const action of ["modify", "create", "delete", "rename"]) {
-      expect(prompt).toContain(`- ${action}:`);
-    }
+    expect(prompt).not.toContain("Action-specific rules:");
+    expect(prompt).not.toContain("Example for this action:");
+  });
+
+  test("format help is injected only on the help turn", () => {
+    const state = stateOf();
+    const base = {
+      state,
+      task: TASK,
+      contentView: renderTaskContentView("export function answer(): number {\n  return 1;\n}"),
+    };
+    expect(buildTaskTurnPrompt(base)).not.toContain("# Format help");
+    const help = buildTaskTurnPrompt({ ...base, help: true });
+    expect(help).toContain("# Format help");
+    expect(help).toContain(taskEditDslHelp("modify"));
   });
 
   test("the turn prompt puts the task first and the content view last", () => {
@@ -163,7 +182,7 @@ describe("execution prompts", () => {
     expect(prompt).toContain('{"request":"read"}');
     expect(
       prompt.endsWith(
-        "Reply with the edit clauses for this task. After an edit lands, reply `TASK_DONE` to finish it.",
+        "Reply with the edit clauses for this task. The root gate runs after all sibling micro-tasks finish.",
       ),
     ).toBe(true);
   });

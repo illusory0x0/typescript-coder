@@ -1,5 +1,6 @@
 import { describe, expect, test } from "bun:test";
 import {
+  activeRoot,
   allTasksDone,
   initialState,
   isSafeTaskPath,
@@ -15,7 +16,11 @@ import {
 import type { EditTask, TaskRunState } from "./tasks";
 
 function task(overrides: Partial<EditTask> & Pick<EditTask, "id">): EditTask {
+  const root = overrides.root ?? overrides.id;
+  const verify = overrides.verify ?? (root === overrides.id ? "test" : undefined);
   return {
+    root,
+    ...(verify === undefined ? {} : { verify }),
     loc: { path: "src/a.ts", symbol: "answer", kind: "value" },
     deps: [],
     action: "modify",
@@ -97,7 +102,7 @@ describe("parseTaskPlan", () => {
       rejectPlan(planJson([task({ id: 1, deps: [1] })], [1], { "1": "todo" })).diagnostics,
     ).toContain("itself");
     const cycle = rejectPlan(
-      planJson([task({ id: 1, deps: [2] }), task({ id: 2, deps: [1] })], [1], {
+      planJson([task({ id: 1, deps: [2] }), task({ id: 2, root: 1, deps: [1] })], [1], {
         "1": "todo",
         "2": "todo",
       }),
@@ -105,29 +110,63 @@ describe("parseTaskPlan", () => {
     expect(cycle.diagnostics).toContain("dependency cycle");
   });
 
-  test("rejects a parent cycle", () => {
-    const parsed = rejectPlan(
-      planJson([task({ id: 1, parent: 2 }), task({ id: 2, parent: 1 })], [1, 2], {
+  test("rejects an unknown root, a non-root verify, and a final non-test root", () => {
+    const unknownRoot = rejectPlan(planJson([task({ id: 1, root: 9 })], [1], { "1": "todo" }));
+    expect(unknownRoot.diagnostics).toContain("names root #9");
+
+    const nonRootVerify = rejectPlan(
+      planJson([task({ id: 1, verify: "tsc" }), task({ id: 2, root: 1, verify: "tsc" })], [1], {
         "1": "todo",
         "2": "todo",
       }),
     );
-    expect(parsed.diagnostics).toContain("parent cycle");
+    expect(nonRootVerify.diagnostics).toContain("carries verify but is not a root task");
+
+    const finalTsc = rejectPlan(planJson([task({ id: 1, verify: "tsc" })], [1], { "1": "todo" }));
+    expect(finalTsc.diagnostics).toContain('must verify "test"');
   });
 
-  test("todo must equal the ready frontier", () => {
+  test("accepts related migration targets and rejects cross-file related locs", () => {
+    const migration = okPlan(
+      planJson(
+        [
+          task({
+            id: 1,
+            related: [{ path: "src/a.ts", symbol: "caller", kind: "value" }],
+          }),
+        ],
+        [1],
+        { "1": "todo" },
+      ),
+    );
+    expect(migration.tasks[0]?.related?.length).toBe(1);
+    const crossFile = rejectPlan(
+      planJson(
+        [
+          task({
+            id: 1,
+            related: [{ path: "src/b.ts", symbol: "caller", kind: "value" }],
+          }),
+        ],
+        [1],
+        { "1": "todo" },
+      ),
+    );
+    expect(crossFile.diagnostics).toContain("not in the task's file");
+  });
+
+  test("todo is normalized to the active root's ready frontier", () => {
     const chain = [
       task({ id: 1 }),
-      task({ id: 2, deps: [1], loc: { path: "src/a.ts", symbol: "caller", kind: "value" } }),
+      task({
+        id: 2,
+        root: 1,
+        deps: [1],
+        loc: { path: "src/a.ts", symbol: "caller", kind: "value" },
+      }),
     ];
-    // A dependent task cannot be in the initial todo.
-    expect(rejectPlan(planJson(chain, [1, 2], { "1": "todo", "2": "todo" })).diagnostics).toContain(
-      "before its dependencies are done",
-    );
-    // Omitting a ready task is equally wrong.
-    expect(rejectPlan(planJson(chain, [], { "1": "todo", "2": "todo" })).diagnostics).toContain(
-      "exactly the ready frontier",
-    );
+    expect(okPlan(planJson(chain, [1, 2], { "1": "todo", "2": "todo" })).todo).toEqual([1]);
+    expect(okPlan(planJson(chain, [], { "1": "todo", "2": "todo" })).todo).toEqual([1]);
     expect(okPlan(planJson(chain, [1], { "1": "todo", "2": "todo" })).todo).toEqual([1]);
   });
 
@@ -199,11 +238,15 @@ describe("isSafeTaskPath", () => {
 describe("scheduling", () => {
   const state = initialState(
     okPlan(
-      planJson([task({ id: 1 }), task({ id: 2, deps: [1] }), task({ id: 3 })], [1, 3], {
-        "1": "todo",
-        "2": "todo",
-        "3": "todo",
-      }),
+      planJson(
+        [task({ id: 1 }), task({ id: 2, root: 1, deps: [1] }), task({ id: 3, root: 1 })],
+        [1, 3],
+        {
+          "1": "todo",
+          "2": "todo",
+          "3": "todo",
+        },
+      ),
     ),
   );
 
@@ -231,11 +274,15 @@ describe("scheduling", () => {
 describe("readPlan", () => {
   test("accepts a re-plan echo with done and failed statuses", () => {
     const parsed = readPlan(
-      planJson([task({ id: 1 }), task({ id: 2, deps: [1] }), task({ id: 3, deps: [1] })], [2], {
-        "1": "done",
-        "2": "todo",
-        "3": "failed",
-      }),
+      planJson(
+        [task({ id: 1 }), task({ id: 2, root: 1, deps: [1] }), task({ id: 3, root: 1, deps: [1] })],
+        [2],
+        {
+          "1": "done",
+          "2": "todo",
+          "3": "failed",
+        },
+      ),
     );
     expect(parsed.ok).toBe(true);
     if (parsed.ok) {
@@ -246,7 +293,7 @@ describe("readPlan", () => {
 
   test("rejects a done task whose dependencies are not done", () => {
     const parsed = readPlan(
-      planJson([task({ id: 1 }), task({ id: 2, deps: [1] })], [1], {
+      planJson([task({ id: 1 }), task({ id: 2, root: 1, deps: [1] })], [1], {
         "1": "failed",
         "2": "done",
       }),
@@ -262,7 +309,10 @@ describe("mergeReplan", () => {
   function baseState(): TaskRunState {
     return initialState(
       okPlan(
-        planJson([task({ id: 1 }), task({ id: 2, deps: [1] })], [1], { "1": "todo", "2": "todo" }),
+        planJson([task({ id: 1 }), task({ id: 2, root: 1, deps: [1] })], [1], {
+          "1": "todo",
+          "2": "todo",
+        }),
       ),
     );
   }
@@ -284,8 +334,13 @@ describe("mergeReplan", () => {
         planJson(
           [
             task({ id: 1 }),
-            task({ id: 2, deps: [1] }),
-            task({ id: 3, deps: [2], loc: { path: "src/b.ts", symbol: "next", kind: "value" } }),
+            task({ id: 2, root: 1, deps: [1] }),
+            task({
+              id: 3,
+              root: 1,
+              deps: [2],
+              loc: { path: "src/b.ts", symbol: "next", kind: "value" },
+            }),
           ],
           [2],
           { "1": "done", "2": "todo", "3": "todo" },
@@ -307,7 +362,10 @@ describe("mergeReplan", () => {
       state,
       replan(
         planJson(
-          [task({ id: 1, instruction: "Rewrite it differently." }), task({ id: 2, deps: [1] })],
+          [
+            task({ id: 1, instruction: "Rewrite it differently." }),
+            task({ id: 2, root: 1, deps: [1] }),
+          ],
           [2],
           { "1": "done", "2": "todo" },
         ),
@@ -330,7 +388,7 @@ describe("mergeReplan", () => {
     const same = mergeReplan(
       state,
       replan(
-        planJson([task({ id: 1 }), task({ id: 2, deps: [1] })], [1], {
+        planJson([task({ id: 1 }), task({ id: 2, root: 1, deps: [1] })], [1], {
           "1": "todo",
           "2": "todo",
         }),
@@ -343,7 +401,7 @@ describe("mergeReplan", () => {
     const kept = mergeReplan(
       state,
       replan(
-        planJson([task({ id: 1 }), task({ id: 2, deps: [1] })], [], {
+        planJson([task({ id: 1 }), task({ id: 2, root: 1, deps: [1] })], [], {
           "1": "failed",
           "2": "todo",
         }),
@@ -360,7 +418,7 @@ describe("mergeReplan", () => {
         planJson(
           [
             task({ id: 1, instruction: "Change only the return value." }),
-            task({ id: 2, deps: [1] }),
+            task({ id: 2, root: 1, deps: [1] }),
           ],
           [1],
           { "1": "todo", "2": "todo" },
@@ -370,6 +428,62 @@ describe("mergeReplan", () => {
     expect(amended.ok).toBe(true);
     if (amended.ok) {
       expect(amended.state.status.get(1)).toBe("todo");
+    }
+  });
+
+  test("a failed root reopens for in-root repair; a passed root stays closed", () => {
+    const failed = initialState(okPlan(planJson([task({ id: 1 })], [1], { "1": "todo" })));
+    failed.status.set(1, "done");
+    failed.rootStatus.set(1, "failed");
+    const sameRoot = mergeReplan(
+      failed,
+      replan(
+        planJson(
+          [
+            task({ id: 1 }),
+            task({
+              id: 2,
+              root: 1,
+              deps: [1],
+              loc: { path: "src/a.ts", symbol: "repair", kind: "value" },
+              instruction: "Repair the gate failure.",
+            }),
+          ],
+          [2],
+          { "1": "done", "2": "todo" },
+        ),
+      ),
+    );
+    expect(sameRoot.ok).toBe(true);
+    if (sameRoot.ok) {
+      expect(activeRoot(sameRoot.state)).toBe(1);
+    }
+
+    const passed = initialState(okPlan(planJson([task({ id: 1 })], [1], { "1": "todo" })));
+    passed.status.set(1, "done");
+    passed.rootStatus.set(1, "passed");
+    const extendPassed = mergeReplan(
+      passed,
+      replan(
+        planJson(
+          [
+            task({ id: 1 }),
+            task({
+              id: 2,
+              root: 1,
+              deps: [1],
+              loc: { path: "src/a.ts", symbol: "repair", kind: "value" },
+              instruction: "This must go in a new root.",
+            }),
+          ],
+          [2],
+          { "1": "done", "2": "todo" },
+        ),
+      ),
+    );
+    expect(extendPassed.ok).toBe(false);
+    if (!extendPassed.ok) {
+      expect(extendPassed.diagnostics).toContain("already passed");
     }
   });
 
@@ -384,20 +498,20 @@ describe("mergeReplan", () => {
     expect(readyFrontier(merged.state)).toEqual([2]);
   });
 
-  test("rejects a todo list naming a blocked task", () => {
+  test("normalizes a todo list that names a blocked task", () => {
     const state = baseState();
     const merged = mergeReplan(
       state,
       replan(
-        planJson([task({ id: 1 }), task({ id: 2, deps: [1] })], [1, 2], {
+        planJson([task({ id: 1 }), task({ id: 2, root: 1, deps: [1] })], [1, 2], {
           "1": "todo",
           "2": "todo",
         }),
       ),
     );
-    expect(merged.ok).toBe(false);
-    if (!merged.ok) {
-      expect(merged.diagnostics).toContain("before its dependencies are done");
+    expect(merged.ok).toBe(true);
+    if (merged.ok) {
+      expect(merged.state.tasks.length).toBe(2);
     }
   });
 
@@ -408,15 +522,19 @@ describe("mergeReplan", () => {
       state,
       replan(
         planJson(
-          [task({ id: 1 }), task({ id: 2, deps: [1] }), task({ id: 3, deps: [2] })],
+          [
+            task({ id: 1 }),
+            task({ id: 2, root: 1, deps: [1] }),
+            task({ id: 3, root: 1, deps: [2] }),
+          ],
           [2, 3],
           { "1": "done", "2": "todo", "3": "todo" },
         ),
       ),
     );
-    expect(merged.ok).toBe(false);
-    if (!merged.ok) {
-      expect(merged.diagnostics).toContain("#3");
+    expect(merged.ok).toBe(true);
+    if (merged.ok) {
+      expect(readyFrontier(merged.state)).toEqual([2]);
     }
   });
 
@@ -426,7 +544,7 @@ describe("mergeReplan", () => {
     const merged = mergeReplan(
       state,
       replan(
-        planJson([task({ id: 1 }), task({ id: 2, deps: [1] })], [], {
+        planJson([task({ id: 1 }), task({ id: 2, root: 1, deps: [1] })], [], {
           "1": "todo",
           "2": "todo",
         }),
@@ -438,7 +556,7 @@ describe("mergeReplan", () => {
     }
     expect(
       readPlan(
-        planJson([task({ id: 1 }), task({ id: 2, deps: [1] })], [1], {
+        planJson([task({ id: 1 }), task({ id: 2, root: 1, deps: [1] })], [1], {
           "1": "in-progress",
           "2": "todo",
         }),

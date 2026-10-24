@@ -635,7 +635,8 @@ class SelectionReader {
         end = this.length;
       }
       const line = this.text.slice(lineStart, end).replace(/\r$/, "");
-      if (isClosingFence(line, open, fenceChar)) {
+      const close = closingFence(line, open, fenceChar);
+      if (close !== null) {
         let body = this.text.slice(bodyStart, lineStart);
         if (body.endsWith("\r\n")) {
           body = body.slice(0, -2);
@@ -643,10 +644,16 @@ class SelectionReader {
           body = body.slice(0, -1);
         }
         // Only a line whose delimiter run equals the opener closes the fence
-        // (see `isClosingFence`), so a shorter run such as a `---` divider is
+        // (see `closingFence`), so a shorter run such as a `---` divider is
         // ordinary body text. Rejecting it forced a full retry over a
-        // harmless markdown separator (#25).
-        this.pos = end >= this.length ? this.length : end + 1;
+        // harmless markdown separator (#25). `----- end` is accepted because
+        // small models often place the clause terminator on the closing line.
+        this.pos =
+          close.endStart === null
+            ? end >= this.length
+              ? this.length
+              : end + 1
+            : lineStart + close.endStart;
         return body;
       }
       if (end >= this.length) {
@@ -659,17 +666,28 @@ class SelectionReader {
   }
 }
 
-function isClosingFence(line: string, open: number, fenceChar: "`" | "-"): boolean {
-  const trimmed = line.replace(/[ \t]+$/, "");
-  if (trimmed.length !== open) {
-    return false;
+function closingFence(
+  line: string,
+  open: number,
+  fenceChar: "`" | "-",
+): { endStart: number | null } | null {
+  let run = 0;
+  while (run < line.length && line[run] === fenceChar) {
+    run += 1;
   }
-  for (const char of trimmed) {
-    if (char !== fenceChar) {
-      return false;
-    }
+  if (run !== open) {
+    return null;
   }
-  return true;
+  const rest = line.slice(run);
+  const trimmed = rest.trim();
+  if (trimmed === "") {
+    return { endStart: null };
+  }
+  if (!/^end\b/i.test(trimmed)) {
+    return null;
+  }
+  // Leave `end` for the clause parser; only the fence line is consumed here.
+  return { endStart: run + rest.search(/end\b/i) };
 }
 
 /**

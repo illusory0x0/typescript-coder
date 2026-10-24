@@ -93,6 +93,10 @@ function planText(tasks: unknown[], todo: number[], status: Record<string, strin
 function task(id: number, overrides: Record<string, unknown> = {}): Record<string, unknown> {
   return {
     id,
+    root: overrides["root"] ?? id,
+    ...(overrides["root"] === undefined || overrides["root"] === id
+      ? { verify: overrides["verify"] ?? "test" }
+      : {}),
     loc: { path: "src/helper.ts", symbol: "answer", kind: "value" },
     deps: [],
     action: "modify",
@@ -175,7 +179,7 @@ describe("runTaskLoop", () => {
     expect(readFileSync(join(dir, "src", "helper.ts"), "utf8")).toContain("return 2;");
     expect(result.tasks?.map((entry) => entry.status)).toEqual(["done"]);
     const outcomes = result.records.map((record) => record.outcome);
-    expect(outcomes).toEqual(["applied", "ok", "ok"]);
+    expect(outcomes).toEqual(["applied", "ok"]);
     // An applied edit carries no read feedback; a read-only turn does.
     expect(result.records[0]?.diagnostics).toBeNull();
     // The execution conversation starts with the DAG and carries the task turn.
@@ -183,6 +187,59 @@ describe("runTaskLoop", () => {
     expect(provider.calls[1]?.[1]?.content).toContain('"tasks"');
     expect(provider.calls[1]?.at(-1)?.content).toContain("Change answer so it returns 2.");
   });
+
+  test("a root gate waits for every micro-task, then the next root runs tests", async () => {
+    const dir = project();
+    writeFileSync(join(dir, "src", "settings.ts"), "export const other = 1;\n");
+    const provider = new ScriptedProvider([
+      planText(
+        [
+          task(1, { verify: "tsc" }),
+          task(2, {
+            root: 1,
+            deps: [1],
+            loc: { path: "src/settings.ts", symbol: "other", kind: "value" },
+          }),
+          task(3, {
+            deps: [1, 2],
+            loc: { path: "src/settings.ts", symbol: "other", kind: "value" },
+            instruction: "Change other to 3 for the test root.",
+          }),
+        ],
+        [1],
+        { "1": "todo", "2": "todo", "3": "todo" },
+      ),
+      GOOD_EDIT,
+      [
+        "select other in src/settings.ts resolve value",
+        "replace with",
+        "-----",
+        "export const other = 2;",
+        "-----",
+        "end",
+      ].join("\n"),
+      [
+        "select other in src/settings.ts resolve value",
+        "replace with",
+        "-----",
+        "export const other = 3;",
+        "-----",
+        "end",
+      ].join("\n"),
+    ]);
+    const result = await runTaskLoop(baseOptions(dir, provider));
+    expect(result.ok).toBe(true);
+    expect(result.records.map((record) => record.outcome)).toEqual([
+      "applied",
+      "applied",
+      "ok",
+      "applied",
+      "ok",
+    ]);
+    const verifications = result.records.filter((record) => record.kind === "verification");
+    expect(verifications.map((record) => record.locator.name)).toEqual(["answer", "other"]);
+    expect(readFileSync(join(dir, "src", "settings.ts"), "utf8")).toContain("other = 3");
+  }, 30000);
 
   test("runs a dependency chain in order and stops at each type check", async () => {
     // A self-contained project: the chain test only cares about order and the
@@ -252,9 +309,9 @@ describe("runTaskLoop", () => {
     expect(result.ok).toBe(true);
     expect(readFileSync(join(dir, "src", "total.ts"), "utf8")).toContain("export function sum(");
     expect(result.tasks?.map((entry) => entry.status)).toEqual(["done", "done"]);
-    // Task 1's type check and task 2's type check are separate verification rows.
+    // Each root has one gate after all of its micro-tasks finish.
     const verifications = result.records.filter((record) => record.kind === "verification");
-    expect(verifications.length).toBeGreaterThanOrEqual(3);
+    expect(verifications.length).toBeGreaterThanOrEqual(2);
   }, 30000);
 
   test("retries an invalid plan with its diagnostics before executing", async () => {
@@ -270,23 +327,30 @@ describe("runTaskLoop", () => {
     expect(provider.calls[1]?.at(-1)?.content).toContain("lists itself as a dependency");
   });
 
-  test("a failed task is reported to the planner, which amends it", async () => {
+  test("a failed micro-task is reported to the planner, which amends it", async () => {
     const dir = project();
+    const wrongTarget = editDsl("export function missing(): number {\n  return 2;\n}").replace(
+      "select answer",
+      "select missing",
+    );
     const provider = new ScriptedProvider([
       planText([task(1)], [1], { "1": "todo" }),
-      // Two rounds of an edit that does not compile: the task fails.
-      editDsl("export function answer(): number {\n  return number;\n}"),
-      editDsl("export function answer(): number {\n  return missing;\n}"),
-      // Re-plan after the failure: the planner amends the instruction.
-      planText([task(1, { instruction: "Return the numeric literal 2." })], [1], { "1": "todo" }),
+      // Three address misses exhaust the micro-task's exchange budget.
+      wrongTarget,
+      wrongTarget,
+      wrongTarget,
+      // The failed task's root is closed; the planner adds a fresh repair root.
+      planText([task(1), task(2, { deps: [], instruction: "Repair answer to return 2." })], [2], {
+        "1": "failed",
+        "2": "todo",
+      }),
       GOOD_EDIT,
     ]);
     const result = await runTaskLoop(baseOptions(dir, provider));
     expect(result.ok).toBe(true);
-    expect(result.records.some((record) => record.outcome === "tsc")).toBe(true);
-    expect(result.records.filter((record) => record.outcome === "tsc").length).toBe(2);
-    expect(provider.calls[3]?.at(-1)?.content).toContain("# Failed tasks and diagnostics");
-    expect(provider.calls[3]?.at(-1)?.content).toContain("did not reach a passing type check");
+    expect(result.records.filter((record) => record.outcome === "address").length).toBe(3);
+    expect(provider.calls[4]?.at(-1)?.content).toContain("# Failed tasks and diagnostics");
+    expect(provider.calls[4]?.at(-1)?.content).toContain("did not land an edit");
   });
 
   test("a passing type check with a failing suite opens a re-plan", async () => {
@@ -304,8 +368,10 @@ describe("runTaskLoop", () => {
     const result = await runTaskLoop(baseOptions(dir, provider));
     expect(result.ok).toBe(true);
     expect(result.records.some((record) => record.outcome === "tests")).toBe(true);
-    expect(provider.calls[2]?.at(-1)?.content).toContain("# Test results");
-    expect(provider.calls[2]?.at(-1)?.content).toContain("the test suite fails");
+    expect(provider.calls[2]?.at(-1)?.content).toContain("# Gate results");
+    expect(provider.calls[2]?.at(-1)?.content).toContain(
+      "A root gate failed after its micro-tasks completed.",
+    );
   });
 
   test("a create task appends an absent declaration", async () => {
@@ -341,6 +407,121 @@ describe("runTaskLoop", () => {
     expect(result.ok).toBe(true);
     expect(readFileSync(join(dir, "src", "extra.ts"), "utf8")).toContain("export function double");
   });
+
+  test("a syntax rejection injects the on-demand format help", async () => {
+    const dir = project();
+    const provider = new ScriptedProvider([
+      planText([task(1)], [1], { "1": "todo" }),
+      [
+        "select answer in src/helper.ts resolve value",
+        "replace with",
+        "-----",
+        "export function answer(): number {",
+        "  return 2;",
+        "}",
+      ].join("\n"),
+      GOOD_EDIT,
+    ]);
+    const result = await runTaskLoop(baseOptions(dir, provider));
+    expect(result.ok).toBe(true);
+    expect(provider.calls[2]?.at(-1)?.content).toContain("# Format help");
+    expect(provider.calls[2]?.at(-1)?.content).toContain("Example for this action");
+  }, 30000);
+
+  test("a create fence carrying extra declarations is rejected", async () => {
+    const dir = project();
+    writeFileSync(
+      join(dir, "src", "helper.ts"),
+      "export function answer(): number {\n  return 2;\n}\n",
+    );
+    writeFileSync(join(dir, "src", "extra.ts"), "");
+    const provider = new ScriptedProvider([
+      planText(
+        [
+          task(1, {
+            loc: { path: "src/extra.ts", symbol: "run", kind: "value" },
+            action: "create",
+            instruction: "Add run.",
+          }),
+        ],
+        [1],
+        { "1": "todo" },
+      ),
+      [
+        "select run in src/extra.ts resolve value",
+        "replace with",
+        "-----",
+        [
+          "type LispValue = number | boolean;",
+          "export function run(): number {",
+          "  return 2;",
+          "}",
+        ].join("\n"),
+        "-----",
+        "end",
+      ].join("\n"),
+      [
+        "select run in src/extra.ts resolve value",
+        "replace with",
+        "-----",
+        "export function run(): number {\n  return 2;\n}",
+        "-----",
+        "end",
+      ].join("\n"),
+    ]);
+    const result = await runTaskLoop(baseOptions(dir, provider));
+    expect(result.ok).toBe(true);
+    expect(result.records[0]?.diagnostics).toContain("exactly one top-level declaration");
+    const text = readFileSync(join(dir, "src", "extra.ts"), "utf8");
+    expect(text).toContain("export function run");
+    expect(text).not.toContain("LispValue");
+  }, 30000);
+
+  test("a related migration edits several same-file declarations atomically", async () => {
+    const dir = project();
+    writeFileSync(
+      join(dir, "src", "helper.ts"),
+      [
+        "export type Answer = 1;",
+        "export function answer(): Answer {",
+        "  return 1;",
+        "}",
+        "",
+      ].join("\n"),
+    );
+    const provider = new ScriptedProvider([
+      planText(
+        [
+          task(1, {
+            loc: { path: "src/helper.ts", symbol: "Answer", kind: "type" },
+            related: [{ path: "src/helper.ts", symbol: "answer", kind: "value" }],
+            instruction: "Migrate Answer to 2 and update answer.",
+          }),
+        ],
+        [1],
+        { "1": "todo" },
+      ),
+      [
+        "select Answer in src/helper.ts resolve type",
+        "replace with",
+        "-----",
+        "export type Answer = 2;",
+        "-----",
+        "end",
+        "select answer in src/helper.ts resolve value",
+        "replace with",
+        "-----",
+        "export function answer(): Answer {\n  return 2;\n}",
+        "-----",
+        "end",
+      ].join("\n"),
+    ]);
+    const result = await runTaskLoop(baseOptions(dir, provider));
+    expect(result.ok).toBe(true);
+    const text = readFileSync(join(dir, "src", "helper.ts"), "utf8");
+    expect(text).toContain("export type Answer = 2;");
+    expect(text).toContain("return 2;");
+  }, 30000);
 
   test("a delete task requires the empty-fence form", async () => {
     const dir = project();
@@ -560,7 +741,7 @@ describe("runTaskLoop", () => {
     const result = await runTaskLoop(baseOptions(dir, provider));
     expect(result.ok).toBe(true);
     expect(result.records[0]?.outcome).toBe("address");
-    expect(result.records[0]?.diagnostics).toContain("loc.kind is");
+    expect(result.records[0]?.diagnostics).toContain("task target is");
   }, 30000);
 
   test("TASK_DONE before any edit is a protocol rejection", async () => {

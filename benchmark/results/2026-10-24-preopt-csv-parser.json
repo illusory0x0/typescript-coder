@@ -1,0 +1,740 @@
+{
+  "generatedAt": "2026-10-24T12:32:46.968Z",
+  "date": "2026-10-24",
+  "mode": "full",
+  "tasks": [
+    "csv-parser"
+  ],
+  "sides": [
+    "tc"
+  ],
+  "reps": 3,
+  "concurrency": 3,
+  "model": "deepseek-flash",
+  "ocModel": null,
+  "effort": null,
+  "multiPayload": false,
+  "protocolFormat": "edit-dsl",
+  "protocolFormats": [
+    "edit-dsl"
+  ],
+  "agentModes": [
+    "plan-exec"
+  ],
+  "tokenBudget": null,
+  "bunVersion": "1.3.13",
+  "opencodeVersion": null,
+  "pilotReference": null,
+  "infraErrors": [],
+  "runs": [
+    {
+      "task": "csv-parser",
+      "side": "tc",
+      "protocol": "edit-dsl",
+      "agentMode": "plan-exec",
+      "rep": 1,
+      "ok": true,
+      "sideOk": true,
+      "tokens": {
+        "input": 3533,
+        "output": 923,
+        "cacheRead": 2304,
+        "cacheWrite": null,
+        "reasoning": null,
+        "total": 4456,
+        "billable": {
+          "in": 1229,
+          "out": 923,
+          "total": 2152
+        }
+      },
+      "usageAvailable": true,
+      "usageSource": "chat-completions",
+      "rawUsage": [
+        {
+          "prompt_tokens": 1850,
+          "completion_tokens": 420,
+          "total_tokens": 2270,
+          "prompt_tokens_details": {
+            "cached_tokens": 1664
+          },
+          "prompt_cache_hit_tokens": 1664,
+          "prompt_cache_miss_tokens": 186
+        },
+        {
+          "prompt_tokens": 1683,
+          "completion_tokens": 503,
+          "total_tokens": 2186,
+          "prompt_tokens_details": {
+            "cached_tokens": 640
+          },
+          "prompt_cache_hit_tokens": 640,
+          "prompt_cache_miss_tokens": 1043
+        }
+      ],
+      "durationMs": 4709,
+      "startedAt": "2026-10-24T12:32:46.989Z",
+      "finishedAt": "2026-10-24T12:32:51.699Z",
+      "cost": 0.0007450619999999999,
+      "rateClass": "off-peak",
+      "steps": 3,
+      "records": [
+        {
+          "row": 1,
+          "iteration": 1,
+          "kind": "exchange",
+          "exchange": 1,
+          "outcome": "applied",
+          "diagnosticsHead": null,
+          "replacementChars": 1772,
+          "finishReason": "stop",
+          "cause": null,
+          "payloads": 1,
+          "toolCalls": 0,
+          "selectors": null,
+          "stages": null,
+          "matcherKinds": null
+        },
+        {
+          "row": 2,
+          "iteration": 1,
+          "kind": "verification",
+          "exchange": null,
+          "outcome": "ok",
+          "diagnosticsHead": null,
+          "replacementChars": null,
+          "finishReason": null,
+          "cause": null,
+          "payloads": 0,
+          "toolCalls": 0,
+          "selectors": null,
+          "stages": null,
+          "matcherKinds": null
+        },
+        {
+          "row": 3,
+          "iteration": 1,
+          "kind": "verification",
+          "exchange": null,
+          "outcome": "ok",
+          "diagnosticsHead": null,
+          "replacementChars": null,
+          "finishReason": null,
+          "cause": null,
+          "payloads": 0,
+          "toolCalls": 0,
+          "selectors": null,
+          "stages": null,
+          "matcherKinds": null
+        }
+      ],
+      "exchangeStats": {
+        "turns": 1,
+        "payloads": 1,
+        "toolCalls": 0,
+        "applied": 1,
+        "rejected": 0,
+        "selected": 0,
+        "stopped": 0,
+        "selfChecks": 0,
+        "range": 0,
+        "matcher": 0,
+        "wholeSymbol": 0,
+        "stageWholeSymbol": 0,
+        "stageMatch": 0,
+        "stagePick": 0,
+        "snippet": 0,
+        "regex": 0,
+        "creates": 0
+      },
+      "loopDiagnostics": null,
+      "terminationReason": null,
+      "model": "deepseek-flash",
+      "workspace": "tmp/benchmark/2026-10-24T12-32-46-971Z-398d12e3/csv-parser-tc-plan-exec-rep1",
+      "logs": {
+        "side": "tmp/benchmark/2026-10-24T12-32-46-971Z-398d12e3/logs/csv-parser-tc-plan-exec-rep1/side.log",
+        "judge": "tmp/benchmark/2026-10-24T12-32-46-971Z-398d12e3/logs/csv-parser-tc-plan-exec-rep1/judge.log",
+        "session": null,
+        "stats": null
+      },
+      "versions": {
+        "bun": "1.3.13",
+        "opencode": null
+      },
+      "judge": {
+        "testsOk": true,
+        "tscOk": true,
+        "fixtureOk": true,
+        "detail": null
+      },
+      "error": null,
+      "infraError": null
+    },
+    {
+      "task": "csv-parser",
+      "side": "tc",
+      "protocol": "edit-dsl",
+      "agentMode": "plan-exec",
+      "rep": 2,
+      "ok": true,
+      "sideOk": true,
+      "tokens": {
+        "input": 3286,
+        "output": 731,
+        "cacheRead": 2304,
+        "cacheWrite": null,
+        "reasoning": null,
+        "total": 4017,
+        "billable": {
+          "in": 982,
+          "out": 731,
+          "total": 1713
+        }
+      },
+      "usageAvailable": true,
+      "usageSource": "chat-completions",
+      "rawUsage": [
+        {
+          "prompt_tokens": 1850,
+          "completion_tokens": 287,
+          "total_tokens": 2137,
+          "prompt_tokens_details": {
+            "cached_tokens": 1664
+          },
+          "prompt_cache_hit_tokens": 1664,
+          "prompt_cache_miss_tokens": 186
+        },
+        {
+          "prompt_tokens": 1436,
+          "completion_tokens": 444,
+          "total_tokens": 1880,
+          "prompt_tokens_details": {
+            "cached_tokens": 640
+          },
+          "prompt_cache_hit_tokens": 640,
+          "prompt_cache_miss_tokens": 796
+        }
+      ],
+      "durationMs": 4489,
+      "startedAt": "2026-10-24T12:32:46.998Z",
+      "finishedAt": "2026-10-24T12:32:51.488Z",
+      "cost": 0.0005928119999999999,
+      "rateClass": "off-peak",
+      "steps": 3,
+      "records": [
+        {
+          "row": 1,
+          "iteration": 1,
+          "kind": "exchange",
+          "exchange": 1,
+          "outcome": "applied",
+          "diagnosticsHead": null,
+          "replacementChars": 1644,
+          "finishReason": "stop",
+          "cause": null,
+          "payloads": 1,
+          "toolCalls": 0,
+          "selectors": null,
+          "stages": null,
+          "matcherKinds": null
+        },
+        {
+          "row": 2,
+          "iteration": 1,
+          "kind": "verification",
+          "exchange": null,
+          "outcome": "ok",
+          "diagnosticsHead": null,
+          "replacementChars": null,
+          "finishReason": null,
+          "cause": null,
+          "payloads": 0,
+          "toolCalls": 0,
+          "selectors": null,
+          "stages": null,
+          "matcherKinds": null
+        },
+        {
+          "row": 3,
+          "iteration": 1,
+          "kind": "verification",
+          "exchange": null,
+          "outcome": "ok",
+          "diagnosticsHead": null,
+          "replacementChars": null,
+          "finishReason": null,
+          "cause": null,
+          "payloads": 0,
+          "toolCalls": 0,
+          "selectors": null,
+          "stages": null,
+          "matcherKinds": null
+        }
+      ],
+      "exchangeStats": {
+        "turns": 1,
+        "payloads": 1,
+        "toolCalls": 0,
+        "applied": 1,
+        "rejected": 0,
+        "selected": 0,
+        "stopped": 0,
+        "selfChecks": 0,
+        "range": 0,
+        "matcher": 0,
+        "wholeSymbol": 0,
+        "stageWholeSymbol": 0,
+        "stageMatch": 0,
+        "stagePick": 0,
+        "snippet": 0,
+        "regex": 0,
+        "creates": 0
+      },
+      "loopDiagnostics": null,
+      "terminationReason": null,
+      "model": "deepseek-flash",
+      "workspace": "tmp/benchmark/2026-10-24T12-32-46-971Z-398d12e3/csv-parser-tc-plan-exec-rep2",
+      "logs": {
+        "side": "tmp/benchmark/2026-10-24T12-32-46-971Z-398d12e3/logs/csv-parser-tc-plan-exec-rep2/side.log",
+        "judge": "tmp/benchmark/2026-10-24T12-32-46-971Z-398d12e3/logs/csv-parser-tc-plan-exec-rep2/judge.log",
+        "session": null,
+        "stats": null
+      },
+      "versions": {
+        "bun": "1.3.13",
+        "opencode": null
+      },
+      "judge": {
+        "testsOk": true,
+        "tscOk": true,
+        "fixtureOk": true,
+        "detail": null
+      },
+      "error": null,
+      "infraError": null
+    },
+    {
+      "task": "csv-parser",
+      "side": "tc",
+      "protocol": "edit-dsl",
+      "agentMode": "plan-exec",
+      "rep": 3,
+      "ok": true,
+      "sideOk": true,
+      "tokens": {
+        "input": 17516,
+        "output": 3683,
+        "cacheRead": 12032,
+        "cacheWrite": null,
+        "reasoning": null,
+        "total": 21199,
+        "billable": {
+          "in": 5484,
+          "out": 3683,
+          "total": 9167
+        }
+      },
+      "usageAvailable": true,
+      "usageSource": "chat-completions",
+      "rawUsage": [
+        {
+          "prompt_tokens": 1850,
+          "completion_tokens": 430,
+          "total_tokens": 2280,
+          "prompt_tokens_details": {
+            "cached_tokens": 1664
+          },
+          "prompt_cache_hit_tokens": 1664,
+          "prompt_cache_miss_tokens": 186
+        },
+        {
+          "prompt_tokens": 1703,
+          "completion_tokens": 432,
+          "total_tokens": 2135,
+          "prompt_tokens_details": {
+            "cached_tokens": 640
+          },
+          "prompt_cache_hit_tokens": 640,
+          "prompt_cache_miss_tokens": 1063
+        },
+        {
+          "prompt_tokens": 3030,
+          "completion_tokens": 662,
+          "total_tokens": 3692,
+          "prompt_tokens_details": {
+            "cached_tokens": 2176
+          },
+          "prompt_cache_hit_tokens": 2176,
+          "prompt_cache_miss_tokens": 854
+        },
+        {
+          "prompt_tokens": 3797,
+          "completion_tokens": 648,
+          "total_tokens": 4445,
+          "prompt_tokens_details": {
+            "cached_tokens": 3584
+          },
+          "prompt_cache_hit_tokens": 3584,
+          "prompt_cache_miss_tokens": 213
+        },
+        {
+          "prompt_tokens": 2290,
+          "completion_tokens": 893,
+          "total_tokens": 3183,
+          "prompt_tokens_details": {
+            "cached_tokens": 896
+          },
+          "prompt_cache_hit_tokens": 896,
+          "prompt_cache_miss_tokens": 1394
+        },
+        {
+          "prompt_tokens": 4846,
+          "completion_tokens": 618,
+          "total_tokens": 5464,
+          "prompt_tokens_details": {
+            "cached_tokens": 3072
+          },
+          "prompt_cache_hit_tokens": 3072,
+          "prompt_cache_miss_tokens": 1774
+        }
+      ],
+      "durationMs": 17134,
+      "startedAt": "2026-10-24T12:32:47.005Z",
+      "finishedAt": "2026-10-24T12:33:04.139Z",
+      "cost": 0.0030684959999999996,
+      "rateClass": "off-peak",
+      "steps": 7,
+      "records": [
+        {
+          "row": 1,
+          "iteration": 1,
+          "kind": "exchange",
+          "exchange": 1,
+          "outcome": "applied",
+          "diagnosticsHead": null,
+          "replacementChars": 1534,
+          "finishReason": "stop",
+          "cause": null,
+          "payloads": 1,
+          "toolCalls": 0,
+          "selectors": null,
+          "stages": null,
+          "matcherKinds": null
+        },
+        {
+          "row": 2,
+          "iteration": 1,
+          "kind": "verification",
+          "exchange": null,
+          "outcome": "ok",
+          "diagnosticsHead": null,
+          "replacementChars": null,
+          "finishReason": null,
+          "cause": null,
+          "payloads": 0,
+          "toolCalls": 0,
+          "selectors": null,
+          "stages": null,
+          "matcherKinds": null
+        },
+        {
+          "row": 3,
+          "iteration": 1,
+          "kind": "verification",
+          "exchange": null,
+          "outcome": "tests",
+          "diagnosticsHead": "stage: tests tests failed: bun test v1.3.13 (bf2e2cec) src/csv.test.ts: 55 | }); 56 | }); 57 | 58 | describe(\"csv-parser errors\", () => { 59 | test(\"a character after a closing quote is rejected\", () ",
+          "replacementChars": null,
+          "finishReason": null,
+          "cause": null,
+          "payloads": 0,
+          "toolCalls": 0,
+          "selectors": null,
+          "stages": null,
+          "matcherKinds": null
+        },
+        {
+          "row": 4,
+          "iteration": 2,
+          "kind": "exchange",
+          "exchange": 1,
+          "outcome": "range",
+          "diagnosticsHead": "clause 1 of 8 (src/csv.ts): stage: range the \"pick\" range (line 1, column 1 to line 1, column 0) is invalid (outside-declaration) for function \"parseCsv\" in src/csv.ts: the range does not sit inside t",
+          "replacementChars": 3213,
+          "finishReason": "stop",
+          "cause": null,
+          "payloads": 0,
+          "toolCalls": 0,
+          "selectors": null,
+          "stages": null,
+          "matcherKinds": null
+        },
+        {
+          "row": 5,
+          "iteration": 2,
+          "kind": "exchange",
+          "exchange": 2,
+          "outcome": "applied",
+          "diagnosticsHead": null,
+          "replacementChars": 2302,
+          "finishReason": "stop",
+          "cause": null,
+          "payloads": 1,
+          "toolCalls": 0,
+          "selectors": null,
+          "stages": null,
+          "matcherKinds": null
+        },
+        {
+          "row": 6,
+          "iteration": 2,
+          "kind": "verification",
+          "exchange": null,
+          "outcome": "ok",
+          "diagnosticsHead": null,
+          "replacementChars": null,
+          "finishReason": null,
+          "cause": null,
+          "payloads": 0,
+          "toolCalls": 0,
+          "selectors": null,
+          "stages": null,
+          "matcherKinds": null
+        },
+        {
+          "row": 7,
+          "iteration": 2,
+          "kind": "verification",
+          "exchange": null,
+          "outcome": "ok",
+          "diagnosticsHead": null,
+          "replacementChars": null,
+          "finishReason": null,
+          "cause": null,
+          "payloads": 0,
+          "toolCalls": 0,
+          "selectors": null,
+          "stages": null,
+          "matcherKinds": null
+        }
+      ],
+      "exchangeStats": {
+        "turns": 3,
+        "payloads": 2,
+        "toolCalls": 0,
+        "applied": 2,
+        "rejected": 1,
+        "selected": 0,
+        "stopped": 0,
+        "selfChecks": 0,
+        "range": 0,
+        "matcher": 0,
+        "wholeSymbol": 0,
+        "stageWholeSymbol": 0,
+        "stageMatch": 0,
+        "stagePick": 0,
+        "snippet": 0,
+        "regex": 0,
+        "creates": 0
+      },
+      "loopDiagnostics": null,
+      "terminationReason": null,
+      "model": "deepseek-flash",
+      "workspace": "tmp/benchmark/2026-10-24T12-32-46-971Z-398d12e3/csv-parser-tc-plan-exec-rep3",
+      "logs": {
+        "side": "tmp/benchmark/2026-10-24T12-32-46-971Z-398d12e3/logs/csv-parser-tc-plan-exec-rep3/side.log",
+        "judge": "tmp/benchmark/2026-10-24T12-32-46-971Z-398d12e3/logs/csv-parser-tc-plan-exec-rep3/judge.log",
+        "session": null,
+        "stats": null
+      },
+      "versions": {
+        "bun": "1.3.13",
+        "opencode": null
+      },
+      "judge": {
+        "testsOk": true,
+        "tscOk": true,
+        "fixtureOk": true,
+        "detail": null
+      },
+      "error": null,
+      "infraError": null
+    }
+  ],
+  "aggregates": {
+    "byTaskSide": [
+      {
+        "task": "csv-parser",
+        "side": "tc",
+        "protocol": "edit-dsl",
+        "agentMode": "plan-exec",
+        "runs": 3,
+        "ok": 3,
+        "failed": 0,
+        "successRate": 1,
+        "usageRuns": 3,
+        "tokens": {
+          "in": {
+            "mean": 2565,
+            "total": 7695
+          },
+          "out": {
+            "mean": 1779,
+            "total": 5337
+          },
+          "total": {
+            "mean": 4344,
+            "total": 13032
+          }
+        },
+        "cost": {
+          "mean": 0.00146879,
+          "total": 0.00440637
+        },
+        "durationMsMean": 8777.333333333334,
+        "stepsMean": 4.333333333333333,
+        "tokensPerSuccess": {
+          "in": 2565,
+          "out": 1779,
+          "total": 4344
+        },
+        "costPerSuccess": 0.00146879,
+        "selectors": {
+          "range": 0,
+          "matcher": 0,
+          "wholeSymbol": 0
+        },
+        "stages": {
+          "wholeSymbol": 0,
+          "match": 0,
+          "pick": 0
+        },
+        "matcherKinds": {
+          "snippet": 0,
+          "regex": 0
+        },
+        "creates": 0
+      }
+    ],
+    "bySide": [
+      {
+        "task": null,
+        "side": "tc",
+        "protocol": "edit-dsl",
+        "agentMode": "plan-exec",
+        "runs": 3,
+        "ok": 3,
+        "failed": 0,
+        "successRate": 1,
+        "usageRuns": 3,
+        "tokens": {
+          "in": {
+            "mean": 2565,
+            "total": 7695
+          },
+          "out": {
+            "mean": 1779,
+            "total": 5337
+          },
+          "total": {
+            "mean": 4344,
+            "total": 13032
+          }
+        },
+        "cost": {
+          "mean": 0.00146879,
+          "total": 0.00440637
+        },
+        "durationMsMean": 8777.333333333334,
+        "stepsMean": 4.333333333333333,
+        "tokensPerSuccess": {
+          "in": 2565,
+          "out": 1779,
+          "total": 4344
+        },
+        "costPerSuccess": 0.00146879,
+        "selectors": {
+          "range": 0,
+          "matcher": 0,
+          "wholeSymbol": 0
+        },
+        "stages": {
+          "wholeSymbol": 0,
+          "match": 0,
+          "pick": 0
+        },
+        "matcherKinds": {
+          "snippet": 0,
+          "regex": 0
+        },
+        "creates": 0
+      }
+    ],
+    "overall": [
+      {
+        "task": null,
+        "side": "tc",
+        "protocol": "edit-dsl",
+        "agentMode": "plan-exec",
+        "runs": 3,
+        "ok": 3,
+        "failed": 0,
+        "successRate": 1,
+        "usageRuns": 3,
+        "tokens": {
+          "in": {
+            "mean": 2565,
+            "total": 7695
+          },
+          "out": {
+            "mean": 1779,
+            "total": 5337
+          },
+          "total": {
+            "mean": 4344,
+            "total": 13032
+          }
+        },
+        "cost": {
+          "mean": 0.00146879,
+          "total": 0.00440637
+        },
+        "durationMsMean": 8777.333333333334,
+        "stepsMean": 4.333333333333333,
+        "tokensPerSuccess": {
+          "in": 2565,
+          "out": 1779,
+          "total": 4344
+        },
+        "costPerSuccess": 0.00146879,
+        "selectors": {
+          "range": 0,
+          "matcher": 0,
+          "wholeSymbol": 0
+        },
+        "stages": {
+          "wholeSymbol": 0,
+          "match": 0,
+          "pick": 0
+        },
+        "matcherKinds": {
+          "snippet": 0,
+          "regex": 0
+        },
+        "creates": 0
+      }
+    ]
+  },
+  "provenance": {
+    "inputs": {
+      "model": "7d963f65d1ede1bd9416a5f55575efe0d202e0a00519ef04e47dae20c3180445",
+      "taskIssue": "aa65258365fc720f213fe953feee2d759b00b3c5835bf6f4b8ddeb7d6af92d9c",
+      "fixture": "0f1bdfab5c41ed8d956f63ae950040155a64104cc8005e9c202e87a403c6f3c4",
+      "systemPrompt": "6e5645734ac8c385fffedb02b8eb42d63fcf74e14e2a928319c084049371dc84",
+      "loopConfig": "fbe9ca190b448fcbc906967743917fe4e636e455d4ea33d6fa75ce023565f525",
+      "pricing": "aab6f45ac055bdc46329be2c46279a8ce322bfa62c0c61f0ef177d8b67766560"
+    },
+    "inputHash": "0f7d23fdade46dd56ad11b1bffc11179ea2f30977aa6e318107fee26e1b4f01d",
+    "computedAt": "2026-10-24T12:32:46.968Z"
+  }
+}

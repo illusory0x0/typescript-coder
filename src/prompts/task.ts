@@ -13,13 +13,18 @@
  */
 
 import type { EditTask, TaskId, TaskRunState } from "../tasks";
-import { formatTaskLoc, renderFailedTasks, renderTaskDag, renderTaskStatus } from "../tasks";
+import {
+  formatTaskLoc,
+  renderFailedRoots,
+  renderFailedTasks,
+  renderTaskDag,
+  renderTaskStatus,
+} from "../tasks";
 import type { SourceFile } from "../utility";
 import { appendSpecSection, splitSourceLines } from "./shared";
 
 /** Caps shared with the planner prompt text and the driver. */
 export const MAX_TASK_EXCHANGES = 3;
-export const MAX_TASK_ROUNDS = 2;
 export const MAX_TASK_PLAN_ROUNDS = 8;
 
 export const TASK_PLANNING_ROLE =
@@ -33,6 +38,8 @@ export const TASK_PLAN_EXAMPLE = `{
   "tasks": [
     {
       "id": 1,
+      "root": 1,
+      "verify": "test",
       "loc": { "path": "src/helper.ts", "symbol": "answer", "kind": "value" },
       "deps": [],
       "action": "modify",
@@ -44,28 +51,36 @@ export const TASK_PLAN_EXAMPLE = `{
 }`;
 
 /**
- * A complex plan example: create a helper, use it, then rename the old
- * function to the new name (the planner workflow from `human/agent-mode.yaml`).
+ * A complex plan example: a type change migrates coupled declarations in one
+ * root, then a later test root verifies the behavior. The final root must use
+ * `verify: "test"`.
  */
 export const TASK_PLAN_COMPLEX_EXAMPLE = `{
   "tasks": [
     {
       "id": 1,
-      "loc": { "path": "src/format.ts", "symbol": "formatNumber", "kind": "value" },
+      "root": 1,
+      "verify": "tsc",
+      "loc": { "path": "src/format.ts", "symbol": "Formatter", "kind": "type" },
+      "related": [
+        { "path": "src/format.ts", "symbol": "formatNumber", "kind": "value" }
+      ],
       "deps": [],
-      "action": "create",
-      "instruction": "Add an exported function formatNumber(value: number): string with its complete declaration."
+      "action": "modify",
+      "instruction": "Change the Formatter shape and update formatNumber in the same migration."
     },
     {
       "id": 2,
+      "root": 1,
       "loc": { "path": "src/report.ts", "symbol": "printTotal", "kind": "value" },
-      "parent": 1,
       "deps": [1],
       "action": "modify",
       "instruction": "Make printTotal call formatNumber(total) instead of String(total)."
     },
     {
       "id": 3,
+      "root": 3,
+      "verify": "test",
       "loc": { "path": "src/report.ts", "symbol": "printTotal", "kind": "value" },
       "deps": [2],
       "action": "rename",
@@ -77,102 +92,38 @@ export const TASK_PLAN_COMPLEX_EXAMPLE = `{
   "status": { "1": "todo", "2": "todo", "3": "todo" }
 }`;
 
-/** Two independent ready tasks, one of them a delete. */
-export const TASK_PLAN_PARALLEL_EXAMPLE = `{
-  "tasks": [
-    {
-      "id": 1,
-      "loc": { "path": "src/legacy.ts", "symbol": "oldHelper", "kind": "value" },
-      "deps": [],
-      "action": "delete",
-      "instruction": "Remove oldHelper; nothing references it."
-    },
-    {
-      "id": 2,
-      "loc": { "path": "src/main.ts", "symbol": "run", "kind": "value" },
-      "deps": [],
-      "action": "modify",
-      "instruction": "Make run return the number of processed rows."
-    }
-  ],
-  "todo": [1, 2],
-  "status": { "1": "todo", "2": "todo" }
-}`;
-
-/** The amendment shape on a re-plan: done, retried failed, and new tasks. */
-export const TASK_REPLAN_EXAMPLE = `{
-  "tasks": [
-    {
-      "id": 1,
-      "loc": { "path": "src/a.ts", "symbol": "parse", "kind": "value" },
-      "deps": [],
-      "action": "modify",
-      "instruction": "Keep this completed change unchanged."
-    },
-    {
-      "id": 2,
-      "loc": { "path": "src/a.ts", "symbol": "format", "kind": "value" },
-      "deps": [],
-      "action": "modify",
-      "instruction": "Retry with a smaller change: return the formatted string instead of rewriting the caller."
-    },
-    {
-      "id": 3,
-      "loc": { "path": "src/a.ts", "symbol": "render", "kind": "value" },
-      "deps": [2],
-      "action": "modify",
-      "instruction": "Use the new format result."
-    }
-  ],
-  "todo": [2],
-  "status": { "1": "done", "2": "todo", "3": "todo" }
-}`;
-
-const TASK_PLAN_FIELDS = `- "tasks": a non-empty array (at most 64), each task with:
-  - "id": a positive integer, unique in the plan;
-  - "loc": {"path": repo-relative file path, "symbol": declared name, "kind": "value" | "type" | "namespace"}. "kind" is the TypeScript symbol space, not the declaration keyword. For "create" it selects the wrapper of a body that is not a complete declaration;
-  - "parent": optional positive integer naming another task in the plan; it groups tasks only and never orders execution;
-  - "deps": array of task ids that must finish first (execution order);
-  - "action": "modify" | "create" | "delete" | "rename";
-  - "instruction": a short, self-contained paragraph (at most 4,000 characters) that states the intended code change and every behavioral detail this task needs. The executor sees only this task and the current source, never the requirement text or the test files;
-  - "renameTo": required only for action "rename", the new identifier;
-- "todo": the ids that are ready now (every dependency done), in priority order. Initially this is exactly the root set: no task in "todo" may depend on another todo task;
-- "status": an object mapping every task id to its status. A new plan starts every task "todo"; on a re-plan echo the status the harness gives you.`;
+const TASK_PLAN_FIELDS = `- "tasks" (1-64): each has "id", "root", "loc" {path, symbol, kind: value|type|namespace; kind is the TypeScript symbol space}, "deps", "action" (modify|create|delete|rename), and "instruction" (a self-contained paragraph; the executor never sees the requirement or tests).
+- "root": the root task id. A root task names itself (root === id) and carries "verify": "tsc" | "test"; all other tasks name that root. Every task in a root runs before the root gate, so a root gate sees the completed batch, not individual micro-edits. Roots run in plan order. The final root must carry "verify": "test".
+- "related": optional same-file loc objects that a modify task may edit atomically with its main target; use it for type/representation migrations.
+- "renameTo": required only for rename.
+- "todo": the ready task ids, in priority order.
+- "status": every task id mapped to "todo", "done", or "failed".`;
 
 const TASK_PLAN_RULES = `Rules:
-1. One task has one address. A change that spans declarations or files becomes several tasks linked by deps, in order.
-2. Keep every intermediate state type-correct: after each task the harness runs the type check, and a failing task is handed back as failed. When a change would break the type check until a later task lands, give the plan a compatibility step (for example the new declaration before its callers change, or an alias before the rename) so no task leaves the project broken.
-3. Model a rename as action "rename" with "renameTo" on the declaration that owns the name; its "instruction" says to update the references the harness rewrites. Same-file references are rewritten; a rename that must cross files becomes tasks that change each caller, then a rename, or is not expressible and must be escalated.
-4. Prefer modify over rewrite: name the smallest declaration that must change. An instruction may mention a span, a signature, or an expected shape, but must not paste a whole file.
-5. Test files (*.test.ts) are specifications. Do not target them unless the requirement explicitly asks for a test change. The executor does not see them, so copy the behavior this task must satisfy into its instruction.
-6. Dependencies must describe the real order; do not add cycles or redundant dependencies. A task that is independent of another should not depend on it.
-7. If the requirement is vague, too large for one DAG, or not expressible as these tasks, stop and say why instead of guessing.`;
+1. One task has one main address; put cohesive coupled changes (a type plus its direct same-file users) in one task's "related" list instead of forcing a temporarily broken intermediate state.
+2. A root gate runs only after all of its micro-tasks are done. Use a "tsc" root for a type phase and a "test" root for a semantic phase; the final root must be "test".
+3. A create task must carry the complete declaration body. Do not plan a later task that rewrites the same declaration unless the create deliberately made a stub; gates verify, so a task whose only effect would be a no-op does not belong in the DAG.
+4. A create fence must declare exactly the task's target declaration. Put helper declarations in their own create tasks.
+5. Use action "rename" with "renameTo" when the declaration name changes; cross-file callers need their own tasks.
+6. Name the smallest declaration that must change; never paste a whole file into an instruction.
+7. Do not target *.test.ts unless the requirement explicitly changes tests; copy required behavior into the instruction.
+8. Dependencies must be real and acyclic; roots run in plan order, so a task must not depend on a task in a later root.
+9. Keep roots as coherent phases. A root is not a scheduling unit for one-line edits; group related micro-tasks, then gate them.
+10. If the requirement is too large or not expressible, stop and say why.`;
 
 export function buildTaskPlanningSystemPrompt(): string {
   return [
     TASK_PLANNING_ROLE,
     "",
-    "Reply with ONLY one bare JSON object, no markdown fences, no prose:",
-    "",
-    "Minimal example (the actual reply shape):",
+    "Reply with ONLY one bare JSON object, no markdown fences, no prose.",
     "",
     TASK_PLAN_EXAMPLE,
-    "",
-    "Fields:",
     "",
     TASK_PLAN_FIELDS,
     "",
     TASK_PLAN_RULES,
     "",
-    "A multi-step example (a create, its caller, then a rename):",
-    "",
-    TASK_PLAN_COMPLEX_EXAMPLE,
-    "",
-    "Two independent ready tasks, including a delete:",
-    "",
-    TASK_PLAN_PARALLEL_EXAMPLE,
-    "",
-    "The symbol index and the current task status below are the only project context you get. Address one symbol-index entry per task; a symbol that the index does not list is not a target unless the task creates it.",
+    "Address one symbol-index entry per task; a symbol that the index does not list is not a target unless the task creates it.",
     "",
   ].join("\n");
 }
@@ -196,10 +147,14 @@ export function buildTaskPlanningUserPrompt(
 export function buildTaskReplanPrompt(input: {
   state: TaskRunState;
   failures: ReadonlyMap<TaskId, string>;
-  /** Test diagnostics when all tasks finished but the suite failed. */
-  testDiagnostics?: string;
+  /** Diagnostics from a failed root gate (tsc or test). */
+  rootFailures?: ReadonlyMap<TaskId, string>;
+  /** The gate diagnostics, also rendered as a direct block. */
+  gateDiagnostics?: string;
   /** Why no task is ready, when the frontier is blocked instead of failed. */
   blocked?: string;
+  /** Fresh symbol index of the current workspace, after edits. */
+  symbolIndex?: string;
   /** Explanation of what the planner may change in this reply. */
   delta: string;
 }): string {
@@ -216,11 +171,19 @@ export function buildTaskReplanPrompt(input: {
   if (failed !== "") {
     blocks.push("", "# Failed tasks and diagnostics", "", failed);
   }
-  if (input.testDiagnostics !== undefined && input.testDiagnostics.trim() !== "") {
-    blocks.push("", "# Test results", "", "```", input.testDiagnostics.trim(), "```");
+  const failedRoots =
+    input.rootFailures === undefined ? "" : renderFailedRoots(input.state, input.rootFailures);
+  if (failedRoots !== "") {
+    blocks.push("", "# Failed root gates and diagnostics", "", failedRoots);
+  }
+  if (input.gateDiagnostics !== undefined && input.gateDiagnostics.trim() !== "") {
+    blocks.push("", "# Gate results", "", "```", input.gateDiagnostics.trim(), "```");
   }
   if (input.blocked !== undefined && input.blocked.trim() !== "") {
     blocks.push("", "# Blocked", "", input.blocked);
+  }
+  if (input.symbolIndex !== undefined && input.symbolIndex.trim() !== "") {
+    blocks.push("", "# Current symbol index", "", "```text", input.symbolIndex.trim(), "```");
   }
   blocks.push(
     "",
@@ -228,24 +191,27 @@ export function buildTaskReplanPrompt(input: {
     "",
     input.delta,
     "",
-    "Shape of a valid amendment (keep #1 done, retry failed #2, add #3):",
-    "",
-    TASK_REPLAN_EXAMPLE,
-    "",
     "Reply with the complete plan JSON, including every existing task.",
   );
   return blocks.join("\n");
 }
 
-/** The first-plan correction: a protocol/DAG error, then the same ask. */
-export function buildTaskPlanRetryPrompt(diagnostics: string): string {
+/**
+ * The first-plan correction: a protocol/DAG error, then the same ask. The
+ * illustrative plan is appended only here, when the model has already failed
+ * the shape once; the initial prompt stays lean.
+ */
+export function buildTaskPlanRetryPrompt(diagnostics: string, help = true): string {
+  const example = help
+    ? `\n\nExample of a valid multi-task plan:\n\n${TASK_PLAN_COMPLEX_EXAMPLE}`
+    : "";
   return `The previous plan was rejected.
 
 Diagnostics:
 
 \`\`\`
 ${diagnostics}
-\`\`\`
+\`\`\`${example}
 
 Reply with the complete, corrected task plan JSON only.`;
 }
@@ -254,7 +220,7 @@ const TASK_ACTION_RULES: Record<string, string> = {
   modify:
     "The declaration must already exist. Reply with one or more edit clauses that change it; a reply that writes nothing is rejected.",
   create:
-    "The declaration (or the file) must be absent. Reply with a whole-declaration `select … replace with <fence> end` clause carrying no `match` or `pick`; a complete top-level declaration is appended verbatim, any other body is wrapped by the task's symbol space (value → `let`, type → `type`, namespace → `namespace`).",
+    "The declaration must be absent. Reply with a whole-declaration `select … replace with <fence> end` clause carrying no `match` or `pick`; the fence must contain exactly one top-level declaration, the task target. Any other body is wrapped by the task's symbol space (value → `let`, type → `type`, namespace → `namespace`).",
   delete:
     "Reply with a whole-declaration clause with an empty fence (no `match`, no `pick`) to remove the declaration. Deleting a whole file is not a task action.",
   rename:
@@ -272,32 +238,19 @@ export const TASK_SELF_CHECK_OFFER =
  */
 export function taskEditDslInstruction(): string {
   return [
-    "A reply is one or more `select … end` clauses; no prose and no JSON edit payload. The task's target is already selected: edit it directly (a bare viewer only locates a match).",
+    "A reply is one or more `select … end` clauses; no prose, no JSON edit payload. The task's target is already selected: edit it directly (a bare viewer only locates a match).",
     "",
     "Clause: `select <symbol> in <path> [ resolve <value|type|namespace> ] [ match (<snippet> | /regex/) ] [ [ pick <range> ] replace with <fence> | rename <old> to <new> ] end`.",
-    "`match` locates a span inside the declaration; `pick` narrows a match and requires `replace`; omit `match` to rewrite the whole declaration; an empty fence deletes it. `resolve` is optional and, when present, must name the task's symbol space. The fence opens with 5+ hyphens (for example `-----`) or 6+ backticks and closes with the same run. `pick` coordinates are the 1-based file-absolute lines of the content view.",
+    "`match` locates a span inside the declaration; `pick` narrows a match and requires `replace`; omit `match` to rewrite the whole declaration; an empty fence deletes it. The fence opens with 5+ hyphens (for example `-----`) or 6+ backticks and closes with the same run. `pick` coordinates are the 1-based file-absolute lines of the content view.",
     "",
-    "Examples:",
-    "",
-    "Whole-declaration modify:",
-    "",
-    "```````",
-    [
-      "select answer in src/a.ts resolve value",
-      "replace with",
-      "-----",
-      "export function answer(): number {",
-      "  return 2;",
-      "}",
-      "-----",
-      "end",
-    ].join("\n"),
-    "```````",
-    "",
-    "Match and pick one line:",
-    "",
-    "```````",
-    [
+    "You do not run the type check; the harness runs the root gate after all micro-tasks in the root finish. A task may also edit the same-file declarations listed in its `related` field.",
+  ].join("\n");
+}
+
+/** One action-specific example, injected only after a format rejection. */
+export function taskEditDslHelp(action: EditTask["action"]): string {
+  const examples: Record<EditTask["action"], string> = {
+    modify: [
       "select answer in src/a.ts resolve value",
       "match `return 1;`",
       "pick 2",
@@ -307,12 +260,7 @@ export function taskEditDslInstruction(): string {
       "-----",
       "end",
     ].join("\n"),
-    "```````",
-    "",
-    "Create an absent declaration:",
-    "",
-    "```````",
-    [
+    create: [
       "select double in src/a.ts resolve value",
       "replace with",
       "-----",
@@ -322,20 +270,18 @@ export function taskEditDslInstruction(): string {
       "-----",
       "end",
     ].join("\n"),
-    "```````",
-    "",
-    "Delete (empty fence):",
-    "",
-    "```````",
-    ["select unused in src/a.ts resolve value", "replace with", "-----", "-----", "end"].join("\n"),
-    "```````",
-    "",
-    "Rename:",
-    "",
-    "```````",
-    ["select answer in src/a.ts resolve value", "rename answer to result", "end"].join("\n"),
-    "```````",
-  ].join("\n");
+    delete: [
+      "select unused in src/a.ts resolve value",
+      "replace with",
+      "-----",
+      "-----",
+      "end",
+    ].join("\n"),
+    rename: ["select answer in src/a.ts resolve value", "rename answer to result", "end"].join(
+      "\n",
+    ),
+  };
+  return `Example for this action:\n\n${examples[action]}`;
 }
 
 /** The execution system prompt: the editing grammar, stable for the whole DAG. */
@@ -343,12 +289,9 @@ export function buildTaskExecutionSystemPrompt(): string {
   return [
     TASK_EXECUTION_ROLE,
     "",
-    'The current source of the task target is included below. Reply with ONLY the edit clauses that carry the task out — no prose, no JSON edit payload. After a rejected edit or a failed type check the one JSON exception is the bounded self-check read {"request":"read"}; the harness returns the source, then asks again. Report the end of a task in one word only if an edit already landed: `TASK_DONE`.',
+    'The current source of the task target is included below. Reply with ONLY the edit clauses that carry the task out — no prose, no JSON edit payload. After a rejected edit the one JSON exception is the bounded self-check read {"request":"read"}; the harness returns the source, then asks again. The type/test check is a root gate after all micro-tasks in the root finish; land this task\'s edit and stop.',
     "",
     "Reply shape: `select <symbol> in <path> [ resolve <value|type|namespace> ] [ match (<snippet> | /regex/) ] [ [ pick <range> ] replace with <fence> | rename <old> to <new> ] end`. A bare clause with no `replace` or `rename` is a read-only viewer.",
-    "",
-    "Action-specific rules:",
-    ...Object.entries(TASK_ACTION_RULES).map(([action, rule]) => `- ${action}: ${rule}`),
     "",
     taskEditDslInstruction(),
     "",
@@ -364,10 +307,10 @@ export interface TaskTurnInput {
   startLine?: number;
   /** Diagnostics from the previous rejected/failed exchange, or the task's opening state. */
   diagnostics?: string;
-  /** Task-scoped retry/round framing. */
+  /** Task-scoped retry framing. */
   context?: string;
-  /** Whether the edit is a repair after a failed type check. */
-  repair?: boolean;
+  /** Append one action-specific example after a format/address rejection. */
+  help?: boolean;
 }
 
 function numberedView(source: string, startLine = 1): string {
@@ -397,7 +340,17 @@ export function buildTaskTurnPrompt(input: TaskTurnInput): string {
     "",
     `#${task.id} (${action}) — ${status}`,
     "",
+    `Root: #${task.root}`,
+    "",
     `Target: ${formatTaskLoc(task.loc)}`,
+    ...(task.related === undefined || task.related.length === 0
+      ? []
+      : [
+          "",
+          `Related targets (same migration): ${task.related
+            .map((loc) => formatTaskLoc(loc))
+            .join(", ")}`,
+        ]),
     "",
     `Dependencies done. Instruction: ${task.instruction}`,
     "",
@@ -413,7 +366,7 @@ export function buildTaskTurnPrompt(input: TaskTurnInput): string {
   if (input.diagnostics !== undefined && input.diagnostics.trim() !== "") {
     blocks.push(
       "",
-      input.repair === true ? "# Type check failed" : "# Diagnostics",
+      "# Diagnostics",
       "",
       "```",
       input.diagnostics.trim(),
@@ -421,6 +374,9 @@ export function buildTaskTurnPrompt(input: TaskTurnInput): string {
       "",
       TASK_SELF_CHECK_OFFER,
     );
+  }
+  if (input.help === true) {
+    blocks.push("", "# Format help", "", taskEditDslHelp(task.action));
   }
   blocks.push(
     "",
@@ -434,7 +390,7 @@ export function buildTaskTurnPrompt(input: TaskTurnInput): string {
     input.contentView.trim() === "" ? "(empty)" : input.contentView,
     "```",
     "",
-    "Reply with the edit clauses for this task. After an edit lands, reply `TASK_DONE` to finish it.",
+    "Reply with the edit clauses for this task. The root gate runs after all sibling micro-tasks finish.",
   );
   return blocks.join("\n");
 }
@@ -453,15 +409,18 @@ export function replanDelta(input: {
   const rules = [
     "Keep every done task exactly as it is, and keep the ids of tasks you keep.",
     "Echo each existing task's status: done tasks stay done, todo tasks stay todo.",
-    "A failed task may be retried only by changing its definition and setting its status to todo; otherwise leave it failed.",
+    "A failed task may be retried by changing its definition and setting it to todo. A failed root reopens when you add or amend its repair tasks; its gate runs again after they finish.",
+    "A passed root is closed; a failed root may be repaired in place. Add new tasks with fresh ids, or amend the failed task with a changed definition.",
     "Add new tasks with fresh ids (above the current maximum) and status todo; amend or remove unfinished tasks by re-emitting the full list.",
-    "Emit todo as exactly the ready frontier after your changes.",
+    "Use related same-file locs when a type/representation migration must update several declarations atomically.",
+    'The final root must carry verify: "test"; earlier roots may use "tsc" or "test".',
+    "Emit todo as the first pending root's ready tasks; the harness recomputes and normalizes it.",
   ];
   const lead =
     input.failedIds.length > 0
       ? `The failed task(s) ${input.failedIds.map((id) => `#${id}`).join(", ")} could not be carried out. Fix the cause: amend the failing task (a different address or a smaller step), or add tasks that do what it could not.`
       : input.testsFailed
-        ? "Every task is done and the type check passes, but the test suite fails. Add the tasks the test output calls for, or amend the plan they contradict."
+        ? "A root gate failed after its micro-tasks completed. Add repair micro-tasks to that root (it reopens), or add a new root; the final gate must still be test."
         : input.blocked
           ? "No task is ready to run. Repair the dependency graph so the remaining work becomes ready, or remove work that is not needed."
           : "Continue the plan.";

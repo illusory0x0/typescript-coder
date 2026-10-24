@@ -37,9 +37,7 @@ export const EDIT_DSL_AT_A_GLANCE =
 export const EDIT_DSL_ROLE =
   "You are a TypeScript expert using the Edit-action DSL to modify source code.";
 export const EDIT_DSL_MOTIVATION =
-  "This protocol keeps edits small and addressable: a clause names one declaration or span instead of resending a whole file. Viewers and `read` locate source and never write. The editing clauses of one reply apply atomically — if any editing clause fails, nothing is written. A failed `read` only reports its error and writes nothing. Every write passes the parse gate, the formatter, and verification before it lands.";
-export const EDIT_DSL_TOOLS_MAPPING =
-  "Tools: `select … end` with no `replace` is a viewer that locates code and writes nothing; `select … replace with … end` is an editor that rewrites the named span or declaration; `rename <old> to <new>` rewrites a declaration name and its same-file references; `read` shows a file or selected lines; `write` replaces a whole file or selected lines; `create` and `delete` add or remove a file.";
+  "Edits are small and addressable: a clause names one declaration or span instead of resending a whole file. Editing clauses in one reply apply atomically; a failed read writes nothing. Every write passes the parse gate, formatter, and verification.";
 
 // The one detailed fold explanation (system prompt). The read/command prompts
 // carry only the short hint below; the edit instruction teaches the workflow.
@@ -66,7 +64,7 @@ export function buildEditDslSystemPrompt(multiPayload = false): string {
     },
     multiPayload,
     EDIT_DSL_ROLE,
-    [EDIT_DSL_AT_A_GLANCE, EDIT_DSL_MOTIVATION, EDIT_DSL_TOOLS_MAPPING],
+    [EDIT_DSL_AT_A_GLANCE, EDIT_DSL_MOTIVATION],
   );
 }
 
@@ -361,55 +359,6 @@ export const EDIT_DSL_EXAMPLE_FORMS: EditDslExampleForm[] = [
       "-----",
       "done",
     ].join("\n"),
-  },
-  {
-    label: "9. Rename: rewrite the declaration name and every same-file reference.",
-    selections: [
-      {
-        locator: { path: "src/x.ts", name: "answer", kind: "function" },
-        space: "value",
-        matcher: null,
-        pick: null,
-        replacement: null,
-        rename: { from: "answer", to: "result" },
-      },
-    ],
-  },
-  {
-    label: "10. Delete: a whole-declaration replace with an empty fence removes it.",
-    raw: [
-      "select const unused in src/x.ts resolve value",
-      "replace with",
-      "-----",
-      "-----",
-      "end",
-    ].join("\n"),
-  },
-  {
-    label:
-      "11. Resolve a type: `resolve type` picks the type alias when a value uses the same name.",
-    selections: [
-      {
-        locator: { path: "src/types.ts", name: "UserId", kind: "type" },
-        space: "type",
-        matcher: null,
-        pick: null,
-        replacement: "type UserId = string;",
-      },
-    ],
-  },
-  {
-    label:
-      "12. Whole variable statement: a variable target expands to its complete statement, including `export`.",
-    selections: [
-      {
-        locator: { path: "src/limits.ts", name: "MAX_TOKENS", kind: "const" },
-        space: "value",
-        matcher: null,
-        pick: null,
-        replacement: "export const MAX_TOKENS = 8192;",
-      },
-    ],
   },
 ];
 

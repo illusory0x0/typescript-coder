@@ -9,7 +9,7 @@
 //
 // Hashing rules (documented in `benchmark/README.md`, §"Evidence and
 // provenance"):
-// - Per-input sha256 hex digests: `model`, `taskIssue` (the frozen task text,
+// - Per-input sha256 hex digests: `model`, `taskIssue` (the frozen task spec text,
 //   keyed by task), `fixture` (the fixture's on-disk content, keyed by task and
 //   relative path), `systemPrompt` (`buildSystemPrompt(multiPayload, format)`),
 //   `loopConfig` (budgets/caps/effort/reps/multiPayload), and `pricing` (the
@@ -46,7 +46,6 @@ import {
   buildTaskPlanningSystemPrompt,
   MAX_TASK_EXCHANGES,
   MAX_TASK_PLAN_ROUNDS,
-  MAX_TASK_ROUNDS,
 } from "./prompts/task";
 
 /** Frozen task names the benchmark measures. */
@@ -95,14 +94,13 @@ export interface LoopConfig {
   /** Present only for the plan/execute mode; absent keeps edit hashes stable. */
   readonly agentMode?: "plan-exec";
   readonly taskMaxExchanges?: number;
-  readonly taskMaxRounds?: number;
   readonly taskMaxPlanRounds?: number;
 }
 
 export interface CurrentInputOptions {
   /** Tasks measured by the report; used to key the task-text and fixture hashes. */
   readonly tasks: readonly string[];
-  /** Frozen task text per task (`TASK_ISSUES` in `benchmark/run.ts`). */
+  /** Frozen task spec text per task (`TASK_SPECS` in `benchmark/run.ts`). */
   readonly taskIssues: Readonly<Record<string, string>>;
   readonly model: string;
   readonly multiPayload: boolean;
@@ -181,7 +179,6 @@ export function loopConfigHashInput(options: {
         ...base,
         agentMode: "plan-exec",
         taskMaxExchanges: MAX_TASK_EXCHANGES,
-        taskMaxRounds: MAX_TASK_ROUNDS,
         taskMaxPlanRounds: MAX_TASK_PLAN_ROUNDS,
       }
     : base;
