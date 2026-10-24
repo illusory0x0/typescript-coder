@@ -86,23 +86,37 @@ function project(): string {
   return dir;
 }
 
-function planText(tasks: unknown[], todo: number[], status: Record<string, string>): string {
-  return JSON.stringify({ tasks, todo, status });
-}
-
-function task(id: number, overrides: Record<string, unknown> = {}): Record<string, unknown> {
+function editSpec(id: number, overrides: Record<string, unknown> = {}): Record<string, unknown> {
   return {
     id,
-    root: overrides["root"] ?? id,
-    ...(overrides["root"] === undefined || overrides["root"] === id
-      ? { verify: overrides["verify"] ?? "test" }
-      : {}),
     loc: { path: "src/helper.ts", symbol: "answer", kind: "value" },
-    deps: [],
     action: "modify",
-    instruction: "Change answer so it returns 2.",
+    instruction: `Carry out edit ${id}.`,
     ...overrides,
   };
+}
+
+function taskSpec(id: number, overrides: Record<string, unknown> = {}): Record<string, unknown> {
+  const edits = overrides["edits"] ?? [editSpec(id + 1_000)];
+  return {
+    id,
+    verify: "test",
+    instruction: `Carry out task ${id}.`,
+    edits,
+    ...overrides,
+  };
+}
+
+function stageSpec(
+  id: number,
+  tasks: Record<string, unknown>[],
+  goal = `Carry out stage ${id}.`,
+): Record<string, unknown> {
+  return { id, goal, tasks };
+}
+
+function planText(stages: Record<string, unknown>[]): string {
+  return JSON.stringify({ stages });
 }
 
 function editDsl(replacement: string): string {
@@ -133,7 +147,7 @@ function baseOptions(dir: string, provider: ProviderLike) {
 describe("runLoop dispatch", () => {
   test("agentMode plan-exec routes through the task driver", async () => {
     const dir = project();
-    const provider = new ScriptedProvider([planText([task(1)], [1], { "1": "todo" }), GOOD_EDIT]);
+    const provider = new ScriptedProvider([planText([stageSpec(1, [taskSpec(1)])]), GOOD_EDIT]);
     const result = await runLoop({
       ...baseOptions(dir, provider),
       protocolFormat: "edit-dsl",
@@ -142,7 +156,7 @@ describe("runLoop dispatch", () => {
     expect(result.tasks?.map((entry) => entry.status)).toEqual(["done"]);
     // The planning call is the first provider call; the edit-dsl driver would
     // have started from its select-first system prompt instead.
-    expect(provider.calls[0]?.[0]?.content).toContain("edit-task DAG");
+    expect(provider.calls[0]?.[0]?.content).toContain("Stage -> Task -> edit");
   });
 
   test("the default edit mode is unchanged", async () => {
@@ -171,45 +185,123 @@ describe("runLoop dispatch", () => {
 });
 
 describe("runTaskLoop", () => {
-  test("plans one task, executes it, and verifies tsc + tests", async () => {
+  test("plans a Plan -> Stage -> Task -> edit tree, executes it, and verifies", async () => {
     const dir = project();
-    const provider = new ScriptedProvider([planText([task(1)], [1], { "1": "todo" }), GOOD_EDIT]);
+    const plan = planText([
+      stageSpec(
+        1,
+        [
+          taskSpec(1, {
+            verify: "test",
+            instruction: "Make the failing test green with a small change.",
+            edits: [
+              editSpec(1001, {
+                instruction: "Change answer so it returns 2 instead of 1.",
+              }),
+            ],
+          }),
+        ],
+        "Fix the answer behavior.",
+      ),
+    ]);
+    const provider = new ScriptedProvider([plan, GOOD_EDIT]);
     const result = await runTaskLoop(baseOptions(dir, provider));
     expect(result.ok).toBe(true);
     expect(readFileSync(join(dir, "src", "helper.ts"), "utf8")).toContain("return 2;");
     expect(result.tasks?.map((entry) => entry.status)).toEqual(["done"]);
     const outcomes = result.records.map((record) => record.outcome);
     expect(outcomes).toEqual(["applied", "ok"]);
-    // An applied edit carries no read feedback; a read-only turn does.
     expect(result.records[0]?.diagnostics).toBeNull();
-    // The execution conversation starts with the DAG and carries the task turn.
-    expect(provider.calls[1]?.[0]?.content).toContain("You receive one task at a time");
-    expect(provider.calls[1]?.[1]?.content).toContain('"tasks"');
-    expect(provider.calls[1]?.at(-1)?.content).toContain("Change answer so it returns 2.");
+    // The execution conversation starts with the tree and carries the current
+    // stage/task/edit turn.
+    expect(provider.calls[1]?.[0]?.content).toContain("one micro edit");
+    expect(provider.calls[1]?.[1]?.content).toContain('"stages"');
+    expect(provider.calls[1]?.at(-1)?.content).toContain("Fix the answer behavior.");
+    expect(provider.calls[1]?.at(-1)?.content).toContain(
+      "Make the failing test green with a small change.",
+    );
+    expect(provider.calls[1]?.at(-1)?.content).toContain(
+      "Change answer so it returns 2 instead of 1.",
+    );
   });
 
-  test("a root gate waits for every micro-task, then the next root runs tests", async () => {
+  test("a task gate waits for every edit in the task", async () => {
+    const dir = project();
+    // The first edit makes the file temporarily type-broken; the task gate
+    // must not run until the second edit fixes it.
+    writeFileSync(
+      join(dir, "src", "helper.ts"),
+      "export type Answer = 1;\nexport function answer(): Answer {\n  return 1;\n}\n",
+    );
+    const plan = planText([
+      stageSpec(1, [
+        taskSpec(1, {
+          verify: "test",
+          edits: [
+            editSpec(1001, {
+              loc: { path: "src/helper.ts", symbol: "Answer", kind: "type" },
+              instruction: "Change Answer to 2.",
+            }),
+            editSpec(1002, {
+              instruction: "Return 2 with the new Answer type.",
+            }),
+          ],
+        }),
+      ]),
+    ]);
+    const provider = new ScriptedProvider([
+      plan,
+      [
+        "select Answer in src/helper.ts resolve type",
+        "replace with",
+        "-----",
+        "export type Answer = 2;",
+        "-----",
+        "end",
+      ].join("\n"),
+      editDsl("export function answer(): Answer {\n  return 2;\n}"),
+    ]);
+    const result = await runTaskLoop(baseOptions(dir, provider));
+    expect(result.ok).toBe(true);
+    expect(result.records.map((record) => record.outcome)).toEqual(["applied", "applied", "ok"]);
+    expect(readFileSync(join(dir, "src", "helper.ts"), "utf8")).toContain(
+      "export type Answer = 2;",
+    );
+    // Every edit turn starts from the stable system + Plan prefix instead of
+    // accumulating the previous edit exchange.
+    expect(provider.calls[2]?.length).toBe(3);
+  }, 30000);
+
+  test("stages and tasks run in array order with their own gates", async () => {
     const dir = project();
     writeFileSync(join(dir, "src", "settings.ts"), "export const other = 1;\n");
+    const plan = planText([
+      stageSpec(1, [
+        taskSpec(1, {
+          verify: "tsc",
+          instruction: "Change the settings value.",
+          edits: [
+            editSpec(1001, {
+              loc: { path: "src/settings.ts", symbol: "other", kind: "value" },
+              instruction: "Change other to 2.",
+            }),
+          ],
+        }),
+      ]),
+      stageSpec(2, [
+        taskSpec(2, {
+          verify: "test",
+          instruction: "Make the failing test green.",
+          edits: [
+            editSpec(1002, {
+              instruction: "Change answer so it returns 2.",
+            }),
+          ],
+        }),
+      ]),
+    ]);
     const provider = new ScriptedProvider([
-      planText(
-        [
-          task(1, { verify: "tsc" }),
-          task(2, {
-            root: 1,
-            deps: [1],
-            loc: { path: "src/settings.ts", symbol: "other", kind: "value" },
-          }),
-          task(3, {
-            deps: [1, 2],
-            loc: { path: "src/settings.ts", symbol: "other", kind: "value" },
-            instruction: "Change other to 3 for the test root.",
-          }),
-        ],
-        [1],
-        { "1": "todo", "2": "todo", "3": "todo" },
-      ),
-      GOOD_EDIT,
+      plan,
       [
         "select other in src/settings.ts resolve value",
         "replace with",
@@ -218,214 +310,128 @@ describe("runTaskLoop", () => {
         "-----",
         "end",
       ].join("\n"),
-      [
-        "select other in src/settings.ts resolve value",
-        "replace with",
-        "-----",
-        "export const other = 3;",
-        "-----",
-        "end",
-      ].join("\n"),
+      GOOD_EDIT,
     ]);
     const result = await runTaskLoop(baseOptions(dir, provider));
     expect(result.ok).toBe(true);
     expect(result.records.map((record) => record.outcome)).toEqual([
       "applied",
-      "applied",
       "ok",
       "applied",
       "ok",
     ]);
     const verifications = result.records.filter((record) => record.kind === "verification");
-    expect(verifications.map((record) => record.locator.name)).toEqual(["answer", "other"]);
-    expect(readFileSync(join(dir, "src", "settings.ts"), "utf8")).toContain("other = 3");
+    expect(verifications.map((record) => record.locator.name)).toEqual(["other", "answer"]);
+    expect(readFileSync(join(dir, "src", "settings.ts"), "utf8")).toContain("other = 2");
   }, 30000);
 
-  test("runs a dependency chain in order and stops at each type check", async () => {
-    // A self-contained project: the chain test only cares about order and the
-    // per-task type check, so its suite is green from the start.
-    const dir = mkdtempSync(join(tmpdir(), "tcchain-"));
-    tempDirs.push(dir);
-    mkdirSync(join(dir, "src"));
-    writeFileSync(
-      join(dir, "tsconfig.json"),
-      JSON.stringify({
-        compilerOptions: { target: "ES2022", module: "ESNext", strict: true, noEmit: true },
-        include: ["src"],
-      }),
-    );
-    writeFileSync(join(dir, "bunfig.toml"), '[test]\nroot = "./src"\n');
-    writeFileSync(
-      join(dir, "src", "total.ts"),
-      "export function total(values: number[]): number {\n  return values.length;\n}\n\nexport function describe(values: number[]): string {\n  return `total ${total(values)}`;\n}\n",
-    );
-    writeFileSync(
-      join(dir, "src", "total.test.ts"),
-      'import { expect, test } from "bun:test";\nimport { describe } from "./total";\ntest("describe", () => {\n  expect(describe([1, 2])).toContain("total");\n});\n',
-    );
-    writeFileSync(
-      join(dir, "src", "bun-shim.d.ts"),
-      [
-        'declare module "bun:test" {',
-        "  export const test: (name: string, fn: () => void) => void;",
-        "  export const expect: (value: unknown) => { toBe: (expected: unknown) => void; toContain: (expected: string) => void };",
-        "}",
-        "",
-      ].join("\n"),
-    );
-    const chain = planText(
-      [
-        task(1, {
-          loc: { path: "src/total.ts", symbol: "total", kind: "value" },
-          instruction: "Change total so it sums the values instead of counting them.",
-        }),
-        task(2, {
-          loc: { path: "src/total.ts", symbol: "total", kind: "value" },
-          deps: [1],
-          action: "rename",
-          renameTo: "sum",
-          instruction: "Rename total to sum; the same-file references in describe follow.",
-        }),
-      ],
-      [1],
-      { "1": "todo", "2": "todo" },
-    );
-    const provider = new ScriptedProvider([
-      chain,
-      [
-        "select total in src/total.ts resolve value",
-        "replace with",
-        "-----",
-        "export function total(values: number[]): number {\n  return values.reduce((sum, value) => sum + value, 0);\n}",
-        "-----",
-        "end",
-      ].join("\n"),
-      ["select total in src/total.ts resolve value", "rename total to sum", "end"].join("\n"),
-    ]);
-    const result = await runTaskLoop({
-      ...baseOptions(dir, provider),
-      testCommand: ["bun", "test"],
-    });
-    expect(result.ok).toBe(true);
-    expect(readFileSync(join(dir, "src", "total.ts"), "utf8")).toContain("export function sum(");
-    expect(result.tasks?.map((entry) => entry.status)).toEqual(["done", "done"]);
-    // Each root has one gate after all of its micro-tasks finish.
-    const verifications = result.records.filter((record) => record.kind === "verification");
-    expect(verifications.length).toBeGreaterThanOrEqual(2);
-  }, 30000);
-
-  test("retries an invalid plan with its diagnostics before executing", async () => {
+  test("a failed task gate lets a later task in the same stage repair it", async () => {
     const dir = project();
+    const plan = planText([
+      stageSpec(1, [
+        taskSpec(1, {
+          verify: "test",
+          instruction: "Try a first answer.",
+          edits: [editSpec(1001, { instruction: "Return 3." })],
+        }),
+        taskSpec(2, {
+          verify: "test",
+          instruction: "Fix the answer if the previous task missed.",
+          edits: [editSpec(1002, { instruction: "Return 2." })],
+        }),
+      ]),
+    ]);
     const provider = new ScriptedProvider([
-      planText([task(1, { deps: [1] })], [1], { "1": "todo" }),
-      planText([task(1)], [1], { "1": "todo" }),
+      plan,
+      editDsl("export function answer(): number {\n  return 3;\n}"),
       GOOD_EDIT,
     ]);
     const result = await runTaskLoop(baseOptions(dir, provider));
     expect(result.ok).toBe(true);
-    expect(provider.calls[1]?.at(-1)?.content).toContain("stage: task-dag");
-    expect(provider.calls[1]?.at(-1)?.content).toContain("lists itself as a dependency");
-  });
+    expect(provider.calls.length).toBe(3);
+    expect(result.records.map((record) => record.outcome)).toEqual([
+      "applied",
+      "tests",
+      "applied",
+      "ok",
+    ]);
+    // The later task sees the earlier gate failure as coordination context.
+    expect(provider.calls[2]?.at(-1)?.content).toContain("# Context");
+    expect(provider.calls[2]?.at(-1)?.content).toContain("Task #1 gate failed");
+  }, 30000);
 
-  test("a failed micro-task is reported to the planner, which amends it", async () => {
+  test("a failed task gate with no later task triggers a re-plan and reopens with a repair edit", async () => {
+    const dir = project();
+    const firstPlan = planText([
+      stageSpec(1, [
+        taskSpec(1, {
+          verify: "test",
+          instruction: "Try a first answer.",
+          edits: [editSpec(1001, { instruction: "Return 3." })],
+        }),
+      ]),
+    ]);
+    const repairPlan = planText([
+      stageSpec(1, [
+        taskSpec(1, {
+          verify: "test",
+          instruction: "Try a first answer.",
+          edits: [
+            editSpec(1001, { instruction: "Return 3." }),
+            editSpec(1002, { instruction: "Add the missing return-2 repair." }),
+          ],
+        }),
+      ]),
+    ]);
+    const provider = new ScriptedProvider([
+      firstPlan,
+      editDsl("export function answer(): number {\n  return 3;\n}"),
+      repairPlan,
+      GOOD_EDIT,
+    ]);
+    const result = await runTaskLoop(baseOptions(dir, provider));
+    expect(result.ok).toBe(true);
+    expect(provider.calls[2]?.at(-1)?.content).toContain("# Gate results");
+    expect(provider.calls[2]?.at(-1)?.content).toContain("The task gate(s) #1 failed");
+    expect(result.records.map((record) => record.outcome)).toEqual([
+      "applied",
+      "tests",
+      "applied",
+      "ok",
+    ]);
+  }, 30000);
+
+  test("a failed edit is reported to the planner, which changes its definition", async () => {
     const dir = project();
     const wrongTarget = editDsl("export function missing(): number {\n  return 2;\n}").replace(
       "select answer",
       "select missing",
     );
+    const firstPlan = planText([stageSpec(1, [taskSpec(1)])]);
+    const secondPlan = planText([
+      stageSpec(1, [
+        taskSpec(1, {
+          edits: [
+            editSpec(1001, {
+              instruction: "Use a smaller edit on the existing answer declaration.",
+            }),
+          ],
+        }),
+      ]),
+    ]);
     const provider = new ScriptedProvider([
-      planText([task(1)], [1], { "1": "todo" }),
-      // Three address misses exhaust the micro-task's exchange budget.
+      firstPlan,
       wrongTarget,
       wrongTarget,
       wrongTarget,
-      // The failed task's root is closed; the planner adds a fresh repair root.
-      planText([task(1), task(2, { deps: [], instruction: "Repair answer to return 2." })], [2], {
-        "1": "failed",
-        "2": "todo",
-      }),
+      secondPlan,
       GOOD_EDIT,
     ]);
     const result = await runTaskLoop(baseOptions(dir, provider));
     expect(result.ok).toBe(true);
     expect(result.records.filter((record) => record.outcome === "address").length).toBe(3);
-    expect(provider.calls[4]?.at(-1)?.content).toContain("# Failed tasks and diagnostics");
+    expect(provider.calls[4]?.at(-1)?.content).toContain("# Failed edits and diagnostics");
     expect(provider.calls[4]?.at(-1)?.content).toContain("did not land an edit");
-  });
-
-  test("a passing type check with a failing suite opens a re-plan", async () => {
-    const dir = project();
-    // The edit compiles but keeps the test red; the re-plan adds the task that
-    // fixes it, and that task's edit passes both.
-    const provider = new ScriptedProvider([
-      // Task 1 compiles but leaves the suite red. The re-plan cannot amend a
-      // done task, so it adds task 2 on the same declaration.
-      planText([task(1)], [1], { "1": "todo" }),
-      editDsl("export function answer(): number {\n  return 3;\n}"),
-      planText([task(1), task(2, { deps: [1] })], [2], { "1": "done", "2": "todo" }),
-      GOOD_EDIT,
-    ]);
-    const result = await runTaskLoop(baseOptions(dir, provider));
-    expect(result.ok).toBe(true);
-    expect(result.records.some((record) => record.outcome === "tests")).toBe(true);
-    expect(provider.calls[2]?.at(-1)?.content).toContain("# Gate results");
-    expect(provider.calls[2]?.at(-1)?.content).toContain(
-      "A root gate failed after its micro-tasks completed.",
-    );
-  });
-
-  test("a create task appends an absent declaration", async () => {
-    const dir = project();
-    // This test is about the create action, not the baseline failure: start green.
-    writeFileSync(
-      join(dir, "src", "helper.ts"),
-      "export function answer(): number {\n  return 2;\n}\n",
-    );
-    writeFileSync(join(dir, "src", "extra.ts"), "");
-    const provider = new ScriptedProvider([
-      planText(
-        [
-          task(1, {
-            loc: { path: "src/extra.ts", symbol: "double", kind: "value" },
-            action: "create",
-            instruction: "Add an exported double function.",
-          }),
-        ],
-        [1],
-        { "1": "todo" },
-      ),
-      [
-        "select double in src/extra.ts resolve value",
-        "replace with",
-        "-----",
-        "export function double(value: number): number {\n  return value * 2;\n}",
-        "-----",
-        "end",
-      ].join("\n"),
-    ]);
-    const result = await runTaskLoop(baseOptions(dir, provider));
-    expect(result.ok).toBe(true);
-    expect(readFileSync(join(dir, "src", "extra.ts"), "utf8")).toContain("export function double");
-  });
-
-  test("a syntax rejection injects the on-demand format help", async () => {
-    const dir = project();
-    const provider = new ScriptedProvider([
-      planText([task(1)], [1], { "1": "todo" }),
-      [
-        "select answer in src/helper.ts resolve value",
-        "replace with",
-        "-----",
-        "export function answer(): number {",
-        "  return 2;",
-        "}",
-      ].join("\n"),
-      GOOD_EDIT,
-    ]);
-    const result = await runTaskLoop(baseOptions(dir, provider));
-    expect(result.ok).toBe(true);
-    expect(provider.calls[2]?.at(-1)?.content).toContain("# Format help");
-    expect(provider.calls[2]?.at(-1)?.content).toContain("Example for this action");
   }, 30000);
 
   test("a create fence carrying extra declarations is rejected", async () => {
@@ -435,18 +441,22 @@ describe("runTaskLoop", () => {
       "export function answer(): number {\n  return 2;\n}\n",
     );
     writeFileSync(join(dir, "src", "extra.ts"), "");
+    const plan = planText([
+      stageSpec(1, [
+        taskSpec(1, {
+          verify: "test",
+          edits: [
+            editSpec(1001, {
+              loc: { path: "src/extra.ts", symbol: "run", kind: "value" },
+              action: "create",
+              instruction: "Add run.",
+            }),
+          ],
+        }),
+      ]),
+    ]);
     const provider = new ScriptedProvider([
-      planText(
-        [
-          task(1, {
-            loc: { path: "src/extra.ts", symbol: "run", kind: "value" },
-            action: "create",
-            instruction: "Add run.",
-          }),
-        ],
-        [1],
-        { "1": "todo" },
-      ),
+      plan,
       [
         "select run in src/extra.ts resolve value",
         "replace with",
@@ -489,18 +499,22 @@ describe("runTaskLoop", () => {
         "",
       ].join("\n"),
     );
+    const plan = planText([
+      stageSpec(1, [
+        taskSpec(1, {
+          verify: "test",
+          edits: [
+            editSpec(1001, {
+              loc: { path: "src/helper.ts", symbol: "Answer", kind: "type" },
+              related: [{ path: "src/helper.ts", symbol: "answer", kind: "value" }],
+              instruction: "Migrate Answer to 2 and update answer.",
+            }),
+          ],
+        }),
+      ]),
+    ]);
     const provider = new ScriptedProvider([
-      planText(
-        [
-          task(1, {
-            loc: { path: "src/helper.ts", symbol: "Answer", kind: "type" },
-            related: [{ path: "src/helper.ts", symbol: "answer", kind: "value" }],
-            instruction: "Migrate Answer to 2 and update answer.",
-          }),
-        ],
-        [1],
-        { "1": "todo" },
-      ),
+      plan,
       [
         "select Answer in src/helper.ts resolve type",
         "replace with",
@@ -523,48 +537,29 @@ describe("runTaskLoop", () => {
     expect(text).toContain("return 2;");
   }, 30000);
 
-  test("a delete task requires the empty-fence form", async () => {
-    const dir = project();
-    const provider = new ScriptedProvider([
-      planText([task(1, { action: "delete", instruction: "Remove answer." })], [1], {
-        "1": "todo",
-      }),
-      editDsl("export function answer(): number {\n  return 2;\n}"),
-      [
-        "select answer in src/helper.ts resolve value",
-        "replace with",
-        "-----",
-        "-----",
-        "end",
-      ].join("\n"),
-    ]);
-    const result = await runTaskLoop(baseOptions(dir, provider));
-    // The first reply is a non-empty fence on a delete task: rejected, then
-    // the empty fence deletes. The remaining file no longer compiles, so the
-    // run fails, which is what the test asserts about the form's enforcement.
-    expect(provider.calls[2]?.at(-1)?.content).toContain("empty fence");
-    expect(result.records[0]?.outcome).toBe("address");
-  }, 30000);
-
-  test("a delete task removes a whole declaration and keeps the suite green", async () => {
+  test("a delete edit removes a whole declaration and keeps the suite green", async () => {
     const dir = project();
     writeFileSync(
       join(dir, "src", "helper.ts"),
       "export function answer(): number {\n  return 2;\n}\n",
     );
     writeFileSync(join(dir, "src", "unused.ts"), "export const unused = 1;\n");
+    const plan = planText([
+      stageSpec(1, [
+        taskSpec(1, {
+          verify: "test",
+          edits: [
+            editSpec(1001, {
+              loc: { path: "src/unused.ts", symbol: "unused", kind: "value" },
+              action: "delete",
+              instruction: "Remove the unused declaration.",
+            }),
+          ],
+        }),
+      ]),
+    ]);
     const provider = new ScriptedProvider([
-      planText(
-        [
-          task(1, {
-            loc: { path: "src/unused.ts", symbol: "unused", kind: "value" },
-            action: "delete",
-            instruction: "Remove the unused declaration.",
-          }),
-        ],
-        [1],
-        { "1": "todo" },
-      ),
+      plan,
       [
         "select unused in src/unused.ts resolve value",
         "replace with",
@@ -578,113 +573,12 @@ describe("runTaskLoop", () => {
     expect(readFileSync(join(dir, "src", "unused.ts"), "utf8").trim()).toBe("");
   }, 30000);
 
-  test("a whole-declaration empty fence is rejected under action modify", async () => {
-    const dir = project();
-    const provider = new ScriptedProvider([
-      planText([task(1)], [1], { "1": "todo" }),
-      [
-        "select answer in src/helper.ts resolve value",
-        "replace with",
-        "-----",
-        "-----",
-        "end",
-      ].join("\n"),
-      GOOD_EDIT,
-    ]);
-    const result = await runTaskLoop(baseOptions(dir, provider));
-    expect(result.ok).toBe(true);
-    expect(result.records[0]?.diagnostics).toContain('action "delete"');
-  }, 30000);
-
-  test("a whole-symbol variable rewrite replaces the enclosing statement", async () => {
-    const dir = project();
-    writeFileSync(
-      join(dir, "src", "helper.ts"),
-      "export function answer(): number {\n  return 2;\n}\n",
-    );
-    writeFileSync(join(dir, "src", "settings.ts"), "export const limit = 1;\n");
-    const provider = new ScriptedProvider([
-      planText(
-        [
-          task(1, {
-            loc: { path: "src/settings.ts", symbol: "limit", kind: "value" },
-            instruction: "Change limit to 2.",
-          }),
-        ],
-        [1],
-        { "1": "todo" },
-      ),
-      [
-        "select limit in src/settings.ts resolve value",
-        "replace with",
-        "-----",
-        "export const limit = 2;",
-        "-----",
-        "end",
-      ].join("\n"),
-    ]);
-    const result = await runTaskLoop(baseOptions(dir, provider));
-    expect(result.ok).toBe(true);
-    expect(readFileSync(join(dir, "src", "settings.ts"), "utf8")).toBe("export const limit = 2;\n");
-  }, 30000);
-
-  test("a variable rename rewrites the binding without expanding to the statement", async () => {
-    const dir = project();
-    writeFileSync(
-      join(dir, "src", "helper.ts"),
-      "export function answer(): number {\n  return 2;\n}\n",
-    );
-    writeFileSync(
-      join(dir, "src", "settings.ts"),
-      "export const limit = 1;\nexport const doubled = limit * 2;\n",
-    );
-    const provider = new ScriptedProvider([
-      planText(
-        [
-          task(1, {
-            loc: { path: "src/settings.ts", symbol: "limit", kind: "value" },
-            action: "rename",
-            renameTo: "max",
-            instruction: "Rename limit to max.",
-          }),
-        ],
-        [1],
-        { "1": "todo" },
-      ),
-      ["select limit in src/settings.ts resolve value", "rename limit to max", "end"].join("\n"),
-    ]);
-    const result = await runTaskLoop(baseOptions(dir, provider));
-    expect(result.ok).toBe(true);
-    expect(readFileSync(join(dir, "src", "settings.ts"), "utf8")).toBe(
-      "export const max = 1;\nexport const doubled = max * 2;\n",
-    );
-  }, 30000);
-
-  test("a read statement before the editor does not shift the target guard", async () => {
-    const dir = project();
-    const provider = new ScriptedProvider([
-      planText([task(1)], [1], { "1": "todo" }),
-      [
-        "read src/helper.test.ts done",
-        "select answer in src/helper.ts resolve value",
-        "replace with",
-        "-----",
-        "export function answer(): number {\n  return 2;\n}",
-        "-----",
-        "end",
-      ].join("\n"),
-    ]);
-    const result = await runTaskLoop(baseOptions(dir, provider));
-    expect(result.ok).toBe(true);
-    expect(readFileSync(join(dir, "src", "helper.ts"), "utf8")).toContain("return 2;");
-    expect(result.records[0]?.diagnostics).toContain("Read results");
-  }, 30000);
-
   test("an off-target edit is rejected without touching the file", async () => {
     const dir = project();
     writeFileSync(join(dir, "src", "other.ts"), "export const other = 1;\n");
+    const plan = planText([stageSpec(1, [taskSpec(1)])]);
     const provider = new ScriptedProvider([
-      planText([task(1)], [1], { "1": "todo" }),
+      plan,
       [
         "select other in src/other.ts resolve value",
         "replace with",
@@ -702,55 +596,10 @@ describe("runTaskLoop", () => {
     expect(result.records[0]?.diagnostics).toContain("must edit only that declared target");
   });
 
-  test("a match edit keeps its body fragment unprefixed", async () => {
-    const dir = project();
-    const provider = new ScriptedProvider([
-      planText([task(1)], [1], { "1": "todo" }),
-      [
-        "select answer in src/helper.ts resolve value",
-        "match `return 1;`",
-        "replace with",
-        "-----",
-        "return 2;",
-        "-----",
-        "end",
-      ].join("\n"),
-    ]);
-    const result = await runTaskLoop(baseOptions(dir, provider));
-    expect(result.ok).toBe(true);
-    expect(readFileSync(join(dir, "src", "helper.ts"), "utf8")).toContain(
-      "export function answer(): number {",
-    );
-    expect(readFileSync(join(dir, "src", "helper.ts"), "utf8")).toContain("return 2;");
-  }, 30000);
-
-  test("a clause that resolves the wrong symbol space is rejected", async () => {
-    const dir = project();
-    const provider = new ScriptedProvider([
-      planText([task(1)], [1], { "1": "todo" }),
-      [
-        "select answer in src/helper.ts resolve type",
-        "replace with",
-        "-----",
-        "export function answer(): number {\n  return 2;\n}",
-        "-----",
-        "end",
-      ].join("\n"),
-      GOOD_EDIT,
-    ]);
-    const result = await runTaskLoop(baseOptions(dir, provider));
-    expect(result.ok).toBe(true);
-    expect(result.records[0]?.outcome).toBe("address");
-    expect(result.records[0]?.diagnostics).toContain("task target is");
-  }, 30000);
-
   test("TASK_DONE before any edit is a protocol rejection", async () => {
     const dir = project();
-    const provider = new ScriptedProvider([
-      planText([task(1)], [1], { "1": "todo" }),
-      "TASK_DONE",
-      GOOD_EDIT,
-    ]);
+    const plan = planText([stageSpec(1, [taskSpec(1)])]);
+    const provider = new ScriptedProvider([plan, "TASK_DONE", GOOD_EDIT]);
     const result = await runTaskLoop(baseOptions(dir, provider));
     expect(result.ok).toBe(true);
     expect(result.records[0]?.outcome).toBe("protocol");
@@ -759,7 +608,14 @@ describe("runTaskLoop", () => {
 
   test("the same rejected plan repeated ends as task-exhausted", async () => {
     const dir = project();
-    const bad = planText([task(1, { deps: [9] })], [1], { "1": "todo" });
+    const bad = planText([
+      stageSpec(1, [
+        taskSpec(1, {
+          verify: "tsc",
+          edits: [editSpec(1001, { loc: { path: "../a.ts", symbol: "a", kind: "value" } })],
+        }),
+      ]),
+    ]);
     const provider = new ScriptedProvider([bad, bad, bad]);
     const result = await runTaskLoop(baseOptions(dir, provider));
     expect(result.ok).toBe(false);
@@ -767,15 +623,13 @@ describe("runTaskLoop", () => {
     expect(result.diagnostics).toContain("no valid plan");
   });
 
-  test("a re-plan that repeats the same DAG makes no progress", async () => {
+  test("a re-plan that repeats the same tree makes no progress", async () => {
     const dir = project();
-    const plan = planText([task(1)], [1], { "1": "todo" });
+    const plan = planText([stageSpec(1, [taskSpec(1)])]);
     const provider = new ScriptedProvider([
       plan,
-      // The task never edits anything; after its exchange rounds it fails, and
-      // the planner re-emits the identical DAG.
-      // 3 exchanges × 2 rounds exhaust the task, then the planner repeats the
-      // unchanged failing task on each of its three re-plan attempts.
+      // The edit never lands; after its exchange rounds it fails, and the
+      // planner re-emits the identical tree on every attempt.
       ...Array.from({ length: 6 }, () => "TASK_DONE"),
       plan,
       plan,

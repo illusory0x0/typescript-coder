@@ -1,40 +1,58 @@
 import { describe, expect, test } from "bun:test";
 import {
-  activeRoot,
-  allTasksDone,
+  activeStage,
+  activeTask,
+  allStagesClosed,
+  allTasks,
+  finalTaskPassed,
+  firstEdit,
+  hasLaterPendingTaskInStage,
   initialState,
   isSafeTaskPath,
-  MAX_TASKS,
-  maxTaskId,
+  MAX_EDITS_PER_TASK,
+  MAX_STAGES,
+  MAX_TASKS_PER_STAGE,
   mergeReplan,
+  nextEdit,
+  parsePlan,
   readPlan,
-  parseTaskPlan,
-  readyFrontier,
-  renderTaskDag,
   renderTaskStatus,
+  renderTaskTree,
+  runComplete,
+  summaryOf,
+  taskEditsSettled,
+  taskHasDoneEdit,
 } from "./tasks";
-import type { EditTask, TaskRunState } from "./tasks";
+import type { EditNode, Stage, TaskNode, TaskRunState } from "./tasks";
 
-function task(overrides: Partial<EditTask> & Pick<EditTask, "id">): EditTask {
-  const root = overrides.root ?? overrides.id;
-  const verify = overrides.verify ?? (root === overrides.id ? "test" : undefined);
+function edit(overrides: Partial<EditNode> & Pick<EditNode, "id">): EditNode {
   return {
-    root,
-    ...(verify === undefined ? {} : { verify }),
-    loc: { path: "src/a.ts", symbol: "answer", kind: "value" },
-    deps: [],
+    loc: { path: "src/a.ts", symbol: `symbol${overrides.id}`, kind: "value" },
     action: "modify",
-    instruction: `Do task ${overrides.id}.`,
+    instruction: `Do edit ${overrides.id}.`,
     ...overrides,
   };
 }
 
-function planJson(tasks: EditTask[], todo: number[], status: Record<string, string>): string {
-  return JSON.stringify({ tasks, todo, status });
+function task(overrides: Partial<TaskNode> & Pick<TaskNode, "id">): TaskNode {
+  return {
+    verify: "test",
+    instruction: `Do task ${overrides.id}.`,
+    edits: [edit({ id: overrides.id + 1_000 })],
+    ...overrides,
+  };
+}
+
+function stage(id: number, tasks: TaskNode[], goal = `Stage ${id}.`): Stage {
+  return { id, goal, tasks };
+}
+
+function planJson(stages: Stage[]): string {
+  return JSON.stringify({ stages });
 }
 
 function okPlan(content: string) {
-  const parsed = parseTaskPlan(content);
+  const parsed = parsePlan(content);
   if (!parsed.ok) {
     throw new Error(`expected an accepted plan, got ${parsed.diagnostics}`);
   }
@@ -42,155 +60,195 @@ function okPlan(content: string) {
 }
 
 function rejectPlan(content: string) {
-  const parsed = parseTaskPlan(content);
+  const parsed = parsePlan(content);
   if (parsed.ok) {
     throw new Error("expected the plan to be rejected");
   }
   return parsed;
 }
 
-describe("parseTaskPlan", () => {
-  test("accepts the minimal plan shape and normalizes status", () => {
-    const plan = okPlan(planJson([task({ id: 1 })], [1], { "1": "todo" }));
-    expect(plan.tasks.length).toBe(1);
-    expect(plan.todo).toEqual([1]);
-    expect(plan.status.get(1)).toBe("todo");
+function stateOf(stages: Stage[]): TaskRunState {
+  return initialState(okPlan(planJson(stages)));
+}
+
+function replan(content: string) {
+  const parsed = readPlan(content);
+  if (!parsed.ok) {
+    throw new Error(`expected an accepted re-plan, got ${parsed.diagnostics}`);
+  }
+  return parsed.plan;
+}
+
+describe("parsePlan", () => {
+  test("accepts the minimal Plan -> Stage -> Task -> edit shape", () => {
+    const plan = okPlan(
+      planJson([
+        stage(1, [
+          task({
+            id: 2,
+            verify: "test",
+            edits: [
+              edit({
+                id: 3,
+                loc: { path: "src/helper.ts", symbol: "answer", kind: "value" },
+                instruction: "Change answer to return 2.",
+              }),
+            ],
+          }),
+        ]),
+      ]),
+    );
+    expect(plan.stages.length).toBe(1);
+    expect(plan.stages[0]?.tasks[0]?.edits[0]?.id).toBe(3);
   });
 
   test("tolerates a whole-text fence and surrounding prose", () => {
-    const body = planJson([task({ id: 1 })], [1], { "1": "todo" });
-    expect(okPlan(`Here is the plan:\n\n\`\`\`json\n${body}\n\`\`\`\n`).tasks.length).toBe(1);
+    const body = planJson([stage(1, [task({ id: 2 })])]);
+    expect(okPlan(`Here is the plan:\n\n\`\`\`json\n${body}\n\`\`\`\n`).stages.length).toBe(1);
   });
 
-  test("rejects a non-object, missing tasks, and extra top-level keys", () => {
+  test("rejects a non-object, empty stages, extra keys, and the old flat shape", () => {
     expect(rejectPlan("[]").diagnostics).toContain("not an object");
+    expect(rejectPlan(`{"stages": []}`).diagnostics).toContain("non-empty array");
+    expect(rejectPlan(`{"stages": [], "tasks": []}`).diagnostics).toContain("unexpected key");
     expect(rejectPlan(`{"tasks": [], "todo": [], "status": {}}`).diagnostics).toContain(
-      "non-empty array",
-    );
-    expect(rejectPlan(`{"tasks": [], "todo": [], "status": {}, "plan": 1}`).diagnostics).toContain(
       "unexpected key",
     );
   });
 
-  test("names an unexpected task key and an invalid action", () => {
-    const withExtra = { ...task({ id: 1 }), note: "x" } as unknown as EditTask;
-    expect(rejectPlan(planJson([withExtra], [1], { "1": "todo" })).diagnostics).toContain(
+  test("rejects empty tasks/edits and names an unexpected key", () => {
+    expect(rejectPlan(planJson([{ id: 1, goal: "g", tasks: [] }])).diagnostics).toContain(
+      "non-empty array",
+    );
+    const emptyEdits = { ...task({ id: 2 }), edits: [] };
+    expect(rejectPlan(planJson([stage(1, [emptyEdits])])).diagnostics).toContain("non-empty array");
+    const withExtra = { ...task({ id: 2 }), note: "x" } as unknown as TaskNode;
+    expect(rejectPlan(planJson([stage(1, [withExtra])])).diagnostics).toContain(
       'unexpected key(s) "note"',
     );
-    const badAction = { ...task({ id: 1 }), action: "rewrite" } as unknown as EditTask;
-    expect(rejectPlan(planJson([badAction], [1], { "1": "todo" })).diagnostics).toContain(
-      "must be one of",
+  });
+
+  test("rejects duplicate stage ids and duplicate task/edit node ids", () => {
+    expect(
+      rejectPlan(planJson([stage(1, [task({ id: 2 })]), stage(1, [task({ id: 3 })])])).diagnostics,
+    ).toContain("reuses stage id");
+    expect(
+      rejectPlan(
+        planJson([
+          stage(1, [
+            task({ id: 2, edits: [edit({ id: 10 })] }),
+            task({ id: 10, edits: [edit({ id: 11 })] }),
+          ]),
+        ]),
+      ).diagnostics,
+    ).toContain("reuses node id");
+    expect(
+      rejectPlan(
+        planJson([
+          stage(1, [
+            task({ id: 2, edits: [edit({ id: 3 })] }),
+            task({ id: 4, edits: [edit({ id: 3 })] }),
+          ]),
+        ]),
+      ).diagnostics,
+    ).toContain("reuses node id");
+  });
+
+  test("requires a task verify and a final test task", () => {
+    const noVerify = { ...task({ id: 2 }), verify: undefined } as unknown as TaskNode;
+    expect(rejectPlan(planJson([stage(1, [noVerify])])).diagnostics).toContain("verify must be");
+    const badVerify = { ...task({ id: 2 }), verify: "lint" } as unknown as TaskNode;
+    expect(rejectPlan(planJson([stage(1, [badVerify])])).diagnostics).toContain("verify must be");
+    expect(
+      rejectPlan(planJson([stage(1, [task({ id: 2, verify: "tsc" })])])).diagnostics,
+    ).toContain('must verify "test"');
+  });
+
+  test("caps stages, tasks per stage, and edits per task", () => {
+    const manyStages = Array.from({ length: MAX_STAGES + 1 }, (_, index) =>
+      stage(index + 1, [task({ id: index + 100 })]),
     );
+    expect(rejectPlan(planJson(manyStages)).diagnostics).toContain("at most");
+    const manyTasks = Array.from({ length: MAX_TASKS_PER_STAGE + 1 }, (_, index) =>
+      task({ id: index + 100 }),
+    );
+    expect(rejectPlan(planJson([stage(1, manyTasks)])).diagnostics).toContain("at most");
+    const manyEdits = Array.from({ length: MAX_EDITS_PER_TASK + 1 }, (_, index) =>
+      edit({ id: index + 100 }),
+    );
+    expect(
+      rejectPlan(planJson([stage(1, [task({ id: 2, edits: manyEdits })])])).diagnostics,
+    ).toContain("at most");
   });
 
   test("loc.kind is a symbol space, not a declaration keyword", () => {
     const bad = {
-      ...task({ id: 1 }),
-      loc: { path: "src/a.ts", symbol: "answer", kind: "function" },
-    } as unknown as EditTask;
-    expect(rejectPlan(planJson([bad], [1], { "1": "todo" })).diagnostics).toContain("symbol space");
-  });
-
-  test("rejects duplicate ids, unknown deps, self deps, and cycles", () => {
-    expect(
-      rejectPlan(planJson([task({ id: 1 }), task({ id: 1 })], [1], { "1": "todo" })).diagnostics,
-    ).toContain("declared more than once");
-    expect(
-      rejectPlan(planJson([task({ id: 1, deps: [9] })], [1], { "1": "todo" })).diagnostics,
-    ).toContain("depends on #9");
-    expect(
-      rejectPlan(planJson([task({ id: 1, deps: [1] })], [1], { "1": "todo" })).diagnostics,
-    ).toContain("itself");
-    const cycle = rejectPlan(
-      planJson([task({ id: 1, deps: [2] }), task({ id: 2, root: 1, deps: [1] })], [1], {
-        "1": "todo",
-        "2": "todo",
-      }),
-    );
-    expect(cycle.diagnostics).toContain("dependency cycle");
-  });
-
-  test("rejects an unknown root, a non-root verify, and a final non-test root", () => {
-    const unknownRoot = rejectPlan(planJson([task({ id: 1, root: 9 })], [1], { "1": "todo" }));
-    expect(unknownRoot.diagnostics).toContain("names root #9");
-
-    const nonRootVerify = rejectPlan(
-      planJson([task({ id: 1, verify: "tsc" }), task({ id: 2, root: 1, verify: "tsc" })], [1], {
-        "1": "todo",
-        "2": "todo",
-      }),
-    );
-    expect(nonRootVerify.diagnostics).toContain("carries verify but is not a root task");
-
-    const finalTsc = rejectPlan(planJson([task({ id: 1, verify: "tsc" })], [1], { "1": "todo" }));
-    expect(finalTsc.diagnostics).toContain('must verify "test"');
+      ...task({ id: 2 }),
+      edits: [
+        {
+          id: 3,
+          loc: { path: "src/a.ts", symbol: "answer", kind: "function" },
+          action: "modify",
+          instruction: "Change it.",
+        },
+      ],
+    } as unknown as TaskNode;
+    expect(rejectPlan(planJson([stage(1, [bad])])).diagnostics).toContain("symbol space");
   });
 
   test("accepts related migration targets and rejects cross-file related locs", () => {
     const migration = okPlan(
-      planJson(
-        [
+      planJson([
+        stage(1, [
           task({
-            id: 1,
-            related: [{ path: "src/a.ts", symbol: "caller", kind: "value" }],
+            id: 2,
+            edits: [
+              edit({
+                id: 3,
+                loc: { path: "src/a.ts", symbol: "Answer", kind: "type" },
+                related: [{ path: "src/a.ts", symbol: "answer", kind: "value" }],
+              }),
+            ],
           }),
-        ],
-        [1],
-        { "1": "todo" },
-      ),
+        ]),
+      ]),
     );
-    expect(migration.tasks[0]?.related?.length).toBe(1);
+    expect(migration.stages[0]?.tasks[0]?.edits[0]?.related?.length).toBe(1);
     const crossFile = rejectPlan(
-      planJson(
-        [
+      planJson([
+        stage(1, [
           task({
-            id: 1,
-            related: [{ path: "src/b.ts", symbol: "caller", kind: "value" }],
+            id: 2,
+            edits: [
+              edit({
+                id: 3,
+                loc: { path: "src/a.ts", symbol: "Answer", kind: "type" },
+                related: [{ path: "src/b.ts", symbol: "answer", kind: "value" }],
+              }),
+            ],
           }),
-        ],
-        [1],
-        { "1": "todo" },
-      ),
+        ]),
+      ]),
     );
-    expect(crossFile.diagnostics).toContain("not in the task's file");
-  });
-
-  test("todo is normalized to the active root's ready frontier", () => {
-    const chain = [
-      task({ id: 1 }),
-      task({
-        id: 2,
-        root: 1,
-        deps: [1],
-        loc: { path: "src/a.ts", symbol: "caller", kind: "value" },
-      }),
-    ];
-    expect(okPlan(planJson(chain, [1, 2], { "1": "todo", "2": "todo" })).todo).toEqual([1]);
-    expect(okPlan(planJson(chain, [], { "1": "todo", "2": "todo" })).todo).toEqual([1]);
-    expect(okPlan(planJson(chain, [1], { "1": "todo", "2": "todo" })).todo).toEqual([1]);
-  });
-
-  test("status must cover exactly the task ids and never start done or in-progress", () => {
-    expect(rejectPlan(planJson([task({ id: 1 })], [1], { "2": "todo" })).diagnostics).toContain(
-      "status omits #1",
-    );
-    expect(
-      rejectPlan(planJson([task({ id: 1 })], [1], { "1": "in-progress" })).diagnostics,
-    ).toContain("in-progress");
-    expect(rejectPlan(planJson([task({ id: 1 })], [1], { "1": "done" })).diagnostics).toContain(
-      "first plan",
-    );
+    expect(crossFile.diagnostics).toContain("not in the edit's file");
   });
 
   test("rename needs renameTo and nothing else may carry it", () => {
-    const rename = task({ id: 1, action: "rename" });
-    expect(rejectPlan(planJson([rename], [1], { "1": "todo" })).diagnostics).toContain("renameTo");
-    const same = task({ id: 1, action: "rename", renameTo: "answer" });
-    expect(rejectPlan(planJson([same], [1], { "1": "todo" })).diagnostics).toContain("to itself");
-    const stray = task({ id: 1, renameTo: "other" });
-    expect(rejectPlan(planJson([stray], [1], { "1": "todo" })).diagnostics).toContain(
-      'action is "modify"',
-    );
+    const missing = task({
+      id: 2,
+      edits: [edit({ id: 3, action: "rename" })],
+    });
+    expect(rejectPlan(planJson([stage(1, [missing])])).diagnostics).toContain("renameTo");
+    const same = task({
+      id: 2,
+      edits: [edit({ id: 3, action: "rename", renameTo: "symbol3" })],
+    });
+    expect(rejectPlan(planJson([stage(1, [same])])).diagnostics).toContain("to itself");
+    const stray = task({
+      id: 2,
+      edits: [edit({ id: 3, renameTo: "other" })],
+    });
+    expect(rejectPlan(planJson([stage(1, [stray])])).diagnostics).toContain('action is "modify"');
   });
 
   test("rejects unsafe target paths", () => {
@@ -201,28 +259,22 @@ describe("parseTaskPlan", () => {
       "node_modules/x.ts",
       "a//b.ts",
     ]) {
-      const bad = task({ id: 1, loc: { path, symbol: "x", kind: "value" } });
-      expect(rejectPlan(planJson([bad], [1], { "1": "todo" })).diagnostics).toContain(
+      const bad = task({
+        id: 2,
+        edits: [edit({ id: 3, loc: { path, symbol: "x", kind: "value" } })],
+      });
+      expect(rejectPlan(planJson([stage(1, [bad])])).diagnostics).toContain(
         "writable repo-relative path",
       );
     }
   });
 
-  test("caps the instruction length and the task count", () => {
-    const long = task({ id: 1, instruction: "x".repeat(4_001) });
-    expect(rejectPlan(planJson([long], [1], { "1": "todo" })).diagnostics).toContain(
-      "at most 4000",
-    );
-    const many = Array.from({ length: MAX_TASKS + 1 }, (_, index) => task({ id: index + 1 }));
-    expect(
-      rejectPlan(
-        planJson(
-          many,
-          many.map((t) => t.id),
-          Object.fromEntries(many.map((t) => [String(t.id), "todo"])),
-        ),
-      ).diagnostics,
-    ).toContain(`at most ${MAX_TASKS}`);
+  test("rejects an instruction that is too long", () => {
+    const long = task({
+      id: 2,
+      edits: [edit({ id: 3, instruction: "x".repeat(4_001) })],
+    });
+    expect(rejectPlan(planJson([stage(1, [long])])).diagnostics).toContain("at most 4000");
   });
 });
 
@@ -236,331 +288,425 @@ describe("isSafeTaskPath", () => {
 });
 
 describe("scheduling", () => {
-  const state = initialState(
-    okPlan(
-      planJson(
-        [task({ id: 1 }), task({ id: 2, root: 1, deps: [1] }), task({ id: 3, root: 1 })],
-        [1, 3],
-        {
-          "1": "todo",
-          "2": "todo",
-          "3": "todo",
-        },
-      ),
-    ),
-  );
+  function tree(): TaskRunState {
+    return stateOf([
+      stage(1, [
+        task({
+          id: 2,
+          edits: [edit({ id: 3 }), edit({ id: 4 })],
+        }),
+        task({ id: 5, edits: [edit({ id: 6 })] }),
+      ]),
+      stage(2, [task({ id: 7, edits: [edit({ id: 8 })] })]),
+    ]);
+  }
 
-  test("the ready frontier follows deps and task order", () => {
-    expect(readyFrontier(state)).toEqual([1, 3]);
-    state.status.set(1, "done");
-    expect(readyFrontier(state)).toEqual([2, 3]);
-    state.status.set(2, "done");
-    state.status.set(3, "done");
-    expect(readyFrontier(state)).toEqual([]);
-    expect(allTasksDone(state)).toBe(true);
-    expect(maxTaskId(state)).toBe(3);
-  });
-
-  test("renderTaskDag is stable and status renders separately", () => {
-    const dag = renderTaskDag(state.tasks);
-    expect(dag).toContain('#1 modify value "answer" in "src/a.ts" (deps: none)');
-    expect(dag).toContain("(deps: 1)");
-    state.status.set(1, "done");
-    expect(renderTaskDag(state.tasks)).toBe(dag);
-    expect(renderTaskStatus(state)).toContain("#1 done");
-  });
-});
-
-describe("readPlan", () => {
-  test("accepts a re-plan echo with done and failed statuses", () => {
-    const parsed = readPlan(
-      planJson(
-        [task({ id: 1 }), task({ id: 2, root: 1, deps: [1] }), task({ id: 3, root: 1, deps: [1] })],
-        [2],
-        {
-          "1": "done",
-          "2": "todo",
-          "3": "failed",
-        },
-      ),
-    );
-    expect(parsed.ok).toBe(true);
-    if (parsed.ok) {
-      expect(parsed.plan.status.get(1)).toBe("done");
-      expect(parsed.plan.status.get(3)).toBe("failed");
+  test("runs stages, tasks, and edits in tree order", () => {
+    const state = tree();
+    const firstStage = state.stages[0];
+    expect(firstStage).toBeDefined();
+    if (firstStage === undefined) {
+      return;
     }
+    expect(activeStage(state)?.id).toBe(1);
+    expect(activeTask(state)?.id).toBe(2);
+    const first = activeTask(state);
+    expect(first === undefined ? undefined : nextEdit(state, first)?.id).toBe(3);
+    state.editStatus.set(3, "done");
+    const firstAgain = activeTask(state);
+    expect(firstAgain === undefined ? undefined : nextEdit(state, firstAgain)?.id).toBe(4);
+    state.editStatus.set(4, "done");
+    expect(firstAgain === undefined ? false : taskEditsSettled(state, firstAgain)).toBe(true);
+    expect(firstAgain === undefined ? false : taskHasDoneEdit(state, firstAgain)).toBe(true);
+    state.taskStatus.set(2, "passed");
+    expect(activeTask(state)?.id).toBe(5);
+    state.editStatus.set(6, "done");
+    state.taskStatus.set(5, "passed");
+    expect(activeStage(state)?.id).toBe(2);
+    expect(activeTask(state)?.id).toBe(7);
+    expect(runComplete(state)).toBe(false);
+    state.editStatus.set(8, "done");
+    state.taskStatus.set(7, "passed");
+    expect(runComplete(state)).toBe(true);
   });
 
-  test("rejects a done task whose dependencies are not done", () => {
-    const parsed = readPlan(
-      planJson([task({ id: 1 }), task({ id: 2, root: 1, deps: [1] })], [1], {
-        "1": "failed",
-        "2": "done",
-      }),
-    );
-    expect(parsed.ok).toBe(false);
-    if (!parsed.ok) {
-      expect(parsed.diagnostics).toContain("dependencies #1 are not");
+  test("a failed task with a later pending task keeps the stage active", () => {
+    const state = tree();
+    const firstStage = state.stages[0];
+    const firstTask = firstStage?.tasks[0];
+    if (firstStage === undefined || firstTask === undefined) {
+      return;
     }
+    state.taskStatus.set(firstTask.id, "failed");
+    expect(hasLaterPendingTaskInStage(state, firstTask)).toBe(true);
+    expect(activeTask(state)?.id).toBe(5);
+  });
+
+  test("allStagesClosed allows earlier failed tasks but not pending work", () => {
+    const state = tree();
+    for (const stageNode of state.stages) {
+      for (const taskNode of stageNode.tasks) {
+        state.taskStatus.set(taskNode.id, taskNode.id === 2 ? "failed" : "passed");
+        for (const editNode of taskNode.edits) {
+          state.editStatus.set(editNode.id, editNode.id === 3 ? "failed" : "done");
+        }
+      }
+    }
+    expect(allStagesClosed(state)).toBe(true);
+    expect(finalTaskPassed(state)).toBe(true);
+    expect(runComplete(state)).toBe(true);
+  });
+
+  test("renderTaskTree is stable and status renders separately", () => {
+    const state = tree();
+    const rendered = renderTaskTree(state.stages);
+    expect(rendered).toContain('@stage #1 goal="Stage 1."');
+    expect(rendered).toContain("@task #2 verify=test");
+    expect(rendered).toContain("#3 modify value");
+    state.taskStatus.set(2, "passed");
+    state.editStatus.set(3, "done");
+    expect(renderTaskTree(state.stages)).toBe(rendered);
+    const status = renderTaskStatus(state);
+    expect(status).toContain("@task #2 passed");
+    expect(status).toContain("#3 done");
+  });
+
+  test("summaryOf reports every edit with its task and stage", () => {
+    const state = tree();
+    const summary = summaryOf(state);
+    expect(summary.length).toBe(4);
+    expect(summary[0]).toMatchObject({ id: 3, stage: 1, task: 2, verify: "test", status: "todo" });
+  });
+
+  test("firstEdit is the first edit or a loud contract error", () => {
+    const taskNode = task({ id: 2, edits: [edit({ id: 3 })] });
+    expect(firstEdit(taskNode).id).toBe(3);
+    expect(() => firstEdit({ ...taskNode, edits: [] })).toThrow("no edits");
   });
 });
 
 describe("mergeReplan", () => {
   function baseState(): TaskRunState {
-    return initialState(
-      okPlan(
-        planJson([task({ id: 1 }), task({ id: 2, root: 1, deps: [1] })], [1], {
-          "1": "todo",
-          "2": "todo",
+    return stateOf([
+      stage(1, [
+        task({
+          id: 2,
+          verify: "tsc",
+          edits: [edit({ id: 3 }), edit({ id: 4 })],
         }),
-      ),
-    );
+        task({ id: 5, edits: [edit({ id: 6 })] }),
+      ]),
+      stage(2, [task({ id: 7, edits: [edit({ id: 8 })] })]),
+    ]);
   }
 
-  function replan(content: string) {
-    const parsed = readPlan(content);
-    if (!parsed.ok) {
-      throw new Error(`expected an accepted re-plan, got ${parsed.diagnostics}`);
-    }
-    return parsed.plan;
-  }
-
-  test("keeps done tasks and adds a new task with a fresh id", () => {
+  test("keeps done edits and appends a new task to the same stage", () => {
     const state = baseState();
-    state.status.set(1, "done");
+    state.editStatus.set(3, "done");
     const merged = mergeReplan(
       state,
       replan(
-        planJson(
-          [
-            task({ id: 1 }),
-            task({ id: 2, root: 1, deps: [1] }),
+        planJson([
+          stage(1, [
             task({
-              id: 3,
-              root: 1,
-              deps: [2],
-              loc: { path: "src/b.ts", symbol: "next", kind: "value" },
+              id: 2,
+              verify: "tsc",
+              edits: [edit({ id: 3 }), edit({ id: 4 })],
             }),
-          ],
-          [2],
-          { "1": "done", "2": "todo", "3": "todo" },
-        ),
+            task({ id: 5, edits: [edit({ id: 6 })] }),
+            task({ id: 9, edits: [edit({ id: 10 })] }),
+          ]),
+          stage(2, [task({ id: 7, edits: [edit({ id: 8 })] })]),
+        ]),
       ),
     );
     if (!merged.ok) {
       throw new Error(merged.diagnostics);
     }
-    expect(merged.state.status.get(1)).toBe("done");
-    expect(merged.state.tasks.length).toBe(3);
-    expect(readyFrontier(merged.state)).toEqual([2]);
+    expect(merged.state.editStatus.get(3)).toBe("done");
+    expect(merged.state.taskStatus.get(9)).toBe("pending");
+    expect(merged.state.editStatus.get(10)).toBe("todo");
   });
 
-  test("rejects changing or removing a done task", () => {
+  test("a passed task is immutable", () => {
     const state = baseState();
-    state.status.set(1, "done");
+    state.taskStatus.set(2, "passed");
     const changed = mergeReplan(
       state,
       replan(
-        planJson(
-          [
-            task({ id: 1, instruction: "Rewrite it differently." }),
-            task({ id: 2, root: 1, deps: [1] }),
-          ],
-          [2],
-          { "1": "done", "2": "todo" },
-        ),
+        planJson([
+          stage(1, [
+            task({
+              id: 2,
+              verify: "tsc",
+              instruction: "Change it differently.",
+              edits: [edit({ id: 3 }), edit({ id: 4 })],
+            }),
+            task({ id: 5, edits: [edit({ id: 6 })] }),
+          ]),
+          stage(2, [task({ id: 7, edits: [edit({ id: 8 })] })]),
+        ]),
       ),
     );
     expect(changed.ok).toBe(false);
     if (!changed.ok) {
-      expect(changed.diagnostics).toContain("is done and its definition cannot change");
-    }
-    const removed = mergeReplan(state, replan(planJson([task({ id: 2 })], [2], { "2": "todo" })));
-    expect(removed.ok).toBe(false);
-    if (!removed.ok) {
-      expect(removed.diagnostics).toContain("done task #1 cannot be removed");
+      expect(changed.diagnostics).toContain("passed task #2 is immutable");
     }
   });
 
-  test("a failed task retries only with a changed definition and status todo", () => {
+  test("a failed task stays closed unchanged and reopens with a repair edit", () => {
     const state = baseState();
-    state.status.set(1, "failed");
+    state.taskStatus.set(2, "failed");
+    state.editStatus.set(3, "done");
+    state.editStatus.set(4, "failed");
     const same = mergeReplan(
       state,
       replan(
-        planJson([task({ id: 1 }), task({ id: 2, root: 1, deps: [1] })], [1], {
-          "1": "todo",
-          "2": "todo",
-        }),
-      ),
-    );
-    expect(same.ok).toBe(false);
-    if (!same.ok) {
-      expect(same.diagnostics).toContain("requires a changed definition");
-    }
-    const kept = mergeReplan(
-      state,
-      replan(
-        planJson([task({ id: 1 }), task({ id: 2, root: 1, deps: [1] })], [], {
-          "1": "failed",
-          "2": "todo",
-        }),
-      ),
-    );
-    expect(kept.ok).toBe(true);
-    if (kept.ok) {
-      expect(kept.state.status.get(1)).toBe("failed");
-      expect(readyFrontier(kept.state)).toEqual([]);
-    }
-    const amended = mergeReplan(
-      state,
-      replan(
-        planJson(
-          [
-            task({ id: 1, instruction: "Change only the return value." }),
-            task({ id: 2, root: 1, deps: [1] }),
-          ],
-          [1],
-          { "1": "todo", "2": "todo" },
-        ),
-      ),
-    );
-    expect(amended.ok).toBe(true);
-    if (amended.ok) {
-      expect(amended.state.status.get(1)).toBe("todo");
-    }
-  });
-
-  test("a failed root reopens for in-root repair; a passed root stays closed", () => {
-    const failed = initialState(okPlan(planJson([task({ id: 1 })], [1], { "1": "todo" })));
-    failed.status.set(1, "done");
-    failed.rootStatus.set(1, "failed");
-    const sameRoot = mergeReplan(
-      failed,
-      replan(
-        planJson(
-          [
-            task({ id: 1 }),
+        planJson([
+          stage(1, [
             task({
               id: 2,
-              root: 1,
-              deps: [1],
-              loc: { path: "src/a.ts", symbol: "repair", kind: "value" },
-              instruction: "Repair the gate failure.",
+              verify: "tsc",
+              edits: [edit({ id: 3 }), edit({ id: 4 })],
             }),
-          ],
-          [2],
-          { "1": "done", "2": "todo" },
-        ),
+            task({ id: 5, edits: [edit({ id: 6 })] }),
+          ]),
+          stage(2, [task({ id: 7, edits: [edit({ id: 8 })] })]),
+        ]),
       ),
     );
-    expect(sameRoot.ok).toBe(true);
-    if (sameRoot.ok) {
-      expect(activeRoot(sameRoot.state)).toBe(1);
+    expect(same.ok).toBe(true);
+    if (same.ok) {
+      expect(same.state.taskStatus.get(2)).toBe("failed");
+      expect(same.state.editStatus.get(4)).toBe("failed");
     }
 
-    const passed = initialState(okPlan(planJson([task({ id: 1 })], [1], { "1": "todo" })));
-    passed.status.set(1, "done");
-    passed.rootStatus.set(1, "passed");
-    const extendPassed = mergeReplan(
-      passed,
+    const repaired = mergeReplan(
+      state,
       replan(
-        planJson(
-          [
-            task({ id: 1 }),
+        planJson([
+          stage(1, [
             task({
               id: 2,
-              root: 1,
-              deps: [1],
-              loc: { path: "src/a.ts", symbol: "repair", kind: "value" },
-              instruction: "This must go in a new root.",
+              verify: "tsc",
+              edits: [edit({ id: 3 }), edit({ id: 4 }), edit({ id: 9 })],
             }),
-          ],
-          [2],
-          { "1": "done", "2": "todo" },
-        ),
+            task({ id: 5, edits: [edit({ id: 6 })] }),
+          ]),
+          stage(2, [task({ id: 7, edits: [edit({ id: 8 })] })]),
+        ]),
       ),
     );
-    expect(extendPassed.ok).toBe(false);
-    if (!extendPassed.ok) {
-      expect(extendPassed.diagnostics).toContain("already passed");
+    if (!repaired.ok) {
+      throw new Error(repaired.diagnostics);
     }
+    expect(repaired.state.taskStatus.get(2)).toBe("pending");
+    expect(repaired.state.editStatus.get(9)).toBe("todo");
   });
 
-  test("drops a failed task when the planner omits it", () => {
+  test("a failed edit retries only with a changed definition", () => {
     const state = baseState();
-    state.status.set(1, "failed");
-    const merged = mergeReplan(state, replan(planJson([task({ id: 2 })], [2], { "2": "todo" })));
-    if (!merged.ok) {
-      throw new Error(merged.diagnostics);
-    }
-    expect(merged.state.tasks.map((task) => task.id)).toEqual([2]);
-    expect(readyFrontier(merged.state)).toEqual([2]);
-  });
-
-  test("normalizes a todo list that names a blocked task", () => {
-    const state = baseState();
-    const merged = mergeReplan(
+    state.editStatus.set(3, "failed");
+    const same = mergeReplan(
       state,
       replan(
-        planJson([task({ id: 1 }), task({ id: 2, root: 1, deps: [1] })], [1, 2], {
-          "1": "todo",
-          "2": "todo",
-        }),
+        planJson([
+          stage(1, [
+            task({
+              id: 2,
+              verify: "tsc",
+              edits: [edit({ id: 3 }), edit({ id: 4 })],
+            }),
+            task({ id: 5, edits: [edit({ id: 6 })] }),
+          ]),
+          stage(2, [task({ id: 7, edits: [edit({ id: 8 })] })]),
+        ]),
       ),
     );
-    expect(merged.ok).toBe(true);
-    if (merged.ok) {
-      expect(merged.state.tasks.length).toBe(2);
+    expect(same.ok).toBe(true);
+    if (same.ok) {
+      expect(same.state.editStatus.get(3)).toBe("failed");
+    }
+    const retried = mergeReplan(
+      state,
+      replan(
+        planJson([
+          stage(1, [
+            task({
+              id: 2,
+              verify: "tsc",
+              edits: [edit({ id: 3, instruction: "A smaller retry." }), edit({ id: 4 })],
+            }),
+            task({ id: 5, edits: [edit({ id: 6 })] }),
+          ]),
+          stage(2, [task({ id: 7, edits: [edit({ id: 8 })] })]),
+        ]),
+      ),
+    );
+    if (!retried.ok) {
+      throw new Error(retried.diagnostics);
+    }
+    expect(retried.state.editStatus.get(3)).toBe("todo");
+    expect(retried.state.taskStatus.get(2)).toBe("pending");
+  });
+
+  test("removing a done edit or a task with done work is rejected", () => {
+    const state = baseState();
+    state.editStatus.set(3, "done");
+    state.editStatus.set(4, "done");
+    const removeEdit = mergeReplan(
+      state,
+      replan(
+        planJson([
+          stage(1, [
+            task({
+              id: 2,
+              verify: "tsc",
+              edits: [edit({ id: 3 })],
+            }),
+            task({ id: 5, edits: [edit({ id: 6 })] }),
+          ]),
+          stage(2, [task({ id: 7, edits: [edit({ id: 8 })] })]),
+        ]),
+      ),
+    );
+    expect(removeEdit.ok).toBe(false);
+    if (!removeEdit.ok) {
+      expect(removeEdit.diagnostics).toContain("done edit #4 cannot be removed");
+    }
+
+    const removeTask = mergeReplan(
+      state,
+      replan(
+        planJson([
+          stage(1, [task({ id: 5, edits: [edit({ id: 6 })] })]),
+          stage(2, [task({ id: 7, edits: [edit({ id: 8 })] })]),
+        ]),
+      ),
+    );
+    expect(removeTask.ok).toBe(false);
+    if (!removeTask.ok) {
+      expect(removeTask.diagnostics).toContain("contains done edits and cannot be removed");
     }
   });
 
-  test("a new task that becomes ready is added to todo even if the planner omitted it", () => {
+  test("a fully passed stage is closed; new work goes in a new stage", () => {
     const state = baseState();
-    state.status.set(1, "done");
-    const merged = mergeReplan(
+    state.taskStatus.set(2, "passed");
+    state.taskStatus.set(5, "passed");
+    for (const id of [3, 4, 6]) {
+      state.editStatus.set(id, "done");
+    }
+    const extend = mergeReplan(
       state,
       replan(
-        planJson(
-          [
-            task({ id: 1 }),
-            task({ id: 2, root: 1, deps: [1] }),
-            task({ id: 3, root: 1, deps: [2] }),
-          ],
-          [2, 3],
-          { "1": "done", "2": "todo", "3": "todo" },
-        ),
+        planJson([
+          stage(1, [
+            task({
+              id: 2,
+              verify: "tsc",
+              edits: [edit({ id: 3 }), edit({ id: 4 })],
+            }),
+            task({ id: 5, edits: [edit({ id: 6 })] }),
+            task({ id: 9, edits: [edit({ id: 10 })] }),
+          ]),
+          stage(2, [task({ id: 7, edits: [edit({ id: 8 })] })]),
+        ]),
       ),
     );
-    expect(merged.ok).toBe(true);
-    if (merged.ok) {
-      expect(readyFrontier(merged.state)).toEqual([2]);
+    expect(extend.ok).toBe(false);
+    if (!extend.ok) {
+      expect(extend.diagnostics).toContain("already passed");
+    }
+
+    const newStage = mergeReplan(
+      state,
+      replan(
+        planJson([
+          stage(1, [
+            task({
+              id: 2,
+              verify: "tsc",
+              edits: [edit({ id: 3 }), edit({ id: 4 })],
+            }),
+            task({ id: 5, edits: [edit({ id: 6 })] }),
+          ]),
+          stage(2, [task({ id: 7, edits: [edit({ id: 8 })] })]),
+          stage(3, [task({ id: 9, edits: [edit({ id: 10 })] })]),
+        ]),
+      ),
+    );
+    if (!newStage.ok) {
+      throw new Error(newStage.diagnostics);
+    }
+    expect(newStage.state.stages.map((stageNode) => stageNode.id)).toEqual([1, 2, 3]);
+  });
+
+  test("new stages are appended and existing order is preserved", () => {
+    const state = baseState();
+    const moved = mergeReplan(
+      state,
+      replan(
+        planJson([
+          stage(2, [task({ id: 7, edits: [edit({ id: 8 })] })]),
+          stage(1, [
+            task({
+              id: 2,
+              verify: "tsc",
+              edits: [edit({ id: 3 }), edit({ id: 4 })],
+            }),
+            task({ id: 5, edits: [edit({ id: 6 })] }),
+          ]),
+        ]),
+      ),
+    );
+    expect(moved.ok).toBe(false);
+    if (!moved.ok) {
+      expect(moved.diagnostics).toContain("existing stages must keep their plan order");
     }
   });
 
-  test("an in-progress echo is a protocol error", () => {
+  test("a plan that drops final test coverage is rejected", () => {
+    const rejected = readPlan(
+      planJson([
+        stage(1, [
+          task({
+            id: 2,
+            verify: "tsc",
+            edits: [edit({ id: 3 }), edit({ id: 4 })],
+          }),
+          task({ id: 5, edits: [edit({ id: 6 })] }),
+        ]),
+        stage(2, [task({ id: 7, verify: "tsc", edits: [edit({ id: 8 })] })]),
+      ]),
+    );
+    expect(rejected.ok).toBe(false);
+    if (!rejected.ok) {
+      expect(rejected.diagnostics).toContain('must verify "test"');
+    }
+  });
+
+  test("an edit cannot move to a different task", () => {
     const state = baseState();
-    state.status.set(1, "in-progress");
-    const merged = mergeReplan(
+    const movedEdit = mergeReplan(
       state,
       replan(
-        planJson([task({ id: 1 }), task({ id: 2, root: 1, deps: [1] })], [], {
-          "1": "todo",
-          "2": "todo",
-        }),
+        planJson([
+          stage(1, [
+            task({
+              id: 2,
+              verify: "tsc",
+              edits: [edit({ id: 4 })],
+            }),
+            task({ id: 5, edits: [edit({ id: 6 }), edit({ id: 3 })] }),
+          ]),
+          stage(2, [task({ id: 7, edits: [edit({ id: 8 })] })]),
+        ]),
       ),
     );
-    expect(merged.ok).toBe(false);
-    if (!merged.ok) {
-      expect(merged.diagnostics).toContain("in progress");
+    expect(movedEdit.ok).toBe(false);
+    if (!movedEdit.ok) {
+      expect(movedEdit.diagnostics).toContain("moved from task #2 to task #5");
     }
-    expect(
-      readPlan(
-        planJson([task({ id: 1 }), task({ id: 2, root: 1, deps: [1] })], [1], {
-          "1": "in-progress",
-          "2": "todo",
-        }),
-      ).ok,
-    ).toBe(false);
   });
 });

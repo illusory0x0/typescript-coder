@@ -12,27 +12,31 @@ import {
   TASK_PLAN_COMPLEX_EXAMPLE,
   TASK_PLAN_EXAMPLE,
 } from "./task";
-import { initialState, parseTaskPlan, readPlan } from "../tasks";
-import type { EditTask, TaskRunState } from "../tasks";
+import { initialState, parsePlan } from "../tasks";
+import type { EditNode, Stage, TaskNode, TaskRunState } from "../tasks";
 
-const TASK: EditTask = {
-  id: 1,
-  root: 1,
-  verify: "test",
+const EDIT: EditNode = {
+  id: 3,
   loc: { path: "src/helper.ts", symbol: "answer", kind: "value" },
-  deps: [],
   action: "modify",
   instruction: "Change answer so it returns 2.",
 };
 
-function stateOf(tasks: EditTask[] = [TASK]): TaskRunState {
-  const parsed = parseTaskPlan(
-    JSON.stringify({
-      tasks,
-      todo: tasks.filter((task) => task.deps.length === 0).map((task) => task.id),
-      status: Object.fromEntries(tasks.map((task) => [String(task.id), "todo"])),
-    }),
-  );
+const TASK: TaskNode = {
+  id: 2,
+  verify: "test",
+  instruction: "Make the failing test green.",
+  edits: [EDIT],
+};
+
+const STAGE: Stage = {
+  id: 1,
+  goal: "Fix the answer behavior.",
+  tasks: [TASK],
+};
+
+function stateOf(stages: Stage[] = [STAGE]): TaskRunState {
+  const parsed = parsePlan(JSON.stringify({ stages }));
   if (!parsed.ok) {
     throw new Error(parsed.diagnostics);
   }
@@ -40,123 +44,120 @@ function stateOf(tasks: EditTask[] = [TASK]): TaskRunState {
 }
 
 describe("planning prompts", () => {
-  test("the system prompt teaches every field and the invariants with one minimal example", () => {
+  test("the system prompt teaches the Plan -> Stage -> Task -> edit fields and invariants", () => {
     const prompt = buildTaskPlanningSystemPrompt();
     for (const field of [
-      '"id"',
-      '"root"',
+      '"stages"',
+      '"goal"',
+      '"tasks"',
       '"verify"',
-      '"related"',
+      '"edits"',
       '"loc"',
-      '"deps"',
       '"action"',
       '"instruction"',
+      '"related"',
       '"renameTo"',
-      '"todo"',
-      '"status"',
     ]) {
       expect(prompt).toContain(field);
     }
-    expect(prompt).toContain("symbol space");
-    expect(prompt).toContain("root gate");
+    expect(prompt).toContain("Plan -> Stage -> Task -> edit");
+    expect(prompt).toContain("root object is the Plan");
+    expect(prompt).toContain("small named functions");
+    expect(prompt).toContain("thin orchestrator");
+    expect(prompt).toContain("verification boundary");
+    expect(prompt).toContain("final task");
     expect(prompt).toContain("Reply with ONLY one bare JSON object");
-    expect(prompt).toContain('"kind": "value"');
-    // The initial prompt carries only the minimal shape; the larger example is
-    // reserved for the retry/help path.
+    expect(prompt).not.toContain('"deps"');
+    expect(prompt).not.toContain('"todo"');
     expect(prompt).toContain(TASK_PLAN_EXAMPLE);
     expect(prompt).not.toContain(TASK_PLAN_COMPLEX_EXAMPLE);
-    expect(prompt.indexOf(TASK_PLAN_EXAMPLE)).toBeLessThan(prompt.indexOf('- "tasks"'));
+    expect(prompt.indexOf(TASK_PLAN_EXAMPLE)).toBeLessThan(
+      prompt.indexOf("root object is the Plan"),
+    );
     expect(prompt).not.toContain("```json");
-    expect(parseTaskPlan(TASK_PLAN_EXAMPLE).ok).toBe(true);
-    expect(parseTaskPlan(TASK_PLAN_COMPLEX_EXAMPLE).ok).toBe(true);
+    expect(parsePlan(TASK_PLAN_EXAMPLE).ok).toBe(true);
+    expect(parsePlan(TASK_PLAN_COMPLEX_EXAMPLE).ok).toBe(true);
   });
 
   test("the first user prompt carries the requirement and the index", () => {
     const prompt = buildTaskPlanningUserPrompt("add a helper", "select helper in src/a.ts");
     expect(prompt).toContain("# Requirement\n\nadd a helper");
     expect(prompt).toContain("select helper in src/a.ts");
-    expect(prompt).toContain("complete task plan JSON");
+    expect(prompt).toContain("complete plan tree JSON");
   });
 
   test("the retry prompt names the rejection and appends help", () => {
-    const prompt = buildTaskPlanRetryPrompt("stage: task-dag\n- bad");
-    expect(prompt).toContain("stage: task-dag");
+    const prompt = buildTaskPlanRetryPrompt("stage: task-tree\n- bad");
+    expect(prompt).toContain("stage: task-tree");
     expect(prompt).toContain(TASK_PLAN_COMPLEX_EXAMPLE);
     expect(buildTaskPlanRetryPrompt("bad", false)).not.toContain(TASK_PLAN_COMPLEX_EXAMPLE);
   });
 
-  test("a re-plan prompt carries the DAG, status, failures, and tests", () => {
+  test("a re-plan prompt carries the tree, status, failures, and tests", () => {
     const state = stateOf();
-    state.status.set(1, "failed");
+    state.editStatus.set(3, "failed");
+    state.taskStatus.set(2, "failed");
     const prompt = buildTaskReplanPrompt({
       state,
-      failures: new Map([[1, "stage: tsc\nTS2322"]]),
+      editFailures: new Map([[3, "stage: task-failed\nTS2322"]]),
+      taskFailures: new Map([[2, "expected 2, got 1"]]),
       gateDiagnostics: "expected 2, got 1",
       symbolIndex: 'files:\n  - path: "src/helper.ts"\n',
-      delta: replanDelta({ failedIds: [1], testsFailed: false, blocked: false }),
+      delta: replanDelta({ failedEditIds: [3], failedTaskIds: [2], blocked: false }),
     });
-    expect(prompt).toContain("# Edit-task DAG");
-    expect(prompt).toContain('#1 modify value "answer" in "src/helper.ts"');
+    expect(prompt).toContain("# Plan tree");
+    expect(prompt).toContain('@stage #1 goal="Fix the answer behavior."');
+    expect(prompt).toContain("@task #2 verify=test");
     expect(prompt).toContain("# Status");
-    expect(prompt).toContain("#1 failed");
+    expect(prompt).toContain("@task #2 failed");
     expect(prompt).toContain("TS2322");
     expect(prompt).toContain("expected 2, got 1");
+    expect(prompt).toContain("# Failed edits and diagnostics");
+    expect(prompt).toContain("# Failed task gates and diagnostics");
     expect(prompt).toContain("# Current symbol index");
-    expect(prompt).toContain("src/helper.ts");
-    expect(prompt).toContain("The failed task(s) #1 could not be carried out.");
-    expect(prompt).toContain("A failed task may be retried by changing its definition");
-    expect(prompt).toContain("Use related same-file locs");
-    expect(prompt).not.toContain("Shape of a valid amendment");
+    expect(prompt).toContain("The edit(s) #3 could not be carried out.");
+    expect(prompt).toContain("A failed task reopens");
+    expect(prompt).toContain("small helper function");
   });
 
-  test("a test-failure re-plan names the test verdict", () => {
+  test("a test-failure re-plan names the task gate verdict", () => {
     const state = stateOf();
-    state.status.set(1, "done");
+    state.editStatus.set(3, "done");
+    state.taskStatus.set(2, "failed");
     const prompt = buildTaskReplanPrompt({
       state,
-      failures: new Map(),
+      editFailures: new Map(),
+      taskFailures: new Map([[2, "1 test failed"]]),
       gateDiagnostics: "1 test failed",
-      delta: replanDelta({ failedIds: [], testsFailed: true, blocked: false }),
+      delta: replanDelta({ failedEditIds: [], failedTaskIds: [2], blocked: false }),
     });
-    expect(prompt).toContain("A root gate failed after its micro-tasks completed.");
+    expect(prompt).toContain("The task gate(s) #2 failed");
   });
 
-  test("a blocked re-plan asks for graph repair", () => {
-    expect(replanDelta({ failedIds: [], testsFailed: false, blocked: true })).toContain(
-      "No task is ready to run",
+  test("a blocked re-plan asks for tree repair", () => {
+    expect(replanDelta({ failedEditIds: [], failedTaskIds: [], blocked: true })).toContain(
+      "No task is runnable",
     );
-  });
-
-  test("readPlan accepts the examples as re-plans too", () => {
-    const state = stateOf();
-    state.status.set(1, "done");
-    const merged = readPlan(
-      JSON.stringify({
-        tasks: [{ ...TASK, id: 1 }],
-        todo: [],
-        status: { "1": "done" },
-      }),
-    );
-    expect(merged.ok).toBe(true);
   });
 });
 
 describe("execution prompts", () => {
-  test("the system prompt teaches the edit-action grammar and the root gate", () => {
+  test("the system prompt teaches the edit grammar and the task gate", () => {
     const prompt = buildTaskExecutionSystemPrompt();
     expect(prompt).toContain("select … end");
-    expect(prompt).toContain("root gate");
+    expect(prompt).toContain("task gate");
     expect(prompt).not.toContain("TASK_DONE");
     expect(prompt).toContain("Reply shape: `select <symbol> in <path>");
-    expect(prompt).not.toContain("Action-specific rules:");
-    expect(prompt).not.toContain("Example for this action:");
+    expect(prompt).toContain("small single-purpose functions");
   });
 
   test("format help is injected only on the help turn", () => {
     const state = stateOf();
     const base = {
       state,
+      stage: STAGE,
       task: TASK,
+      edit: EDIT,
       contentView: renderTaskContentView("export function answer(): number {\n  return 1;\n}"),
     };
     expect(buildTaskTurnPrompt(base)).not.toContain("# Format help");
@@ -165,33 +166,43 @@ describe("execution prompts", () => {
     expect(help).toContain(taskEditDslHelp("modify"));
   });
 
-  test("the turn prompt puts the task first and the content view last", () => {
+  test("the turn prompt carries stage, task, edit, and the content view last", () => {
     const state = stateOf();
     const prompt = buildTaskTurnPrompt({
       state,
+      stage: STAGE,
       task: TASK,
+      edit: EDIT,
       contentView: renderTaskContentView("export function answer(): number {\n  return 1;\n}"),
       diagnostics: "stage: protocol\nbad clause",
     });
+    expect(prompt).toContain("# Stage");
+    expect(prompt).toContain("#1 — Fix the answer behavior.");
     expect(prompt).toContain("# Task");
-    expect(prompt).toContain("#1 (modify) — todo");
-    expect(prompt).toContain(TASK.instruction);
+    expect(prompt).toContain("#2 (verify test) — pending");
+    expect(prompt).toContain("Make the failing test green.");
+    expect(prompt).toContain("# Micro edit");
+    expect(prompt).toContain("#3 (modify) — todo");
+    expect(prompt).toContain(EDIT.instruction);
     expect(prompt).toContain("1 | export function answer");
-    expect(prompt.indexOf("# Task")).toBeLessThan(prompt.indexOf("# Project status"));
+    expect(prompt.indexOf("# Stage")).toBeLessThan(prompt.indexOf("# Diagnostics"));
     expect(prompt.indexOf("# Diagnostics")).toBeLessThan(prompt.indexOf("# Content view"));
     expect(prompt).toContain('{"request":"read"}');
     expect(
       prompt.endsWith(
-        "Reply with the edit clauses for this task. The root gate runs after all sibling micro-tasks finish.",
+        "Reply with the edit clauses for this micro edit. The task gate runs after every edit in the task settles.",
       ),
     ).toBe(true);
   });
 
   test("a rename turn names the new identifier and an empty view renders explicitly", () => {
-    const state = stateOf([{ ...TASK, action: "rename", renameTo: "result" }]);
+    const rename = { ...EDIT, action: "rename" as const, renameTo: "result" };
+    const state = stateOf([{ ...STAGE, tasks: [{ ...TASK, edits: [rename] }] }]);
     const prompt = buildTaskTurnPrompt({
       state,
-      task: state.tasks[0] as EditTask,
+      stage: state.stages[0] as Stage,
+      task: state.stages[0]?.tasks[0] as TaskNode,
+      edit: state.stages[0]?.tasks[0]?.edits[0] as EditNode,
       contentView: "",
     });
     expect(prompt).toContain('rename to "result"');

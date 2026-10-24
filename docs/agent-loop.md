@@ -18,10 +18,11 @@ context, selection resolution, gates). Protocol prompt text lives in
 ## Plan → execute mode
 
 `--mode plan-exec` adds a two-mode loop ([`spec.md`](spec.md)): a planner emits
-an edit-task DAG as JSON (`src/tasks.ts`), and the executor carries out one
-micro-task at a time with the edit-action clauses above. Tasks are grouped under
-explicit roots; a root runs all of its micro-tasks first, then its `tsc` or
-`test` gate. The final root must be a `test` gate. Existing modes are unchanged.
+a `Plan → Stage → Task → edit` tree as JSON (`src/tasks.ts`), and the executor
+carries out one micro edit at a time with the edit-action clauses above. A stage
+groups a coherent phase; a task is the verification boundary and runs its
+`tsc` or `test` gate after all of its edits settle. The final task must be a
+`test` gate. Existing modes are unchanged.
 
 ## Shape of a run
 

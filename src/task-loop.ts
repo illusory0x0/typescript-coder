@@ -1,7 +1,8 @@
 /**
  * The plan/execute driver (`docs/spec.md`): a planner turns the requirement
- * into an edit-task DAG, and an executor carries out one task at a time with
- * edit-dsl clauses. The harness owns status, scheduling, and verification.
+ * into a Plan -> Stage -> Task -> edit tree, and an executor carries out one
+ * edit at a time with edit-dsl clauses. The harness owns status, scheduling,
+ * and verification.
  *
  * This module orchestrates. It reuses the edit-dsl machinery rather than
  * re-implementing it: `parseMultiEditor`/`resolveMultiEditor` for the reply,
@@ -69,30 +70,32 @@ import {
   replanDelta,
 } from "./prompts/task";
 import {
-  activeRoot,
-  allRootsPassed,
+  activeStage,
+  activeTask,
+  allTasks,
+  finalTask,
+  firstEdit,
   formatTaskLoc,
+  hasLaterPendingTaskInStage,
   initialState,
   isSafeTaskPath,
-  MAX_TASKS,
   mergeReplan,
-  parseTaskPlan,
+  nextEdit,
+  parsePlan,
   readPlan,
-  readyFrontier,
-  renderFailedRoots,
-  rootOrder,
-  rootTasksDone,
-  rootTaskOf,
+  runComplete,
   summaryOf,
+  taskEditsSettled,
+  taskHasDoneEdit,
 } from "./tasks";
-import type { EditTask, TaskId, TaskPlan, TaskRunState, TaskStatus } from "./tasks";
+import type { EditNode, NodeId, Stage, TaskNode, Plan, TaskRunState } from "./tasks";
 
 /**
  * A planning turn's result, tagged so the caller never has to guess whether a
  * value is a run state or a terminated result.
  */
 type PlanningOutcome =
-  | { kind: "initial"; plan: TaskPlan }
+  | { kind: "initial"; plan: Plan }
   | { kind: "replan"; state: TaskRunState }
   | { kind: "failed"; result: LoopResult };
 /** Model attempts per planning turn (a rejected reply is retried with its diagnostics). */
@@ -177,7 +180,7 @@ function stageOf(diagnostics: string): string {
  * `loc.kind` is a *symbol space*, which `resolveCurrentEntry`/`lookup` filter
  * separately; a declaration keyword here would exclude every entry.
  */
-function locatorOf(task: EditTask): Locator {
+function locatorOf(task: EditNode): Locator {
   return { path: task.loc.path, name: task.loc.symbol, kind: "" };
 }
 
@@ -191,7 +194,7 @@ function writeRecord(
     iteration: number;
     kind: "exchange" | "verification";
     exchange: number | null;
-    task: EditTask;
+    edit: EditNode;
     outcome: ExchangeOutcome | "ok" | "tsc" | "tests";
     replacement: string | null;
     diagnostics: string | null;
@@ -206,7 +209,7 @@ function writeRecord(
       iteration: input.iteration,
       kind: input.kind,
       exchange: input.exchange,
-      locator: locatorOf(input.task),
+      locator: locatorOf(input.edit),
       replacement: input.replacement,
       diagnostics: input.diagnostics,
       outcome: input.outcome,
@@ -224,18 +227,18 @@ type TargetGuard =
   | { ok: true; entry: IndexEntry | null; related: IndexEntry[] }
   | { ok: false; diagnostics: string };
 
-function taskLabel(task: EditTask): string {
+function editLabel(task: EditNode): string {
   return `task #${task.id} (${task.action}) targets ${formatTaskLoc(task.loc)}`;
 }
 
 /** The addresses a migration task may edit: its target plus related locs. */
-function taskLocs(
-  task: EditTask,
-): readonly { path: string; symbol: string; kind: EditTask["loc"]["kind"] }[] {
+function editLocs(
+  task: EditNode,
+): readonly { path: string; symbol: string; kind: EditNode["loc"]["kind"] }[] {
   return [task.loc, ...(task.related ?? [])];
 }
 
-function locatorOfLoc(loc: EditTask["loc"]): Locator {
+function locatorOfLoc(loc: EditNode["loc"]): Locator {
   return { path: loc.path, name: loc.symbol, kind: "" };
 }
 
@@ -245,9 +248,9 @@ function workspaceIndex(workspace: Workspace): SymbolIndex {
   return buildIndexTolerant(files).index;
 }
 
-function guardTarget(workspace: Workspace, task: EditTask): TargetGuard {
+function guardTarget(workspace: Workspace, task: EditNode): TargetGuard {
   const cwd = workspace.cwd;
-  for (const loc of taskLocs(task)) {
+  for (const loc of editLocs(task)) {
     if (!isSafeTaskPath(loc.path) || safeMutablePath(cwd, loc.path) === null) {
       return {
         ok: false,
@@ -268,7 +271,7 @@ function guardTarget(workspace: Workspace, task: EditTask): TargetGuard {
     if (entry.length > 0) {
       return {
         ok: false,
-        diagnostics: `stage: address\n${taskLabel(task)}: the declaration already exists, so a create task cannot add it (use modify)`,
+        diagnostics: `stage: address\n${editLabel(task)}: the declaration already exists, so a create task cannot add it (use modify)`,
       };
     }
     // A name declared only in another symbol space is a legal create in this
@@ -277,7 +280,7 @@ function guardTarget(workspace: Workspace, task: EditTask): TargetGuard {
   }
   const existing = resolveCurrentEntry(source, task.loc.path, locatorOf(task), task.loc.kind);
   if (!existing.ok) {
-    return { ok: false, diagnostics: `${existing.diagnostics}\n${taskLabel(task)}` };
+    return { ok: false, diagnostics: `${existing.diagnostics}\n${editLabel(task)}` };
   }
   const related: IndexEntry[] = [];
   for (const loc of task.related ?? []) {
@@ -294,8 +297,8 @@ function guardTarget(workspace: Workspace, task: EditTask): TargetGuard {
 }
 
 /** Statement indices allowed for the task's target and its related locs. */
-function ownStatementIndices(task: EditTask, statements: readonly EditStatement[]): Set<number> {
-  const keys = new Set(taskLocs(task).map((loc) => `${loc.path}\u0000${loc.symbol}`));
+function ownStatementIndices(task: EditNode, statements: readonly EditStatement[]): Set<number> {
+  const keys = new Set(editLocs(task).map((loc) => `${loc.path}\u0000${loc.symbol}`));
   const allowed = new Set<number>();
   for (let index = 0; index < statements.length; index += 1) {
     const statement = statements[index];
@@ -310,16 +313,16 @@ function ownStatementIndices(task: EditTask, statements: readonly EditStatement[
   return allowed;
 }
 
-function targetMismatch(task: EditTask): string {
+function targetMismatch(task: EditNode): string {
   const related =
     task.related === undefined || task.related.length === 0
       ? ""
       : ` or one of its related targets (${task.related.map((loc) => formatTaskLoc(loc)).join(", ")})`;
-  return `stage: address\n${taskLabel(task)}: the reply must edit only that declared target${related}; re-address the task's own symbols`;
+  return `stage: address\n${editLabel(task)}: the reply must edit only that declared target${related}; re-address the task's own symbols`;
 }
 
 /** True when the create fence declares exactly the task's symbol in its space. */
-function createBodyCheck(task: EditTask, body: string): string | null {
+function createBodyCheck(task: EditNode, body: string): string | null {
   let program: Program;
   try {
     program = new Parser(body).parseProgram();
@@ -328,7 +331,7 @@ function createBodyCheck(task: EditTask, body: string): string | null {
     return null;
   }
   if (program.body.length !== 1) {
-    return `stage: address\na create fence must contain exactly one top-level declaration (the task target); it carried ${program.body.length}. Put helper declarations in their own micro-tasks.`;
+    return `stage: address\na create fence must contain exactly one top-level declaration (the task target); it carried ${program.body.length}. Put helper declarations in their own create edits.`;
   }
   const binder = new Binder(program);
   const symbols = binder.rootScope.resolveLocal(task.loc.symbol);
@@ -504,9 +507,9 @@ function rejectionText(resolution: MultiEditorResolution, totalClauses: number):
  * the next turn's diagnostics. File commands that write are rejected: the plan
  * names declarations, not whole files.
  */
-async function applyTaskReply(
+async function applyEditReply(
   context: ExecutionContext,
-  task: EditTask,
+  task: EditNode,
   content: string,
 ): Promise<ReplyOutcome> {
   let statements;
@@ -536,7 +539,7 @@ async function applyTaskReply(
     }
     return {
       ok: false,
-      diagnostics: `stage: protocol\n${taskLabel(task)}: the file command "${statement.statement.op}" is not accepted; one task edits one declared declaration`,
+      diagnostics: `stage: protocol\n${editLabel(task)}: the file command "${statement.statement.op}" is not accepted; one task edits one declared declaration`,
       viewerOnly: false,
       appliedLocators: [],
     };
@@ -549,7 +552,7 @@ async function applyTaskReply(
   const sourceBefore = readTarget(context.cwd, task.loc.path);
   const normalized = new Map<number, EditDslSelection>();
   const entryByIndex = new Map<number, IndexEntry | null>();
-  const locs = taskLocs(task);
+  const locs = editLocs(task);
   for (let index = 0; index < statements.length; index += 1) {
     const statement = statements[index];
     if (statement?.type !== "editor") {
@@ -575,10 +578,10 @@ async function applyTaskReply(
         ok: false,
         diagnostics:
           sameName.length > 0
-            ? `stage: address\n${taskLabel(task)}: the clause resolves ${JSON.stringify(
+            ? `stage: address\n${editLabel(task)}: the clause resolves ${JSON.stringify(
                 selection.space,
               )} but the task target is ${JSON.stringify(sameName[0]?.kind)}; use the matching symbol space or omit resolve`
-            : `stage: address\n${taskLabel(task)}: the clause resolves an address that is neither the target nor one of its related declarations`,
+            : `stage: address\n${editLabel(task)}: the clause resolves an address that is neither the target nor one of its related declarations`,
         viewerOnly: false,
         appliedLocators: [],
       };
@@ -615,7 +618,7 @@ async function applyTaskReply(
   const replacements = ownSelections.filter((selection) => selection.replacement !== null);
   const actionFailure = (detail: string): ReplyOutcome => ({
     ok: false,
-    diagnostics: `stage: address\n${taskLabel(task)}: ${detail}`,
+    diagnostics: `stage: address\n${editLabel(task)}: ${detail}`,
     viewerOnly: false,
     appliedLocators: [],
   });
@@ -788,7 +791,7 @@ async function applyTaskReply(
 }
 
 /** The declaration (or whole file for create) and its 1-based start line. */
-function declarationView(cwd: string, task: EditTask): { view: string; startLine: number } {
+function declarationView(cwd: string, task: EditNode): { view: string; startLine: number } {
   const source = readTarget(cwd, task.loc.path);
   if (task.related !== undefined && task.related.length > 0) {
     // A migration task needs the whole file because related declarations can be
@@ -814,29 +817,30 @@ function declarationView(cwd: string, task: EditTask): { view: string; startLine
   return { view: lines.join("\n"), startLine };
 }
 
-interface TaskExecution {
+interface EditExecution {
   ok: boolean;
   diagnostics: string | null;
   messages: ChatMessage[];
 }
 
 /**
- * Run one root gate after every micro-task in that root is done. A `tsc` gate
+ * Run one task gate after every edit in that task has settled. A `tsc` gate
  * runs the type check; a `test` gate also runs the test suite. The gate is the
  * only place a type/test failure is turned into planner diagnostics.
  */
-async function verifyRoot(
+async function verifyTask(
   context: ExecutionContext,
-  rootTask: EditTask,
+  task: TaskNode,
   baseSource: string,
 ): Promise<{ ok: boolean; diagnostics: string | null }> {
+  const anchor = firstEdit(task);
   const check = await checkTool(
     context.cwd,
     context.options.checkCommand,
     context.options.commandTimeoutMs,
   );
   const test =
-    check.ok && rootTask.verify === "test"
+    check.ok && task.verify === "test"
       ? await testTool(context.cwd, context.options.testCommand, context.options.commandTimeoutMs)
       : { ok: true, exitCode: 0, output: "" };
   const diagnostics =
@@ -845,16 +849,16 @@ async function verifyRoot(
       : formatDiagnostics({
           check,
           test,
-          targetPath: rootTask.loc.path,
+          targetPath: anchor.loc.path,
           baseSource,
-          newSource: readTarget(context.cwd, rootTask.loc.path),
+          newSource: readTarget(context.cwd, anchor.loc.path),
           sourceFor: (path) => readTarget(context.cwd, path),
         });
   writeRecord(context.records, {
     iteration: context.iteration,
     kind: "verification",
     exchange: null,
-    task: rootTask,
+    edit: anchor,
     outcome: check.ok ? (test.ok ? "ok" : "tests") : "tsc",
     replacement: null,
     diagnostics,
@@ -864,34 +868,46 @@ async function verifyRoot(
 }
 
 /**
- * Carry out one micro-task. There is no per-task type check: the executor just
- * lands the edit, and the root gate runs after every sibling micro-task has
- * completed. Protocol/address failures still consume one of the bounded
- * exchanges.
+ * Carry out one micro edit. The executor lands the edit and stops; the task
+ * gate runs only after every edit in the task has settled. Protocol/address
+ * failures still consume one of the bounded exchanges.
  */
-async function executeTask(
+async function executeEdit(
   context: ExecutionContext,
   chat: ChatState,
-  task: EditTask,
-): Promise<TaskExecution> {
+  stage: Stage,
+  task: TaskNode,
+  edit: EditNode,
+  priorGateDiagnostics: string | undefined,
+): Promise<EditExecution> {
   let diagnostics: string | undefined;
   let consecutiveLength = 0;
   let selfCheckUsed = false;
   let formatHelp = false;
 
   for (let exchange = 1; exchange <= MAX_TASK_EXCHANGES; exchange += 1) {
-    const view = declarationView(context.cwd, task);
+    const view = declarationView(context.cwd, edit);
+    const contextText = [
+      `This is micro edit #${edit.id} in task #${task.id}, stage #${stage.id}. Do not change declarations outside this edit's target and related list.`,
+      priorGateDiagnostics === undefined
+        ? null
+        : `A previous task gate in this stage failed; later edits may need to fix it:\n\n${priorGateDiagnostics}`,
+    ]
+      .filter((block): block is string => block !== null && block.trim() !== "")
+      .join("\n\n");
     const prompt = buildTaskTurnPrompt({
       state: context.runState,
+      stage,
       task,
+      edit,
       contentView: renderTaskContentView(view.view, view.startLine),
       startLine: view.startLine,
       diagnostics,
       help: formatHelp,
-      context: `This is task #${task.id} (${task.action}) in root #${task.root}. Do not change declarations outside this task's target and related list.`,
+      context: contextText,
     });
     const last = chat.messages[chat.messages.length - 1];
-    if (last?.role === "user" && (last.content ?? "").startsWith("# Task")) {
+    if (last?.role === "user" && (last.content ?? "").startsWith("# Stage")) {
       chat.messages[chat.messages.length - 1] = { role: "user", content: prompt };
     } else {
       chat.messages.push({ role: "user", content: prompt });
@@ -933,14 +949,14 @@ async function executeTask(
     if (request.kind === "ok") {
       if (selfCheckUsed) {
         diagnostics =
-          "stage: protocol\nthe task already used its one read; return the edit clauses now";
+          "stage: protocol\nthe edit already used its one read; return the edit clauses now";
         formatHelp = true;
       } else {
         selfCheckUsed = true;
         diagnostics =
           request.request === "read"
-            ? `Self-check (read): current source of ${formatTaskLoc(task.loc)}.\n\n${renderTaskContentView(view.view, view.startLine)}`
-            : `Self-check (${request.request}): a task turn edits code; \`read\` is the only self-check accepted here.`;
+            ? `Self-check (read): current source of ${formatTaskLoc(edit.loc)}.\n\n${renderTaskContentView(view.view, view.startLine)}`
+            : `Self-check (${request.request}): an edit turn edits code; \`read\` is the only self-check accepted here.`;
         formatHelp = request.request !== "read";
       }
       continue;
@@ -951,13 +967,13 @@ async function executeTask(
         .trim(),
     );
     if (doneWord) {
-      diagnostics = `stage: protocol\nTASK_DONE ends a task that applied an edit; this task has not changed ${formatTaskLoc(task.loc)} yet, so reply with the edit clauses`;
+      diagnostics = `stage: protocol\nTASK_DONE ends an edit that applied a change; this edit has not changed ${formatTaskLoc(edit.loc)} yet, so reply with the edit clauses`;
       formatHelp = true;
       writeRecord(context.records, {
         iteration: context.iteration,
         kind: "exchange",
         exchange,
-        task,
+        edit,
         outcome: "protocol",
         replacement: content,
         diagnostics,
@@ -965,7 +981,7 @@ async function executeTask(
       });
       continue;
     }
-    const outcome = await applyTaskReply(context, task, content);
+    const outcome = await applyEditReply(context, edit, content);
     if (!outcome.ok) {
       diagnostics = outcome.diagnostics ?? "stage: protocol\nthe edit was rejected";
       formatHelp =
@@ -975,7 +991,7 @@ async function executeTask(
         iteration: context.iteration,
         kind: "exchange",
         exchange,
-        task,
+        edit,
         outcome: outcome.viewerOnly ? "viewer" : outcomeOf(stageOf(diagnostics)),
         replacement: content,
         diagnostics,
@@ -988,7 +1004,7 @@ async function executeTask(
       iteration: context.iteration,
       kind: "exchange",
       exchange,
-      task,
+      edit,
       outcome: "applied",
       replacement: content,
       diagnostics: outcome.diagnostics,
@@ -1000,7 +1016,7 @@ async function executeTask(
   }
   return {
     ok: false,
-    diagnostics: `stage: task-failed\n${taskLabel(task)} did not land an edit within ${MAX_TASK_EXCHANGES} exchanges\n\n${diagnostics ?? "the task ran out of exchanges without an edit"}`,
+    diagnostics: `stage: edit-failed\n${editLabel(edit)} did not land an edit within ${MAX_TASK_EXCHANGES} exchanges\n\n${diagnostics ?? "the edit ran out of exchanges without a write"}`,
     messages: chat.messages,
   };
 }
@@ -1008,41 +1024,17 @@ async function executeTask(
 // ---------------------------------------------------------------------------
 // The driver
 
-function fingerprintPlan(tasks: readonly EditTask[]): string {
-  return tasks
-    .map((task) =>
-      [
-        task.id,
-        task.root,
-        task.verify ?? "",
-        task.action,
-        task.loc.path,
-        task.loc.symbol,
-        task.loc.kind,
-        task.instruction,
-        task.deps.join(","),
-        (task.related ?? []).map((loc) => `${loc.path}:${loc.kind}:${loc.symbol}`).join(","),
-        task.renameTo ?? "",
-      ].join("|"),
-    )
-    .join("\n");
+function fingerprintPlan(stages: readonly Stage[]): string {
+  return JSON.stringify(stages);
 }
 
-/** Render the DAG in the wire shape for the execution system's first turn. */
-function dagWire(state: TaskRunState): string {
-  const status: Record<string, TaskStatus> = {};
-  for (const task of state.tasks) {
-    status[String(task.id)] = state.status.get(task.id) ?? "todo";
-  }
-  const rootStatus: Record<string, string> = {};
-  for (const root of rootOrder(state.tasks)) {
-    rootStatus[String(root)] = state.rootStatus.get(root) ?? "pending";
-  }
-  return JSON.stringify(
-    { tasks: state.tasks, todo: readyFrontier(state), status, rootStatus },
-    null,
-    2,
-  );
+/** Render the Plan tree for the execution system's first turn. */
+function planWire(state: TaskRunState): string {
+  return JSON.stringify({ stages: state.stages }, null, 2);
+}
+
+function firstEditOfState(state: TaskRunState | null): EditNode | undefined {
+  return state === null ? undefined : allTasks(state.stages).flatMap((task) => task.edits)[0];
 }
 
 /**
@@ -1069,8 +1061,8 @@ export async function runTaskLoop(options: LoopOptions): Promise<LoopResult> {
     consumed: 0,
   };
   const records: LoopRecord[] = [];
-  const failures = new Map<TaskId, string>();
-  const rootFailures = new Map<TaskId, string>();
+  const editFailures = new Map<NodeId, string>();
+  const taskFailures = new Map<NodeId, string>();
   let iteration = 0;
   let current: TaskRunState | null = null;
 
@@ -1085,12 +1077,12 @@ export async function runTaskLoop(options: LoopOptions): Promise<LoopResult> {
       reason,
       diagnostics,
     );
+    const anchor = firstEditOfState(current);
     return {
       ok: false,
       mode: current === null ? undefined : "modify",
-      locator:
-        current === null || current.tasks[0] === undefined ? null : locatorOf(current.tasks[0]),
-      filePath: current?.tasks[0]?.loc.path ?? null,
+      locator: anchor === undefined ? null : locatorOf(anchor),
+      filePath: anchor?.loc.path ?? null,
       editedSource: null,
       records,
       diagnostics,
@@ -1103,20 +1095,23 @@ export async function runTaskLoop(options: LoopOptions): Promise<LoopResult> {
     };
   };
 
-  const success = (state: TaskRunState): LoopResult => ({
-    ok: true,
-    mode: "modify",
-    locator: state.tasks[0] === undefined ? null : locatorOf(state.tasks[0]),
-    filePath: state.tasks[0]?.loc.path ?? null,
-    editedSource: null,
-    records,
-    diagnostics: null,
-    explanation: null,
-    messages: planningMessages,
-    skipped: workspace.skipped,
-    tokens: planningState.tokens,
-    tasks: summaryOf(state),
-  });
+  const success = (state: TaskRunState): LoopResult => {
+    const anchor = firstEditOfState(state);
+    return {
+      ok: true,
+      mode: "modify",
+      locator: anchor === undefined ? null : locatorOf(anchor),
+      filePath: anchor?.loc.path ?? null,
+      editedSource: null,
+      records,
+      diagnostics: null,
+      explanation: null,
+      messages: planningMessages,
+      skipped: workspace.skipped,
+      tokens: planningState.tokens,
+      tasks: summaryOf(state),
+    };
+  };
 
   const providerCall = async (): Promise<ChatResponse | LoopResult> => {
     let response: ChatResponse;
@@ -1136,8 +1131,7 @@ export async function runTaskLoop(options: LoopOptions): Promise<LoopResult> {
 
   /**
    * One planning turn: ask, parse, retry a rejection with its diagnostics. An
-   * initial plan returns the parsed `TaskPlan`; a re-plan returns the merged
-   * `TaskRunState`.
+   * initial plan returns the parsed Plan; a re-plan returns the merged state.
    */
   const planningTurn = async (replan: boolean): Promise<PlanningOutcome> => {
     let lastDiagnostics: string | null = null;
@@ -1149,7 +1143,7 @@ export async function runTaskLoop(options: LoopOptions): Promise<LoopResult> {
       const content = response.content ?? "";
       planningMessages.push({ role: "assistant", content });
       if (!replan) {
-        const parsed = parseTaskPlan(content);
+        const parsed = parsePlan(content);
         if (parsed.ok) {
           return { kind: "initial", plan: parsed.plan };
         }
@@ -1185,15 +1179,10 @@ export async function runTaskLoop(options: LoopOptions): Promise<LoopResult> {
     return first.result;
   }
   if (first.kind !== "initial") {
-    // The first turn is always the initial-plan parse; a replan here would be a
-    // contract bug, so refuse rather than silently start from a partial DAG.
-    return terminated(
-      "task-exhausted",
-      "task-exhausted: the first planning turn produced no task plan",
-    );
+    return terminated("task-exhausted", "task-exhausted: the first planning turn produced no plan");
   }
   current = initialState(first.plan);
-  let previousFingerprint = fingerprintPlan(current.tasks);
+  let previousFingerprint = fingerprintPlan(current.stages);
   let planningRounds = 1;
 
   const replan = async (
@@ -1204,25 +1193,30 @@ export async function runTaskLoop(options: LoopOptions): Promise<LoopResult> {
     if (planningRounds >= MAX_TASK_PLAN_ROUNDS) {
       return terminated(
         "task-exhausted",
-        `task-exhausted: ${planningRounds} DAGs without a passing run\n\n${blocked ?? ""}`,
+        `task-exhausted: ${planningRounds} plan trees without a passing run\n\n${blocked ?? ""}`,
       );
     }
-    const failedIds = state.tasks
-      .filter((task) => state.status.get(task.id) === "failed")
+    const failedEditIds = state.stages
+      .flatMap((stage) => stage.tasks)
+      .flatMap((task) => task.edits)
+      .filter((edit) => state.editStatus.get(edit.id) === "failed")
+      .map((edit) => edit.id);
+    const failedTaskIds = allTasks(state.stages)
+      .filter((task) => state.taskStatus.get(task.id) === "failed")
       .map((task) => task.id);
     const currentFiles = discoverSourceFiles(cwd);
     planningMessages.push({
       role: "user",
       content: buildTaskReplanPrompt({
         state,
-        failures,
-        rootFailures,
+        editFailures,
+        taskFailures,
         gateDiagnostics,
         blocked,
         symbolIndex: buildContextYaml(currentFiles),
         delta: replanDelta({
-          failedIds,
-          testsFailed: gateDiagnostics !== undefined,
+          failedEditIds,
+          failedTaskIds,
           blocked: blocked !== undefined,
         }),
       }),
@@ -1234,15 +1228,15 @@ export async function runTaskLoop(options: LoopOptions): Promise<LoopResult> {
     if (merged.kind !== "replan") {
       return terminated(
         "task-exhausted",
-        "task-exhausted: a re-planning turn produced no merged DAG",
+        "task-exhausted: a re-planning turn produced no merged tree",
       );
     }
     const next = merged.state;
-    const fingerprint = fingerprintPlan(next.tasks);
+    const fingerprint = fingerprintPlan(next.stages);
     if (fingerprint === previousFingerprint) {
       return terminated(
         "task-exhausted",
-        "task-exhausted: the planner returned the same DAG after a failure or a failing suite; no progress is possible",
+        "task-exhausted: the planner returned the same tree after a failure or a failing suite; no progress is possible",
       );
     }
     previousFingerprint = fingerprint;
@@ -1251,23 +1245,25 @@ export async function runTaskLoop(options: LoopOptions): Promise<LoopResult> {
     return next;
   };
 
-  // Each DAG gets a fresh execution conversation: stable system prompt + DAG,
-  // then one task turn at a time (status and content stay in the volatile tail).
+  // Each Plan tree gets a fresh execution conversation: stable system prompt +
+  // tree, then one edit turn at a time (stage/task/edit context stays volatile).
   let execution: ChatState | null = null;
   let executionState: TaskRunState | null = null;
+  let executionBase: ChatMessage[] = [];
 
   const executionChat = (state: TaskRunState): ChatState => {
     if (execution !== null && executionState === state) {
       return execution;
     }
+    const messages: ChatMessage[] = [
+      { role: "system", content: buildTaskExecutionSystemPrompt() },
+      {
+        role: "user",
+        content: `# Plan tree\n\n\`\`\`json\n${planWire(state)}\n\`\`\`\n\nYou receive one micro edit at a time. Reply with its edit clauses only.`,
+      },
+    ];
     const chat: ChatState = {
-      messages: [
-        { role: "system", content: buildTaskExecutionSystemPrompt() },
-        {
-          role: "user",
-          content: `# Edit-task DAG\n\n\`\`\`json\n${dagWire(state)}\n\`\`\`\n\nYou receive one task at a time. Reply with its edit clauses only.`,
-        },
-      ],
+      messages,
       // The token tally is shared across mode contexts; only the message list
       // is per-conversation.
       tokens: { input: 0, output: 0, total: 0, cacheRead: 0 },
@@ -1275,47 +1271,87 @@ export async function runTaskLoop(options: LoopOptions): Promise<LoopResult> {
     };
     execution = chat;
     executionState = state;
+    executionBase = messages;
     return chat;
   };
 
-  /** Sources at the moment a root became active, for mapping gate diagnostics. */
-  const rootBases = new Map<TaskId, Map<string, string>>();
-  const baseSourcesFor = (state: TaskRunState, root: TaskId): Map<string, string> => {
-    const existing = rootBases.get(root);
+  /** Sources when a task became active, for mapping gate diagnostics. */
+  const taskBases = new Map<NodeId, Map<string, string>>();
+  const baseSourcesFor = (state: TaskRunState, task: TaskNode): Map<string, string> => {
+    const existing = taskBases.get(task.id);
     if (existing !== undefined) {
       return existing;
     }
     const bases = new Map<string, string>();
-    for (const task of state.tasks.filter((candidate) => candidate.root === root)) {
-      bases.set(task.loc.path, readTarget(cwd, task.loc.path));
+    for (const edit of task.edits) {
+      if (!bases.has(edit.loc.path)) {
+        bases.set(edit.loc.path, readTarget(cwd, edit.loc.path));
+      }
     }
-    rootBases.set(root, bases);
+    taskBases.set(task.id, bases);
     return bases;
+  };
+
+  const priorGateDiagnostics = (
+    state: TaskRunState,
+    stage: Stage,
+    task: TaskNode,
+  ): string | undefined => {
+    const index = stage.tasks.findIndex((candidate) => candidate.id === task.id);
+    for (let position = index - 1; position >= 0; position -= 1) {
+      const earlier = stage.tasks[position];
+      if (earlier === undefined) {
+        continue;
+      }
+      if (state.taskStatus.get(earlier.id) === "failed" && taskFailures.has(earlier.id)) {
+        return `Task #${earlier.id} gate failed: ${taskFailures.get(earlier.id) ?? ""}`;
+      }
+    }
+    return undefined;
   };
 
   for (;;) {
     const state = current as TaskRunState;
-    if (allRootsPassed(state)) {
+    if (runComplete(state)) {
       return success(state);
     }
-    const root = activeRoot(state);
-    if (root === null) {
+    const stage = activeStage(state);
+    if (stage === undefined) {
+      const last = finalTask(state.stages);
       const merged = await replan(
         undefined,
-        "No root is pending; add a new root (with a final test gate) for the remaining work.",
+        `All stages are closed but the final task ${last === undefined ? "is missing" : `#${last.id}`} has not passed; add a repair stage or task.`,
       );
       if ("ok" in merged) {
         return merged;
       }
       continue;
     }
-    const rootTask = rootTaskOf(state, root);
-    if (rootTask === undefined) {
-      return terminated("task-exhausted", `task-exhausted: root #${root} has no root task`);
+    const task = activeTask(state);
+    if (task === undefined) {
+      const merged = await replan(
+        undefined,
+        `Stage #${stage.id} has no pending task; repair the tree so the remaining work is runnable.`,
+      );
+      if ("ok" in merged) {
+        return merged;
+      }
+      continue;
     }
-    const bases = baseSourcesFor(state, root);
+    const anchor = firstEdit(task);
+    const bases = baseSourcesFor(state, task);
 
-    if (rootTasksDone(state, root)) {
+    if (taskEditsSettled(state, task)) {
+      if (!taskHasDoneEdit(state, task)) {
+        const merged = await replan(
+          undefined,
+          `Task #${task.id} has no landed edit; add a repair edit rather than re-running the gate on an unchanged file.`,
+        );
+        if ("ok" in merged) {
+          return merged;
+        }
+        continue;
+      }
       iteration += 1;
       const context: ExecutionContext = {
         cwd,
@@ -1325,18 +1361,24 @@ export async function runTaskLoop(options: LoopOptions): Promise<LoopResult> {
         runState: state,
         iteration,
       };
-      const gate = await verifyRoot(
+      const gate = await verifyTask(
         context,
-        rootTask,
-        bases.get(rootTask.loc.path) ?? readTarget(cwd, rootTask.loc.path),
+        task,
+        bases.get(anchor.loc.path) ?? readTarget(cwd, anchor.loc.path),
       );
       if (gate.ok) {
-        state.rootStatus.set(root, "passed");
-        rootFailures.delete(root);
+        state.taskStatus.set(task.id, "passed");
+        taskFailures.delete(task.id);
         continue;
       }
-      state.rootStatus.set(root, "failed");
-      rootFailures.set(root, gate.diagnostics ?? "stage: root-gate\nthe root gate failed");
+      state.taskStatus.set(task.id, "failed");
+      taskFailures.set(task.id, gate.diagnostics ?? "stage: task-gate\nthe task gate failed");
+      taskBases.delete(task.id);
+      // Let later planned tasks in the same stage run first; they may repair
+      // the gate failure without paying for a planning round.
+      if (hasLaterPendingTaskInStage(state, task)) {
+        continue;
+      }
       const merged = await replan(gate.diagnostics ?? undefined, undefined);
       if ("ok" in merged) {
         return merged;
@@ -1344,20 +1386,11 @@ export async function runTaskLoop(options: LoopOptions): Promise<LoopResult> {
       continue;
     }
 
-    const queue = readyFrontier(state);
-    if (queue.length === 0) {
-      const blocked = state.tasks
-        .filter((task) => task.root === root && state.status.get(task.id) === "todo")
-        .map(
-          (task) =>
-            `#${task.id} waits on ${task.deps
-              .map((dep) => `#${dep} (${state.status.get(dep) ?? "todo"})`)
-              .join(", ")}`,
-        )
-        .join("; ");
+    const edit = nextEdit(state, task);
+    if (edit === undefined) {
       const merged = await replan(
         undefined,
-        `Root #${root} has no ready micro-task: ${blocked || "the root has no todo tasks"}`,
+        `Task #${task.id} has no runnable edit; repair the tree so its remaining work is runnable.`,
       );
       if ("ok" in merged) {
         return merged;
@@ -1366,83 +1399,48 @@ export async function runTaskLoop(options: LoopOptions): Promise<LoopResult> {
     }
 
     const chat = executionChat(state);
-    // Every micro-task starts from the stable system + DAG prefix; task turns
-    // are volatile and must not leak into the next task.
-    const baseMessages = [...chat.messages];
-    let failedThisWave = false;
-    let visits = 0;
-    const maxVisits = Math.max(MAX_TASKS * 4, state.tasks.length * 4);
-    while (queue.length > 0) {
-      visits += 1;
-      if (visits > maxVisits) {
-        return terminated(
-          "task-exhausted",
-          "task-exhausted: the scheduler revisited more tasks than the DAG allows",
-        );
-      }
-      const id = queue.shift() as TaskId;
-      const task = state.tasks.find((candidate) => candidate.id === id);
-      if (task === undefined || state.status.get(id) !== "todo") {
-        continue;
-      }
-      iteration += 1;
-      state.status.set(id, "in-progress");
-      chat.messages = [...baseMessages];
-      const context: ExecutionContext = {
-        cwd,
-        workspace,
-        options,
-        records,
-        runState: state,
-        iteration,
-      };
-      // Carry the run-wide token tally into the per-DAG conversation.
-      chat.tokens = { ...planningState.tokens };
-      chat.consumed = planningState.consumed;
-      const outcome = await executeTask(context, chat, task);
-      planningState.tokens = chat.tokens;
-      planningState.consumed = chat.consumed;
-      if (overBudget(chat, tokenBudget)) {
-        return terminated("token-budget", tokenBudgetDiagnostics(chat.consumed, tokenBudget));
-      }
-      if (!outcome.ok) {
-        state.status.set(id, "failed");
-        failures.set(id, outcome.diagnostics ?? "the task failed");
-        // A root cannot reach its gate after one of its micro-tasks failed;
-        // close it until a re-plan adds or amends repair work.
-        state.rootStatus.set(root, "failed");
-        for (const sibling of state.tasks) {
-          if (
-            sibling.root === root &&
-            sibling.id !== id &&
-            state.status.get(sibling.id) === "todo"
-          ) {
-            state.status.set(sibling.id, "failed");
-            failures.set(
-              sibling.id,
-              `root #${root} closed because task #${id} failed before the root gate`,
-            );
-          }
-        }
-        failedThisWave = true;
-        break;
-      }
-      state.status.set(id, "done");
-      failures.delete(id);
-      for (const next of readyFrontier(state)) {
-        if (!queue.includes(next)) {
-          queue.push(next);
-        }
-      }
+    iteration += 1;
+    state.editStatus.set(edit.id, "in-progress");
+    // Every edit starts from the stable system + Plan prefix; turns from the
+    // previous edit must not leak into this one.
+    chat.messages = [...executionBase];
+    // Carry the run-wide token tally into the per-Plan conversation.
+    chat.tokens = { ...planningState.tokens };
+    chat.consumed = planningState.consumed;
+    const context: ExecutionContext = {
+      cwd,
+      workspace,
+      options,
+      records,
+      runState: state,
+      iteration,
+    };
+    const outcome = await executeEdit(
+      context,
+      chat,
+      stage,
+      task,
+      edit,
+      priorGateDiagnostics(state, stage, task),
+    );
+    planningState.tokens = chat.tokens;
+    planningState.consumed = chat.consumed;
+    if (overBudget(chat, tokenBudget)) {
+      return terminated("token-budget", tokenBudgetDiagnostics(chat.consumed, tokenBudget));
     }
-    if (failedThisWave) {
+    if (!outcome.ok) {
+      state.editStatus.set(edit.id, "failed");
+      state.taskStatus.set(task.id, "failed");
+      editFailures.set(edit.id, outcome.diagnostics ?? "the edit failed");
+      taskBases.delete(task.id);
       const merged = await replan(undefined, undefined);
       if ("ok" in merged) {
         return merged;
       }
       continue;
     }
-    // The root's micro-tasks are done; the next iteration runs its gate.
+    state.editStatus.set(edit.id, "done");
+    editFailures.delete(edit.id);
   }
 }
 

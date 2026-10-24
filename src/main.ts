@@ -62,7 +62,7 @@ function emitTextResult(io: MainIo, cwd: string, result: LoopResult): number {
       const done = result.tasks.filter((task) => task.status === "done").length;
       const files = new Set(result.tasks.map((task) => task.path)).size;
       io.out(
-        `applied ${done} task(s) across ${files} file(s) after ${result.records.length} record(s)`,
+        `applied ${done} edit(s) across ${files} file(s) after ${result.records.length} record(s)`,
       );
       return 0;
     }

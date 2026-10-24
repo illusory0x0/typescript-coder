@@ -744,7 +744,7 @@ const TERMINATION_SUMMARY: Record<TerminationReason | "provider-error", string> 
   "harness-fault": "the harness produced an invalid edit candidate at the format gate",
   "output-limit": "the completion hit the output limit three times in a row without a usable edit",
   "task-exhausted":
-    "the edit-task plan could not be carried out (planning or task execution exhausted its budget)",
+    "the planned edit tree could not be carried out (planning or execution exhausted its budget)",
 };
 
 /**
@@ -1359,7 +1359,7 @@ export interface ProviderLike {
   ): Promise<ChatResponse>;
 }
 
-/** The loop shape: one pinned target, or a planned edit-task DAG. */
+/** The loop shape: one pinned target, or a planned Plan -> Stage -> Task -> edit tree. */
 export type AgentMode = "edit" | "plan-exec";
 
 export const DEFAULT_TOKEN_BUDGET = 120_000;
@@ -1453,7 +1453,8 @@ export interface LoopOptions {
   /**
    * Loop shape (`--mode`): `edit` (default) is the single-target Edit → Verify
    * loop; `plan-exec` runs the planning/execution loop of `docs/spec.md`, where
-   * a planner emits an edit-task DAG and the harness executes it task by task.
+   * a planner emits a Plan -> Stage -> Task -> edit tree and the harness
+   * executes one edit at a time.
    */
   agentMode?: AgentMode;
   /**
@@ -2249,7 +2250,7 @@ export interface LoopResult {
    */
   appliedTargets?: Locator[];
   /**
-   * Plan/execute mode: one entry per task of the final edit-task DAG, in task
+   * Plan/execute mode: one entry per edit of the final Plan tree, in tree
    * order. Absent on the single-target drivers.
    */
   tasks?: TaskSummary[];

@@ -379,19 +379,27 @@ export const scenarios: Scenario[] = [
     issue: TEST_ISSUE,
     responses: [
       JSON.stringify({
-        tasks: [
+        stages: [
           {
             id: 1,
-            root: 1,
-            verify: "test",
-            loc: { path: "src/helper.ts", symbol: "answer", kind: "value" },
-            deps: [],
-            action: "modify",
-            instruction: "Change answer so it returns 2 instead of 1.",
+            goal: "Fix the answer behavior.",
+            tasks: [
+              {
+                id: 1,
+                verify: "test",
+                instruction: "Change answer so it returns 2 instead of 1.",
+                edits: [
+                  {
+                    id: 2,
+                    loc: { path: "src/helper.ts", symbol: "answer", kind: "value" },
+                    action: "modify",
+                    instruction: "Change answer so it returns 2 instead of 1.",
+                  },
+                ],
+              },
+            ],
           },
         ],
-        todo: [1],
-        status: { "1": "todo" },
       }),
       [
         "select answer in src/helper.ts resolve value",

@@ -51,7 +51,7 @@ selects the tc loop mode(s).
 
 - `src/main.ts` — CLI entry (`#!/usr/bin/env bun`, piped-stdin contract `tc < task.txt`; a TTY stdin prints help).
 - `src/loop.ts` — `runLoop` + `buildSystemPrompt` (the model-facing prompt is a literal in this file; prompt text is benchmark-sensitive).
-- `src/tasks.ts` / `src/task-loop.ts` — plan/execute task DAG contract and driver (`--mode plan-exec`); spec in `docs/spec.md`.
+- `src/tasks.ts` / `src/task-loop.ts` — plan/execute Plan → Stage → Task → edit tree contract and driver (`--mode plan-exec`); spec in `docs/spec.md`.
 - `src/prompts/task.ts` — planning/execution prompt text for the plan/execute loop.
 - `src/tools.ts` — check/test tools; default verify commands are `bunx tsc --noEmit` and `bun test`.
 - `src/editor.ts` — splice + oxfmt + parse gate. `src/utility.ts` — symbol index (path×symbol×kind).
