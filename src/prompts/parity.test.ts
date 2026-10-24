@@ -20,30 +20,30 @@ import {
 import { buildIndexTolerant } from "../utility";
 import type { SourceFile } from "../utility";
 
-// Golden hashes captured from the pre-split src/loop.ts. They make the Phase 1
-// prompt-module extraction a byte-for-byte move: any prompt-text drift fails here.
+// Golden hashes for the current prompt snapshots. They make intentional prompt
+// edits visible: a text change must update the matching hash in the same commit.
 const GOLDEN: Record<string, string> = {
   systemJson: "cdd21ce09270b89e9ae01ac4bde7417226789419a618155f02ed401e4e82f5c4",
   systemJsonDefault: "cdd21ce09270b89e9ae01ac4bde7417226789419a618155f02ed401e4e82f5c4",
   systemMulti: "32531cd313962aa7bccc84d345683ac74d460fe2edc5b40b4528fa0e7de06b21",
-  systemEditDsl: "971b706cc629ed451a82ab7c47ddd4ddd1766757cc96335d066d659c85368bf2",
-  systemEditDslMulti: "028823154e83b05bfcfbefcc39b46f7dd73816a5f1fb18c0702c51da608fa281",
+  systemEditDsl: "f0595105398a277da2f251c997369f200a3ffadcc30a06bec221265970d686b8",
+  systemEditDslMulti: "3666f0a3045ab4fa3c846f8c1a10089cc9402a18bae3835409bf6bac9321e6a6",
   user: "fab917eb505894899f23e5c6389b1b1035c716be21b61eef3b2ef5a6c375c132",
   userEmpty: "b3b61b61b8aca5a1296decc363e1b0a9869dd9e31881fca4f2451a55a45ecba1",
   userBigSpec: "ca77bbabd5b99f9442c3f8e5c96500b84e6a8917e9f8c8add2a33517580fae8e",
   editJson: "bf01281b8050f59041136dc6b56825c5e8aef26d16a5553df3ede4333d82c509",
   editMulti: "8355d1b2c6f6c81b77d3e42da3e1e707b62a8798ee38b803c7db375ffe07d599",
-  editDsl: "7719e193aab382627182f1712d5b7ee740c24853eabe6227b7d000c62fcb5dff",
+  editDsl: "0703ac7f530e02aa5b6fc5d64dfdbb371de227bc6b531162023174db703ef0f1",
   targets: "14fa464c2b605fbdb538c5122dc2369e5aa7468c246ec78685b6a5d346f92523",
   createJson: "2366f08c45318acfcf13b56c7830117eb901357770bc2dcf598325ca217b0613",
-  createDsl: "e69608dad27186c0a3d89ac16439734f93be229b58af7bd552e1bdc6935be7ae",
+  createDsl: "e8ecbff77ee3bf7df3309d27a2569106e6b3c38661e9fefa5b75cfcc06331488",
   selectionRetry: "139beeaab3b0daa8405e3efd55ecd1970c318dfbb51d68a9fe78ed634cea198b",
   selectionContinuation: "163abbf779c72b2afa8c6900970fd928576d9d4d3bd85c68ac3f710c6c45d63c",
   dslSelectionRetry: "f98647d7bf2e5d118c70757673a6565de04de028d43269d72b9876825697ebac",
   dslSelectionContinuation: "fc34aeea0599554baa0962654afd472845e72228fa3d13001141efe3d25cfa64",
-  dslUser: "d6b48e859339843fe48d57fd0de5c561d803985d907da5b369d3f9a4247729b5",
-  dslDetails: "b2d917d39d16504429787fef58bea54d6fa790babc7785ccff94da6910ed8b38",
-  dslCreate: "23bed1176c40af5284c98ff255411d9b5d0b717dcca759a2dd5d9ec702a123ca",
+  dslUser: "24d29a2def1aa583bb82d344b101951e11ae8dca877e635c4358e9e449ae9fd2",
+  dslDetails: "943f5481355a94d4007720643ece825cf5678e4421f9432d0d686f942dd77b15",
+  dslCreate: "b2293cb2ee0e2382ea9a232b557bc62da041ec6393a3dce8f6e3d047682faf02",
   dslModified: "9f42714af7262f6a57e68cc94c989ff24b19024fa2c8d9c55c05eecf67ddd019",
   dslIndex: "886b377d739a5cf3dac6e3d7de9a0e6ac1d8c66f7cd52604f60b57c15f12b2b6",
   numberedBlock: "d9faeb4ee96019066acac996f3d09a0fcabb0bbb492e7739afb9539d24382d90",
@@ -56,8 +56,8 @@ function hash(value: string): string {
   return hasher.digest("hex");
 }
 
-describe("prompt extraction parity", () => {
-  test("the moved builders keep the pre-split prompt bytes", () => {
+describe("prompt snapshots", () => {
+  test("the prompt builders keep their reviewed bytes", () => {
     const files: SourceFile[] = [
       {
         path: "src/a.ts",

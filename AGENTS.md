@@ -43,13 +43,16 @@ The oc side and the legacy `json` edit protocol are **frozen reference points**:
 Strictly forbidden, with no exception: **do not run `--side oc` and do not run
 `--protocol-format json`** in the benchmark. Do not ask whether to run them; the
 benchmark now rejects both. tc reports run `--side tc` with the default
-`--protocol-format edit-dsl` and report their savings against the frozen oc
-baseline.
+`--protocol-format edit-dsl` and report savings against **both** frozen
+baselines (oc and tc json) in a four-way table; `--agent-mode edit|plan-exec|both`
+selects the tc loop mode(s).
 
 ## Layout / entrypoints
 
 - `src/main.ts` — CLI entry (`#!/usr/bin/env bun`, piped-stdin contract `tc < task.txt`; a TTY stdin prints help).
 - `src/loop.ts` — `runLoop` + `buildSystemPrompt` (the model-facing prompt is a literal in this file; prompt text is benchmark-sensitive).
+- `src/tasks.ts` / `src/task-loop.ts` — plan/execute task DAG contract and driver (`--mode plan-exec`); spec in `docs/spec.md`.
+- `src/prompts/task.ts` — planning/execution prompt text for the plan/execute loop.
 - `src/tools.ts` — check/test tools; default verify commands are `bunx tsc --noEmit` and `bun test`.
 - `src/editor.ts` — splice + oxfmt + parse gate. `src/utility.ts` — symbol index (path×symbol×kind).
 - `src/openai.ts` — provider config from env, retries/timeouts. `src/result.ts` — the JSON sub-agent result contract.

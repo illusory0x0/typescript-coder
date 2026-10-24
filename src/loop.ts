@@ -60,6 +60,7 @@ import type {
   SymbolSpace,
   TolerantIndex,
 } from "./utility";
+import type { TaskSummary } from "./tasks";
 import {
   APPROACH_LIMIT,
   CONTEXT_SYMBOL_LIMIT,
@@ -742,6 +743,8 @@ const TERMINATION_SUMMARY: Record<TerminationReason | "provider-error", string> 
   "provider-error": "the provider call failed",
   "harness-fault": "the harness produced an invalid edit candidate at the format gate",
   "output-limit": "the completion hit the output limit three times in a row without a usable edit",
+  "task-exhausted":
+    "the edit-task plan could not be carried out (planning or task execution exhausted its budget)",
 };
 
 /**
@@ -1356,6 +1359,9 @@ export interface ProviderLike {
   ): Promise<ChatResponse>;
 }
 
+/** The loop shape: one pinned target, or a planned edit-task DAG. */
+export type AgentMode = "edit" | "plan-exec";
+
 export const DEFAULT_TOKEN_BUDGET = 120_000;
 /** Model exchanges per Run iteration, shared by target picking and content revision (#43). */
 export const MAX_RUN_ITERATIONS = 32;
@@ -1444,6 +1450,12 @@ export interface LoopOptions {
    * (#81) is JSON-only.
    */
   protocolFormat?: ProtocolFormat;
+  /**
+   * Loop shape (`--mode`): `edit` (default) is the single-target Edit → Verify
+   * loop; `plan-exec` runs the planning/execution loop of `docs/spec.md`, where
+   * a planner emits an edit-task DAG and the harness executes it task by task.
+   */
+  agentMode?: AgentMode;
   /**
    * Explicit-targets mode (#81): the addresses to edit, one entry per desired
    * declaration. When non-empty the run skips model selection, forces the
@@ -2196,7 +2208,8 @@ export type TerminationReason =
   | "delete-verification-failed"
   | "prev-broken"
   | "harness-fault"
-  | "output-limit";
+  | "output-limit"
+  | "task-exhausted";
 
 /**
  * Token spend of one run (#80): the component breakdown of every provider
@@ -2211,7 +2224,7 @@ export interface LoopTokens {
 }
 
 /** A fresh all-zero token tally (#80); safe to return and never mutate. */
-function zeroLoopTokens(): LoopTokens {
+export function zeroLoopTokens(): LoopTokens {
   return { input: 0, output: 0, total: 0, cacheRead: 0 };
 }
 
@@ -2235,6 +2248,11 @@ export interface LoopResult {
    * order. Absent on the default discovery path.
    */
   appliedTargets?: Locator[];
+  /**
+   * Plan/execute mode: one entry per task of the final edit-task DAG, in task
+   * order. Absent on the single-target drivers.
+   */
+  tasks?: TaskSummary[];
 }
 
 type Selection =
@@ -2246,14 +2264,14 @@ const EMPTY_LOCATOR: Locator = { path: "", name: "", kind: "" };
 const DIAGNOSTICS_LIMIT = 4000;
 const DIAGNOSTICS_HEAD_LIMIT = 200;
 
-function errorMessage(error: unknown): string {
+export function errorMessage(error: unknown): string {
   return error instanceof Error ? error.message : String(error);
 }
 
 // Render a provider failure for diagnostics (#97): a context-overflow or
 // payload-too-large classification gets its own label so the run's defined
 // summary path names the cause; everything else keeps the generic text.
-function providerErrorDiagnostics(error: unknown): string {
+export function providerErrorDiagnostics(error: unknown): string {
   if (error instanceof ChatContextOverflowError) {
     return `provider context-overflow: ${errorMessage(error)}`;
   }
@@ -2265,7 +2283,7 @@ function providerErrorDiagnostics(error: unknown): string {
 
 // Tolerant provider usage reader (#36): prefer the reported total, fall back to
 // prompt + completion when both are reported; unknown shapes count as zero.
-function tokensFromResponse(response: ChatResponse): number {
+export function tokensFromResponse(response: ChatResponse): number {
   const usage = usageFromRaw(response.raw);
   if (typeof usage !== "object" || usage === null) {
     return 0;
@@ -2302,7 +2320,7 @@ function finiteTokenCount(value: unknown): number {
  * prefers `total_tokens` and falls back to input+output. Unknown shapes count
  * as zero.
  */
-function loopTokensFromResponse(response: ChatResponse): LoopTokens {
+export function loopTokensFromResponse(response: ChatResponse): LoopTokens {
   const usage = usageFromRaw(response.raw);
   if (typeof usage !== "object" || usage === null) {
     return zeroLoopTokens();
@@ -2327,7 +2345,7 @@ function loopTokensFromResponse(response: ChatResponse): LoopTokens {
   };
 }
 
-function tokenBudgetDiagnostics(consumedTokens: number, tokenBudget: number): string {
+export function tokenBudgetDiagnostics(consumedTokens: number, tokenBudget: number): string {
   return `token-budget: accumulated ${consumedTokens} tokens exceeded the ${tokenBudget} token budget`;
 }
 
@@ -2341,7 +2359,7 @@ function diagnosticsHeadOf(diagnostics: string | null): string | null {
     : collapsed;
 }
 
-function recordRow(input: {
+export function recordRow(input: {
   row: number;
   iteration: number;
   kind: "exchange" | "verification";
@@ -2772,7 +2790,7 @@ function safeAppendPath(cwd: string, path: string): string | null {
   return path;
 }
 
-function safeMutablePath(cwd: string, path: string): string | null {
+export function safeMutablePath(cwd: string, path: string): string | null {
   const safe = safeAppendPath(cwd, path);
   if (safe === null) {
     return null;
@@ -2785,7 +2803,7 @@ function safeMutablePath(cwd: string, path: string): string | null {
   return safe;
 }
 
-function readFileIfExists(path: string): string | null {
+export function readFileIfExists(path: string): string | null {
   const stats = statSync(path, { throwIfNoEntry: false });
   if (stats === undefined || !stats.isFile()) {
     return null;
@@ -2802,7 +2820,7 @@ function appendText(existing: string, replacement: string): string {
   return `${base}\n${body}\n`;
 }
 
-function writeTarget(cwd: string, path: string, source: string): void {
+export function writeTarget(cwd: string, path: string, source: string): void {
   const target = join(cwd, path);
   mkdirSync(dirname(target), { recursive: true });
   writeFileSync(target, source);
@@ -3051,7 +3069,7 @@ function addressAmbiguousDiagnostics(
   ].join("\n");
 }
 
-type CurrentEntryResolution =
+export type CurrentEntryResolution =
   | { ok: true; entry: IndexEntry }
   | { ok: false; diagnostics: string; undeclared: boolean; spaceMiss: boolean };
 
@@ -3059,7 +3077,7 @@ type CurrentEntryResolution =
 // spliced: no silent first-match pick, no kind coercion, no auto-append. An
 // empty locator kind is the edit-dsl wildcard (path + name only); `space` is the
 // edit-dsl `resolve value|type|namespace` filter and is `null` on the JSON path.
-function resolveCurrentEntry(
+export function resolveCurrentEntry(
   sourceBefore: string,
   target: string,
   locator: Locator,
@@ -3135,7 +3153,7 @@ function precedingExportModifier(sourceBefore: string, entry: IndexEntry): strin
   );
 }
 
-function stripLeadingExport(replacement: string, modifier: string | null): string {
+export function stripLeadingExport(replacement: string, modifier: string | null): string {
   if (modifier === null) {
     return replacement;
   }
@@ -3491,7 +3509,7 @@ function editDslOverlapDiagnostics(
 // Bridge a resolved edit-dsl editor clause into the shared `ResolvedRegion`
 // shape; the edit-dsl path already carries the cascade stage and matcher kind
 // (#110), so no reclassification is needed.
-function editDslRegionToResolved(region: EditDslRegion): ResolvedRegion {
+export function editDslRegionToResolved(region: EditDslRegion): ResolvedRegion {
   return {
     index: region.index,
     path: region.path,
@@ -3506,7 +3524,7 @@ function editDslRegionToResolved(region: EditDslRegion): ResolvedRegion {
   };
 }
 
-interface ResolvedRegion {
+export interface ResolvedRegion {
   /** Clause/payload position in the reply (0-based), for diagnostics. */
   index: number;
   /** The file the region edits (a same-file batch shares it). */
@@ -4144,7 +4162,7 @@ export function formatDiagnostics(input: DiagnosticsInput): string {
  * the bounded history and the provider is called exactly once. Provider errors
  * keep their own path and fall back to a readable string.
  */
-async function explain(
+export async function explain(
   provider: ProviderLike,
   messages: ChatMessage[],
   temperature: number | undefined,
@@ -4162,7 +4180,7 @@ async function explain(
   }
 }
 
-function withEffort(base: ChatOptions | undefined, effort: ReasoningEffort): ChatOptions {
+export function withEffort(base: ChatOptions | undefined, effort: ReasoningEffort): ChatOptions {
   return { ...base, reasoningEffort: effort };
 }
 
@@ -7730,6 +7748,12 @@ async function runEditDslLoop(options: LoopOptions): Promise<LoopResult> {
 }
 
 export async function runLoop(options: LoopOptions): Promise<LoopResult> {
+  if (options.agentMode === "plan-exec") {
+    // Lazy: the task driver imports from this module, so a static import here
+    // would be a load-time cycle.
+    const { runTaskLoop } = await import("./task-loop");
+    return runTaskLoop(options);
+  }
   const targetsMode = (options.targets ?? []).length > 0;
   const protocolFormat: ProtocolFormat = targetsMode
     ? "json"

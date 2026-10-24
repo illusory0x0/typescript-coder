@@ -25,11 +25,17 @@ export const EDIT_DSL_CREATE_DELETE_SYSTEM_PARAGRAPH =
 export const EDIT_DSL_FS_SYSTEM_PARAGRAPH =
   "Raw file commands may accompany or replace the select workflow: `create <path> done` creates an empty file (it must not already exist), `delete <path> done` removes it, `read <path> [within <selecters>] done` shows the file or selected lines without writing, and `write <path> [within <selecters>] with <fence> done` writes the whole file or replaces the selected lines (creating the file when absent). A path that does not exist is created by `write`; a missing symbol in an editor still appends. A reply may carry several statements; the editing statements apply atomically, while a failed `read` only reports its error and never discards them. A `read` sees the source as it was before the reply. File commands and a `select` may not be mixed in the first reply; after the first target is pinned they may be mixed.";
 
+// The first thing the model reads: name the protocol and show the reply shape
+// before the motivation paragraphs. The detailed grammar still follows below;
+// this block is the anchor a small model can copy on the first turn.
+export const EDIT_DSL_AT_A_GLANCE =
+  "This is the Edit-action DSL. Reply with one or more `select … end` clauses, never JSON or prose. At a glance: a bare `select <symbol> in <path> end` is a viewer; `select <symbol> in <path> [ match … ] [ pick … ] replace with <fence> end` edits; `select <symbol> in <path> rename <old> to <new> end` renames.";
+
 // #25: why this protocol, then a one-line map from intent to tool. The clause
 // syntax follows in the four paragraphs; few-shot examples stay in
 // `editDslInstruction()` so read turns do not pay for them.
 export const EDIT_DSL_ROLE =
-  "You are a TypeScript expert using this edit protocol to modify source code.";
+  "You are a TypeScript expert using the Edit-action DSL to modify source code.";
 export const EDIT_DSL_MOTIVATION =
   "This protocol keeps edits small and addressable: a clause names one declaration or span instead of resending a whole file. Viewers and `read` locate source and never write. The editing clauses of one reply apply atomically — if any editing clause fails, nothing is written. A failed `read` only reports its error and writes nothing. Every write passes the parse gate, the formatter, and verification before it lands.";
 export const EDIT_DSL_TOOLS_MAPPING =
@@ -60,7 +66,7 @@ export function buildEditDslSystemPrompt(multiPayload = false): string {
     },
     multiPayload,
     EDIT_DSL_ROLE,
-    [EDIT_DSL_MOTIVATION, EDIT_DSL_TOOLS_MAPPING],
+    [EDIT_DSL_AT_A_GLANCE, EDIT_DSL_MOTIVATION, EDIT_DSL_TOOLS_MAPPING],
   );
 }
 
@@ -138,12 +144,22 @@ export function appendEditDslSpecFiles(prompt: string, specFiles: readonly Sourc
   return appendSpecSection(prompt, specFiles);
 }
 
+export const EDIT_DSL_FIRST_TURN_GUIDE = `Reply with exactly one \`select … end\` clause (a viewer, or a direct editor when you already know the change), or one or more raw file commands. Do not reply with prose or JSON.
+
+For example, to inspect the declaration named "answer" in src/a.ts:
+
+select answer in src/a.ts resolve value
+end`;
+
 export function buildEditDslUserPrompt(
   issue: string,
   indexText: string,
   specFiles: readonly SourceFile[] = [],
 ): string {
-  return appendEditDslSpecFiles(editDslGoal(issue, indexText), specFiles);
+  return appendEditDslSpecFiles(
+    `${editDslGoal(issue, indexText)}\n${EDIT_DSL_FIRST_TURN_GUIDE}\n`,
+    specFiles,
+  );
 }
 
 // The first-turn content prompt pins the selected declaration. A match viewer
@@ -346,6 +362,55 @@ export const EDIT_DSL_EXAMPLE_FORMS: EditDslExampleForm[] = [
       "done",
     ].join("\n"),
   },
+  {
+    label: "9. Rename: rewrite the declaration name and every same-file reference.",
+    selections: [
+      {
+        locator: { path: "src/x.ts", name: "answer", kind: "function" },
+        space: "value",
+        matcher: null,
+        pick: null,
+        replacement: null,
+        rename: { from: "answer", to: "result" },
+      },
+    ],
+  },
+  {
+    label: "10. Delete: a whole-declaration replace with an empty fence removes it.",
+    raw: [
+      "select const unused in src/x.ts resolve value",
+      "replace with",
+      "-----",
+      "-----",
+      "end",
+    ].join("\n"),
+  },
+  {
+    label:
+      "11. Resolve a type: `resolve type` picks the type alias when a value uses the same name.",
+    selections: [
+      {
+        locator: { path: "src/types.ts", name: "UserId", kind: "type" },
+        space: "type",
+        matcher: null,
+        pick: null,
+        replacement: "type UserId = string;",
+      },
+    ],
+  },
+  {
+    label:
+      "12. Whole variable statement: a variable target expands to its complete statement, including `export`.",
+    selections: [
+      {
+        locator: { path: "src/limits.ts", name: "MAX_TOKENS", kind: "const" },
+        space: "value",
+        matcher: null,
+        pick: null,
+        replacement: "export const MAX_TOKENS = 8192;",
+      },
+    ],
+  },
 ];
 
 // Render the labelled forms with the grammar's own serializer, one blank line
@@ -376,11 +441,11 @@ export function editDslInstruction(): string {
     "",
     "A viewer's next prompt carries one numbered declaration block per clause with `⁉️` in the gutter on the matched lines.",
     "",
-    "Examples:",
+    "Examples (each block is a complete reply; the blank lines between blocks are not part of a reply):",
     "",
-    "```````",
     renderEditDslExamples(),
-    "```````",
+    "",
+    "End of examples. Do not wrap your own reply in those separators.",
     "",
     "Workflow — choose the smallest micro-operation that fits:",
     "",

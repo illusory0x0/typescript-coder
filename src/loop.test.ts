@@ -8976,11 +8976,11 @@ describe("edit-dsl protocol (#111/#119)", () => {
   test("the edit-dsl user and details prompts carry Goal, index, and file-absolute lines", () => {
     const indexText = "select answer in src/helper.ts resolve value";
     const user = buildEditDslUserPrompt("make the answer test pass", indexText);
-    expect(user).toBe(
-      ["# Goal", "", "make the answer test pass", "", "# Symbol index", "", indexText, ""].join(
-        "\n",
-      ),
+    expect(user).toContain(
+      ["# Goal", "", "make the answer test pass", "", "# Symbol index", "", indexText].join("\n"),
     );
+    expect(user).toContain("Reply with exactly one `select … end` clause");
+    expect(user).toContain("select answer in src/a.ts resolve value");
     const source = [
       "const before = 1;",
       "",
@@ -9130,11 +9130,9 @@ describe("edit-dsl protocol (#111/#119)", () => {
     const examples = renderEditDslExamples();
 
     // The role names the expert and the motivation explains why the protocol.
-    expect(
-      system.startsWith(
-        "You are a TypeScript expert using this edit protocol to modify source code.",
-      ),
-    ).toBe(true);
+    expect(system.startsWith("You are a TypeScript expert using the Edit-action DSL")).toBe(true);
+    expect(system).toContain("This is the Edit-action DSL.");
+    expect(system).toContain("a bare `select <symbol> in <path> end` is a viewer");
     expect(system).toContain("This protocol keeps edits small and addressable");
     expect(system).toContain("Viewers and `read` locate source and never write");
     expect(system).toContain("Tools: `select … end` with no `replace` is a viewer");
@@ -11089,6 +11087,18 @@ describe("edit-dsl protocol (#111/#119)", () => {
     expect(edit).toContain("select function make in src/new.ts");
     expect(edit).toContain("6. Viewer then editor:");
     expect(edit).toContain("select function parse in src/x.ts");
+    // Common actions and symbol spaces are exemplified too.
+    expect(edit).toContain("9. Rename:");
+    expect(edit).toContain("rename answer to result");
+    expect(edit).toContain("10. Delete:");
+    expect(edit).toContain("select const unused in src/x.ts resolve value");
+    expect(edit).toContain("11. Resolve a type:");
+    expect(edit).toContain("select type UserId in src/types.ts resolve type");
+    expect(edit).toContain("12. Whole variable statement:");
+    expect(edit).toContain("export const MAX_TOKENS = 8192;");
+    // The examples are bare blocks, not wrapped in one outer markdown fence.
+    expect(edit).not.toContain("```````");
+    expect(edit).toContain("End of examples.");
   });
 
   test("under edit-dsl a JSON edit payload is a protocol rejection and an edit-dsl reply is accepted", async () => {

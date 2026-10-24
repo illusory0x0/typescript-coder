@@ -40,7 +40,14 @@ import {
   MAX_STALLED_ROUNDS,
   buildSystemPrompt,
 } from "./loop";
-import type { ProtocolFormat } from "./loop";
+import type { AgentMode, ProtocolFormat } from "./loop";
+import {
+  buildTaskExecutionSystemPrompt,
+  buildTaskPlanningSystemPrompt,
+  MAX_TASK_EXCHANGES,
+  MAX_TASK_PLAN_ROUNDS,
+  MAX_TASK_ROUNDS,
+} from "./prompts/task";
 
 /** Frozen task names the benchmark measures. */
 export const TASK_NAMES = ["json-parser", "sexp-parser", "minilisp"] as const;
@@ -85,6 +92,11 @@ export interface LoopConfig {
   readonly effort: string;
   readonly reps: number;
   readonly multiPayload: boolean;
+  /** Present only for the plan/execute mode; absent keeps edit hashes stable. */
+  readonly agentMode?: "plan-exec";
+  readonly taskMaxExchanges?: number;
+  readonly taskMaxRounds?: number;
+  readonly taskMaxPlanRounds?: number;
 }
 
 export interface CurrentInputOptions {
@@ -101,6 +113,8 @@ export interface CurrentInputOptions {
   readonly reps: number;
   /** Token budget, or null for `DEFAULT_TOKEN_BUDGET`. */
   readonly tokenBudget?: number | null;
+  /** Loop mode; absent or `edit` keeps the historical edit-loop hashes. */
+  readonly agentMode?: AgentMode;
 }
 
 function sha256(text: string): string {
@@ -149,8 +163,9 @@ export function loopConfigHashInput(options: {
   effort: string | null;
   reps: number;
   multiPayload: boolean;
+  agentMode?: AgentMode;
 }): LoopConfig {
-  return {
+  const base: LoopConfig = {
     tokenBudget: options.tokenBudget ?? DEFAULT_TOKEN_BUDGET,
     maxEditExchanges: MAX_EDIT_EXCHANGES,
     maxRunIterations: MAX_RUN_ITERATIONS,
@@ -159,6 +174,17 @@ export function loopConfigHashInput(options: {
     reps: options.reps,
     multiPayload: options.multiPayload,
   };
+  // Only the plan/execute mode adds fields, so existing edit-loop input hashes
+  // stay byte-identical.
+  return options.agentMode === "plan-exec"
+    ? {
+        ...base,
+        agentMode: "plan-exec",
+        taskMaxExchanges: MAX_TASK_EXCHANGES,
+        taskMaxRounds: MAX_TASK_ROUNDS,
+        taskMaxPlanRounds: MAX_TASK_PLAN_ROUNDS,
+      }
+    : base;
 }
 
 /** Hash the measured pieces into per-input digests plus the derived `inputHash`. */
@@ -210,16 +236,20 @@ export function currentInputHashes(root: string, options: CurrentInputOptions): 
     issues[task] = normalizeText(options.taskIssues[task] ?? "");
     fixtures[task] = readFixtureContents(join(root, "benchmark", "fixtures", task));
   }
+  const planning = options.agentMode === "plan-exec";
   return computeInputHashes({
     model: options.model,
     taskIssue: stableStringify(issues),
     fixture: stableStringify(fixtures),
-    systemPrompt: buildSystemPrompt(options.multiPayload, options.protocolFormat ?? "edit-dsl"),
+    systemPrompt: planning
+      ? `${buildTaskPlanningSystemPrompt()}\n\n---\n\n${buildTaskExecutionSystemPrompt()}`
+      : buildSystemPrompt(options.multiPayload, options.protocolFormat ?? "edit-dsl"),
     loopConfig: loopConfigHashInput({
       tokenBudget: options.tokenBudget ?? null,
       effort: options.effort,
       reps: options.reps,
       multiPayload: options.multiPayload,
+      agentMode: options.agentMode,
     }),
     pricing: pricingTable(),
   });

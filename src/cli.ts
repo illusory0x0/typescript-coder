@@ -1,10 +1,12 @@
 import { readFileSync } from "node:fs";
-import type { ProtocolFormat } from "./loop";
+import type { AgentMode, ProtocolFormat } from "./loop";
 import type { Locator } from "./utility";
 
 export interface CliOptions {
   help: boolean;
   model: string;
+  /** Loop shape: the single-target edit loop (default) or plan/execute. */
+  agentMode?: AgentMode;
   /** Opt-in multi-payload exchanges (#69); default off. */
   multiPayload: boolean;
   /** Edit protocol format (#119): `json` or the `edit-dsl` syntax (default). */
@@ -151,6 +153,7 @@ export function readTargetsFile(file: string): Locator[] {
 export function parseArgs(argv: string[]): CliOptions {
   let help = false;
   let model = DEFAULT_MODEL;
+  let agentMode: AgentMode = "edit";
   let multiPayload = false;
   let protocolFormat: ProtocolFormat = "edit-dsl";
   let targets: Locator[] | null = null;
@@ -183,6 +186,21 @@ export function parseArgs(argv: string[]): CliOptions {
       // `compact` is the deprecated input alias for `edit-dsl`; output and
       // internals only use `edit-dsl`.
       protocolFormat = value === "compact" ? "edit-dsl" : value;
+      index = next;
+      continue;
+    }
+    if (
+      arg === "--mode" ||
+      arg === "--agent-mode" ||
+      arg.startsWith("--mode=") ||
+      arg.startsWith("--agent-mode=")
+    ) {
+      const flag = arg.startsWith("--agent-mode") ? "--agent-mode" : "--mode";
+      const { value, next } = flagValue(argv, index, flag);
+      if (value !== "edit" && value !== "plan-exec") {
+        throw new Error(`--mode must be "edit" or "plan-exec" (got ${JSON.stringify(value)})`);
+      }
+      agentMode = value;
       index = next;
       continue;
     }
@@ -239,9 +257,22 @@ export function parseArgs(argv: string[]): CliOptions {
     }
     throw new Error(`unknown argument: ${arg}`);
   }
+  if (agentMode === "plan-exec") {
+    if (targets !== null) {
+      throw new Error(
+        "--targets edits explicit addresses through the single-target edit loop; it cannot be combined with --mode plan-exec",
+      );
+    }
+    if (protocolFormat === "json") {
+      throw new Error(
+        "--mode plan-exec executes tasks with the edit-dsl protocol; --protocol-format json cannot be combined with it",
+      );
+    }
+  }
   return {
     help,
     model,
+    agentMode,
     multiPayload,
     protocolFormat,
     targets,
@@ -259,11 +290,15 @@ export function helpText(): string {
     "typescript-coder — read an issue on stdin and apply a verified LLM edit",
     "",
     "Usage:",
-    "  tc [--model <id>] [--format <text|json>] [--protocol-format <json|edit-dsl>] [--token-budget <n>] [--multi-payload] [--targets <file>] < issue.txt",
-    "  bun run src/main.ts [--model <id>] [--format <text|json>] [--protocol-format <json|edit-dsl>] [--token-budget <n>] [--multi-payload] [--targets <file>] < issue.txt",
+    "  tc [--model <id>] [--mode <edit|plan-exec>] [--format <text|json>] [--protocol-format <json|edit-dsl>] [--token-budget <n>] [--multi-payload] [--targets <file>] < issue.txt",
+    "  bun run src/main.ts [--model <id>] [--mode <edit|plan-exec>] [--format <text|json>] [--protocol-format <json|edit-dsl>] [--token-budget <n>] [--multi-payload] [--targets <file>] < issue.txt",
     "",
     "Options:",
     "  --model <id>       model id for the OpenAI-compatible provider (default: deepseek-v4.1-flash)",
+    "  --mode <edit|plan-exec>",
+    "                     loop shape (default: edit); plan-exec plans an",
+    "                     edit-task DAG and executes it task by task",
+    "                     (alias --agent-mode)",
     "  --format <text|json>",
     "                     stdout format (default: text); json prints exactly one",
     "                     typescript-coder-result@1 object on stdout",

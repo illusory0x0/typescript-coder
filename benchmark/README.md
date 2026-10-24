@@ -19,6 +19,7 @@ an edit-dsl row.
 
     bun run benchmark/run.ts --all --pilot
     bun run benchmark/run.ts --task json-parser --side tc --reps 2 --keep
+    bun run benchmark/run.ts --all --side tc --agent-mode both --reps 3
 
 Flags: `--task`, `--all` (default), `--reps <n>` (default 3), `--concurrency
 <n>` (default 4, max parallel runs), `--pilot` (1 rep per task and side, writes
@@ -31,8 +32,10 @@ once accumulated provider tokens exceed n; default 120000, see "Run budget"
 below), `--effort <none|low|high|max>` (tc side only: force this reasoning_effort
 on every Edit-loop call, overriding the default described below),
 `--protocol-format edit-dsl` (the only allowed value; `json` is frozen and
-`compact` is a deprecated alias for `edit-dsl`), `--help`. Non-pilot results
-default to `benchmark/results/<date>.json`.
+`compact` is a deprecated alias for `edit-dsl`), `--agent-mode edit|plan-exec|both`
+(the tc loop; `edit` is the default, `both` measures the edit loop and the new
+plan/execute loop in one report), `--help`. Non-pilot results default to
+`benchmark/results/<date>.json`.
 
 The tc side runs every Edit-loop call at `reasoning_effort: none` by default
 (the 2026-10-18 effort sweep showed reasoning only added cost on these tasks);
@@ -52,15 +55,18 @@ They are reference points, not a development loop: the benchmark **rejects**
 them. Do not ask for an exception. tc reports run `--side tc` with the default
 `edit-dsl` protocol.
 
-A tc-only report loads the oc baseline and renders a `## Savings vs oc baseline`
-section: per task and overall, the factor is the oc baseline's mean
-cache-excluded total divided by the tc mean, so `2.5x` means tc used 2.5 times
-fewer tokens. Tasks missing from either side are skipped. The same sentence is
-printed after a run. The baseline file carries its own `model`, `reps`, and
-`date`, and a report whose task set does not overlap it says so instead of
-inventing a ratio. (`json-format-baseline.json` records the frozen legacy
-protocol for reference; it is not a live comparison target because that
-protocol can no longer run.)
+A tc-only report loads **both** frozen baselines and renders a
+`## Four-way comparison (oc / tc json / tc edit / tc plan-exec)` section when
+`json-format-baseline.json` is present: per task and overall, with two factor
+columns — `vs oc baseline` and `vs tc json baseline`. A factor is the baseline's
+mean cache-excluded total divided by the variant's mean, so `2.5x` means the
+variant used 2.5 times fewer tokens. The two frozen rows themselves show `1.00x`
+in their own column and the cross-baseline ratio in the other. Overall rows are
+emitted only over tasks where all four variants report a total, so the columns
+stay like-for-like; tasks missing from a baseline are skipped. The same
+four-way sentence is printed after a run. Each baseline file carries its own
+`model`, `reps`, and `date`. If only `oc-baseline.json` is present, the older
+`## Savings vs oc baseline` section is rendered instead.
 
 Each run also writes a sibling Markdown report next to the `--json` target
 (`.json` replaced by `.md`): aggregates per task and side plus token/cost
@@ -75,11 +81,11 @@ run's judged workspace holds the last attempted content rather than the pristine
 fixture. The task × side × rep matrix runs through a bounded worker pool
 (`--concurrency`, default 4); each run keeps its own workspace, git repo,
 session, and logs, and `report.runs` stays in matrix order even though runs
-finish in arbitrary order. The multi-protocol matrix still exists for historical
-reports, but the only selectable protocol is now `edit-dsl`: `json` is frozen
-and `oc` is frozen, so a run produces one tc variant per task/rep. Each tc run
-records its `protocol` (null for `oc`) and aggregates/report tables keep
-variants in separate rows.
+finish in arbitrary order. The protocol matrix still exists for historical
+reports, but the only selectable edit protocol is now `edit-dsl`: `json` is
+frozen and `oc` is frozen. The live variant dimension is the tc loop mode
+(`--agent-mode edit|plan-exec`); each tc run records `protocol` and `agentMode`
+(null for `oc`) and aggregates/report tables keep variants in separate rows.
 
 ## Fixtures and the held-out task
 
@@ -118,6 +124,8 @@ reported in each row's `Notes` and never as a tuned column.
 - `steps`: tc = number of recorded loop rows (`records`, exchanges +
   verifications); oc = assistant messages in the session export (null when
   unavailable).
+- `agentMode` (tc side): `"edit"` or `"plan-exec"`; null for the oc side and
+  legacy rows (read as `edit`).
 - `records` (tc side): per-record summaries with `row`, `iteration`, `kind`
   (`exchange` or `verification`), `exchange` (1-based index inside the Run
   iteration's shared ≤3 budget; null for verification rows), `outcome`
@@ -132,6 +140,7 @@ reported in each row's `Notes` and never as a tuned column.
   termination-matrix reason plus staged diagnostics, or a provider error that
   ended the run before any record), null when none.
 - `terminationReason` (tc side): `"token-budget"`, `"edit-exhausted"`,
+  `"task-exhausted"`,
   `"delete-verification-failed"`, `"prev-broken"`, or `"harness-fault"` when the
   run ended through the termination matrix; null on success, on provider errors,
   and for the oc side.
@@ -146,6 +155,7 @@ reported in each row's `Notes` and never as a tuned column.
   `typescript-coder-replay@1`) with the task issue, fixture path, the recorded
   edit protocol (`protocolFormat`: `"json"` or `"edit-dsl"`; legacy bundles
   recorded before the #15 rename carry `"compact"`, which reads as `"edit-dsl"`),
+  the loop mode (`agentMode`: `"edit"` or `"plan-exec"`; absent reads as `"edit"`),
   and the ordered
   chat calls (request messages, response content, finishReason, usage). In a
   multi-variant run the bundle name carries the protocol
@@ -281,8 +291,8 @@ and `infraErrors` is untouched. The oc side is unaffected.
 
 Replays a recorded bundle (`--replay-dir`, above) through the current loop in a
 fresh copy of the bundle's fixture under `tmp/replay/<stamp>/`, with no network
-calls. Each bundle replays under the protocol it was recorded with
-(`protocolFormat`). Backward compatibility: this is still `@1`, so an `@1`
+calls. Each bundle replays under the protocol and loop mode it was recorded with
+(`protocolFormat`, `agentMode`). Backward compatibility: this is still `@1`, so an `@1`
 bundle written before the field existed — or one carrying an unknown value —
 replays as `json`, the protocol all older bundles used. The summary reports the
 calls consumed against the recorded count, per-record outcomes and diagnostics,
@@ -396,16 +406,21 @@ order never changes a hash. A single-protocol report keeps the scalar
 json,edit-dsl`) carries `protocolFormats: [...]` and a `provenanceByProtocol`
 map keyed by variant, so each ledger row is checked against the prompt its
 protocol actually measured; `protocolFormat` is null for such a report, while
-legacy scalar reports and `"compact"` values stay readable.
+legacy scalar reports and `"compact"` values stay readable. A multi-mode report
+(`--agent-mode edit,plan-exec`) instead carries `agentModes: [...]` and a
+`provenanceByAgentMode` map; the plan-exec block hashes the planning+execution
+prompts and the task caps, while the edit block keeps the historical edit-loop
+hash. The ledger has no mode column yet, so a multi-mode row is not selected by
+`check` until that column lands.
 
-| Digest         | What it covers                                                                       | Computation point                                                 |
-| -------------- | ------------------------------------------------------------------------------------ | ----------------------------------------------------------------- |
-| `model`        | the gateway model id                                                                 | `report.model`                                                    |
-| `taskIssue`    | the frozen task text of every task in the report, keyed by task                      | `TASK_ISSUES` (`run.ts`)                                          |
-| `fixture`      | the on-disk content of `benchmark/fixtures/<task>/`, keyed by task and relative path | current tree                                                      |
-| `systemPrompt` | the model-facing system + protocol text                                              | `buildSystemPrompt(multiPayload, protocolFormat)` (`src/loop.ts`) |
-| `loopConfig`   | token budget, edit/iteration/stall caps, `effort`, `reps`, `multiPayload`            | loop constants + run flags                                        |
-| `pricing`      | the peak/off-peak rate table plus `PRICING_FETCHED_ON`                               | `src/benchmark-pricing.ts`                                        |
+| Digest         | What it covers                                                                        | Computation point                                                         |
+| -------------- | ------------------------------------------------------------------------------------- | ------------------------------------------------------------------------- |
+| `model`        | the gateway model id                                                                  | `report.model`                                                            |
+| `taskIssue`    | the frozen task text of every task in the report, keyed by task                       | `TASK_ISSUES` (`run.ts`)                                                  |
+| `fixture`      | the on-disk content of `benchmark/fixtures/<task>/`, keyed by task and relative path  | current tree                                                              |
+| `systemPrompt` | the model-facing system + protocol text (plan-exec hashes planning+execution prompts) | `buildSystemPrompt` / task prompts (`src/loop.ts`, `src/prompts/task.ts`) |
+| `loopConfig`   | token budget, edit/iteration/stall caps, `effort`, `reps`, `multiPayload`             | loop constants + run flags                                                |
+| `pricing`      | the peak/off-peak rate table plus `PRICING_FETCHED_ON`                                | `src/benchmark-pricing.ts`                                                |
 
 `inputHash` is sha256 over the stable JSON of that digest object. A change to
 the fixture text, the prompt, the loop config, or the pricing table changes the

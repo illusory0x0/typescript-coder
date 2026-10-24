@@ -5,7 +5,7 @@ import { runLoop } from "./loop";
 import { RESULT_FORMAT, buildSubagentResult, serializeSubagentResult } from "./result";
 import { OpenAIProvider, readConfigFromEnv } from "./openai";
 import type { CliOptions } from "./cli";
-import type { LoopResult, ProviderLike, ProtocolFormat } from "./loop";
+import type { AgentMode, LoopResult, ProviderLike, ProtocolFormat } from "./loop";
 import type { SubagentResult } from "./result";
 import type { Locator } from "./utility";
 
@@ -21,6 +21,8 @@ export interface RunMainOptions {
   io?: MainIo;
   /** Opt-in multi-payload exchanges (#69); default off. */
   multiPayload?: boolean;
+  /** Loop shape (`--mode`); default "edit". */
+  agentMode?: AgentMode;
   /** Edit protocol format (#119); default "json". */
   protocolFormat?: ProtocolFormat;
   /** Explicit addresses to edit (#81); absent = the default discovery path. */
@@ -56,6 +58,14 @@ function emptyFailureResult(diagnostics: string): SubagentResult {
 
 function emitTextResult(io: MainIo, cwd: string, result: LoopResult): number {
   if (result.ok) {
+    if (result.tasks !== undefined) {
+      const done = result.tasks.filter((task) => task.status === "done").length;
+      const files = new Set(result.tasks.map((task) => task.path)).size;
+      io.out(
+        `applied ${done} task(s) across ${files} file(s) after ${result.records.length} record(s)`,
+      );
+      return 0;
+    }
     const kind = result.locator?.kind ?? "symbol";
     const name = result.locator?.name ?? "unknown";
     const path = result.filePath ?? result.locator?.path ?? "unknown";
@@ -120,6 +130,7 @@ export async function runMain(options: RunMainOptions): Promise<number> {
       issue,
       provider: options.provider,
       multiPayload: options.multiPayload === true,
+      agentMode: options.agentMode,
       protocolFormat: options.protocolFormat,
       targets: options.targets,
       tokenBudget: options.tokenBudget,
@@ -206,6 +217,7 @@ if (import.meta.main) {
     provider,
     io,
     multiPayload: cli.multiPayload,
+    agentMode: cli.agentMode,
     protocolFormat: cli.protocolFormat,
     targets: cli.targets ?? undefined,
     format: cli.format,

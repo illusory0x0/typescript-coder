@@ -107,6 +107,12 @@ describe("currentInputHashes", () => {
       const effort = currentInputHashes(root, { ...base, effort: "high" });
       expect(effort.inputs.loopConfig).not.toBe(first.inputs.loopConfig);
 
+      // Plan/execute pins its own prompt + task caps; edit hashes stay stable.
+      const plan = currentInputHashes(root, { ...base, agentMode: "plan-exec" });
+      expect(plan.inputs.systemPrompt).not.toBe(first.inputs.systemPrompt);
+      expect(plan.inputs.loopConfig).not.toBe(first.inputs.loopConfig);
+      expect(currentInputHashes(root, { ...base, agentMode: "edit" })).toEqual(first);
+
       // Changing a fixture's on-disk content changes the fixture digest.
       writeFileSync(
         join(root, "benchmark", "fixtures", "json-parser", "tsconfig.json"),

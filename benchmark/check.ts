@@ -138,6 +138,14 @@ function checkLedgerFile(ledgerPath: string, repoRoot: string): LedgerOutcome {
       if (protocolFormat === null) {
         return null;
       }
+      // A single-mode report names its loop; a multi-mode report's ledger rows
+      // do not yet carry a mode column, so they check against the edit loop.
+      const modes = Array.isArray(json["agentModes"])
+        ? (json["agentModes"] as unknown[]).filter(
+            (mode): mode is string => mode === "edit" || mode === "plan-exec",
+          )
+        : [];
+      const agentMode = modes.length === 1 && modes[0] === "plan-exec" ? "plan-exec" : "edit";
       const tokenBudget = typeof json["tokenBudget"] === "number" ? json["tokenBudget"] : null;
       try {
         return currentInputHashes(repoRoot, {
@@ -146,6 +154,7 @@ function checkLedgerFile(ledgerPath: string, repoRoot: string): LedgerOutcome {
           model,
           multiPayload,
           protocolFormat,
+          agentMode,
           effort,
           reps,
           tokenBudget,

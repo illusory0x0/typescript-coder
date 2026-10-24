@@ -14,7 +14,7 @@ import { fileURLToPath } from "node:url";
 import { archiveFailureArtifacts, writeFailureArtifact } from "../src/failure-artifact";
 import { exchangeStats, runLoop } from "../src/loop";
 import { OpenAIProvider, readConfigFromEnv } from "../src/openai";
-import type { ProviderLike, ProtocolFormat, RejectionCause } from "../src/loop";
+import type { AgentMode, ProviderLike, ProtocolFormat, RejectionCause } from "../src/loop";
 import { ReplayRecorder, usageFromRaw } from "../src/replay-format";
 import {
   PRICING_FETCHED_ON,
@@ -52,6 +52,8 @@ interface CliArgs {
   multiPayload: boolean;
   /** Edit protocols (#119) to measure on the tc side; `edit-dsl` is the default. */
   protocolFormats: ProtocolFormat[];
+  /** tc loop modes to measure; `edit` is the default. */
+  agentModes: AgentMode[];
   help: boolean;
 }
 
@@ -175,6 +177,8 @@ export interface RunRecord {
   readonly side: Side;
   /** Edit protocol used by a tc run (#119); null for the oc side. */
   readonly protocol: ProtocolFormat | null;
+  /** tc loop mode; null for the oc side and legacy rows (read as `edit`). */
+  readonly agentMode: AgentMode | null;
   readonly rep: number;
   readonly ok: boolean;
   readonly sideOk: boolean;
@@ -212,6 +216,8 @@ export interface AggregateRow {
   side: Side | null;
   /** Edit protocol of a tc row (#119); null for the oc side and legacy rows. */
   protocol: ProtocolFormat | null;
+  /** tc loop mode of the row; null for the oc side and legacy rows (read as `edit`). */
+  agentMode: AgentMode | null;
   runs: number;
   ok: number;
   failed: number;
@@ -239,8 +245,8 @@ export interface Aggregates {
   byTaskSide: AggregateRow[];
   bySide: AggregateRow[];
   /**
-   * One row per side and tc protocol (#16): never a single row that pools two
-   * tc protocols into one comparison.
+   * One row per side, tc protocol, and loop mode (#16): never a single row
+   * that pools two tc variants into one comparison.
    */
   overall: AggregateRow[];
 }
@@ -269,6 +275,8 @@ export interface Report {
    * write it; absent on legacy single-protocol reports.
    */
   protocolFormats?: ProtocolFormat[];
+  /** Selected tc loop modes; absent on legacy reports (read as `["edit"]`). */
+  agentModes?: AgentMode[];
   /** Token budget forwarded to the tc side; null means `DEFAULT_TOKEN_BUDGET`. */
   tokenBudget: number | null;
   bunVersion: string;
@@ -283,8 +291,10 @@ export interface Report {
    * variant (#16).
    */
   provenance: RecordedProvenance | null;
-  /** Per-protocol provenance for a multi-variant report (#16). */
+  /** Per-protocol provenance for a multi-protocol report (#16). */
   provenanceByProtocol?: Partial<Record<ProtocolFormat, RecordedProvenance>>;
+  /** Per-mode provenance for a multi-mode report; absent on edit-only reports. */
+  provenanceByAgentMode?: Partial<Record<AgentMode, RecordedProvenance>>;
 }
 
 interface RunContext {
@@ -301,6 +311,8 @@ interface RunContext {
   readonly multiPayload: boolean;
   /** Selected tc protocol variants (#16); used to keep multi-variant run names unique. */
   readonly protocols: readonly ProtocolFormat[];
+  /** Selected tc loop modes; used to keep multi-variant run names unique. */
+  readonly agentModes: readonly AgentMode[];
 }
 
 interface BenchmarkJob {
@@ -309,6 +321,8 @@ interface BenchmarkJob {
   readonly rep: number;
   /** Edit protocol for a tc job (#119); null for the oc side. */
   readonly protocol: ProtocolFormat | null;
+  /** tc loop mode; null for the oc side. */
+  readonly agentMode: AgentMode | null;
 }
 
 interface OpencodeContext {
@@ -388,6 +402,7 @@ const OPENCODE_PROVIDER = "honghong";
 // the official DeepSeek endpoint, then tc-only reports compare their
 // cache-excluded totals against this file instead of re-running oc.
 const OC_BASELINE_RELATIVE_PATH = "benchmark/results/oc-baseline.json";
+const JSON_BASELINE_RELATIVE_PATH = "benchmark/results/json-format-baseline.json";
 const OPENCODE_FALLBACK_BIN = "/home/illu/.opencode/bin/opencode";
 // Parallel runs multiplex one gateway, so the caps get headroom beyond the
 // serial pilot's slowest opencode run (821 s of the previous 900 s cap).
@@ -451,6 +466,9 @@ Options:
                                              json is frozen at
                                              benchmark/results/json-format-baseline.json).
                                              compact is a deprecated alias for edit-dsl
+  --agent-mode edit|plan-exec|both           tc loop mode(s); edit is the default. Use
+                                             both to measure the edit loop and the new
+                                             plan/execute loop in one report
   --help, -h                                 print this help and exit
 `);
 }
@@ -526,6 +544,29 @@ export function parseProtocolFormats(value: string): ProtocolFormat[] {
   return PROTOCOL_ORDER.filter((protocol) => selected.has(protocol));
 }
 
+/** Canonical mode order: `edit` before `plan-exec`. */
+const AGENT_MODE_ORDER: readonly AgentMode[] = ["edit", "plan-exec"];
+
+/** Parse `--agent-mode`: one value, a comma list, or `both`. */
+export function parseAgentModes(value: string): AgentMode[] {
+  if (value === "both") {
+    return [...AGENT_MODE_ORDER];
+  }
+  const selected = new Set<AgentMode>();
+  for (const raw of value.split(",")) {
+    const element = raw.trim();
+    if (element === "edit" || element === "plan-exec") {
+      selected.add(element);
+    } else {
+      throw new Error(`invalid --agent-mode value: ${element === "" ? raw : element}`);
+    }
+  }
+  if (selected.size === 0) {
+    throw new Error("missing value for --agent-mode");
+  }
+  return AGENT_MODE_ORDER.filter((mode) => selected.has(mode));
+}
+
 function parseSide(value: string): SideSelection {
   if (value === "tc" || value === "oc" || value === "both") {
     return value;
@@ -578,6 +619,7 @@ export function parseArgs(argv: string[]): CliArgs {
     effort: null,
     multiPayload: false,
     protocolFormats: ["edit-dsl"],
+    agentModes: ["edit"],
     help: false,
   };
   for (let index = 0; index < argv.length; index += 1) {
@@ -695,6 +737,19 @@ export function parseArgs(argv: string[]): CliArgs {
       }
       case "--multi-payload": {
         args.multiPayload = true;
+        break;
+      }
+      case "--agent-mode": {
+        const value = argv[index + 1];
+        if (value === undefined || value.startsWith("-")) {
+          failUsage("missing value for --agent-mode");
+        }
+        try {
+          args.agentModes = parseAgentModes(value);
+        } catch (error) {
+          failUsage(errorMessage(error));
+        }
+        index += 1;
         break;
       }
       case "--protocol-format": {
@@ -946,6 +1001,8 @@ async function runTypescriptCoderSide(options: {
   multiPayload: boolean;
   /** Edit protocol (#119); forwarded to the loop. */
   protocolFormat: ProtocolFormat;
+  /** Loop mode (`--agent-mode`); forwarded to the loop. */
+  agentMode: AgentMode;
   /** Repo root receiving failure artifacts under `failures/` (#43). */
   failureRoot: string;
 }): Promise<SideOutcome> {
@@ -975,6 +1032,7 @@ async function runTypescriptCoderSide(options: {
       effortOverride: options.effort ?? undefined,
       multiPayload: options.multiPayload,
       protocolFormat: options.protocolFormat,
+      agentMode: options.agentMode,
     });
   } catch (caught) {
     error = errorMessage(caught);
@@ -1063,6 +1121,7 @@ async function runTypescriptCoderSide(options: {
       issue: options.issue,
       fixture: options.fixture,
       protocolFormat: options.protocolFormat,
+      agentMode: options.agentMode,
     });
     writeFile(options.replayPath, `${JSON.stringify(bundle, null, 2)}\n`);
   }
@@ -1382,12 +1441,18 @@ function initWorkspaceGit(workspace: string): void {
 }
 
 async function runOnce(job: BenchmarkJob, context: RunContext): Promise<RunRecord> {
-  const { task, side, rep, protocol } = job;
+  const { task, side, rep, protocol, agentMode } = job;
   const fixtureDir = join(context.repoRoot, "benchmark", "fixtures", task);
   // Keep today's `task-side-repN` names for single-protocol runs; only a
   // multi-variant matrix needs the protocol in the name to stay unique (#16).
   const protocolSuffix = protocol !== null && context.protocols.length > 1 ? `-${protocol}` : "";
-  const runName = `${task}-${side}${protocolSuffix}-rep${rep}`;
+  // Name the mode only when it is not the historical edit default or when the
+  // matrix measures both modes, so existing log paths stay stable.
+  const modeSuffix =
+    agentMode !== null && (context.agentModes.length > 1 || agentMode !== "edit")
+      ? `-${agentMode}`
+      : "";
+  const runName = `${task}-${side}${protocolSuffix}${modeSuffix}-rep${rep}`;
   const workspace = join(context.runRoot, runName);
   const logsDir = join(context.runRoot, "logs", runName);
   mkdirSync(logsDir, { recursive: true });
@@ -1402,6 +1467,9 @@ async function runOnce(job: BenchmarkJob, context: RunContext): Promise<RunRecor
     if (protocol === null) {
       throw new InfraError("tc job is missing its edit protocol");
     }
+    if (agentMode === null) {
+      throw new InfraError("tc job is missing its agent mode");
+    }
     outcome = await runTypescriptCoderSide({
       workspace,
       issue,
@@ -1415,6 +1483,7 @@ async function runOnce(job: BenchmarkJob, context: RunContext): Promise<RunRecor
       effort: context.effort,
       multiPayload: context.multiPayload,
       protocolFormat: protocol,
+      agentMode,
       failureRoot: context.repoRoot,
     });
   } else {
@@ -1449,6 +1518,7 @@ async function runOnce(job: BenchmarkJob, context: RunContext): Promise<RunRecor
     task,
     side,
     protocol,
+    agentMode,
     rep,
     // A termination-matrix ending is a run failure even when the judge passes
     // on the state left on disk (#43); judge fields stay as recorded.
@@ -1488,10 +1558,14 @@ async function runOnce(job: BenchmarkJob, context: RunContext): Promise<RunRecor
   };
 }
 
-function printRecord(record: RunRecord, showProtocol: boolean): void {
+function printRecord(record: RunRecord, showProtocol: boolean, showMode = false): void {
   const seconds = (record.durationMs / 1000).toFixed(1);
   const label = record.ok ? "PASS" : "FAIL";
-  const variant = showProtocol && record.protocol !== null ? ` ${record.protocol}` : "";
+  const variant =
+    (showProtocol && record.protocol !== null ? ` ${record.protocol}` : "") +
+    (record.agentMode !== null && (showMode || record.agentMode !== "edit")
+      ? ` ${record.agentMode}`
+      : "");
   process.stdout.write(
     `${label} ${record.task} ${record.side}${variant} rep${record.rep} (${seconds}s, tokens=${
       record.tokens.total ?? "unavailable"
@@ -1528,12 +1602,19 @@ export function aggregateRuns(
   side: Side | null,
   /** Omitted = no protocol filter (legacy callers); null = runs without one (oc). */
   protocol: ProtocolFormat | null | undefined = undefined,
+  /** Omitted = no mode filter; null = runs without one (oc). */
+  agentMode: AgentMode | null | undefined = undefined,
 ): AggregateRow {
   const selected = runs.filter(
     (run) =>
       (task === null || run.task === task) &&
       (side === null || run.side === side) &&
-      (protocol === undefined || (run.protocol ?? null) === protocol),
+      (protocol === undefined ||
+        (protocol === null
+          ? run.side !== "tc" || run.protocol === null || run.protocol === undefined
+          : run.side === "tc" && (run.protocol ?? "edit-dsl") === protocol)) &&
+      (agentMode === undefined ||
+        (run.side === "tc" ? (run.agentMode ?? "edit") : null) === agentMode),
   );
   const usageRuns = selected.filter((run) => run.tokens.total !== null);
   const ok = selected.filter((run) => run.ok).length;
@@ -1596,6 +1677,12 @@ export function aggregateRuns(
     side,
     protocol:
       protocol === undefined ? (side === "oc" ? null : (selected[0]?.protocol ?? null)) : protocol,
+    agentMode:
+      agentMode === undefined
+        ? side === "oc"
+          ? null
+          : (selected[0]?.agentMode ?? "edit")
+        : agentMode,
     runs: selected.length,
     ok,
     failed: selected.length - ok,
@@ -1634,18 +1721,36 @@ function protocolsFromRuns(runs: readonly RunRecord[]): (ProtocolFormat | null)[
   return protocols.size === 0 ? [null] : [...protocols];
 }
 
+// Modes present among tc runs; a legacy run without the field reads as `edit`.
+function agentModesFromRuns(runs: readonly RunRecord[]): AgentMode[] {
+  const modes = new Set<AgentMode>();
+  for (const run of runs) {
+    if (run.side === "tc") {
+      modes.add(run.agentMode ?? "edit");
+    }
+  }
+  return modes.size === 0 ? ["edit"] : AGENT_MODE_ORDER.filter((mode) => modes.has(mode));
+}
+
 function aggregatesForSide(
   runs: readonly RunRecord[],
   task: TaskName | null,
   side: Side,
   protocols: readonly (ProtocolFormat | null)[],
+  agentModes: readonly AgentMode[],
 ): AggregateRow[] {
-  // `oc` has no protocol dimension: exactly one row however many tc variants
-  // were selected (#16).
+  // `oc` has no protocol or mode dimension: exactly one row however many tc
+  // variants were selected (#16).
   if (side === "oc") {
-    return [aggregateRuns(runs, task, side, null)];
+    return [aggregateRuns(runs, task, side, null, null)];
   }
-  return protocols.map((protocol) => aggregateRuns(runs, task, side, protocol));
+  const rows: AggregateRow[] = [];
+  for (const agentMode of agentModes) {
+    for (const protocol of protocols) {
+      rows.push(aggregateRuns(runs, task, side, protocol, agentMode));
+    }
+  }
+  return rows;
 }
 
 /**
@@ -1659,14 +1764,17 @@ export function computeAggregates(
   tasks: readonly TaskName[],
   sides: readonly Side[],
   protocols: readonly (ProtocolFormat | null)[] = protocolsFromRuns(runs),
+  agentModes: readonly AgentMode[] = agentModesFromRuns(runs),
 ): Aggregates {
   const byTaskSide: AggregateRow[] = [];
   for (const task of tasks) {
     for (const side of sides) {
-      byTaskSide.push(...aggregatesForSide(runs, task, side, protocols));
+      byTaskSide.push(...aggregatesForSide(runs, task, side, protocols, agentModes));
     }
   }
-  const bySide = sides.flatMap((side) => aggregatesForSide(runs, null, side, protocols));
+  const bySide = sides.flatMap((side) =>
+    aggregatesForSide(runs, null, side, protocols, agentModes),
+  );
   return {
     byTaskSide,
     bySide,
@@ -1704,8 +1812,8 @@ function formatOneLine(text: string, limit = 160): string {
   return collapsed.length > limit ? `${collapsed.slice(0, limit)}...` : collapsed;
 }
 
-// A tc row is named by side and protocol when the report has several variants;
-// a single-protocol report keeps the historical bare side label.
+// A tc row is named by side, protocol, and mode when the report has several
+// variants; a single edit-dsl/edit report keeps the historical bare side label.
 function hasMultipleProtocols(rows: readonly AggregateRow[]): boolean {
   const protocols = new Set<ProtocolFormat>();
   for (const row of rows) {
@@ -1716,20 +1824,43 @@ function hasMultipleProtocols(rows: readonly AggregateRow[]): boolean {
   return protocols.size > 1;
 }
 
-function sideLabel(row: AggregateRow, showProtocol: boolean): string {
-  const side = row.side ?? "all";
-  return showProtocol && row.protocol !== null ? `${side} ${row.protocol}` : side;
+function hasMultipleModes(rows: readonly AggregateRow[]): boolean {
+  const modes = new Set<AgentMode>();
+  for (const row of rows) {
+    if (row.side === "tc") {
+      modes.add(row.agentMode ?? "edit");
+    }
+  }
+  return modes.size > 1;
+}
+
+function sideLabel(row: AggregateRow, showProtocol: boolean, showMode: boolean): string {
+  const parts = [row.side ?? "all"];
+  if (showProtocol && row.protocol !== null) {
+    parts.push(row.protocol);
+  }
+  if (row.side === "tc" && row.agentMode !== null && (showMode || row.agentMode !== "edit")) {
+    parts.push(row.agentMode);
+  }
+  return parts.join(" ");
 }
 
 // The multiplier sentence names the variant first (`json tc 1.38x oc`) so a
 // tc protocol is never mistaken for the side itself.
-function multiplierSideLabel(row: AggregateRow, showProtocol: boolean): string {
-  const side = row.side ?? "all";
-  return showProtocol && row.protocol !== null ? `${row.protocol} ${side}` : side;
+function multiplierSideLabel(row: AggregateRow, showProtocol: boolean, showMode: boolean): string {
+  const parts: string[] = [];
+  if (showProtocol && row.protocol !== null) {
+    parts.push(row.protocol);
+  }
+  if (row.side === "tc" && row.agentMode !== null && (showMode || row.agentMode !== "edit")) {
+    parts.push(row.agentMode);
+  }
+  parts.push(row.side ?? "all");
+  return parts.join(" ");
 }
 
-function successSummary(row: AggregateRow, showProtocol: boolean): string {
-  return `${sideLabel(row, showProtocol)} ${row.ok}/${row.runs} (${formatPercent(
+function successSummary(row: AggregateRow, showProtocol: boolean, showMode: boolean): string {
+  return `${sideLabel(row, showProtocol, showMode)} ${row.ok}/${row.runs} (${formatPercent(
     row.successRate,
   )})`;
 }
@@ -1740,17 +1871,22 @@ function successRateSentence(rows: readonly AggregateRow[]): string {
     return "No side ran; success rates are not comparable.";
   }
   const showProtocol = hasMultipleProtocols(rows);
+  const showMode = hasMultipleModes(rows);
   if (rows.length === 1) {
-    return `Only one side ran: ${successSummary(first, showProtocol)}.`;
+    return `Only one side ran: ${successSummary(first, showProtocol, showMode)}.`;
   }
-  const summaries = rows.map((row) => successSummary(row, showProtocol)).join(" vs ");
+  const summaries = rows.map((row) => successSummary(row, showProtocol, showMode)).join(" vs ");
   const equal = rows.every((row) => row.successRate === first.successRate);
   return equal ? `Success rates are equal: ${summaries}.` : `Success rates differ: ${summaries}.`;
 }
 
 // `higher X.XXx lower` for a two-side pair, or null when the pair cannot be
 // compared (a missing total or a zero lower side).
-function multiplierLabel(rows: readonly AggregateRow[], showProtocol: boolean): string | null {
+function multiplierLabel(
+  rows: readonly AggregateRow[],
+  showProtocol: boolean,
+  showMode: boolean,
+): string | null {
   const [first, second] = rows;
   if (first === undefined || second === undefined) {
     return null;
@@ -1767,15 +1903,20 @@ function multiplierLabel(rows: readonly AggregateRow[], showProtocol: boolean): 
   if (low <= 0) {
     return null;
   }
-  return `${multiplierSideLabel(higher, showProtocol)} ${(high / low).toFixed(2)}x ${multiplierSideLabel(
+  return `${multiplierSideLabel(higher, showProtocol, showMode)} ${(high / low).toFixed(2)}x ${multiplierSideLabel(
     lower,
     showProtocol,
+    showMode,
   )}`;
 }
 
 // One comparison per tc row against the oc row (#16): with two tc variants the
 // first two rows must never be paired with each other.
-function multiplierLabels(rows: readonly AggregateRow[], showProtocol: boolean): string[] {
+function multiplierLabels(
+  rows: readonly AggregateRow[],
+  showProtocol: boolean,
+  showMode: boolean,
+): string[] {
   const oc = rows.find((row) => row.side === "oc");
   if (oc === undefined) {
     return [];
@@ -1785,7 +1926,7 @@ function multiplierLabels(rows: readonly AggregateRow[], showProtocol: boolean):
     if (row.side !== "tc") {
       continue;
     }
-    const label = multiplierLabel([row, oc], showProtocol);
+    const label = multiplierLabel([row, oc], showProtocol, showMode);
     if (label !== null) {
       labels.push(label);
     }
@@ -1802,10 +1943,13 @@ export function tokenMultiplierSentence(
   bySide: readonly AggregateRow[],
   byTaskSide: readonly AggregateRow[],
 ): string {
-  const showProtocol = hasMultipleProtocols([...bySide, ...byTaskSide]);
+  const combined = [...bySide, ...byTaskSide];
+  const showProtocol = hasMultipleProtocols(combined);
+  const showMode = hasMultipleModes(combined);
   const overallLabels = multiplierLabels(
     bySide.filter((row) => row.side !== null),
     showProtocol,
+    showMode,
   );
   const taskParts: string[] = [];
   const taskNames = [
@@ -1815,6 +1959,7 @@ export function tokenMultiplierSentence(
     for (const label of multiplierLabels(
       byTaskSide.filter((row) => row.task === task && row.side !== null),
       showProtocol,
+      showMode,
     )) {
       taskParts.push(`${task} ${label}`);
     }
@@ -1830,6 +1975,7 @@ export function tokenMultiplierSentence(
 export interface BaselineSavingsRow {
   readonly task: TaskName;
   readonly protocol: ProtocolFormat | null;
+  readonly agentMode: AgentMode | null;
   readonly baselineMean: number;
   readonly currentMean: number;
   /** Baseline mean over the current mean: how many times fewer tokens tc uses. */
@@ -1838,6 +1984,7 @@ export interface BaselineSavingsRow {
 
 interface BaselineOverall {
   readonly protocol: ProtocolFormat | null;
+  readonly agentMode: AgentMode | null;
   readonly baselineSum: number;
   readonly currentSum: number;
   readonly factor: number;
@@ -1879,24 +2026,39 @@ export function savingsVsOcBaseline(
     rows.push({
       task: row.task,
       protocol: row.protocol,
+      agentMode: row.agentMode,
       baselineMean,
       currentMean,
       factor: baselineMean / currentMean,
     });
   }
-  const byProtocol = new Map<
-    ProtocolFormat | null,
-    { baselineSum: number; currentSum: number; tasks: number }
+  const byVariant = new Map<
+    string,
+    {
+      protocol: ProtocolFormat | null;
+      agentMode: AgentMode | null;
+      baselineSum: number;
+      currentSum: number;
+      tasks: number;
+    }
   >();
   for (const row of rows) {
-    const accrued = byProtocol.get(row.protocol) ?? { baselineSum: 0, currentSum: 0, tasks: 0 };
+    const key = `${row.protocol ?? ""}\u0000${row.agentMode ?? ""}`;
+    const accrued = byVariant.get(key) ?? {
+      protocol: row.protocol,
+      agentMode: row.agentMode,
+      baselineSum: 0,
+      currentSum: 0,
+      tasks: 0,
+    };
     accrued.baselineSum += row.baselineMean;
     accrued.currentSum += row.currentMean;
     accrued.tasks += 1;
-    byProtocol.set(row.protocol, accrued);
+    byVariant.set(key, accrued);
   }
-  const overall: BaselineOverall[] = [...byProtocol.entries()].map(([protocol, value]) => ({
-    protocol,
+  const overall: BaselineOverall[] = [...byVariant.values()].map((value) => ({
+    protocol: value.protocol,
+    agentMode: value.agentMode,
     baselineSum: value.baselineSum,
     currentSum: value.currentSum,
     factor: value.baselineSum / value.currentSum,
@@ -1910,7 +2072,10 @@ export function ocBaselineSavingsSentence(savings: BaselineSavings): string {
     return "Savings vs oc baseline: not comparable (no shared task reports a token total).";
   }
   const parts = savings.overall.map((entry) => {
-    const label = entry.protocol === null ? "" : `${entry.protocol} `;
+    const label =
+      entry.protocol === null
+        ? ""
+        : `${entry.protocol}${entry.agentMode !== null && entry.agentMode !== "edit" ? `/${entry.agentMode}` : ""} `;
     return `${label}${entry.factor.toFixed(2)}x fewer tokens across ${entry.tasks} task${
       entry.tasks === 1 ? "" : "s"
     }`;
@@ -1918,16 +2083,17 @@ export function ocBaselineSavingsSentence(savings: BaselineSavings): string {
   return `Savings vs oc baseline (cache-excluded total, oc/tc): ${parts.join("; ")}.`;
 }
 
-interface OcBaseline {
+interface FrozenBaseline {
   readonly path: string;
   readonly date: string | null;
   readonly model: string | null;
   readonly reps: number | null;
   readonly byTaskSide: AggregateRow[];
 }
-/** Read the fixed oc baseline report, or null when it is missing/unreadable. */
-function loadOcBaseline(repoRoot: string): OcBaseline | null {
-  const path = join(repoRoot, OC_BASELINE_RELATIVE_PATH);
+
+/** Read one fixed baseline report, or null when it is missing/unreadable. */
+function loadFrozenBaseline(repoRoot: string, relativePath: string): FrozenBaseline | null {
+  const path = join(repoRoot, relativePath);
   if (!existsSync(path)) {
     return null;
   }
@@ -1949,12 +2115,191 @@ function loadOcBaseline(repoRoot: string): OcBaseline | null {
   const reps = parsed["reps"];
   const label = typeof ocModel === "string" ? ocModel : model;
   return {
-    path: OC_BASELINE_RELATIVE_PATH,
+    path: relativePath,
     date: typeof date === "string" ? date : null,
     model: typeof label === "string" ? label : null,
     reps: typeof reps === "number" ? reps : null,
     byTaskSide: rows as AggregateRow[],
   };
+}
+
+function loadOcBaseline(repoRoot: string): FrozenBaseline | null {
+  return loadFrozenBaseline(repoRoot, OC_BASELINE_RELATIVE_PATH);
+}
+
+function loadJsonBaseline(repoRoot: string): FrozenBaseline | null {
+  return loadFrozenBaseline(repoRoot, JSON_BASELINE_RELATIVE_PATH);
+}
+
+/** The two frozen reference points the four-way comparison uses. */
+export interface FrozenBaselines {
+  readonly oc: FrozenBaseline;
+  readonly json: FrozenBaseline;
+}
+
+// Four-way comparison: both frozen baselines plus the two tc loop modes.
+export type FourWayVariant = "oc" | "tc-json" | "tc-edit" | "tc-plan-exec";
+
+export interface FourWayRow {
+  readonly task: TaskName | null;
+  readonly variant: FourWayVariant;
+  readonly label: string;
+  readonly mean: number | null;
+  /** Frozen oc mean / this row's mean; >1 means this row used fewer tokens. */
+  readonly vsOc: number | null;
+  /** Frozen tc json mean / this row's mean; >1 means fewer tokens. */
+  readonly vsJson: number | null;
+  /** Tasks summed into an overall row; 1 for a task row. */
+  readonly tasks: number;
+}
+
+const FOUR_WAY_LABELS: Record<FourWayVariant, string> = {
+  oc: "oc baseline",
+  "tc-json": "tc json baseline",
+  "tc-edit": "tc edit",
+  "tc-plan-exec": "tc plan-exec",
+};
+
+function meanFor(
+  rows: readonly AggregateRow[],
+  task: TaskName | null,
+  predicate: (row: AggregateRow) => boolean,
+): number | null {
+  for (const row of rows) {
+    if (row.task !== task || !predicate(row)) {
+      continue;
+    }
+    const mean = row.tokens.total.mean;
+    if (mean !== null && mean > 0) {
+      return mean;
+    }
+  }
+  return null;
+}
+
+function ratio(numerator: number | null, denominator: number | null): number | null {
+  if (numerator === null || denominator === null || numerator <= 0 || denominator <= 0) {
+    return null;
+  }
+  return numerator / denominator;
+}
+
+function fourWayFactor(value: number | null, base: number | null): number | null {
+  return ratio(base, value);
+}
+
+/**
+ * Build the four-way table from the frozen baselines and the current tc runs.
+ * Per task, every variant that reports a token total is included; factors are
+ * baseline mean / variant mean. Overall rows are emitted only over tasks where
+ * all four variants are present, so the four columns stay like-for-like.
+ */
+export function fourWayComparison(
+  currentByTaskSide: readonly AggregateRow[],
+  ocBaselineByTaskSide: readonly AggregateRow[],
+  jsonBaselineByTaskSide: readonly AggregateRow[],
+  tasks: readonly TaskName[],
+): FourWayRow[] {
+  const rows: FourWayRow[] = [];
+  const shared: TaskName[] = [];
+  for (const task of tasks) {
+    const oc = meanFor(ocBaselineByTaskSide, task, (row) => row.side === "oc");
+    const json = meanFor(
+      jsonBaselineByTaskSide,
+      task,
+      (row) => row.side === "tc" && (row.protocol ?? "json") === "json",
+    );
+    const edit = meanFor(
+      currentByTaskSide,
+      task,
+      (row) =>
+        row.side === "tc" &&
+        (row.protocol ?? "edit-dsl") === "edit-dsl" &&
+        (row.agentMode ?? "edit") === "edit",
+    );
+    const plan = meanFor(
+      currentByTaskSide,
+      task,
+      (row) =>
+        row.side === "tc" &&
+        (row.protocol ?? "edit-dsl") === "edit-dsl" &&
+        row.agentMode === "plan-exec",
+    );
+    const values: [FourWayVariant, number | null][] = [
+      ["oc", oc],
+      ["tc-json", json],
+      ["tc-edit", edit],
+      ["tc-plan-exec", plan],
+    ];
+    for (const [variant, mean] of values) {
+      if (mean === null) {
+        continue;
+      }
+      rows.push({
+        task,
+        variant,
+        label: FOUR_WAY_LABELS[variant],
+        mean,
+        vsOc: variant === "oc" ? 1 : fourWayFactor(mean, oc),
+        vsJson: variant === "tc-json" ? 1 : fourWayFactor(mean, json),
+        tasks: 1,
+      });
+    }
+    if (oc !== null && json !== null && edit !== null && plan !== null) {
+      shared.push(task);
+    }
+  }
+  if (shared.length === 0) {
+    return rows;
+  }
+  const sumFor = (predicate: (row: FourWayRow) => boolean): number => {
+    let total = 0;
+    for (const row of rows) {
+      if (row.task !== null && shared.includes(row.task) && predicate(row)) {
+        total += row.mean ?? 0;
+      }
+    }
+    return total;
+  };
+  const ocSum = sumFor((row) => row.variant === "oc");
+  const jsonSum = sumFor((row) => row.variant === "tc-json");
+  const editSum = sumFor((row) => row.variant === "tc-edit");
+  const planSum = sumFor((row) => row.variant === "tc-plan-exec");
+  const overall: [FourWayVariant, number, number | null, number | null][] = [
+    ["oc", ocSum, 1, fourWayFactor(ocSum, jsonSum)],
+    ["tc-json", jsonSum, fourWayFactor(jsonSum, ocSum), 1],
+    ["tc-edit", editSum, fourWayFactor(editSum, ocSum), fourWayFactor(editSum, jsonSum)],
+    ["tc-plan-exec", planSum, fourWayFactor(planSum, ocSum), fourWayFactor(planSum, jsonSum)],
+  ];
+  for (const [variant, mean, vsOc, vsJson] of overall) {
+    rows.push({
+      task: null,
+      variant,
+      label: FOUR_WAY_LABELS[variant],
+      mean: mean > 0 ? mean : null,
+      vsOc,
+      vsJson,
+      tasks: shared.length,
+    });
+  }
+  return rows;
+}
+
+/** One-line summary of the four-way factors, or null when no overall rows. */
+export function fourWaySavingsSentence(rows: readonly FourWayRow[]): string | null {
+  const overall = rows.filter((row) => row.task === null);
+  const edit = overall.find((row) => row.variant === "tc-edit");
+  const plan = overall.find((row) => row.variant === "tc-plan-exec");
+  if (edit === undefined || plan === undefined) {
+    return null;
+  }
+  const factor = (value: number | null): string =>
+    value === null ? "n/a" : `${value.toFixed(2)}x`;
+  return `Four-way savings (cache-excluded total): vs oc — tc edit ${factor(
+    edit.vsOc,
+  )}, tc plan-exec ${factor(plan.vsOc)}; vs tc json — tc edit ${factor(
+    edit.vsJson,
+  )}, tc plan-exec ${factor(plan.vsJson)}.`;
 }
 
 // The references tree names one file per task (json/sexp/lisp today); probe the
@@ -1985,6 +2330,11 @@ export function writeMarkdownReport(mdPath: string, report: Report): void {
     protocolFormats.length > 1
       ? `- protocol-formats: ${protocolFormats.join(", ")} (#119)`
       : `- protocol-format: ${protocolFormats[0] ?? report.protocolFormat ?? "json"} (#119)`;
+  const agentModes = report.agentModes ?? ["edit"];
+  const modeLine =
+    agentModes.length > 1 || agentModes[0] !== "edit"
+      ? `- agent modes: ${agentModes.join(", ")}`
+      : null;
   const lines: string[] = [];
   lines.push(`# Benchmark report — ${report.date}`, "");
   lines.push(
@@ -1996,6 +2346,7 @@ export function writeMarkdownReport(mdPath: string, report: Report): void {
     `- effort: ${report.effort ?? "none (default)"}`,
     `- multi-payload: ${report.multiPayload ? "on (#69)" : "off (default)"}`,
     protocolLine,
+    ...(modeLine === null ? [] : [modeLine]),
     `- concurrency: ${report.concurrency}`,
     `- tasks: ${report.tasks.join(", ")}`,
     `- sides: ${report.sides.join(", ")}`,
@@ -2056,12 +2407,12 @@ export function writeMarkdownReport(mdPath: string, report: Report): void {
 
   lines.push("## Per-task results", "");
   lines.push(
-    "| Task | Side | Protocol | Success | Mean in (no cache) | Mean out | Mean total | Mean $ | $/success | Mean dur (s) | Mean steps |",
-    "| --- | --- | --- | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: |",
+    "| Task | Side | Protocol | Agent mode | Success | Mean in (no cache) | Mean out | Mean total | Mean $ | $/success | Mean dur (s) | Mean steps |",
+    "| --- | --- | --- | --- | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: |",
   );
   for (const row of aggregates.byTaskSide) {
     lines.push(
-      `| ${row.task ?? "all"} | ${row.side ?? "all"} | ${row.protocol ?? "n/a"} | ${row.ok}/${row.runs} | ${formatTokenCount(
+      `| ${row.task ?? "all"} | ${row.side ?? "all"} | ${row.protocol ?? "n/a"} | ${row.agentMode ?? "n/a"} | ${row.ok}/${row.runs} | ${formatTokenCount(
         row.tokens.in.mean,
       )} | ${formatTokenCount(row.tokens.out.mean)} | ${formatTokenCount(
         row.tokens.total.mean,
@@ -2074,12 +2425,12 @@ export function writeMarkdownReport(mdPath: string, report: Report): void {
 
   lines.push("## Overall comparison", "");
   lines.push(
-    "| Side | Protocol | Success | Mean in (no cache) | Mean out | Mean total | Total tokens | Mean $ | Total $ | $/success | Mean dur (s) | Mean steps |",
-    "| --- | --- | --- | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: |",
+    "| Side | Protocol | Agent mode | Success | Mean in (no cache) | Mean out | Mean total | Total tokens | Mean $ | Total $ | $/success | Mean dur (s) | Mean steps |",
+    "| --- | --- | --- | --- | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: |",
   );
   for (const row of aggregates.bySide) {
     lines.push(
-      `| ${row.side ?? "all"} | ${row.protocol ?? "n/a"} | ${row.ok}/${row.runs} | ${formatTokenCount(
+      `| ${row.side ?? "all"} | ${row.protocol ?? "n/a"} | ${row.agentMode ?? "n/a"} | ${row.ok}/${row.runs} | ${formatTokenCount(
         row.tokens.in.mean,
       )} | ${formatTokenCount(row.tokens.out.mean)} | ${formatTokenCount(
         row.tokens.total.mean,
@@ -2093,12 +2444,12 @@ export function writeMarkdownReport(mdPath: string, report: Report): void {
   lines.push("");
   lines.push("Per success (usage-run sums divided by successful runs):", "");
   lines.push(
-    "| Side | Protocol | In (no cache) | Out | Total | Cost |",
-    "| --- | --- | ---: | ---: | ---: | ---: |",
+    "| Side | Protocol | Agent mode | In (no cache) | Out | Total | Cost |",
+    "| --- | --- | --- | ---: | ---: | ---: | ---: |",
   );
   for (const row of aggregates.bySide) {
     lines.push(
-      `| ${row.side ?? "all"} | ${row.protocol ?? "n/a"} | ${formatTokenCount(
+      `| ${row.side ?? "all"} | ${row.protocol ?? "n/a"} | ${row.agentMode ?? "n/a"} | ${formatTokenCount(
         row.tokensPerSuccess.in,
       )} | ${formatTokenCount(
         row.tokensPerSuccess.out,
@@ -2108,29 +2459,66 @@ export function writeMarkdownReport(mdPath: string, report: Report): void {
   lines.push("");
   lines.push(successRateSentence(aggregates.bySide), "");
   lines.push(tokenMultiplierSentence(aggregates.bySide, aggregates.byTaskSide), "");
-  // The oc side is measured once; later tc-only reports compare against that
-  // fixed baseline instead of re-running opencode.
+  // The oc and tc-json sides are measured once; tc-only reports compare against
+  // those fixed baselines instead of re-running either.
   const ranOpencode = aggregates.bySide.some((row) => row.side === "oc");
-  const baseline = ranOpencode ? null : loadOcBaseline(repoRoot);
-  if (baseline !== null) {
-    const savings = savingsVsOcBaseline(aggregates.byTaskSide, baseline.byTaskSide);
+  const ocBaseline = ranOpencode ? null : loadOcBaseline(repoRoot);
+  const jsonBaseline = ranOpencode ? null : loadJsonBaseline(repoRoot);
+  if (ocBaseline !== null && jsonBaseline !== null) {
+    const rows = fourWayComparison(
+      aggregates.byTaskSide,
+      ocBaseline.byTaskSide,
+      jsonBaseline.byTaskSide,
+      report.tasks,
+    );
+    if (rows.length > 0) {
+      const note = (baseline: FrozenBaseline, fallback: string): string => {
+        const model = baseline.model ?? fallback;
+        const reps = baseline.reps === null ? "n/a" : `${baseline.reps} reps`;
+        return `\`${baseline.path}\` (${model}, ${reps}, ${baseline.date ?? "date n/a"})`;
+      };
+      lines.push("## Four-way comparison (oc / tc json / tc edit / tc plan-exec)", "");
+      lines.push(
+        `Baselines: oc ${note(ocBaseline, "oc")}; tc json ${note(jsonBaseline, "tc json")}.`,
+        "Factor = baseline mean / variant mean; above 1 means the variant used that many times fewer cache-excluded tokens.",
+        "",
+      );
+      lines.push(
+        "| Task | Variant | Mean total | vs oc baseline | vs tc json baseline |",
+        "| --- | --- | ---: | ---: | ---: |",
+      );
+      const factor = (value: number | null): string =>
+        value === null ? "n/a" : `${value.toFixed(2)}x`;
+      for (const row of rows) {
+        const task = row.task === null ? `**all ${row.tasks} tasks**` : row.task;
+        lines.push(
+          `| ${task} | ${row.label} | ${formatTokenCount(row.mean)} | ${factor(row.vsOc)} | ${factor(row.vsJson)} |`,
+        );
+      }
+      const sentence = fourWaySavingsSentence(rows);
+      if (sentence !== null) {
+        lines.push("", sentence, "");
+      }
+    }
+  } else if (ocBaseline !== null) {
+    const savings = savingsVsOcBaseline(aggregates.byTaskSide, ocBaseline.byTaskSide);
     if (savings.rows.length > 0) {
-      const baselineModel = baseline.model ?? "oc";
-      const baselineReps = baseline.reps === null ? "n/a" : `${baseline.reps} reps`;
+      const baselineModel = ocBaseline.model ?? "oc";
+      const baselineReps = ocBaseline.reps === null ? "n/a" : `${ocBaseline.reps} reps`;
       lines.push("## Savings vs oc baseline", "");
       lines.push(
-        `Baseline: \`${baseline.path}\` (${baselineModel}, ${baselineReps}, ${
-          baseline.date ?? "date n/a"
+        `Baseline: \`${ocBaseline.path}\` (${baselineModel}, ${baselineReps}, ${
+          ocBaseline.date ?? "date n/a"
         }). A factor above 1 means tc uses that many times fewer cache-excluded tokens.`,
         "",
       );
       lines.push(
-        "| Task | Protocol | oc baseline mean total | tc mean total | Savings (oc/tc) |",
-        "| --- | --- | ---: | ---: | ---: |",
+        "| Task | Protocol | Agent mode | oc baseline mean total | tc mean total | Savings (oc/tc) |",
+        "| --- | --- | --- | ---: | ---: | ---: |",
       );
       for (const row of savings.rows) {
         lines.push(
-          `| ${row.task} | ${row.protocol ?? "n/a"} | ${formatTokenCount(
+          `| ${row.task} | ${row.protocol ?? "n/a"} | ${row.agentMode ?? "n/a"} | ${formatTokenCount(
             row.baselineMean,
           )} | ${formatTokenCount(row.currentMean)} | ${row.factor.toFixed(2)}x |`,
         );
@@ -2139,7 +2527,7 @@ export function writeMarkdownReport(mdPath: string, report: Report): void {
         lines.push(
           `| **all ${row.tasks} task${row.tasks === 1 ? "" : "s"}** | ${
             row.protocol ?? "n/a"
-          } | ${formatTokenCount(row.baselineSum)} | ${formatTokenCount(
+          } | ${row.agentMode ?? "n/a"} | ${formatTokenCount(row.baselineSum)} | ${formatTokenCount(
             row.currentSum,
           )} | **${row.factor.toFixed(2)}x** |`,
         );
@@ -2160,24 +2548,24 @@ export function writeMarkdownReport(mdPath: string, report: Report): void {
   lines.push("## Selector adoption (#101)", "");
   lines.push("Per task and side (payloads that used each selector):", "");
   lines.push(
-    "| Task | Side | Protocol | range | matcher | whole-symbol |",
-    "| --- | --- | --- | ---: | ---: | ---: |",
+    "| Task | Side | Protocol | Agent mode | range | matcher | whole-symbol |",
+    "| --- | --- | --- | --- | ---: | ---: | ---: |",
   );
   for (const row of aggregates.byTaskSide) {
     lines.push(
-      `| ${row.task ?? "all"} | ${row.side ?? "all"} | ${row.protocol ?? "n/a"} | ${
+      `| ${row.task ?? "all"} | ${row.side ?? "all"} | ${row.protocol ?? "n/a"} | ${row.agentMode ?? "n/a"} | ${
         row.selectors.range
       } | ${row.selectors.matcher} | ${row.selectors.wholeSymbol} |`,
     );
   }
   lines.push("");
   lines.push(
-    "| Side | Protocol | range | matcher | whole-symbol |",
-    "| --- | --- | ---: | ---: | ---: |",
+    "| Side | Protocol | Agent mode | range | matcher | whole-symbol |",
+    "| --- | --- | --- | ---: | ---: | ---: |",
   );
   for (const row of aggregates.bySide) {
     lines.push(
-      `| ${row.side ?? "all"} | ${row.protocol ?? "n/a"} | ${row.selectors.range} | ${
+      `| ${row.side ?? "all"} | ${row.protocol ?? "n/a"} | ${row.agentMode ?? "n/a"} | ${row.selectors.range} | ${
         row.selectors.matcher
       } | ${row.selectors.wholeSymbol} |`,
     );
@@ -2186,12 +2574,12 @@ export function writeMarkdownReport(mdPath: string, report: Report): void {
   lines.push("Resolved cascade stages and matcher kinds (#110):", "");
   lines.push("Per task and side (payloads that resolved at each stage / used each matcher):", "");
   lines.push(
-    "| Task | Side | Protocol | whole-symbol | match | pick | snippet | regex |",
-    "| --- | --- | --- | ---: | ---: | ---: | ---: | ---: |",
+    "| Task | Side | Protocol | Agent mode | whole-symbol | match | pick | snippet | regex |",
+    "| --- | --- | --- | --- | ---: | ---: | ---: | ---: | ---: |",
   );
   for (const row of aggregates.byTaskSide) {
     lines.push(
-      `| ${row.task ?? "all"} | ${row.side ?? "all"} | ${row.protocol ?? "n/a"} | ${
+      `| ${row.task ?? "all"} | ${row.side ?? "all"} | ${row.protocol ?? "n/a"} | ${row.agentMode ?? "n/a"} | ${
         row.stages.wholeSymbol
       } | ${row.stages.match} | ${row.stages.pick} | ${row.matcherKinds.snippet} | ${
         row.matcherKinds.regex
@@ -2200,12 +2588,12 @@ export function writeMarkdownReport(mdPath: string, report: Report): void {
   }
   lines.push("");
   lines.push(
-    "| Side | Protocol | whole-symbol | match | pick | snippet | regex |",
-    "| --- | --- | ---: | ---: | ---: | ---: | ---: |",
+    "| Side | Protocol | Agent mode | whole-symbol | match | pick | snippet | regex |",
+    "| --- | --- | --- | ---: | ---: | ---: | ---: | ---: |",
   );
   for (const row of aggregates.bySide) {
     lines.push(
-      `| ${row.side ?? "all"} | ${row.protocol ?? "n/a"} | ${row.stages.wholeSymbol} | ${
+      `| ${row.side ?? "all"} | ${row.protocol ?? "n/a"} | ${row.agentMode ?? "n/a"} | ${row.stages.wholeSymbol} | ${
         row.stages.match
       } | ${row.stages.pick} | ${row.matcherKinds.snippet} | ${row.matcherKinds.regex} |`,
     );
@@ -2213,16 +2601,21 @@ export function writeMarkdownReport(mdPath: string, report: Report): void {
   lines.push("");
   // #111: edit-dsl implicit-create clauses the replies carried.
   lines.push("Implicit creates (#111):", "");
-  lines.push("| Task | Side | Protocol | creates |", "| --- | --- | --- | ---: |");
+  lines.push(
+    "| Task | Side | Protocol | Agent mode | creates |",
+    "| --- | --- | --- | --- | ---: |",
+  );
   for (const row of aggregates.byTaskSide) {
     lines.push(
-      `| ${row.task ?? "all"} | ${row.side ?? "all"} | ${row.protocol ?? "n/a"} | ${row.creates} |`,
+      `| ${row.task ?? "all"} | ${row.side ?? "all"} | ${row.protocol ?? "n/a"} | ${row.agentMode ?? "n/a"} | ${row.creates} |`,
     );
   }
   lines.push("");
-  lines.push("| Side | Protocol | creates |", "| --- | --- | ---: |");
+  lines.push("| Side | Protocol | Agent mode | creates |", "| --- | --- | --- | ---: |");
   for (const row of aggregates.bySide) {
-    lines.push(`| ${row.side ?? "all"} | ${row.protocol ?? "n/a"} | ${row.creates} |`);
+    lines.push(
+      `| ${row.side ?? "all"} | ${row.protocol ?? "n/a"} | ${row.agentMode ?? "n/a"} | ${row.creates} |`,
+    );
   }
   lines.push("");
 
@@ -2305,12 +2698,12 @@ export function writeMarkdownReport(mdPath: string, report: Report): void {
     "oc `Raw in` excludes them. The cache-excluded comparison total is in the tables",
     "above (and each row's `tokens.billable`), not here.",
     "",
-    "| Task | Side | Protocol | Rep | OK | Raw in | Raw out | Raw total | Cost | Rate | Steps | Dur (s) |",
-    "| --- | --- | --- | ---: | --- | ---: | ---: | ---: | ---: | --- | ---: | ---: |",
+    "| Task | Side | Protocol | Agent mode | Rep | OK | Raw in | Raw out | Raw total | Cost | Rate | Steps | Dur (s) |",
+    "| --- | --- | --- | --- | ---: | --- | ---: | ---: | ---: | ---: | --- | ---: | ---: |",
   );
   for (const run of report.runs) {
     lines.push(
-      `| ${run.task} | ${run.side} | ${run.protocol ?? "n/a"} | ${run.rep} | ${
+      `| ${run.task} | ${run.side} | ${run.protocol ?? "n/a"} | ${run.agentMode ?? "n/a"} | ${run.rep} | ${
         run.ok ? "yes" : "no"
       } | ${formatTokenCount(
         run.tokens.input,
@@ -2356,27 +2749,30 @@ export async function runPool<Job, Result>(
 }
 
 /**
- * Expand the task × side × rep matrix with the tc protocol dimension (#16).
- * `oc` has no protocol: it gets exactly one job per task/rep however many tc
- * variants are selected. The pool in `main` claims all jobs from one array, so
- * variants run concurrently rather than in a serial per-protocol phase.
+ * Expand the task × side × rep matrix with the tc protocol and loop-mode
+ * dimensions (#16). `oc` has no variant: it gets exactly one job per task/rep
+ * however many tc variants are selected. The pool in `main` claims all jobs
+ * from one array, so variants run concurrently rather than in serial phases.
  */
 export function buildJobs(
   tasks: readonly TaskName[],
   sides: readonly Side[],
   reps: number,
   protocols: readonly ProtocolFormat[],
+  agentModes: readonly AgentMode[] = ["edit"],
 ): BenchmarkJob[] {
   const jobs: BenchmarkJob[] = [];
   for (const task of tasks) {
     for (const side of sides) {
       for (let rep = 1; rep <= reps; rep += 1) {
         if (side === "tc") {
-          for (const protocol of protocols) {
-            jobs.push({ task, side, rep, protocol });
+          for (const agentMode of agentModes) {
+            for (const protocol of protocols) {
+              jobs.push({ task, side, rep, protocol, agentMode });
+            }
           }
         } else {
-          jobs.push({ task, side, rep, protocol: null });
+          jobs.push({ task, side, rep, protocol: null, agentMode: null });
         }
       }
     }
@@ -2415,21 +2811,22 @@ async function main(): Promise<number> {
   const reps = args.pilot ? PILOT_REPS : args.reps;
   const protocols = args.protocolFormats;
 
-  const jobs = buildJobs(tasks, sides, reps, protocols);
+  const jobs = buildJobs(tasks, sides, reps, protocols, args.agentModes);
 
   // The full run on the pilot's date references the pilot report when it has
   // already been written; other days (and missing files) stay null.
   const pilotCandidate = join(repoRoot, "benchmark", "results", `pilot-${date}.json`);
 
-  // #66/#16: pin the measured inputs per tc protocol, so a multi-variant report
-  // can be checked against the prompt each ledger row actually measured.
-  const provenanceFor = (protocol: ProtocolFormat): RecordedProvenance => ({
+  // #66/#16: pin the measured inputs per variant, so a multi-variant report can
+  // be checked against the prompt each ledger row actually measured.
+  const provenanceFor = (protocol: ProtocolFormat, agentMode: AgentMode): RecordedProvenance => ({
     ...currentInputHashes(repoRoot, {
       tasks,
       taskIssues: TASK_ISSUES,
       model: args.model,
       multiPayload: args.multiPayload,
       protocolFormat: protocol,
+      agentMode,
       effort: args.effort,
       reps,
       tokenBudget: args.tokenBudget,
@@ -2437,12 +2834,23 @@ async function main(): Promise<number> {
     computedAt: generatedAt,
   });
   const provenanceByProtocol: Partial<Record<ProtocolFormat, RecordedProvenance>> = {};
-  for (const protocol of protocols) {
-    provenanceByProtocol[protocol] = provenanceFor(protocol);
+  if (args.agentModes.length === 1) {
+    for (const protocol of protocols) {
+      provenanceByProtocol[protocol] = provenanceFor(protocol, args.agentModes[0] as AgentMode);
+    }
+  }
+  const provenanceByAgentMode: Partial<Record<AgentMode, RecordedProvenance>> = {};
+  if (protocols.length === 1) {
+    for (const agentMode of args.agentModes) {
+      provenanceByAgentMode[agentMode] = provenanceFor(protocols[0] as ProtocolFormat, agentMode);
+    }
   }
   const singleProtocol = protocols.length === 1 ? protocols[0] : undefined;
+  const singleMode = args.agentModes.length === 1 ? args.agentModes[0] : undefined;
   const scalarProvenance =
-    singleProtocol === undefined ? null : (provenanceByProtocol[singleProtocol] ?? null);
+    singleProtocol === undefined || singleMode === undefined
+      ? null
+      : (provenanceByAgentMode[singleMode] ?? provenanceByProtocol[singleProtocol] ?? null);
 
   const report: Report = {
     generatedAt,
@@ -2460,6 +2868,7 @@ async function main(): Promise<number> {
     // into no row, with the full selection in `protocolFormats` (#16).
     protocolFormat: singleProtocol ?? null,
     protocolFormats: protocols,
+    agentModes: args.agentModes,
     tokenBudget: args.tokenBudget,
     bunVersion: Bun.version,
     opencodeVersion: null,
@@ -2468,11 +2877,12 @@ async function main(): Promise<number> {
     runs: [],
     // Preflight errors write this zeroed aggregate set; the normal path
     // recomputes it from the final runs after the pool.
-    aggregates: computeAggregates([], tasks, sides, protocols),
+    aggregates: computeAggregates([], tasks, sides, protocols, args.agentModes),
     // #66: pin the measured inputs from the same tree the runs read, so the
     // record is self-describing and the ledger check can flag staleness.
     provenance: scalarProvenance,
     ...(singleProtocol === undefined ? { provenanceByProtocol } : {}),
+    ...(args.agentModes.length > 1 ? { provenanceByAgentMode } : {}),
   };
 
   let opencode: OpencodeContext | null = null;
@@ -2524,6 +2934,7 @@ async function main(): Promise<number> {
     tokenBudget: args.tokenBudget,
     multiPayload: args.multiPayload,
     protocols,
+    agentModes: args.agentModes,
   };
 
   // Bounded worker pool: workers claim jobs by index so each run keeps its own
@@ -2532,13 +2943,16 @@ async function main(): Promise<number> {
   // `task side repN` console shape (#16); variants are named only when the
   // matrix measures more than one.
   const showProtocol = protocols.length > 1;
+  const showMode = args.agentModes.length > 1;
   const records = await runPool(jobs, Math.min(args.concurrency, jobs.length), async (job, i) => {
-    const variant = showProtocol && job.protocol !== null ? ` ${job.protocol}` : "";
+    const variant =
+      (showProtocol && job.protocol !== null ? ` ${job.protocol}` : "") +
+      (job.agentMode !== null && (showMode || job.agentMode !== "edit") ? ` ${job.agentMode}` : "");
     process.stdout.write(
       `starting ${job.task} ${job.side}${variant} rep${job.rep} (${i + 1}/${jobs.length})\n`,
     );
     const record = await runOnce(job, context);
-    printRecord(record, showProtocol);
+    printRecord(record, showProtocol, showMode);
     return record;
   });
 
@@ -2555,14 +2969,26 @@ async function main(): Promise<number> {
     rmSync(runRoot, { recursive: true, force: true });
   }
 
-  report.aggregates = computeAggregates(report.runs, tasks, sides, protocols);
+  report.aggregates = computeAggregates(report.runs, tasks, sides, protocols, args.agentModes);
   writeReport(jsonPath, report);
   writeMarkdownReport(markdownPathFor(jsonPath), report);
   const ranOpencode = report.aggregates.bySide.some((row) => row.side === "oc");
   if (!ranOpencode) {
-    const baseline = loadOcBaseline(repoRoot);
-    if (baseline !== null) {
-      const savings = savingsVsOcBaseline(report.aggregates.byTaskSide, baseline.byTaskSide);
+    const ocBaseline = loadOcBaseline(repoRoot);
+    const jsonBaseline = loadJsonBaseline(repoRoot);
+    if (ocBaseline !== null && jsonBaseline !== null) {
+      const rows = fourWayComparison(
+        report.aggregates.byTaskSide,
+        ocBaseline.byTaskSide,
+        jsonBaseline.byTaskSide,
+        report.tasks,
+      );
+      const sentence = fourWaySavingsSentence(rows);
+      if (sentence !== null) {
+        process.stdout.write(`${sentence}\n`);
+      }
+    } else if (ocBaseline !== null) {
+      const savings = savingsVsOcBaseline(report.aggregates.byTaskSide, ocBaseline.byTaskSide);
       if (savings.rows.length > 0) {
         process.stdout.write(`${ocBaselineSavingsSentence(savings)}\n`);
       }

@@ -24,6 +24,8 @@ export interface ReplayBundleMeta {
    * edit-dsl bundles pass `edit-dsl` explicitly.
    */
   readonly protocolFormat?: ReplayProtocolFormat;
+  /** Loop mode recorded for the bundle; omitted means the legacy `edit` loop. */
+  readonly agentMode?: "edit" | "plan-exec";
 }
 
 export interface ReplayBundle extends ReplayBundleMeta {
@@ -31,6 +33,8 @@ export interface ReplayBundle extends ReplayBundleMeta {
   readonly side: "tc";
   /** Recorded edit protocol; required on bundles written/parsed here. */
   readonly protocolFormat: ReplayProtocolFormat;
+  /** Recorded loop mode; legacy bundles and direct callers read as `edit`. */
+  readonly agentMode?: "edit" | "plan-exec";
   readonly calls: ReplayCall[];
 }
 
@@ -92,6 +96,7 @@ export class ReplayRecorder {
       issue: meta.issue,
       fixture: meta.fixture,
       protocolFormat: meta.protocolFormat ?? "json",
+      agentMode: meta.agentMode ?? "edit",
       calls: this.calls,
     };
   }

@@ -47,6 +47,7 @@ describe("parseArgs", () => {
   const DEFAULTS = {
     help: false,
     model: "deepseek-v4.1-flash",
+    agentMode: "edit" as const,
     multiPayload: false,
     protocolFormat: "edit-dsl" as const,
     targets: null,
@@ -678,6 +679,41 @@ describe("cli entry points", () => {
     const target = join(repoRoot, pkg.bin.tc);
     expect(existsSync(target)).toBe(true);
     expect(readFileSync(target, "utf8").split("\n")[0]?.startsWith("#!")).toBe(true);
+  });
+});
+
+describe("--mode", () => {
+  test("defaults to the edit loop", () => {
+    expect(parseArgs([]).agentMode).toBe("edit");
+  });
+
+  test("selects the plan/execute loop with --mode plan-exec and the long alias", () => {
+    expect(parseArgs(["--mode", "plan-exec"]).agentMode).toBe("plan-exec");
+    expect(parseArgs(["--agent-mode=plan-exec"]).agentMode).toBe("plan-exec");
+    expect(parseArgs(["--mode=edit"]).agentMode).toBe("edit");
+  });
+
+  test("rejects an unknown mode", () => {
+    expect(() => parseArgs(["--mode", "planner"])).toThrow('--mode must be "edit" or "plan-exec"');
+    expect(() => parseArgs(["--mode"])).toThrow("--mode requires a value");
+  });
+
+  test("plan-exec refuses explicit targets and the frozen json edit protocol", () => {
+    const targets = join(tempDir(), "targets.json");
+    writeFileSync(targets, JSON.stringify([{ path: "src/a.ts", symbol: "a", kind: "function" }]));
+    expect(() => parseArgs(["--mode", "plan-exec", "--targets", targets])).toThrow(
+      "cannot be combined with --mode plan-exec",
+    );
+    expect(() => parseArgs(["--mode", "plan-exec", "--protocol-format", "json"])).toThrow(
+      "cannot be combined with it",
+    );
+    expect(parseArgs(["--mode", "plan-exec", "--protocol-format", "edit-dsl"]).agentMode).toBe(
+      "plan-exec",
+    );
+  });
+
+  test("help names the mode flag", () => {
+    expect(helpText()).toContain("--mode <edit|plan-exec>");
   });
 });
 

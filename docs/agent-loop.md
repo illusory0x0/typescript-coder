@@ -8,11 +8,20 @@ discovery, splicing, formatting, and verification.
 
 Implementation: `runLoop` in `src/loop.ts` is a dispatcher. Explicit-targets
 mode and `--protocol-format=json` route to `runJsonLoop`; the default routes to
-`runEditDslLoop`. The two drivers are independent: each owns its run driver
+`runEditDslLoop`; `--mode plan-exec` lazily routes to `runTaskLoop` in
+`src/task-loop.ts`. The drivers are independent: each owns its run driver
 (budget, rounds, records) and shares only the lower-level primitives (index and
 context, selection resolution, gates). Protocol prompt text lives in
-`src/prompts/{json,edit-dsl}.ts` and the commit/gate pipeline in
+`src/prompts/{json,edit-dsl,task}.ts` and the commit/gate pipeline in
 `src/commit.ts`.
+
+## Plan → execute mode
+
+`--mode plan-exec` adds a two-mode loop ([`spec.md`](spec.md)): a planner emits
+an edit-task DAG as JSON (`src/tasks.ts`), and the executor carries out one task
+at a time with the edit-action clauses above. The harness owns status and
+scheduling; each task boundary runs the type check, and the suite runs once
+after the whole DAG. Existing modes are unchanged.
 
 ## Shape of a run
 

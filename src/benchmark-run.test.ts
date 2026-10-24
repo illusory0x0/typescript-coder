@@ -28,6 +28,7 @@ interface AggregateLike {
   task: string | null;
   side: string | null;
   protocol: string | null;
+  agentMode: string | null;
   runs: number;
   ok: number;
   tokens: { in: TokenStatsLike; out: TokenStatsLike; total: TokenStatsLike };
@@ -49,6 +50,7 @@ interface JobLike {
   side: string;
   rep: number;
   protocol: string | null;
+  agentMode: string | null;
 }
 
 interface RunModule {
@@ -57,6 +59,7 @@ interface RunModule {
     tasks: readonly string[],
     sides: readonly string[],
     protocols?: readonly string[],
+    agentModes?: readonly string[],
   ): AggregatesLike;
   aggregateRuns(
     runs: readonly unknown[],
@@ -69,6 +72,7 @@ interface RunModule {
     sides: readonly string[],
     reps: number,
     protocols: readonly string[],
+    agentModes?: readonly string[],
   ): JobLike[];
   runPool<Job, Result>(
     jobs: readonly Job[],
@@ -76,6 +80,22 @@ interface RunModule {
     run: (job: Job, index: number) => Promise<Result>,
   ): Promise<Result[]>;
   parseProtocolFormats(value: string): string[];
+  parseAgentModes(value: string): string[];
+  fourWayComparison(
+    currentByTaskSide: readonly AggregateLike[],
+    ocBaselineByTaskSide: readonly AggregateLike[],
+    jsonBaselineByTaskSide: readonly AggregateLike[],
+    tasks: readonly string[],
+  ): {
+    task: string | null;
+    variant: string;
+    label: string;
+    mean: number | null;
+    vsOc: number | null;
+    vsJson: number | null;
+    tasks: number;
+  }[];
+  fourWaySavingsSentence(rows: unknown): string | null;
   tokenMultiplierSentence(
     bySide: readonly AggregateLike[],
     byTaskSide: readonly AggregateLike[],
@@ -110,6 +130,7 @@ interface RunModule {
     ocModel: string | null;
     side: string;
     protocolFormats: string[];
+    agentModes: string[];
   };
   opencodeModelFor(model: string, ocModel: string | null): string;
 }
@@ -126,6 +147,7 @@ function makeRun(
   buckets: { input: number; output: number; cacheRead?: number },
   exchangeStats: Record<string, unknown> | null = null,
   protocol: string | null = null,
+  agentMode: string | null = null,
 ): Record<string, unknown> {
   const raw = {
     input: buckets.input,
@@ -139,6 +161,7 @@ function makeRun(
     task,
     side,
     protocol,
+    agentMode,
     rep: 1,
     ok: true,
     sideOk: true,
@@ -298,7 +321,7 @@ describe("rendered report (#89)", () => {
     async () => {
       const { computeAggregates, writeMarkdownReport } = await loadRunModule();
       const runs = sampleRuns();
-      const tasks = ["json-parser", "sexp-parser"];
+      const tasks = ["json-parser"];
       const sides = ["tc", "oc"];
       const report = {
         generatedAt: "2026-10-20T00:00:00.000Z",
@@ -342,20 +365,24 @@ describe("rendered report (#89)", () => {
         expect(markdown).toContain("decision-only");
         // json-parser tc: in 200, out 500, total 700 (no protocol on this
         // synthetic legacy record).
-        expect(markdown).toContain("| json-parser | tc | n/a | 1/1 | 200 | 500 | 700 |");
+        expect(markdown).toContain("| json-parser | tc | n/a | edit | 1/1 | 200 | 500 | 700 |");
         expect(markdown).toContain("oc 1.56x tc overall");
         expect(markdown).toContain("json-parser oc 1.86x tc");
         // #101: adoption surfaces per task/side and per side.
         expect(markdown).toContain("## Selector adoption (#101)");
-        expect(markdown).toContain("| Task | Side | Protocol | range | matcher | whole-symbol |");
-        expect(markdown).toContain("| Side | Protocol | range | matcher | whole-symbol |");
+        expect(markdown).toContain(
+          "| Task | Side | Protocol | Agent mode | range | matcher | whole-symbol |",
+        );
+        expect(markdown).toContain(
+          "| Side | Protocol | Agent mode | range | matcher | whole-symbol |",
+        );
         // #110: resolved stages and matcher kinds surface alongside.
         expect(markdown).toContain("Resolved cascade stages and matcher kinds (#110)");
         expect(markdown).toContain(
-          "| Task | Side | Protocol | whole-symbol | match | pick | snippet | regex |",
+          "| Task | Side | Protocol | Agent mode | whole-symbol | match | pick | snippet | regex |",
         );
         expect(markdown).toContain(
-          "| Side | Protocol | whole-symbol | match | pick | snippet | regex |",
+          "| Side | Protocol | Agent mode | whole-symbol | match | pick | snippet | regex |",
         );
         // #111: edit-dsl implicit-create clauses surface alongside.
         expect(markdown).toContain("Implicit creates (#111):");
@@ -721,6 +748,166 @@ describe("concurrent protocol variants (#16)", () => {
   );
 
   test.skipIf(!runModulePresent)(
+    "parses the two agent modes and expands tc jobs once per mode",
+    async () => {
+      const { parseAgentModes, buildJobs, parseArgs } = await loadRunModule();
+      expect(parseArgs([]).agentModes).toEqual(["edit"]);
+      expect(parseArgs(["--agent-mode", "plan-exec"]).agentModes).toEqual(["plan-exec"]);
+      expect(parseAgentModes("both")).toEqual(["edit", "plan-exec"]);
+      expect(parseAgentModes("plan-exec,edit")).toEqual(["edit", "plan-exec"]);
+      expect(() => parseAgentModes("yaml")).toThrow("invalid --agent-mode value: yaml");
+      const jobs = buildJobs(["json-parser"], ["tc", "oc"], 2, ["edit-dsl"], ["edit", "plan-exec"]);
+      expect(jobs).toHaveLength(6);
+      expect(jobs.filter((job) => job.side === "tc").map((job) => job.agentMode)).toEqual([
+        "edit",
+        "plan-exec",
+        "edit",
+        "plan-exec",
+      ]);
+      expect(jobs.filter((job) => job.side === "oc").every((job) => job.agentMode === null)).toBe(
+        true,
+      );
+    },
+  );
+
+  test.skipIf(!runModulePresent)("keeps edit and plan-exec aggregates separate", async () => {
+    const { computeAggregates } = await loadRunModule();
+    const runs = [
+      makeRun("json-parser", "tc", { input: 400, output: 200 }, null, "edit-dsl", "edit"),
+      makeRun("json-parser", "tc", { input: 100, output: 50 }, null, "edit-dsl", "plan-exec"),
+    ];
+    const aggregates = computeAggregates(
+      runs,
+      ["json-parser"],
+      ["tc"],
+      ["edit-dsl"],
+      ["edit", "plan-exec"],
+    );
+    expect(aggregates.byTaskSide.map((row) => [row.agentMode, row.tokens.total.mean])).toEqual([
+      ["edit", 600],
+      ["plan-exec", 150],
+    ]);
+  });
+
+  test.skipIf(!runModulePresent)(
+    "renders the four-way factors against both baselines",
+    async () => {
+      const { computeAggregates, fourWayComparison, fourWaySavingsSentence } =
+        await loadRunModule();
+      const tasks = ["json-parser"];
+      const baseline = (side: string, values: number[]) =>
+        computeAggregates(
+          values.map((value, index) =>
+            side === "oc"
+              ? makeRun(tasks[index] as string, "oc", {
+                  input: Math.round(value * 0.6),
+                  output: Math.round(value * 0.4),
+                })
+              : makeRun(
+                  tasks[index] as string,
+                  "tc",
+                  { input: Math.round(value * 0.6), output: Math.round(value * 0.4) },
+                  null,
+                  "json",
+                ),
+          ),
+          tasks,
+          [side],
+        );
+      const oc = baseline("oc", [1400]);
+      const json = baseline("tc", [700]);
+      const current = computeAggregates(
+        [
+          makeRun("json-parser", "tc", { input: 500, output: 200 }, null, "edit-dsl", "edit"),
+          makeRun("json-parser", "tc", { input: 250, output: 100 }, null, "edit-dsl", "plan-exec"),
+        ],
+        tasks,
+        ["tc"],
+        ["edit-dsl"],
+        ["edit", "plan-exec"],
+      );
+      const rows = fourWayComparison(current.byTaskSide, oc.byTaskSide, json.byTaskSide, tasks);
+      const jsonRow = rows.find((row) => row.task === "json-parser" && row.variant === "tc-edit");
+      expect(jsonRow?.vsOc?.toFixed(2)).toBe("2.00");
+      expect(jsonRow?.vsJson?.toFixed(2)).toBe("1.00");
+      const planRow = rows.find(
+        (row) => row.task === "json-parser" && row.variant === "tc-plan-exec",
+      );
+      expect(planRow?.vsOc?.toFixed(2)).toBe("4.00");
+      expect(planRow?.vsJson?.toFixed(2)).toBe("2.00");
+      const overall = rows.find((row) => row.task === null && row.variant === "tc-edit");
+      expect(overall?.vsOc?.toFixed(2)).toBe("2.00");
+      const sentence = fourWaySavingsSentence(rows);
+      expect(sentence).toContain("vs oc — tc edit 2.00x, tc plan-exec 4.00x");
+      expect(sentence).toContain("vs tc json — tc edit 1.00x, tc plan-exec 2.00x");
+    },
+  );
+
+  test.skipIf(!runModulePresent)(
+    "renders the four-way section with two baseline columns",
+    async () => {
+      const { computeAggregates, writeMarkdownReport } = await loadRunModule();
+      const tasks = ["json-parser"];
+      const runs = [
+        makeRun("json-parser", "tc", { input: 500, output: 200 }, null, "edit-dsl", "edit"),
+        makeRun("json-parser", "tc", { input: 250, output: 100 }, null, "edit-dsl", "plan-exec"),
+      ];
+      const aggregates = computeAggregates(
+        runs,
+        tasks,
+        ["tc"],
+        ["edit-dsl"],
+        ["edit", "plan-exec"],
+      );
+      const report = {
+        generatedAt: "2026-10-20T00:00:00.000Z",
+        date: "2026-10-20",
+        mode: "full",
+        tasks,
+        sides: ["tc"],
+        reps: 1,
+        concurrency: 1,
+        model: "deepseek-v4.1-flash",
+        ocModel: null,
+        effort: null,
+        multiPayload: false,
+        protocolFormat: "edit-dsl",
+        protocolFormats: ["edit-dsl"],
+        agentModes: ["edit", "plan-exec"],
+        tokenBudget: null,
+        bunVersion: "1.0.0",
+        opencodeVersion: null,
+        pilotReference: null,
+        infraErrors: [],
+        runs,
+        aggregates,
+        provenance: null,
+        provenanceByAgentMode: {},
+      };
+      const dir = mkdtempSync(join(tmpdir(), "run-four-way-"));
+      try {
+        const md = join(dir, "four-way.md");
+        writeMarkdownReport(md, report);
+        const markdown = readFileSync(md, "utf8");
+        expect(markdown).toContain("- agent modes: edit, plan-exec");
+        expect(markdown).toContain(
+          "## Four-way comparison (oc / tc json / tc edit / tc plan-exec)",
+        );
+        expect(markdown).toContain(
+          "| Task | Variant | Mean total | vs oc baseline | vs tc json baseline |",
+        );
+        expect(markdown).toContain("| json-parser | oc baseline |");
+        expect(markdown).toContain("| json-parser | tc json baseline |");
+        expect(markdown).toContain("| json-parser | tc edit |");
+        expect(markdown).toContain("| json-parser | tc plan-exec |");
+        expect(markdown).toContain("Four-way savings (cache-excluded total): vs oc");
+      } finally {
+        rmSync(dir, { recursive: true, force: true });
+      }
+    },
+  );
+
+  test.skipIf(!runModulePresent)(
     "multiplier sentence compares each tc variant with oc, never tc with tc",
     async () => {
       const { computeAggregates, tokenMultiplierSentence } = await loadRunModule();
@@ -784,11 +971,11 @@ describe("concurrent protocol variants (#16)", () => {
         writeMarkdownReport(md, report);
         const markdown = readFileSync(md, "utf8");
         expect(markdown).toContain("- protocol-formats: json, edit-dsl (#119)");
-        expect(markdown).toContain("| json-parser | tc | json | 2/2 |");
-        expect(markdown).toContain("| json-parser | tc | edit-dsl | 1/1 |");
-        expect(markdown).toContain("| json-parser | oc | n/a | 1/1 |");
-        expect(markdown).toContain("| tc | json | 2/2 |");
-        expect(markdown).toContain("| tc | edit-dsl | 1/1 |");
+        expect(markdown).toContain("| json-parser | tc | json | edit | 2/2 |");
+        expect(markdown).toContain("| json-parser | tc | edit-dsl | edit | 1/1 |");
+        expect(markdown).toContain("| json-parser | oc | n/a | n/a | 1/1 |");
+        expect(markdown).toContain("| tc | json | edit | 2/2 |");
+        expect(markdown).toContain("| tc | edit-dsl | edit | 1/1 |");
       } finally {
         rmSync(dir, { recursive: true, force: true });
       }

@@ -60,6 +60,8 @@ export interface Scenario {
   live?: boolean;
   /** Edit protocol the scenario drives; omitted means the shipped `json` form. */
   protocolFormat?: ProtocolFormat;
+  /** Loop shape; omitted means the single-target edit loop. */
+  agentMode?: "edit" | "plan-exec";
   issue: string;
   responses: ScriptedResponse[];
   prepare?: (dir: string, repoRoot: string) => void;
@@ -367,6 +369,45 @@ export const scenarios: Scenario[] = [
       recordOutcomes(["selected", "applied", "ok"]),
       fileContains("src/helper.ts", "return 2;"),
       fileEqualsOriginal("src/helper.test.ts"),
+    ],
+  },
+  {
+    id: "plan-exec-fix-answer",
+    title: "plan/execute plans one task and the executor makes the failing test green",
+    fixture: "fix-answer",
+    agentMode: "plan-exec",
+    issue: TEST_ISSUE,
+    responses: [
+      JSON.stringify({
+        tasks: [
+          {
+            id: 1,
+            loc: { path: "src/helper.ts", symbol: "answer", kind: "value" },
+            deps: [],
+            action: "modify",
+            instruction: "Change answer so it returns 2 instead of 1.",
+          },
+        ],
+        todo: [1],
+        status: { "1": "todo" },
+      }),
+      [
+        "select answer in src/helper.ts resolve value",
+        "replace with",
+        "-----",
+        "export function answer(): number {",
+        "  return 2;",
+        "}",
+        "-----",
+        "end",
+      ].join("\n"),
+    ],
+    assertions: [
+      hasOk(true),
+      fileContains("src/helper.ts", "return 2;"),
+      fileEqualsOriginal("src/helper.test.ts"),
+      hasCallCount(2),
+      messageContains(1, "Change answer so it returns 2 instead of 1."),
     ],
   },
   {

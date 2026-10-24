@@ -79,6 +79,8 @@ export function parseReplayBundle(json: string): ReplayBundle {
     parsed["protocolFormat"] === "edit-dsl" || parsed["protocolFormat"] === "compact"
       ? "edit-dsl"
       : "json";
+  const agentMode: ReplayBundle["agentMode"] =
+    parsed["agentMode"] === "plan-exec" ? "plan-exec" : "edit";
   return {
     format: REPLAY_BUNDLE_FORMAT,
     side: "tc",
@@ -88,6 +90,7 @@ export function parseReplayBundle(json: string): ReplayBundle {
     issue,
     fixture,
     protocolFormat,
+    agentMode,
     calls,
   };
 }
@@ -217,6 +220,7 @@ export async function runReplay(options: ReplayRunOptions): Promise<ReplayRun> {
       // Replay under the protocol recorded in the bundle; legacy/unknown
       // bundles normalized to JSON in `parseReplayBundle`.
       protocolFormat: options.bundle.protocolFormat,
+      agentMode: options.bundle.agentMode ?? "edit",
       checkCommand: ["bun", options.tscBin, "--noEmit"],
       testCommand: ["bun", "test"],
     });
