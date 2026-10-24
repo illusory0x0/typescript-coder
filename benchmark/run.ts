@@ -379,11 +379,15 @@ const TASK_REFERENCE_BASENAMES: Record<TaskName, string> = {
   "csv-parser": "csv",
 };
 
-const DEFAULT_MODEL = "deepseek-v4.1-flash";
+const DEFAULT_MODEL = "deepseek-flash";
 const DEFAULT_REPS = 3;
 const DEFAULT_CONCURRENCY = 4;
 const PILOT_REPS = 1;
 const OPENCODE_PROVIDER = "honghong";
+// The fixed opencode reference point: the oc side is measured once against
+// the official DeepSeek endpoint, then tc-only reports compare their
+// cache-excluded totals against this file instead of re-running oc.
+const OC_BASELINE_RELATIVE_PATH = "benchmark/results/oc-baseline.json";
 const OPENCODE_FALLBACK_BIN = "/home/illu/.opencode/bin/opencode";
 // Parallel runs multiplex one gateway, so the caps get headroom beyond the
 // serial pilot's slowest opencode run (821 s of the previous 900 s cap).
@@ -427,11 +431,11 @@ Options:
   --concurrency <n>                          max parallel runs (default: ${DEFAULT_CONCURRENCY})
   --pilot                                    force 1 rep per task and side and write
                                              benchmark/results/pilot-<date>.json
-  --side tc|oc|both                          which side(s) to run (default: both)
+  --side tc                                  only tc is measured; oc is frozen at
+                                             benchmark/results/oc-baseline.json
   --model <id>                               gateway model id (default: ${DEFAULT_MODEL})
-  --oc-model <id>                            model id for the oc side only, overriding --model
-                                             (e.g. to pin an oc variant such as
-                                             ${DEFAULT_MODEL}#none while tc uses the base id)
+  --oc-model <id>                            frozen oc model id (accepted for compatibility;
+                                             the oc side cannot run)
   --keep                                     keep workspaces and logs under ./tmp/benchmark/
   --json <path>                              report output path (default: benchmark/results/)
   --replay-dir <path>                        write per-run tc-side replay bundles to <path>
@@ -443,14 +447,10 @@ Options:
                                              tc side: a modify reply may batch path-independent
                                              edits in one {"payloads": [...]} object
                                              (default: off, one flat payload per exchange)
-  --protocol-format <json|edit-dsl>[,<...>]  edit protocol(s) for the tc side (default: edit-dsl);
-                                             a comma-separated list measures each variant in
-                                             the same concurrent matrix (for example
-                                             json,edit-dsl); order does not matter and
-                                             duplicates collapse. json keeps the flat JSON
-                                             payload; edit-dsl requires the 'select … end'
-                                             syntax (#119); compact is a deprecated alias
-                                             for edit-dsl
+  --protocol-format edit-dsl                 edit protocol for the tc side (only edit-dsl;
+                                             json is frozen at
+                                             benchmark/results/json-format-baseline.json).
+                                             compact is a deprecated alias for edit-dsl
   --help, -h                                 print this help and exit
 `);
 }
@@ -533,6 +533,26 @@ function parseSide(value: string): SideSelection {
   failUsage(`invalid --side value: ${value}`);
 }
 
+/**
+ * Frozen dimensions: the oc side and the legacy json protocol were measured
+ * once and stored under benchmark/results/. Re-running either would move the
+ * reference point, so the benchmark refuses both outright (see AGENTS.md).
+ * Returned as a message rather than thrown so tests can cover it without the
+ * process-exiting usage path.
+ */
+export function frozenDimensionError(
+  side: SideSelection,
+  protocolFormats: readonly ProtocolFormat[],
+): string | null {
+  if (side !== "tc") {
+    return "the oc side is frozen (benchmark/results/oc-baseline.json); benchmark only runs --side tc";
+  }
+  if (protocolFormats.includes("json")) {
+    return "the json protocol is frozen (benchmark/results/json-format-baseline.json); benchmark only runs --protocol-format edit-dsl";
+  }
+  return null;
+}
+
 function parseTask(value: string): TaskName {
   const match = TASKS.find((task) => task.name === value);
   if (match === undefined) {
@@ -548,7 +568,7 @@ export function parseArgs(argv: string[]): CliArgs {
     reps: DEFAULT_REPS,
     concurrency: DEFAULT_CONCURRENCY,
     pilot: false,
-    side: "both",
+    side: "tc",
     model: DEFAULT_MODEL,
     ocModel: null,
     keep: false,
@@ -703,6 +723,15 @@ export function parseArgs(argv: string[]): CliArgs {
   }
   if (args.ocModel === "") {
     failUsage("--oc-model must not be empty");
+  }
+  // Frozen dimensions: the oc side and the legacy json protocol are measured
+  // once and stored under benchmark/results/. Re-running either would move the
+  // reference point, so the benchmark refuses both outright (see AGENTS.md).
+  if (!args.help) {
+    const frozen = frozenDimensionError(args.side, args.protocolFormats);
+    if (frozen !== null) {
+      failUsage(frozen);
+    }
   }
   return args;
 }
@@ -1798,6 +1827,136 @@ export function tokenMultiplierSentence(
   return `Token multiplier (cache-excluded total, higher/lower): ${parts.join("; ")}.`;
 }
 
+export interface BaselineSavingsRow {
+  readonly task: TaskName;
+  readonly protocol: ProtocolFormat | null;
+  readonly baselineMean: number;
+  readonly currentMean: number;
+  /** Baseline mean over the current mean: how many times fewer tokens tc uses. */
+  readonly factor: number;
+}
+
+interface BaselineOverall {
+  readonly protocol: ProtocolFormat | null;
+  readonly baselineSum: number;
+  readonly currentSum: number;
+  readonly factor: number;
+  readonly tasks: number;
+}
+
+export interface BaselineSavings {
+  readonly rows: BaselineSavingsRow[];
+  readonly overall: BaselineOverall[];
+}
+
+/**
+ * Savings against the fixed oc baseline: per task and overall, `factor` is the
+ * oc baseline's mean cache-excluded total divided by the current tc mean, so
+ * `2.5` reads as "tc uses 2.5x fewer tokens". Tasks absent from either side are
+ * skipped instead of treated as zero, and a zero current mean never divides.
+ */
+export function savingsVsOcBaseline(
+  currentByTaskSide: readonly AggregateRow[],
+  baselineByTaskSide: readonly AggregateRow[],
+): BaselineSavings {
+  const baseline = new Map<TaskName, number>();
+  for (const row of baselineByTaskSide) {
+    const mean = row.tokens.total.mean;
+    if (row.side === "oc" && row.task !== null && mean !== null && mean > 0) {
+      baseline.set(row.task, mean);
+    }
+  }
+  const rows: BaselineSavingsRow[] = [];
+  for (const row of currentByTaskSide) {
+    if (row.side !== "tc" || row.task === null) {
+      continue;
+    }
+    const baselineMean = baseline.get(row.task);
+    const currentMean = row.tokens.total.mean;
+    if (baselineMean === undefined || currentMean === null || currentMean <= 0) {
+      continue;
+    }
+    rows.push({
+      task: row.task,
+      protocol: row.protocol,
+      baselineMean,
+      currentMean,
+      factor: baselineMean / currentMean,
+    });
+  }
+  const byProtocol = new Map<
+    ProtocolFormat | null,
+    { baselineSum: number; currentSum: number; tasks: number }
+  >();
+  for (const row of rows) {
+    const accrued = byProtocol.get(row.protocol) ?? { baselineSum: 0, currentSum: 0, tasks: 0 };
+    accrued.baselineSum += row.baselineMean;
+    accrued.currentSum += row.currentMean;
+    accrued.tasks += 1;
+    byProtocol.set(row.protocol, accrued);
+  }
+  const overall: BaselineOverall[] = [...byProtocol.entries()].map(([protocol, value]) => ({
+    protocol,
+    baselineSum: value.baselineSum,
+    currentSum: value.currentSum,
+    factor: value.baselineSum / value.currentSum,
+    tasks: value.tasks,
+  }));
+  return { rows, overall };
+}
+
+export function ocBaselineSavingsSentence(savings: BaselineSavings): string {
+  if (savings.overall.length === 0) {
+    return "Savings vs oc baseline: not comparable (no shared task reports a token total).";
+  }
+  const parts = savings.overall.map((entry) => {
+    const label = entry.protocol === null ? "" : `${entry.protocol} `;
+    return `${label}${entry.factor.toFixed(2)}x fewer tokens across ${entry.tasks} task${
+      entry.tasks === 1 ? "" : "s"
+    }`;
+  });
+  return `Savings vs oc baseline (cache-excluded total, oc/tc): ${parts.join("; ")}.`;
+}
+
+interface OcBaseline {
+  readonly path: string;
+  readonly date: string | null;
+  readonly model: string | null;
+  readonly reps: number | null;
+  readonly byTaskSide: AggregateRow[];
+}
+/** Read the fixed oc baseline report, or null when it is missing/unreadable. */
+function loadOcBaseline(repoRoot: string): OcBaseline | null {
+  const path = join(repoRoot, OC_BASELINE_RELATIVE_PATH);
+  if (!existsSync(path)) {
+    return null;
+  }
+  const parsed = tryParseJson(readFileSync(path, "utf8"));
+  if (!isRecord(parsed)) {
+    return null;
+  }
+  const aggregates = parsed["aggregates"];
+  if (!isRecord(aggregates)) {
+    return null;
+  }
+  const rows = aggregates["byTaskSide"];
+  if (!Array.isArray(rows)) {
+    return null;
+  }
+  const date = parsed["date"];
+  const model = parsed["model"];
+  const ocModel = parsed["ocModel"];
+  const reps = parsed["reps"];
+  const label = typeof ocModel === "string" ? ocModel : model;
+  return {
+    path: OC_BASELINE_RELATIVE_PATH,
+    date: typeof date === "string" ? date : null,
+    model: typeof label === "string" ? label : null,
+    reps: typeof reps === "number" ? reps : null,
+    byTaskSide: rows as AggregateRow[],
+  };
+}
+
 // The references tree names one file per task (json/sexp/lisp today); probe the
 // variants so the report prints a path that actually exists in the checkout.
 function resolveReferencePath(repoRoot: string, task: TaskName): string {
@@ -1949,6 +2108,45 @@ export function writeMarkdownReport(mdPath: string, report: Report): void {
   lines.push("");
   lines.push(successRateSentence(aggregates.bySide), "");
   lines.push(tokenMultiplierSentence(aggregates.bySide, aggregates.byTaskSide), "");
+  // The oc side is measured once; later tc-only reports compare against that
+  // fixed baseline instead of re-running opencode.
+  const ranOpencode = aggregates.bySide.some((row) => row.side === "oc");
+  const baseline = ranOpencode ? null : loadOcBaseline(repoRoot);
+  if (baseline !== null) {
+    const savings = savingsVsOcBaseline(aggregates.byTaskSide, baseline.byTaskSide);
+    if (savings.rows.length > 0) {
+      const baselineModel = baseline.model ?? "oc";
+      const baselineReps = baseline.reps === null ? "n/a" : `${baseline.reps} reps`;
+      lines.push("## Savings vs oc baseline", "");
+      lines.push(
+        `Baseline: \`${baseline.path}\` (${baselineModel}, ${baselineReps}, ${
+          baseline.date ?? "date n/a"
+        }). A factor above 1 means tc uses that many times fewer cache-excluded tokens.`,
+        "",
+      );
+      lines.push(
+        "| Task | Protocol | oc baseline mean total | tc mean total | Savings (oc/tc) |",
+        "| --- | --- | ---: | ---: | ---: |",
+      );
+      for (const row of savings.rows) {
+        lines.push(
+          `| ${row.task} | ${row.protocol ?? "n/a"} | ${formatTokenCount(
+            row.baselineMean,
+          )} | ${formatTokenCount(row.currentMean)} | ${row.factor.toFixed(2)}x |`,
+        );
+      }
+      for (const row of savings.overall) {
+        lines.push(
+          `| **all ${row.tasks} task${row.tasks === 1 ? "" : "s"}** | ${
+            row.protocol ?? "n/a"
+          } | ${formatTokenCount(row.baselineSum)} | ${formatTokenCount(
+            row.currentSum,
+          )} | **${row.factor.toFixed(2)}x** |`,
+        );
+      }
+      lines.push("", ocBaselineSavingsSentence(savings), "");
+    }
+  }
   lines.push(
     `*Pricing footnote (decision-only):* USD costs use the official DeepSeek V4.1-Flash peak/off-peak`,
     `rates (fetched ${PRICING_FETCHED_ON} from ${PRICING_SOURCE_URL}; USD per 1M tokens):`,
@@ -2360,6 +2558,16 @@ async function main(): Promise<number> {
   report.aggregates = computeAggregates(report.runs, tasks, sides, protocols);
   writeReport(jsonPath, report);
   writeMarkdownReport(markdownPathFor(jsonPath), report);
+  const ranOpencode = report.aggregates.bySide.some((row) => row.side === "oc");
+  if (!ranOpencode) {
+    const baseline = loadOcBaseline(repoRoot);
+    if (baseline !== null) {
+      const savings = savingsVsOcBaseline(report.aggregates.byTaskSide, baseline.byTaskSide);
+      if (savings.rows.length > 0) {
+        process.stdout.write(`${ocBaselineSavingsSentence(savings)}\n`);
+      }
+    }
+  }
   const passed = report.runs.filter((run) => run.ok).length;
   process.stdout.write(`benchmark: ${passed} passed, ${report.runs.length - passed} failed\n`);
   process.stdout.write(`report: ${jsonPath}\n`);

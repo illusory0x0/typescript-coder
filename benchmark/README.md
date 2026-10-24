@@ -22,22 +22,45 @@ an edit-dsl row.
 
 Flags: `--task`, `--all` (default), `--reps <n>` (default 3), `--concurrency
 <n>` (default 4, max parallel runs), `--pilot` (1 rep per task and side, writes
-`benchmark/results/pilot-<date>.json`), `--side tc|oc|both`, `--model`
-(default `deepseek-v4.1-flash`), `--keep`, `--json <path>`, `--replay-dir
+`benchmark/results/pilot-<date>.json`), `--side tc` (the only allowed value; oc
+is frozen), `--model`
+(default `deepseek-flash`), `--keep`, `--json <path>`, `--replay-dir
 <path>` (tc side only: write one replay bundle per run to `<path>/<task>-tc-
 rep<n>.json`; off by default), `--token-budget <n>` (tc side only: abort a run
 once accumulated provider tokens exceed n; default 120000, see "Run budget"
 below), `--effort <none|low|high|max>` (tc side only: force this reasoning_effort
 on every Edit-loop call, overriding the default described below),
-`--protocol-format <json|edit-dsl>[,...]` (tc side: one value or a
-comma-separated list; `edit-dsl` is the default, order is canonicalized,
-duplicates collapse, and `compact` is still accepted as the deprecated alias for
-`edit-dsl`), `--help`. Non-pilot results default to
-`benchmark/results/<date>.json`.
+`--protocol-format edit-dsl` (the only allowed value; `json` is frozen and
+`compact` is a deprecated alias for `edit-dsl`), `--help`. Non-pilot results
+default to `benchmark/results/<date>.json`.
 
 The tc side runs every Edit-loop call at `reasoning_effort: none` by default
 (the 2026-10-18 effort sweep showed reasoning only added cost on these tasks);
 `--effort` overrides it with one value.
+
+## Frozen baselines
+
+The oc side and the legacy `json` edit protocol are measured **once** against
+the official DeepSeek endpoint (4 tasks × 3 reps, 2026-10-24) and frozen:
+
+- `benchmark/results/oc-baseline.json` — `--side oc`, `deepseek/deepseek-flash`.
+- `benchmark/results/json-format-baseline.json` — tc with `--protocol-format
+  json`.
+
+They are reference points, not a development loop: the benchmark **rejects**
+`--side oc` and `--protocol-format json` outright, so a change can never move
+them. Do not ask for an exception. tc reports run `--side tc` with the default
+`edit-dsl` protocol.
+
+A tc-only report loads the oc baseline and renders a `## Savings vs oc baseline`
+section: per task and overall, the factor is the oc baseline's mean
+cache-excluded total divided by the tc mean, so `2.5x` means tc used 2.5 times
+fewer tokens. Tasks missing from either side are skipped. The same sentence is
+printed after a run. The baseline file carries its own `model`, `reps`, and
+`date`, and a report whose task set does not overlap it says so instead of
+inventing a ratio. (`json-format-baseline.json` records the frozen legacy
+protocol for reference; it is not a live comparison target because that
+protocol can no longer run.)
 
 Each run also writes a sibling Markdown report next to the `--json` target
 (`.json` replaced by `.md`): aggregates per task and side plus token/cost
@@ -52,11 +75,11 @@ run's judged workspace holds the last attempted content rather than the pristine
 fixture. The task × side × rep matrix runs through a bounded worker pool
 (`--concurrency`, default 4); each run keeps its own workspace, git repo,
 session, and logs, and `report.runs` stays in matrix order even though runs
-finish in arbitrary order. A comma-separated `--protocol-format` adds the tc
-protocol dimension to that same matrix: each selected variant gets one tc job
-per task/rep, `oc` still gets exactly one, and all jobs are claimed from the one
-pool (no serial per-protocol phase). Each tc run records its `protocol` (null
-for `oc`) and aggregates/report tables keep the variants in separate rows.
+finish in arbitrary order. The multi-protocol matrix still exists for historical
+reports, but the only selectable protocol is now `edit-dsl`: `json` is frozen
+and `oc` is frozen, so a run produces one tc variant per task/rep. Each tc run
+records its `protocol` (null for `oc`) and aggregates/report tables keep
+variants in separate rows.
 
 ## Fixtures and the held-out task
 

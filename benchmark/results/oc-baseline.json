@@ -1,0 +1,1149 @@
+{
+  "generatedAt": "2026-10-24T09:57:09.151Z",
+  "date": "2026-10-24",
+  "mode": "full",
+  "tasks": [
+    "json-parser",
+    "sexp-parser",
+    "minilisp",
+    "csv-parser"
+  ],
+  "sides": [
+    "oc"
+  ],
+  "reps": 3,
+  "concurrency": 4,
+  "model": "deepseek-flash",
+  "ocModel": "deepseek/deepseek-flash",
+  "effort": null,
+  "multiPayload": false,
+  "protocolFormat": "edit-dsl",
+  "protocolFormats": [
+    "edit-dsl"
+  ],
+  "tokenBudget": null,
+  "bunVersion": "1.3.13",
+  "opencodeVersion": "opencode v2.1.2",
+  "pilotReference": null,
+  "infraErrors": [],
+  "runs": [
+    {
+      "task": "json-parser",
+      "side": "oc",
+      "protocol": null,
+      "rep": 1,
+      "ok": true,
+      "sideOk": true,
+      "tokens": {
+        "input": 5682,
+        "output": 2191,
+        "cacheRead": 42624,
+        "cacheWrite": 0,
+        "reasoning": 697,
+        "total": 8570,
+        "billable": {
+          "in": 5682,
+          "out": 2888,
+          "total": 8570
+        }
+      },
+      "usageAvailable": true,
+      "usageSource": "session-export",
+      "rawUsage": {
+        "tokens": {
+          "input": 5682,
+          "output": 2191,
+          "reasoning": 697,
+          "cache": {
+            "read": 42624,
+            "write": 0
+          }
+        },
+        "cost": 0.005425943999999999,
+        "projectID": "global"
+      },
+      "durationMs": 13519,
+      "startedAt": "2026-10-24T09:57:09.638Z",
+      "finishedAt": "2026-10-24T09:57:23.158Z",
+      "cost": 0.0027129719999999997,
+      "rateClass": "off-peak",
+      "steps": 5,
+      "records": null,
+      "exchangeStats": null,
+      "loopDiagnostics": null,
+      "terminationReason": null,
+      "model": "deepseek/deepseek-flash",
+      "workspace": "tmp/benchmark/2026-10-24T09-57-09-622Z-858928ea/json-parser-oc-rep1",
+      "logs": {
+        "side": "tmp/benchmark/2026-10-24T09-57-09-622Z-858928ea/logs/json-parser-oc-rep1/side.log",
+        "judge": "tmp/benchmark/2026-10-24T09-57-09-622Z-858928ea/logs/json-parser-oc-rep1/judge.log",
+        "session": "tmp/benchmark/2026-10-24T09-57-09-622Z-858928ea/logs/json-parser-oc-rep1/session.json",
+        "stats": null
+      },
+      "versions": {
+        "bun": "1.3.13",
+        "opencode": "opencode v2.1.2"
+      },
+      "judge": {
+        "testsOk": true,
+        "tscOk": true,
+        "fixtureOk": true,
+        "detail": null
+      },
+      "error": null,
+      "infraError": null
+    },
+    {
+      "task": "json-parser",
+      "side": "oc",
+      "protocol": null,
+      "rep": 2,
+      "ok": true,
+      "sideOk": true,
+      "tokens": {
+        "input": 5533,
+        "output": 2066,
+        "cacheRead": 32128,
+        "cacheWrite": 0,
+        "reasoning": 301,
+        "total": 7900,
+        "billable": {
+          "in": 5533,
+          "out": 2367,
+          "total": 7900
+        }
+      },
+      "usageAvailable": true,
+      "usageSource": "session-export",
+      "rawUsage": {
+        "tokens": {
+          "input": 5533,
+          "output": 2066,
+          "reasoning": 301,
+          "cache": {
+            "read": 32128,
+            "write": 0
+          }
+        },
+        "cost": 0.004693068,
+        "projectID": "global"
+      },
+      "durationMs": 11495,
+      "startedAt": "2026-10-24T09:57:09.646Z",
+      "finishedAt": "2026-10-24T09:57:21.141Z",
+      "cost": 0.002346534,
+      "rateClass": "off-peak",
+      "steps": 4,
+      "records": null,
+      "exchangeStats": null,
+      "loopDiagnostics": null,
+      "terminationReason": null,
+      "model": "deepseek/deepseek-flash",
+      "workspace": "tmp/benchmark/2026-10-24T09-57-09-622Z-858928ea/json-parser-oc-rep2",
+      "logs": {
+        "side": "tmp/benchmark/2026-10-24T09-57-09-622Z-858928ea/logs/json-parser-oc-rep2/side.log",
+        "judge": "tmp/benchmark/2026-10-24T09-57-09-622Z-858928ea/logs/json-parser-oc-rep2/judge.log",
+        "session": "tmp/benchmark/2026-10-24T09-57-09-622Z-858928ea/logs/json-parser-oc-rep2/session.json",
+        "stats": null
+      },
+      "versions": {
+        "bun": "1.3.13",
+        "opencode": "opencode v2.1.2"
+      },
+      "judge": {
+        "testsOk": true,
+        "tscOk": true,
+        "fixtureOk": true,
+        "detail": null
+      },
+      "error": null,
+      "infraError": null
+    },
+    {
+      "task": "json-parser",
+      "side": "oc",
+      "protocol": null,
+      "rep": 3,
+      "ok": true,
+      "sideOk": true,
+      "tokens": {
+        "input": 5434,
+        "output": 2144,
+        "cacheRead": 32256,
+        "cacheWrite": 0,
+        "reasoning": 338,
+        "total": 7916,
+        "billable": {
+          "in": 5434,
+          "out": 2482,
+          "total": 7916
+        }
+      },
+      "usageAvailable": true,
+      "usageSource": "session-export",
+      "rawUsage": {
+        "tokens": {
+          "input": 5434,
+          "output": 2144,
+          "reasoning": 338,
+          "cache": {
+            "read": 32256,
+            "write": 0
+          }
+        },
+        "cost": 0.004802135999999999,
+        "projectID": "global"
+      },
+      "durationMs": 11999,
+      "startedAt": "2026-10-24T09:57:09.653Z",
+      "finishedAt": "2026-10-24T09:57:21.652Z",
+      "cost": 0.002401068,
+      "rateClass": "off-peak",
+      "steps": 4,
+      "records": null,
+      "exchangeStats": null,
+      "loopDiagnostics": null,
+      "terminationReason": null,
+      "model": "deepseek/deepseek-flash",
+      "workspace": "tmp/benchmark/2026-10-24T09-57-09-622Z-858928ea/json-parser-oc-rep3",
+      "logs": {
+        "side": "tmp/benchmark/2026-10-24T09-57-09-622Z-858928ea/logs/json-parser-oc-rep3/side.log",
+        "judge": "tmp/benchmark/2026-10-24T09-57-09-622Z-858928ea/logs/json-parser-oc-rep3/judge.log",
+        "session": "tmp/benchmark/2026-10-24T09-57-09-622Z-858928ea/logs/json-parser-oc-rep3/session.json",
+        "stats": null
+      },
+      "versions": {
+        "bun": "1.3.13",
+        "opencode": "opencode v2.1.2"
+      },
+      "judge": {
+        "testsOk": true,
+        "tscOk": true,
+        "fixtureOk": true,
+        "detail": null
+      },
+      "error": null,
+      "infraError": null
+    },
+    {
+      "task": "sexp-parser",
+      "side": "oc",
+      "protocol": null,
+      "rep": 1,
+      "ok": true,
+      "sideOk": true,
+      "tokens": {
+        "input": 8269,
+        "output": 1363,
+        "cacheRead": 53632,
+        "cacheWrite": 0,
+        "reasoning": 463,
+        "total": 10095,
+        "billable": {
+          "in": 8269,
+          "out": 1826,
+          "total": 10095
+        }
+      },
+      "usageAvailable": true,
+      "usageSource": "session-export",
+      "rawUsage": {
+        "tokens": {
+          "input": 8269,
+          "output": 1363,
+          "reasoning": 463,
+          "cache": {
+            "read": 53632,
+            "write": 0
+          }
+        },
+        "cost": 0.004993692,
+        "projectID": "global"
+      },
+      "durationMs": 13700,
+      "startedAt": "2026-10-24T09:57:09.662Z",
+      "finishedAt": "2026-10-24T09:57:23.362Z",
+      "cost": 0.0024968459999999996,
+      "rateClass": "off-peak",
+      "steps": 6,
+      "records": null,
+      "exchangeStats": null,
+      "loopDiagnostics": null,
+      "terminationReason": null,
+      "model": "deepseek/deepseek-flash",
+      "workspace": "tmp/benchmark/2026-10-24T09-57-09-622Z-858928ea/sexp-parser-oc-rep1",
+      "logs": {
+        "side": "tmp/benchmark/2026-10-24T09-57-09-622Z-858928ea/logs/sexp-parser-oc-rep1/side.log",
+        "judge": "tmp/benchmark/2026-10-24T09-57-09-622Z-858928ea/logs/sexp-parser-oc-rep1/judge.log",
+        "session": "tmp/benchmark/2026-10-24T09-57-09-622Z-858928ea/logs/sexp-parser-oc-rep1/session.json",
+        "stats": null
+      },
+      "versions": {
+        "bun": "1.3.13",
+        "opencode": "opencode v2.1.2"
+      },
+      "judge": {
+        "testsOk": true,
+        "tscOk": true,
+        "fixtureOk": true,
+        "detail": null
+      },
+      "error": null,
+      "infraError": null
+    },
+    {
+      "task": "sexp-parser",
+      "side": "oc",
+      "protocol": null,
+      "rep": 2,
+      "ok": true,
+      "sideOk": true,
+      "tokens": {
+        "input": 5097,
+        "output": 1038,
+        "cacheRead": 29440,
+        "cacheWrite": 0,
+        "reasoning": 276,
+        "total": 6411,
+        "billable": {
+          "in": 5097,
+          "out": 1314,
+          "total": 6411
+        }
+      },
+      "usageAvailable": true,
+      "usageSource": "session-export",
+      "rawUsage": {
+        "tokens": {
+          "input": 5097,
+          "output": 1038,
+          "reasoning": 276,
+          "cache": {
+            "read": 29440,
+            "write": 0
+          }
+        },
+        "cost": 0.00328254,
+        "projectID": "global"
+      },
+      "durationMs": 7852,
+      "startedAt": "2026-10-24T09:57:21.439Z",
+      "finishedAt": "2026-10-24T09:57:29.291Z",
+      "cost": 0.00164127,
+      "rateClass": "off-peak",
+      "steps": 4,
+      "records": null,
+      "exchangeStats": null,
+      "loopDiagnostics": null,
+      "terminationReason": null,
+      "model": "deepseek/deepseek-flash",
+      "workspace": "tmp/benchmark/2026-10-24T09-57-09-622Z-858928ea/sexp-parser-oc-rep2",
+      "logs": {
+        "side": "tmp/benchmark/2026-10-24T09-57-09-622Z-858928ea/logs/sexp-parser-oc-rep2/side.log",
+        "judge": "tmp/benchmark/2026-10-24T09-57-09-622Z-858928ea/logs/sexp-parser-oc-rep2/judge.log",
+        "session": "tmp/benchmark/2026-10-24T09-57-09-622Z-858928ea/logs/sexp-parser-oc-rep2/session.json",
+        "stats": null
+      },
+      "versions": {
+        "bun": "1.3.13",
+        "opencode": "opencode v2.1.2"
+      },
+      "judge": {
+        "testsOk": true,
+        "tscOk": true,
+        "fixtureOk": true,
+        "detail": null
+      },
+      "error": null,
+      "infraError": null
+    },
+    {
+      "task": "sexp-parser",
+      "side": "oc",
+      "protocol": null,
+      "rep": 3,
+      "ok": true,
+      "sideOk": true,
+      "tokens": {
+        "input": 5144,
+        "output": 1033,
+        "cacheRead": 29440,
+        "cacheWrite": 0,
+        "reasoning": 209,
+        "total": 6386,
+        "billable": {
+          "in": 5144,
+          "out": 1242,
+          "total": 6386
+        }
+      },
+      "usageAvailable": true,
+      "usageSource": "session-export",
+      "rawUsage": {
+        "tokens": {
+          "input": 5144,
+          "output": 1033,
+          "reasoning": 209,
+          "cache": {
+            "read": 29440,
+            "write": 0
+          }
+        },
+        "cost": 0.0032102399999999996,
+        "projectID": "global"
+      },
+      "durationMs": 8204,
+      "startedAt": "2026-10-24T09:57:21.923Z",
+      "finishedAt": "2026-10-24T09:57:30.127Z",
+      "cost": 0.0016051199999999998,
+      "rateClass": "off-peak",
+      "steps": 4,
+      "records": null,
+      "exchangeStats": null,
+      "loopDiagnostics": null,
+      "terminationReason": null,
+      "model": "deepseek/deepseek-flash",
+      "workspace": "tmp/benchmark/2026-10-24T09-57-09-622Z-858928ea/sexp-parser-oc-rep3",
+      "logs": {
+        "side": "tmp/benchmark/2026-10-24T09-57-09-622Z-858928ea/logs/sexp-parser-oc-rep3/side.log",
+        "judge": "tmp/benchmark/2026-10-24T09-57-09-622Z-858928ea/logs/sexp-parser-oc-rep3/judge.log",
+        "session": "tmp/benchmark/2026-10-24T09-57-09-622Z-858928ea/logs/sexp-parser-oc-rep3/session.json",
+        "stats": null
+      },
+      "versions": {
+        "bun": "1.3.13",
+        "opencode": "opencode v2.1.2"
+      },
+      "judge": {
+        "testsOk": true,
+        "tscOk": true,
+        "fixtureOk": true,
+        "detail": null
+      },
+      "error": null,
+      "infraError": null
+    },
+    {
+      "task": "minilisp",
+      "side": "oc",
+      "protocol": null,
+      "rep": 1,
+      "ok": true,
+      "sideOk": true,
+      "tokens": {
+        "input": 5974,
+        "output": 4004,
+        "cacheRead": 62080,
+        "cacheWrite": 0,
+        "reasoning": 1612,
+        "total": 11590,
+        "billable": {
+          "in": 5974,
+          "out": 5616,
+          "total": 11590
+        }
+      },
+      "usageAvailable": true,
+      "usageSource": "session-export",
+      "rawUsage": {
+        "tokens": {
+          "input": 5974,
+          "output": 4004,
+          "reasoning": 1612,
+          "cache": {
+            "read": 62080,
+            "write": 0
+          }
+        },
+        "cost": 0.008903879999999998,
+        "projectID": "global"
+      },
+      "durationMs": 29247,
+      "startedAt": "2026-10-24T09:57:23.514Z",
+      "finishedAt": "2026-10-24T09:57:52.761Z",
+      "cost": 0.004451940000000001,
+      "rateClass": "off-peak",
+      "steps": 6,
+      "records": null,
+      "exchangeStats": null,
+      "loopDiagnostics": null,
+      "terminationReason": null,
+      "model": "deepseek/deepseek-flash",
+      "workspace": "tmp/benchmark/2026-10-24T09-57-09-622Z-858928ea/minilisp-oc-rep1",
+      "logs": {
+        "side": "tmp/benchmark/2026-10-24T09-57-09-622Z-858928ea/logs/minilisp-oc-rep1/side.log",
+        "judge": "tmp/benchmark/2026-10-24T09-57-09-622Z-858928ea/logs/minilisp-oc-rep1/judge.log",
+        "session": "tmp/benchmark/2026-10-24T09-57-09-622Z-858928ea/logs/minilisp-oc-rep1/session.json",
+        "stats": null
+      },
+      "versions": {
+        "bun": "1.3.13",
+        "opencode": "opencode v2.1.2"
+      },
+      "judge": {
+        "testsOk": true,
+        "tscOk": true,
+        "fixtureOk": true,
+        "detail": null
+      },
+      "error": null,
+      "infraError": null
+    },
+    {
+      "task": "minilisp",
+      "side": "oc",
+      "protocol": null,
+      "rep": 2,
+      "ok": true,
+      "sideOk": true,
+      "tokens": {
+        "input": 6298,
+        "output": 2363,
+        "cacheRead": 58368,
+        "cacheWrite": 0,
+        "reasoning": 1775,
+        "total": 10436,
+        "billable": {
+          "in": 6298,
+          "out": 4138,
+          "total": 10436
+        }
+      },
+      "usageAvailable": true,
+      "usageSource": "session-export",
+      "rawUsage": {
+        "tokens": {
+          "input": 6298,
+          "output": 2363,
+          "reasoning": 1775,
+          "cache": {
+            "read": 58368,
+            "write": 0
+          }
+        },
+        "cost": 0.007205207999999999,
+        "projectID": "global"
+      },
+      "durationMs": 24941,
+      "startedAt": "2026-10-24T09:57:23.663Z",
+      "finishedAt": "2026-10-24T09:57:48.604Z",
+      "cost": 0.0036026039999999993,
+      "rateClass": "off-peak",
+      "steps": 6,
+      "records": null,
+      "exchangeStats": null,
+      "loopDiagnostics": null,
+      "terminationReason": null,
+      "model": "deepseek/deepseek-flash",
+      "workspace": "tmp/benchmark/2026-10-24T09-57-09-622Z-858928ea/minilisp-oc-rep2",
+      "logs": {
+        "side": "tmp/benchmark/2026-10-24T09-57-09-622Z-858928ea/logs/minilisp-oc-rep2/side.log",
+        "judge": "tmp/benchmark/2026-10-24T09-57-09-622Z-858928ea/logs/minilisp-oc-rep2/judge.log",
+        "session": "tmp/benchmark/2026-10-24T09-57-09-622Z-858928ea/logs/minilisp-oc-rep2/session.json",
+        "stats": null
+      },
+      "versions": {
+        "bun": "1.3.13",
+        "opencode": "opencode v2.1.2"
+      },
+      "judge": {
+        "testsOk": true,
+        "tscOk": true,
+        "fixtureOk": true,
+        "detail": null
+      },
+      "error": null,
+      "infraError": null
+    },
+    {
+      "task": "minilisp",
+      "side": "oc",
+      "protocol": null,
+      "rep": 3,
+      "ok": true,
+      "sideOk": true,
+      "tokens": {
+        "input": 8467,
+        "output": 4328,
+        "cacheRead": 178944,
+        "cacheWrite": 0,
+        "reasoning": 3601,
+        "total": 16396,
+        "billable": {
+          "in": 8467,
+          "out": 7929,
+          "total": 16396
+        }
+      },
+      "usageAvailable": true,
+      "usageSource": "session-export",
+      "rawUsage": {
+        "tokens": {
+          "input": 8467,
+          "output": 4328,
+          "reasoning": 3601,
+          "cache": {
+            "read": 178944,
+            "write": 0
+          }
+        },
+        "cost": 0.013128564000000002,
+        "projectID": "global"
+      },
+      "durationMs": 45546,
+      "startedAt": "2026-10-24T09:57:29.587Z",
+      "finishedAt": "2026-10-24T09:58:15.134Z",
+      "cost": 0.006564281999999999,
+      "rateClass": "off-peak",
+      "steps": 13,
+      "records": null,
+      "exchangeStats": null,
+      "loopDiagnostics": null,
+      "terminationReason": null,
+      "model": "deepseek/deepseek-flash",
+      "workspace": "tmp/benchmark/2026-10-24T09-57-09-622Z-858928ea/minilisp-oc-rep3",
+      "logs": {
+        "side": "tmp/benchmark/2026-10-24T09-57-09-622Z-858928ea/logs/minilisp-oc-rep3/side.log",
+        "judge": "tmp/benchmark/2026-10-24T09-57-09-622Z-858928ea/logs/minilisp-oc-rep3/judge.log",
+        "session": "tmp/benchmark/2026-10-24T09-57-09-622Z-858928ea/logs/minilisp-oc-rep3/session.json",
+        "stats": null
+      },
+      "versions": {
+        "bun": "1.3.13",
+        "opencode": "opencode v2.1.2"
+      },
+      "judge": {
+        "testsOk": true,
+        "tscOk": true,
+        "fixtureOk": true,
+        "detail": null
+      },
+      "error": null,
+      "infraError": null
+    },
+    {
+      "task": "csv-parser",
+      "side": "oc",
+      "protocol": null,
+      "rep": 1,
+      "ok": true,
+      "sideOk": true,
+      "tokens": {
+        "input": 5191,
+        "output": 1040,
+        "cacheRead": 30592,
+        "cacheWrite": 0,
+        "reasoning": 660,
+        "total": 6891,
+        "billable": {
+          "in": 5191,
+          "out": 1700,
+          "total": 6891
+        }
+      },
+      "usageAvailable": true,
+      "usageSource": "session-export",
+      "rawUsage": {
+        "tokens": {
+          "input": 5191,
+          "output": 1040,
+          "reasoning": 660,
+          "cache": {
+            "read": 30592,
+            "write": 0
+          }
+        },
+        "cost": 0.0037808519999999995,
+        "projectID": "global"
+      },
+      "durationMs": 11542,
+      "startedAt": "2026-10-24T09:57:30.404Z",
+      "finishedAt": "2026-10-24T09:57:41.946Z",
+      "cost": 0.001890426,
+      "rateClass": "off-peak",
+      "steps": 4,
+      "records": null,
+      "exchangeStats": null,
+      "loopDiagnostics": null,
+      "terminationReason": null,
+      "model": "deepseek/deepseek-flash",
+      "workspace": "tmp/benchmark/2026-10-24T09-57-09-622Z-858928ea/csv-parser-oc-rep1",
+      "logs": {
+        "side": "tmp/benchmark/2026-10-24T09-57-09-622Z-858928ea/logs/csv-parser-oc-rep1/side.log",
+        "judge": "tmp/benchmark/2026-10-24T09-57-09-622Z-858928ea/logs/csv-parser-oc-rep1/judge.log",
+        "session": "tmp/benchmark/2026-10-24T09-57-09-622Z-858928ea/logs/csv-parser-oc-rep1/session.json",
+        "stats": null
+      },
+      "versions": {
+        "bun": "1.3.13",
+        "opencode": "opencode v2.1.2"
+      },
+      "judge": {
+        "testsOk": true,
+        "tscOk": true,
+        "fixtureOk": true,
+        "detail": null
+      },
+      "error": null,
+      "infraError": null
+    },
+    {
+      "task": "csv-parser",
+      "side": "oc",
+      "protocol": null,
+      "rep": 2,
+      "ok": true,
+      "sideOk": true,
+      "tokens": {
+        "input": 5280,
+        "output": 1189,
+        "cacheRead": 32256,
+        "cacheWrite": 0,
+        "reasoning": 1555,
+        "total": 8024,
+        "billable": {
+          "in": 5280,
+          "out": 2744,
+          "total": 8024
+        }
+      },
+      "usageAvailable": true,
+      "usageSource": "session-export",
+      "rawUsage": {
+        "tokens": {
+          "input": 5280,
+          "output": 1189,
+          "reasoning": 1555,
+          "cache": {
+            "read": 32256,
+            "write": 0
+          }
+        },
+        "cost": 0.005070336,
+        "projectID": "global"
+      },
+      "durationMs": 16006,
+      "startedAt": "2026-10-24T09:57:42.220Z",
+      "finishedAt": "2026-10-24T09:57:58.226Z",
+      "cost": 0.0025351679999999995,
+      "rateClass": "off-peak",
+      "steps": 4,
+      "records": null,
+      "exchangeStats": null,
+      "loopDiagnostics": null,
+      "terminationReason": null,
+      "model": "deepseek/deepseek-flash",
+      "workspace": "tmp/benchmark/2026-10-24T09-57-09-622Z-858928ea/csv-parser-oc-rep2",
+      "logs": {
+        "side": "tmp/benchmark/2026-10-24T09-57-09-622Z-858928ea/logs/csv-parser-oc-rep2/side.log",
+        "judge": "tmp/benchmark/2026-10-24T09-57-09-622Z-858928ea/logs/csv-parser-oc-rep2/judge.log",
+        "session": "tmp/benchmark/2026-10-24T09-57-09-622Z-858928ea/logs/csv-parser-oc-rep2/session.json",
+        "stats": null
+      },
+      "versions": {
+        "bun": "1.3.13",
+        "opencode": "opencode v2.1.2"
+      },
+      "judge": {
+        "testsOk": true,
+        "tscOk": true,
+        "fixtureOk": true,
+        "detail": null
+      },
+      "error": null,
+      "infraError": null
+    },
+    {
+      "task": "csv-parser",
+      "side": "oc",
+      "protocol": null,
+      "rep": 3,
+      "ok": true,
+      "sideOk": true,
+      "tokens": {
+        "input": 5220,
+        "output": 944,
+        "cacheRead": 29568,
+        "cacheWrite": 0,
+        "reasoning": 224,
+        "total": 6388,
+        "billable": {
+          "in": 5220,
+          "out": 1168,
+          "total": 6388
+        }
+      },
+      "usageAvailable": true,
+      "usageSource": "session-export",
+      "rawUsage": {
+        "tokens": {
+          "input": 5220,
+          "output": 944,
+          "reasoning": 224,
+          "cache": {
+            "read": 29568,
+            "write": 0
+          }
+        },
+        "cost": 0.003145008,
+        "projectID": "global"
+      },
+      "durationMs": 9254,
+      "startedAt": "2026-10-24T09:57:48.871Z",
+      "finishedAt": "2026-10-24T09:57:58.125Z",
+      "cost": 0.001572504,
+      "rateClass": "off-peak",
+      "steps": 4,
+      "records": null,
+      "exchangeStats": null,
+      "loopDiagnostics": null,
+      "terminationReason": null,
+      "model": "deepseek/deepseek-flash",
+      "workspace": "tmp/benchmark/2026-10-24T09-57-09-622Z-858928ea/csv-parser-oc-rep3",
+      "logs": {
+        "side": "tmp/benchmark/2026-10-24T09-57-09-622Z-858928ea/logs/csv-parser-oc-rep3/side.log",
+        "judge": "tmp/benchmark/2026-10-24T09-57-09-622Z-858928ea/logs/csv-parser-oc-rep3/judge.log",
+        "session": "tmp/benchmark/2026-10-24T09-57-09-622Z-858928ea/logs/csv-parser-oc-rep3/session.json",
+        "stats": null
+      },
+      "versions": {
+        "bun": "1.3.13",
+        "opencode": "opencode v2.1.2"
+      },
+      "judge": {
+        "testsOk": true,
+        "tscOk": true,
+        "fixtureOk": true,
+        "detail": null
+      },
+      "error": null,
+      "infraError": null
+    }
+  ],
+  "aggregates": {
+    "byTaskSide": [
+      {
+        "task": "json-parser",
+        "side": "oc",
+        "protocol": null,
+        "runs": 3,
+        "ok": 3,
+        "failed": 0,
+        "successRate": 1,
+        "usageRuns": 3,
+        "tokens": {
+          "in": {
+            "mean": 5549.666666666667,
+            "total": 16649
+          },
+          "out": {
+            "mean": 2579,
+            "total": 7737
+          },
+          "total": {
+            "mean": 8128.666666666667,
+            "total": 24386
+          }
+        },
+        "cost": {
+          "mean": 0.002486858,
+          "total": 0.007460574
+        },
+        "durationMsMean": 12337.666666666666,
+        "stepsMean": 4.333333333333333,
+        "tokensPerSuccess": {
+          "in": 5549.666666666667,
+          "out": 2579,
+          "total": 8128.666666666667
+        },
+        "costPerSuccess": 0.002486858,
+        "selectors": {
+          "range": 0,
+          "matcher": 0,
+          "wholeSymbol": 0
+        },
+        "stages": {
+          "wholeSymbol": 0,
+          "match": 0,
+          "pick": 0
+        },
+        "matcherKinds": {
+          "snippet": 0,
+          "regex": 0
+        },
+        "creates": 0
+      },
+      {
+        "task": "sexp-parser",
+        "side": "oc",
+        "protocol": null,
+        "runs": 3,
+        "ok": 3,
+        "failed": 0,
+        "successRate": 1,
+        "usageRuns": 3,
+        "tokens": {
+          "in": {
+            "mean": 6170,
+            "total": 18510
+          },
+          "out": {
+            "mean": 1460.6666666666667,
+            "total": 4382
+          },
+          "total": {
+            "mean": 7630.666666666667,
+            "total": 22892
+          }
+        },
+        "cost": {
+          "mean": 0.0019144119999999999,
+          "total": 0.005743236
+        },
+        "durationMsMean": 9918.666666666666,
+        "stepsMean": 4.666666666666667,
+        "tokensPerSuccess": {
+          "in": 6170,
+          "out": 1460.6666666666667,
+          "total": 7630.666666666667
+        },
+        "costPerSuccess": 0.0019144119999999999,
+        "selectors": {
+          "range": 0,
+          "matcher": 0,
+          "wholeSymbol": 0
+        },
+        "stages": {
+          "wholeSymbol": 0,
+          "match": 0,
+          "pick": 0
+        },
+        "matcherKinds": {
+          "snippet": 0,
+          "regex": 0
+        },
+        "creates": 0
+      },
+      {
+        "task": "minilisp",
+        "side": "oc",
+        "protocol": null,
+        "runs": 3,
+        "ok": 3,
+        "failed": 0,
+        "successRate": 1,
+        "usageRuns": 3,
+        "tokens": {
+          "in": {
+            "mean": 6913,
+            "total": 20739
+          },
+          "out": {
+            "mean": 5894.333333333333,
+            "total": 17683
+          },
+          "total": {
+            "mean": 12807.333333333334,
+            "total": 38422
+          }
+        },
+        "cost": {
+          "mean": 0.004872942,
+          "total": 0.014618826
+        },
+        "durationMsMean": 33244.666666666664,
+        "stepsMean": 8.333333333333334,
+        "tokensPerSuccess": {
+          "in": 6913,
+          "out": 5894.333333333333,
+          "total": 12807.333333333334
+        },
+        "costPerSuccess": 0.004872942,
+        "selectors": {
+          "range": 0,
+          "matcher": 0,
+          "wholeSymbol": 0
+        },
+        "stages": {
+          "wholeSymbol": 0,
+          "match": 0,
+          "pick": 0
+        },
+        "matcherKinds": {
+          "snippet": 0,
+          "regex": 0
+        },
+        "creates": 0
+      },
+      {
+        "task": "csv-parser",
+        "side": "oc",
+        "protocol": null,
+        "runs": 3,
+        "ok": 3,
+        "failed": 0,
+        "successRate": 1,
+        "usageRuns": 3,
+        "tokens": {
+          "in": {
+            "mean": 5230.333333333333,
+            "total": 15691
+          },
+          "out": {
+            "mean": 1870.6666666666667,
+            "total": 5612
+          },
+          "total": {
+            "mean": 7101,
+            "total": 21303
+          }
+        },
+        "cost": {
+          "mean": 0.001999366,
+          "total": 0.0059980979999999995
+        },
+        "durationMsMean": 12267.333333333334,
+        "stepsMean": 4,
+        "tokensPerSuccess": {
+          "in": 5230.333333333333,
+          "out": 1870.6666666666667,
+          "total": 7101
+        },
+        "costPerSuccess": 0.001999366,
+        "selectors": {
+          "range": 0,
+          "matcher": 0,
+          "wholeSymbol": 0
+        },
+        "stages": {
+          "wholeSymbol": 0,
+          "match": 0,
+          "pick": 0
+        },
+        "matcherKinds": {
+          "snippet": 0,
+          "regex": 0
+        },
+        "creates": 0
+      }
+    ],
+    "bySide": [
+      {
+        "task": null,
+        "side": "oc",
+        "protocol": null,
+        "runs": 12,
+        "ok": 12,
+        "failed": 0,
+        "successRate": 1,
+        "usageRuns": 12,
+        "tokens": {
+          "in": {
+            "mean": 5965.75,
+            "total": 71589
+          },
+          "out": {
+            "mean": 2951.1666666666665,
+            "total": 35414
+          },
+          "total": {
+            "mean": 8916.916666666666,
+            "total": 107003
+          }
+        },
+        "cost": {
+          "mean": 0.0028183945,
+          "total": 0.033820734
+        },
+        "durationMsMean": 16942.083333333332,
+        "stepsMean": 5.333333333333333,
+        "tokensPerSuccess": {
+          "in": 5965.75,
+          "out": 2951.1666666666665,
+          "total": 8916.916666666666
+        },
+        "costPerSuccess": 0.0028183945,
+        "selectors": {
+          "range": 0,
+          "matcher": 0,
+          "wholeSymbol": 0
+        },
+        "stages": {
+          "wholeSymbol": 0,
+          "match": 0,
+          "pick": 0
+        },
+        "matcherKinds": {
+          "snippet": 0,
+          "regex": 0
+        },
+        "creates": 0
+      }
+    ],
+    "overall": [
+      {
+        "task": null,
+        "side": "oc",
+        "protocol": null,
+        "runs": 12,
+        "ok": 12,
+        "failed": 0,
+        "successRate": 1,
+        "usageRuns": 12,
+        "tokens": {
+          "in": {
+            "mean": 5965.75,
+            "total": 71589
+          },
+          "out": {
+            "mean": 2951.1666666666665,
+            "total": 35414
+          },
+          "total": {
+            "mean": 8916.916666666666,
+            "total": 107003
+          }
+        },
+        "cost": {
+          "mean": 0.0028183945,
+          "total": 0.033820734
+        },
+        "durationMsMean": 16942.083333333332,
+        "stepsMean": 5.333333333333333,
+        "tokensPerSuccess": {
+          "in": 5965.75,
+          "out": 2951.1666666666665,
+          "total": 8916.916666666666
+        },
+        "costPerSuccess": 0.0028183945,
+        "selectors": {
+          "range": 0,
+          "matcher": 0,
+          "wholeSymbol": 0
+        },
+        "stages": {
+          "wholeSymbol": 0,
+          "match": 0,
+          "pick": 0
+        },
+        "matcherKinds": {
+          "snippet": 0,
+          "regex": 0
+        },
+        "creates": 0
+      }
+    ]
+  },
+  "provenance": {
+    "inputs": {
+      "model": "7d963f65d1ede1bd9416a5f55575efe0d202e0a00519ef04e47dae20c3180445",
+      "taskIssue": "f804315c31409381af225e25efafbf67ce848cdd323c4eeec81d6b10bc598a24",
+      "fixture": "f7f2c7770301209f01f973de4e1b1b8e52302ffa3e749558993909f14d792681",
+      "systemPrompt": "971b706cc629ed451a82ab7c47ddd4ddd1766757cc96335d066d659c85368bf2",
+      "loopConfig": "c3a6ac3bbb97ab6e7258844b30e9009c07b542b7d102fb8110a30070773538a5",
+      "pricing": "aab6f45ac055bdc46329be2c46279a8ce322bfa62c0c61f0ef177d8b67766560"
+    },
+    "inputHash": "e2de52b30af4d8b6c506f8296239701a4cd4d094875ab71c51f194d8dc90abf6",
+    "computedAt": "2026-10-24T09:57:09.151Z"
+  }
+}

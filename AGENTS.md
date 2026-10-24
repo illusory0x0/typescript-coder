@@ -33,6 +33,19 @@ harness — deterministic tests, offline acceptance scenarios, replay fixtures,
 diagnostics — and reserve a targeted live run for the end of a change, when a
 human asks for it or the harness cannot answer the question.
 
+The oc side and the legacy `json` edit protocol are **frozen reference points**:
+
+- `benchmark/results/oc-baseline.json` — oc, official `deepseek/deepseek-flash`,
+  4 tasks × 3 reps, 2026-10-24.
+- `benchmark/results/json-format-baseline.json` — tc with `--protocol-format
+  json`, 4 tasks × 3 reps, 2026-10-24.
+
+Strictly forbidden, with no exception: **do not run `--side oc` and do not run
+`--protocol-format json`** in the benchmark. Do not ask whether to run them; the
+benchmark now rejects both. tc reports run `--side tc` with the default
+`--protocol-format edit-dsl` and report their savings against the frozen oc
+baseline.
+
 ## Layout / entrypoints
 
 - `src/main.ts` — CLI entry (`#!/usr/bin/env bun`, piped-stdin contract `tc < task.txt`; a TTY stdin prints help).
@@ -50,7 +63,7 @@ human asks for it or the harness cannot answer the question.
 - `bun test` at root only sees `src/` (`bunfig.toml` `root = "./src"`); acceptance/benchmark run their own commands.
 - `benchmark/` is excluded from `tsc` (`benchmark/fixtures`), and `judge-golden.test.ts` imports it through a computed specifier so the self-host copy of just `src/` stays green — preserve that trick when touching `benchmark/`.
 - `tsconfig` is strict + `noUncheckedIndexedAccess` + `verbatimModuleSyntax`: use `import type`, handle possibly-undefined index results (code style follows this: `const x = arr[i]; if (x === undefined) …`).
-- Live checks cost tokens: `just accept --live` and `bun run benchmark/run.ts` call the real model (default `deepseek-v4.1-flash`). Don't run them unprompted, and don't use them as an iteration loop — see Evaluation.
+- Live checks cost tokens: `just accept --live` and `bun run benchmark/run.ts` call the real model (benchmark default `deepseek-flash` on the official endpoint). Don't run them unprompted, and don't use them as an iteration loop — see Evaluation.
 - `csv-parser` benchmark fixture is held out — never tune prompts or code against it.
 - Benchmark artifacts (`benchmark/results/`, `failures/`, `tmp/`, `acceptance/report.json`) are generated; don't commit unless the ledger (`consumption.md`) cites them.
 - Commits are titled by topic (`resolve-issue: …`, `Land #80: …`) and reference tracker issue numbers in comments as `(#NN)`; the tracker is the local coding-skills set, not GitHub.

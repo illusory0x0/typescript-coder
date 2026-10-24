@@ -51,3 +51,19 @@ divides the summed USD of the selected runs (failed runs included) by that
 success count; `n/a` means no run passed. See `benchmark/README.md`
 §"Evidence and provenance" for the full rule. Every row cites exactly one source
 JSON, re-derived by `bun benchmark/check.ts`.
+
+## Frozen baselines
+
+Two reference points are measured once and then frozen; the benchmark rejects
+`--side oc` and `--protocol-format json` so neither can move. See
+`benchmark/README.md` §"Frozen baselines". tc reports compare their
+cache-excluded totals against the oc baseline.
+
+| Group       | Date       | Side / protocol | Model                     | Tasks | Reps | Success | Mean total (cache-excluded) | Source                                      |
+| ----------- | ---------- | --------------- | ------------------------- | ----- | ---- | ------- | --------------------------: | ------------------------------------------- |
+| oc          | 2026-10-24 | oc              | `deepseek/deepseek-flash` | all 4 | 3    | 12/12   | 8,917                       | `benchmark/results/oc-baseline.json`        |
+| json-format | 2026-10-24 | tc / `json`     | `deepseek-flash`          | all 4 | 3    | 12/12   | 3,709                       | `benchmark/results/json-format-baseline.json` |
+
+The json-format group used 2.40× fewer cache-excluded tokens than the oc
+baseline over the same four tasks.
+

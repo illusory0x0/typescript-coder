@@ -80,10 +80,35 @@ interface RunModule {
     bySide: readonly AggregateLike[],
     byTaskSide: readonly AggregateLike[],
   ): string;
+  savingsVsOcBaseline(
+    currentByTaskSide: readonly AggregateLike[],
+    baselineByTaskSide: readonly AggregateLike[],
+  ): {
+    rows: {
+      task: string;
+      protocol: string | null;
+      baselineMean: number;
+      currentMean: number;
+      factor: number;
+    }[];
+    overall: {
+      protocol: string | null;
+      baselineSum: number;
+      currentSum: number;
+      factor: number;
+      tasks: number;
+    }[];
+  };
+  ocBaselineSavingsSentence(savings: unknown): string;
+  frozenDimensionError(
+    side: "tc" | "oc" | "both",
+    protocolFormats: readonly ("json" | "edit-dsl")[],
+  ): string | null;
   writeMarkdownReport(path: string, report: unknown): void;
   parseArgs(argv: string[]): {
     model: string;
     ocModel: string | null;
+    side: string;
     protocolFormats: string[];
   };
   opencodeModelFor(model: string, ocModel: string | null): string;
@@ -209,6 +234,61 @@ describe("cache-excluded token triple (#89)", () => {
     const aggregates = computeAggregates(runs, ["json-parser"], ["tc"]);
     const sentence = tokenMultiplierSentence(aggregates.bySide, aggregates.byTaskSide);
     expect(sentence).toContain("not comparable");
+  });
+
+  test.skipIf(!runModulePresent)(
+    "savings vs the oc baseline uses oc/tc per task and over the shared tasks",
+    async () => {
+      const { computeAggregates, savingsVsOcBaseline, ocBaselineSavingsSentence } =
+        await loadRunModule();
+      const tasks = ["json-parser", "sexp-parser"];
+      const baseline = computeAggregates(
+        [
+          makeRun("json-parser", "oc", { input: 900, output: 400 }),
+          makeRun("sexp-parser", "oc", { input: 400, output: 200 }),
+        ],
+        tasks,
+        ["oc"],
+      );
+      // tc: json-parser 700, sexp-parser 200.
+      const current = computeAggregates(sampleRuns(), tasks, ["tc"]);
+      const savings = savingsVsOcBaseline(current.byTaskSide, baseline.byTaskSide);
+      expect(savings.rows.map((row) => [row.task, row.factor.toFixed(2)])).toEqual([
+        ["json-parser", "1.86"],
+        ["sexp-parser", "3.00"],
+      ]);
+      expect(savings.overall).toHaveLength(1);
+      expect(savings.overall[0]?.factor.toFixed(2)).toBe("2.11");
+      expect(savings.overall[0]?.tasks).toBe(2);
+      expect(ocBaselineSavingsSentence(savings)).toContain("2.11x fewer tokens across 2 tasks");
+    },
+  );
+
+  test.skipIf(!runModulePresent)("savings skips tasks the baseline never ran", async () => {
+    const { computeAggregates, savingsVsOcBaseline, ocBaselineSavingsSentence } =
+      await loadRunModule();
+    const baseline = computeAggregates(
+      [makeRun("json-parser", "oc", { input: 900, output: 400 })],
+      ["json-parser"],
+      ["oc"],
+    );
+    const current = computeAggregates(
+      [makeRun("json-parser", "tc", { input: 200, output: 100 })],
+      ["json-parser"],
+      ["tc"],
+    );
+    const savings = savingsVsOcBaseline(current.byTaskSide, baseline.byTaskSide);
+    expect(savings.rows).toHaveLength(1);
+    const empty = savingsVsOcBaseline(
+      computeAggregates(
+        [makeRun("minilisp", "tc", { input: 200, output: 100 })],
+        ["minilisp"],
+        ["tc"],
+      ).byTaskSide,
+      baseline.byTaskSide,
+    );
+    expect(empty.rows).toHaveLength(0);
+    expect(ocBaselineSavingsSentence(empty)).toContain("not comparable");
   });
 });
 
@@ -374,12 +454,25 @@ describe("resolved stage and matcher-kind aggregates (#110)", () => {
 });
 
 describe("oc model override (--oc-model)", () => {
+  test.skipIf(!runModulePresent)("defaults to the tc side and rejects frozen oc runs", async () => {
+    const { parseArgs, frozenDimensionError } = await loadRunModule();
+    expect(parseArgs([]).side).toBe("tc");
+    expect(parseArgs(["--side", "tc"]).side).toBe("tc");
+    expect(frozenDimensionError("oc", ["edit-dsl"])).toContain(
+      "the oc side is frozen (benchmark/results/oc-baseline.json)",
+    );
+    expect(frozenDimensionError("both", ["edit-dsl"])).toContain(
+      "the oc side is frozen (benchmark/results/oc-baseline.json)",
+    );
+    expect(frozenDimensionError("tc", ["edit-dsl"])).toBeNull();
+  });
+
   test.skipIf(!runModulePresent)("parses --oc-model and defaults to null", async () => {
     const { parseArgs } = await loadRunModule();
     expect(parseArgs([]).ocModel).toBeNull();
     expect(parseArgs(["--model", "base"]).ocModel).toBeNull();
     expect(parseArgs(["--model", "base", "--oc-model", "base#none"]).ocModel).toBe("base#none");
-    expect(parseArgs(["--oc-model", "base#none"]).model).toBe("deepseek-v4.1-flash");
+    expect(parseArgs(["--oc-model", "base#none"]).model).toBe("deepseek-flash");
   });
 
   test.skipIf(!runModulePresent)(
@@ -455,8 +548,11 @@ describe("edit protocol override (--protocol-format) (#119)", () => {
     expect(parseArgs([]).protocolFormats).toEqual(["edit-dsl"]);
     expect(parseArgs(["--multi-payload"]).protocolFormats).toEqual(["edit-dsl"]);
     expect(parseArgs(["--protocol-format", "edit-dsl"]).protocolFormats).toEqual(["edit-dsl"]);
-    expect(parseArgs(["--protocol-format", "json"]).protocolFormats).toEqual(["json"]);
     expect(parseArgs(["--protocol-format", "compact"]).protocolFormats).toEqual(["edit-dsl"]);
+    const { frozenDimensionError } = await loadRunModule();
+    expect(frozenDimensionError("tc", ["json"])).toContain(
+      "the json protocol is frozen (benchmark/results/json-format-baseline.json)",
+    );
   });
 
   test.skipIf(!runModulePresent)("the report renders the selected protocol format", async () => {
@@ -521,17 +617,16 @@ describe("concurrent protocol variants (#16)", () => {
   test.skipIf(!runModulePresent)(
     "parses comma lists in either order, de-duplicates, and normalizes the compact alias",
     async () => {
-      const { parseProtocolFormats, parseArgs } = await loadRunModule();
+      const { parseProtocolFormats, frozenDimensionError } = await loadRunModule();
       expect(parseProtocolFormats("json")).toEqual(["json"]);
       expect(parseProtocolFormats("edit-dsl")).toEqual(["edit-dsl"]);
       expect(parseProtocolFormats("json,edit-dsl")).toEqual(["json", "edit-dsl"]);
       // Order-independent: canonical order is json then edit-dsl.
       expect(parseProtocolFormats("edit-dsl,json")).toEqual(["json", "edit-dsl"]);
       expect(parseProtocolFormats("json,json,compact")).toEqual(["json", "edit-dsl"]);
-      expect(parseArgs(["--protocol-format", "edit-dsl,json"]).protocolFormats).toEqual([
-        "json",
-        "edit-dsl",
-      ]);
+      expect(frozenDimensionError("tc", ["json", "edit-dsl"])).toContain(
+        "the json protocol is frozen (benchmark/results/json-format-baseline.json)",
+      );
       expect(() => parseProtocolFormats("json,yaml")).toThrow(
         "invalid --protocol-format value: yaml",
       );
