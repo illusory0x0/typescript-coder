@@ -118,6 +118,19 @@ instruction: Wire the final entry point; no new class.
 end
 finish`;
 
+const TASK_INITIAL_PLAN_CONTRACT = `Initial Plan contract:
+- exactly one Stage and exactly one Task;
+- 1-${MAX_EDITS_PER_TASK} edit records;
+- every task record comes before every edit record;
+- no second Task and no finish; later turns add those with patches;
+- if the work needs more than ${MAX_EDITS_PER_TASK} edits, keep only the first Task here and defer the rest.
+
+Invalid shape (rejected):
+task "03-first" ...
+edit "04-change" ...
+task "05-next" ... // second Task after edits
+`;
+
 const TASK_PLAN_FIELDS = `- The initial reply is the flat Plan DSL. Start with the singleton header \`plan "<id>"\`, then a \`goal:\` label. The Plan header has no \`end\`.
 - A stage record is \`stage "<id>" plan "<plan-id>"\`, then \`goal:\` and \`end\`. The Plan goal and stage goal are planning context for the executor; the initial Plan has exactly one current Stage.
 - A task record is \`task "<id>" stage "<stage-id>" verify tsc|test\`, then \`instruction:\` and \`end\`. A task is a verification boundary: its gate runs after every edit in it settles, so plan the whole task so that gate passes. The initial Plan has exactly one current Task in that Stage; later Tasks are patches.
@@ -137,7 +150,7 @@ const TASK_PLAN_RULES = `Rules:
 7. Name the smallest declaration that must change; never paste a whole file into an instruction. Instructions are self-contained because the executor does not see the requirement or tests.
 8. Do not target *.test.ts unless the requirement explicitly changes tests; copy required behavior into the instruction.
 9. Record order expresses dependency: an edit sees the results of earlier edits, tasks see earlier tasks, and stages see earlier stages. Do not rely on later work.
-10. End the run with a \`test\` task and a trailing \`finish\`. If that test is already the current last task and has passed, a bare \`patch\` + \`finish\` is enough.
+10. End the run with a \`test\` task and a trailing \`finish\`; the initial Plan must not emit \`finish\`, so add it in a later patch. If that test is already the current last task and has passed, a bare \`patch\` + \`finish\` is enough.
 11. Never plan a new class: prefer a top-level helper. If an existing class must grow, plan one whole-class \`modify\` that adds all needed stubs, then \`modify\` the existing members. Never plan a dotted \`create\`.
 12. Emit only the Plan DSL records on the initial turn: no JSON, no markdown fence around the whole reply, and no prose.`;
 
@@ -169,6 +182,8 @@ export function buildTaskPlanningSystemPrompt(): string {
     "",
     "The first reply is ONLY the initial Plan DSL: exactly one current Stage and one current Task. Every later planning turn replies with exactly one patch; never re-emit the Plan.",
     "",
+    TASK_INITIAL_PLAN_CONTRACT,
+    "",
     TASK_PLAN_EXAMPLE,
     "",
     TASK_PATCH_EXAMPLE,
@@ -194,7 +209,7 @@ export function buildTaskPlanningUserPrompt(
   indexText: string,
   specFiles: readonly SourceFile[] = [],
 ): string {
-  const prompt = `# Requirement\n\n${requirement}\n\n# Symbol index\n\n\`\`\`text\n${indexText}\n\`\`\`\n\nReply with the initial Plan DSL: exactly one current Stage and one current Task, with that Task's edits.\n`;
+  const prompt = `# Requirement\n\n${requirement}\n\n# Symbol index\n\n\`\`\`text\n${indexText}\n\`\`\`\n\nReply with the initial Plan DSL: exactly one current Stage and exactly one current Task, with 1-${MAX_EDITS_PER_TASK} edits. Put every task record before every edit record. Do not add a second Task or finish; later turns add those with patches.\n`;
   return appendSpecSection(prompt, specFiles);
 }
 
@@ -269,9 +284,16 @@ Diagnostics:
 
 \`\`\`
 ${diagnostics}
-\`\`\`${example}
+\`\`\`
 
-Reply with the complete, corrected initial Plan DSL only: exactly one current Stage and one current Task.`;
+Hard repair rules:
+- Keep exactly one Stage and exactly one Task.
+- If the rejected plan had multiple Tasks, keep only the first Task and its edits; drop every later Task and its edits.
+- If the first Task has more than ${MAX_EDITS_PER_TASK} edits, keep the first ${MAX_EDITS_PER_TASK} edits; plan the rest later.
+- Put every task record before every edit record.
+- Do not emit finish.${example}
+
+Reply with the complete, corrected initial Plan DSL only: exactly one current Stage and exactly one current Task.`;
 }
 
 /**
@@ -492,6 +514,7 @@ export function renderTaskContentView(source: string, startLine = 1): string {
  * already has the Plan and requirement in the cached prefix, so this turn only
  * adds the gate verdict, the current Task, and the applied diff. Full files are
  * never repeated; the diff carries 2-3 lines of context around each change.
+ * A malformed review reply gets one format retry in the same review turn.
  */
 export interface TaskReviewInput {
   stage: Stage;
@@ -512,6 +535,7 @@ export function buildTaskReviewPrompt(input: TaskReviewInput): string {
   const edits = task.edits.map(
     (edit) => `- #${edit.id} ${edit.action} ${formatTaskLoc(edit.loc)}: ${edit.instruction}`,
   );
+  const editExample = task.edits[0]?.id ?? "04-change";
   const blocks = ["# Review", "", `Gate: ${verify} ${gate.ok ? "passed" : "failed"}.`];
   if (gate.diagnostics !== null && gate.diagnostics.trim() !== "") {
     blocks.push("", "```", gate.diagnostics.trim(), "```");
@@ -532,10 +556,32 @@ export function buildTaskReviewPrompt(input: TaskReviewInput): string {
     "",
     "Reply with exactly `approve` or one `patch`; no prose and no other format.",
     "- `approve` when this Task needs no repair: the gate passed and the applied diff matches the instruction; if the gate failed, prefer a repair patch unless the failure lies outside this Task.",
-    `- A patch may only repair this Task #${task.id}: \`task~ "#${task.id}"\`, \`edit+\` on it, \`edit~\` / \`edit-\` for its edits. It may carry \`finish\` when this is the last \`test\` Task.`,
+    `- A patch may only repair this Task #${task.id}. Use \`task~ "${task.id}"\` for the Task, or \`edit+ "<new-id>" task "${task.id}" ...\`, \`edit~ "<edit-id>"\`, and \`edit- "<edit-id>"\` for its edits. It may carry \`finish\` when this is the last \`test\` Task.`,
+    `- \`edit+\` keeps \`task "${task.id}"\`; \`edit~\` and \`edit-\` take only the edit id. Do not repeat \`task\`; the parent is the current Task #${task.id}.`,
+    "- Example (replace the id with the edit you are repairing):",
+    "",
+    "```",
+    `edit~ "${editExample}"`,
+    "instruction: Repair only this edit.",
+    "```",
     "- Do not add a Stage or Task, do not edit another Task, and do not re-emit the Plan.",
   );
   return blocks.join("\n");
+}
+
+/** One bounded format retry for a malformed review reply (#32). */
+export function buildTaskReviewRetryPrompt(diagnostics: string): string {
+  return `# Review retry
+
+The previous review reply was rejected.
+
+Diagnostics:
+
+\`\`\`
+${diagnostics}
+\`\`\`
+
+Reply with exactly \`approve\` or one corrected \`patch\`; no prose. A patch may only repair the current Task. \`edit~\` and \`edit-\` take only the edit id; do not repeat \`task\`.`;
 }
 
 /** The planner's patch-delta sentence for the common causes. */

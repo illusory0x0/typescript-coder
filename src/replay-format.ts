@@ -27,7 +27,7 @@ export interface ReplayBundleMeta {
   readonly protocolFormat?: ReplayProtocolFormat;
   /**
    * Canonical loop mode recorded for the bundle; omitted means pinned-repair.
-   * Legacy `edit`/`plan-exec` bundles are normalized on read.
+   * Legacy `edit` bundles are normalized on read.
    */
   readonly agentMode?: AgentMode;
 }

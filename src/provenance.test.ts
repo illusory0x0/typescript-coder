@@ -109,18 +109,11 @@ describe("currentInputHashes", () => {
       expect(effort.inputs.loopConfig).not.toBe(first.inputs.loopConfig);
 
       // Plan/execute/review pins its own prompt + task caps; pinned-repair
-      // hashes stay stable, and the deprecated plan-exec/edit spellings map to
-      // the same bytes so old plan-exec provenance hashes stay identical (#34).
-      const plan = currentInputHashes(root, { ...base, agentMode: "plan-exec-review" });
+      // hashes stay stable.
+      const plan = currentInputHashes(root, { ...base, agentMode: "plan-exec" });
       expect(plan.inputs.systemPrompt).not.toBe(first.inputs.systemPrompt);
       expect(plan.inputs.loopConfig).not.toBe(first.inputs.loopConfig);
       expect(currentInputHashes(root, { ...base, agentMode: "pinned-repair" })).toEqual(first);
-      expect(
-        currentInputHashes(root, {
-          ...base,
-          agentMode: "plan-exec" as unknown as AgentMode,
-        }),
-      ).toEqual(plan);
       expect(
         currentInputHashes(root, {
           ...base,

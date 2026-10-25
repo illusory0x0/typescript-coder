@@ -141,7 +141,7 @@ function checkLedgerFile(ledgerPath: string, repoRoot: string): LedgerOutcome {
       }
       // A single-mode report names its loop; a multi-mode report's ledger rows
       // do not yet carry a mode column, so they check against pinned-repair.
-      // Historical `edit`/`plan-exec` values map through the same aliases.
+      // Historical `edit` values map through the same alias.
       const modes = Array.isArray(json["agentModes"])
         ? (json["agentModes"] as unknown[]).flatMap((value) => {
             const mode = canonicalAgentMode(value);

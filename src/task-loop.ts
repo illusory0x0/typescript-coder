@@ -69,6 +69,7 @@ import {
   buildTaskPlanningUserPrompt,
   buildTaskReplanPrompt,
   buildTaskReviewPrompt,
+  buildTaskReviewRetryPrompt,
   buildTaskTurnPrompt,
   MAX_TASK_EXCHANGES,
   MAX_TASK_PLAN_ROUNDS,
@@ -116,6 +117,8 @@ type ReviewOutcome =
   | { kind: "failed"; result: LoopResult };
 /** Model attempts per planning turn (a rejected reply is retried with its diagnostics). */
 const MAX_PLAN_ATTEMPTS = 3;
+/** Review reply attempts: one initial reply plus one format-only retry. */
+const MAX_REVIEW_ATTEMPTS = 2;
 
 interface Workspace {
   cwd: string;
@@ -1459,7 +1462,7 @@ function firstEditOfState(state: TaskRunState | null): EditNode | undefined {
 
 /**
  * Run the plan/execute/review loop. `runLoop` dispatches here only when
- * `agentMode === "plan-exec-review"` (legacy `plan-exec` canonicalizes first).
+ * `agentMode === "plan-exec"`.
  */
 export async function runTaskLoop(options: LoopOptions): Promise<LoopResult> {
   const cwd = options.cwd;
@@ -1703,8 +1706,9 @@ export async function runTaskLoop(options: LoopOptions): Promise<LoopResult> {
   /**
    * One post-execution review in the same planner conversation. It sees the
    * gate verdict and the concise diff, then either approves or returns one
-   * repair patch for the current Task. A malformed reply or a scope violation
-   * terminates the run; there is no retry loop here (#33 owns tolerance).
+   * repair patch for the current Task. A syntactically malformed reply gets
+   * one bounded format retry; a scope or merge violation still terminates. A
+   * patch that reopens the Task gets no second review.
    */
   const reviewTurn = async (
     state: TaskRunState,
@@ -1729,58 +1733,69 @@ export async function runTaskLoop(options: LoopOptions): Promise<LoopResult> {
         diff: appliedDiff(cwd, bases),
       }),
     });
-    let response: ChatResponse;
-    try {
-      response = await callModel(
-        planningMessages,
-        usageState.usage.review,
-        usageState,
-        options.provider,
-        options,
-      );
-    } catch (error) {
-      return {
-        kind: "failed",
-        result: await terminated("provider-error", providerErrorDiagnostics(error)),
-      };
+    for (let attempt = 1; attempt <= MAX_REVIEW_ATTEMPTS; attempt += 1) {
+      let response: ChatResponse;
+      try {
+        response = await callModel(
+          planningMessages,
+          usageState.usage.review,
+          usageState,
+          options.provider,
+          options,
+        );
+      } catch (error) {
+        return {
+          kind: "failed",
+          result: await terminated("provider-error", providerErrorDiagnostics(error)),
+        };
+      }
+      if (overBudget(usageState, tokenBudget)) {
+        return {
+          kind: "failed",
+          result: await terminated(
+            "token-budget",
+            tokenBudgetDiagnostics(usageState.consumed, tokenBudget),
+          ),
+        };
+      }
+      const content = response.content ?? "";
+      planningMessages.push({ role: "assistant", content });
+      if (content.trim().toLowerCase() === "approve") {
+        return { kind: "approve" };
+      }
+      const parsed = parsePlanPatchDetailed(content);
+      noteWarnings(parsed);
+      if (!parsed.ok || parsed.value === undefined) {
+        const diagnostics = renderDslIssues(parsed.issues);
+        if (attempt < MAX_REVIEW_ATTEMPTS) {
+          planningMessages.push({
+            role: "user",
+            content: buildTaskReviewRetryPrompt(diagnostics),
+          });
+          continue;
+        }
+        return rejected(diagnostics);
+      }
+      const scope = reviewPatchProblems(state, task, parsed.value);
+      if (scope !== null) {
+        return rejected(scope);
+      }
+      const merged = applyPlanPatch(state, parsed.value);
+      if (!merged.ok) {
+        return rejected(merged.diagnostics);
+      }
+      const after = reviewMergeProblems(state, merged.state, task);
+      if (after !== null) {
+        return rejected(after);
+      }
+      if (fingerprintState(merged.state) === fingerprintState(state)) {
+        return rejected(
+          "the patch left the Plan and finalTaskId unchanged; a review patch must repair the current task or carry finish",
+        );
+      }
+      return { kind: "patched", state: merged.state };
     }
-    if (overBudget(usageState, tokenBudget)) {
-      return {
-        kind: "failed",
-        result: await terminated(
-          "token-budget",
-          tokenBudgetDiagnostics(usageState.consumed, tokenBudget),
-        ),
-      };
-    }
-    const content = response.content ?? "";
-    planningMessages.push({ role: "assistant", content });
-    if (content.trim().toLowerCase() === "approve") {
-      return { kind: "approve" };
-    }
-    const parsed = parsePlanPatchDetailed(content);
-    noteWarnings(parsed);
-    if (!parsed.ok || parsed.value === undefined) {
-      return rejected(renderDslIssues(parsed.issues));
-    }
-    const scope = reviewPatchProblems(state, task, parsed.value);
-    if (scope !== null) {
-      return rejected(scope);
-    }
-    const merged = applyPlanPatch(state, parsed.value);
-    if (!merged.ok) {
-      return rejected(merged.diagnostics);
-    }
-    const after = reviewMergeProblems(state, merged.state, task);
-    if (after !== null) {
-      return rejected(after);
-    }
-    if (fingerprintState(merged.state) === fingerprintState(state)) {
-      return rejected(
-        "the patch left the Plan and finalTaskId unchanged; a review patch must repair the current task or carry finish",
-      );
-    }
-    return { kind: "patched", state: merged.state };
+    return rejected("the review turn produced no usable reply");
   };
 
   // Each Plan tree gets a fresh execution conversation: stable system prompt +

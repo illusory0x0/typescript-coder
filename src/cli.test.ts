@@ -688,11 +688,10 @@ describe("cli entry points", () => {
 
 describe("--mode", () => {
   test("canonical module values and aliases", () => {
-    expect(AGENT_MODES).toEqual(["pinned-repair", "plan-exec-review"]);
+    expect(AGENT_MODES).toEqual(["pinned-repair", "plan-exec"]);
     expect(canonicalAgentMode("pinned-repair")).toBe("pinned-repair");
-    expect(canonicalAgentMode("plan-exec-review")).toBe("plan-exec-review");
+    expect(canonicalAgentMode("plan-exec")).toBe("plan-exec");
     expect(canonicalAgentMode("edit")).toBe("pinned-repair");
-    expect(canonicalAgentMode("plan-exec")).toBe("plan-exec-review");
     expect(canonicalAgentMode("both")).toBeNull();
     expect(canonicalAgentMode(undefined)).toBeNull();
   });
@@ -703,20 +702,18 @@ describe("--mode", () => {
 
   test("accepts the canonical modes through --mode and --agent-mode", () => {
     expect(parseArgs(["--mode", "pinned-repair"]).agentMode).toBe("pinned-repair");
-    expect(parseArgs(["--mode", "plan-exec-review"]).agentMode).toBe("plan-exec-review");
+    expect(parseArgs(["--mode", "plan-exec"]).agentMode).toBe("plan-exec");
     expect(parseArgs(["--agent-mode=pinned-repair"]).agentMode).toBe("pinned-repair");
-    expect(parseArgs(["--agent-mode", "plan-exec-review"]).agentMode).toBe("plan-exec-review");
+    expect(parseArgs(["--agent-mode", "plan-exec"]).agentMode).toBe("plan-exec");
   });
 
-  test("maps the deprecated edit/plan-exec aliases to canonical modes", () => {
+  test("maps the deprecated edit alias to the pinned-repair mode", () => {
     expect(parseArgs(["--mode=edit"]).agentMode).toBe("pinned-repair");
-    expect(parseArgs(["--mode", "plan-exec"]).agentMode).toBe("plan-exec-review");
-    expect(parseArgs(["--agent-mode=plan-exec"]).agentMode).toBe("plan-exec-review");
   });
 
-  test("rejects an unknown mode with the canonical choices and aliases", () => {
+  test("rejects an unknown mode with the canonical choices and alias", () => {
     expect(() => parseArgs(["--mode", "planner"])).toThrow(
-      '--mode must be "pinned-repair" or "plan-exec-review" (aliases: edit, plan-exec; got "planner")',
+      '--mode must be "pinned-repair" or "plan-exec" (alias: edit; got "planner")',
     );
     expect(() => parseArgs(["--mode"])).toThrow("--mode requires a value");
   });
@@ -728,32 +725,26 @@ describe("--mode", () => {
     expect(() => parseArgs(["--agent-mode=both"])).toThrow("pinned-repair");
   });
 
-  test("plan-exec-review refuses explicit targets and the frozen json edit protocol", () => {
+  test("plan-exec refuses explicit targets and the frozen json edit protocol", () => {
     const targets = join(tempDir(), "targets.json");
     writeFileSync(targets, JSON.stringify([{ path: "src/a.ts", symbol: "a", kind: "function" }]));
-    expect(() => parseArgs(["--mode", "plan-exec-review", "--targets", targets])).toThrow(
-      "cannot be combined with --mode plan-exec-review",
-    );
     expect(() => parseArgs(["--mode", "plan-exec", "--targets", targets])).toThrow(
-      "cannot be combined with --mode plan-exec-review",
+      "cannot be combined with --mode plan-exec",
     );
-    expect(() => parseArgs(["--mode", "plan-exec-review", "--protocol-format", "json"])).toThrow(
+    expect(() => parseArgs(["--mode", "plan-exec", "--protocol-format", "json"])).toThrow(
       "cannot be combined with it",
     );
-    expect(
-      parseArgs(["--mode", "plan-exec-review", "--protocol-format", "edit-dsl"]).agentMode,
-    ).toBe("plan-exec-review");
     expect(parseArgs(["--mode", "plan-exec", "--protocol-format", "edit-dsl"]).agentMode).toBe(
-      "plan-exec-review",
+      "plan-exec",
     );
     expect(parseArgs(["--mode", "edit", "--targets", targets]).agentMode).toBe("pinned-repair");
   });
 
-  test("help names the canonical mode flag, default, and aliases", () => {
+  test("help names the canonical mode flag, default, and alias", () => {
     const text = helpText();
-    expect(text).toContain("--mode <pinned-repair|plan-exec-review>");
+    expect(text).toContain("--mode <pinned-repair|plan-exec>");
     expect(text).toContain("(default: pinned-repair)");
-    expect(text).toContain("deprecated aliases: edit, plan-exec");
+    expect(text).toContain("deprecated alias: edit");
   });
 });
 

@@ -1,11 +1,11 @@
 # Plan → execute → review agent loop
 
 Status: **implemented, as-built.** This document describes the shipped
-`plan-exec-review` loop; the code and its tests are the source of truth. It
+`plan-exec` loop; the code and its tests are the source of truth. It
 describes the V2 design and is now kept in step with the implementation.
 
 The loop is **additive**. `--mode pinned-repair` (default) keeps the single-target
-Edit → Verify driver byte-identical. `--mode plan-exec-review` runs the
+Edit → Verify driver byte-identical. `--mode plan-exec` runs the
 Plan → Execute → Review flow over this hierarchy:
 
 - **Plan** — the root: `id`, `goal`, and ordered stages;
@@ -22,15 +22,15 @@ status maps.
 
 Implementation map (as built):
 
-| Concern                                              | File                                                                     |
-| ---------------------------------------------------- | ------------------------------------------------------------------------ |
-| Plan contract, tree validator, scheduler             | `src/tasks.ts`                                                          |
-| Flat Plan DSL and patch DSL parser/serializer        | `src/plan-dsl.ts`                                                       |
-| Planning/execution/review prompt text                | `src/prompts/task.ts`                                                    |
-| Driver, target guards, apply/verify, incremental loop | `src/task-loop.ts`                                                      |
-| Dispatch (`--mode`)                                  | `src/loop.ts`                                                            |
-| CLI flag                                             | `src/cli.ts`, `src/main.ts`                                             |
-| Tests                                                | `src/tasks.test.ts`, `src/plan-dsl.test.ts`, `src/prompts/task.test.ts`, `src/task-loop.test.ts` |
+| Concern                                               | File                                                                                             |
+| ----------------------------------------------------- | ------------------------------------------------------------------------------------------------ |
+| Plan contract, tree validator, scheduler              | `src/tasks.ts`                                                                                   |
+| Flat Plan DSL and patch DSL parser/serializer         | `src/plan-dsl.ts`                                                                                |
+| Planning/execution/review prompt text                 | `src/prompts/task.ts`                                                                            |
+| Driver, target guards, apply/verify, incremental loop | `src/task-loop.ts`                                                                               |
+| Dispatch (`--mode`)                                   | `src/loop.ts`                                                                                    |
+| CLI flag                                              | `src/cli.ts`, `src/main.ts`                                                                      |
+| Tests                                                 | `src/tasks.test.ts`, `src/plan-dsl.test.ts`, `src/prompts/task.test.ts`, `src/task-loop.test.ts` |
 
 ## 1. Core model
 
@@ -226,15 +226,17 @@ The review checks:
 - if `finish` is present, the final Task is last and verifies `test`.
 
 The review reply is either `approve` or a patch. Review uses the same planner
-conversation in its own turn, not a fresh reviewer. A review patch may only
-repair the current Task (`task~`, `edit+`, `edit~`, `edit-`) and may not add a
-future Stage/Task. A review patch may carry `finish` for the current final
-Task, but may not add future work. The harness structurally validates the
-patch; if it returns a patch, the current Task reopens and executes again, with
-no second review for that Task. If it approves, the Task is finalized as
-`passed` or `failed` from the gate. Further changes go through the normal repair/replan
-path. Review calls count toward the token budget but are additional to the
-planning-turn cap.
+conversation in its own turn, not a fresh reviewer. A syntactically malformed
+review reply gets one bounded format retry with its diagnostics; a scope or
+merge violation still terminates. A review patch may only repair the current
+Task (`task~`, `edit+`, `edit~`, `edit-`) and may not add a future Stage/Task.
+A review patch may carry `finish` for the current final Task, but may not add
+future work. The harness structurally validates the patch; if it returns a
+patch, the current Task reopens and executes again, with no second review for
+that Task. If it approves, the Task is finalized as `passed` or `failed` from
+the gate. Further changes go through the normal repair/replan path. Review
+calls count toward the token budget but are additional to the planning-turn
+cap.
 
 ## 3. Flat Plan DSL
 
@@ -289,7 +291,8 @@ Rules:
   Plan root, stages, tasks, and edits share one namespace.
 - The initial Plan reply contains exactly one current Stage and one current
   Task. Later Tasks/Stages are added by patches, one new Task per planning
-  turn.
+  turn. The initial planning prompt also asks for 1-6 edits, all task records
+  before edit records, and no `finish`; later patches add the remaining work.
 - All stage records come before task records; all task records come before edit
   records. A parent must be declared earlier in the reply or already exist.
 - Stage order is stage-record order; task order within a stage is task-record
@@ -540,7 +543,8 @@ Rules shared by the Plan DSL and edit-action DSL:
   are still parsed so the diagnostic can list every problem.
 - An initial Plan reply is all-or-nothing: a malformed record rejects the plan.
   Incremental planning still does not insert a partial plan.
-- A review reply is all-or-nothing: `approve`, or one fully valid patch.
+- A review reply is all-or-nothing: `approve`, or one fully valid patch. A
+  malformed review reply gets one format retry before termination.
 
 Plan-specific recovery:
 
@@ -707,9 +711,10 @@ A separate compact review turn in the same planner conversation receives the
 gate result, the concise applied diff, and the current Task checklist. It
 returns `approve` or a patch. Review is per executed Task and counts toward the
 token budget but not the planning-turn cap. There is one review turn per
-executed Task; its patch may only repair the current Task (no future
-Stage/Task). The review prompt must be short; it should not repeat the full
-requirement, full source, or full Plan grammar.
+executed Task, with at most one format retry for a malformed reply; its patch
+may only repair the current Task (no future Stage/Task). The review prompt must
+be short; it should not repeat the full requirement, full source, or full Plan
+grammar.
 
 Call usage is recorded in three `LoopTokens` buckets — `planning`, `review`, and
 `execution` — and exposed as `LoopResult.usage`. Their sum is
@@ -850,24 +855,23 @@ run still makes one summary call. Provider errors keep their own path.
 
 ```sh
 tc --mode pinned-repair < issue.txt       # default
-tc --mode plan-exec-review < issue.txt
-tc --agent-mode plan-exec-review < issue.txt
+tc --mode plan-exec < issue.txt
+tc --agent-mode plan-exec < issue.txt
 ```
 
 - `--mode` and its alias `--agent-mode` accept the two canonical loop modes:
-  `pinned-repair` (default) and `plan-exec-review`.
-- Deprecated aliases: `edit` → `pinned-repair`; `plan-exec` →
-  `plan-exec-review`. Historical benchmark/replay rows keep their old strings
-  and are read through this mapping.
+  `pinned-repair` (default) and `plan-exec`.
+- Deprecated alias: `edit` → `pinned-repair`. Historical benchmark/replay
+  rows keep their old `edit` strings and are read through this mapping.
 - `both` is the benchmark's multi-mode selector, not a single-run CLI mode:
   `bun run benchmark/run.ts --agent-mode both` measures `pinned-repair` and
-  `plan-exec-review`, while `tc --mode both` is rejected with a clear
+  `plan-exec`, while `tc --mode both` is rejected with a clear
   benchmark-only message because one CLI process runs one loop.
 - `pinned-repair` is the default and is unchanged.
-- `plan-exec-review` rejects `--targets` (single-target JSON loop) and
+- `plan-exec` rejects `--targets` (single-target JSON loop) and
   `--protocol-format json` (execution is edit-dsl); `edit-dsl` and the default
   are accepted.
-- `--multi-payload` is irrelevant in `plan-exec-review` (execution replies are
+- `--multi-payload` is irrelevant in `plan-exec` (execution replies are
   edit-dsl clauses).
 - Text stdout names the completed edit/file summary; `--format json` prints
   `typescript-coder-result@2`.
@@ -875,7 +879,7 @@ tc --agent-mode plan-exec-review < issue.txt
   `verify`, `action`, `path`, `symbol`, `kind`, `status`). All three node-id
   fields are strings (`"01-main"` etc.). `terminationReason` can be
   `task-exhausted`.
-- `LoopResult.usage` splits a `plan-exec-review` run's spend into `planning`,
+- `LoopResult.usage` splits a `plan-exec` run's spend into `planning`,
   `review`, and `execution` `LoopTokens` buckets; their sum is
   `LoopResult.tokens`, and all three count toward the budget.
   `LoopResult.warnings` carries recovered parser warnings.
@@ -924,9 +928,9 @@ Shipped design decisions:
 1. **Planning turn cap:** 32 planning replies per run, with one review turn per
    executed Task outside that cap.
 2. **Review model:** post-execution review in the same planner conversation;
-   gate result + concise diff; one review patch per executed Task, no second
-   review; a review patch may only repair the current Task and may carry
-   `finish` for the current final Task.
+   gate result + concise diff; one format retry for a malformed reply; one
+   review patch per executed Task, no second review; a review patch may only
+   repair the current Task and may carry `finish` for the current final Task.
 3. **Stage closure:** implicit; append a new Stage only when the current Stage
    has no pending or `review` Task. No `stage-end` control.
 4. **Final test repair:** both in-place repair and a new final Task are allowed;
@@ -981,6 +985,6 @@ Implementation notes:
   rejection.
 - `bun test src/result.test.ts` — `typescript-coder-result@2` string ids.
 - `just typecheck && just test`.
-- `just accept` (offline), including a `plan-exec-review-fix-answer` scenario
+- `just accept` (offline), including a `plan-exec-fix-answer` scenario
   driven by the flat Plan DSL.
 - This verification is offline; it makes no benchmark or live-model claim.

@@ -79,8 +79,8 @@ export function parseReplayBundle(json: string): ReplayBundle {
     parsed["protocolFormat"] === "edit-dsl" || parsed["protocolFormat"] === "compact"
       ? "edit-dsl"
       : "json";
-  // Loop modes were renamed (#34): legacy `edit`/`plan-exec` bundles map to
-  // the canonical values; a missing or unknown mode reads as pinned-repair.
+  // Loop modes were renamed (#34): legacy `edit` bundles map to pinned-repair;
+  // a missing or unknown mode reads as pinned-repair.
   const agentMode: ReplayBundle["agentMode"] =
     canonicalAgentMode(parsed["agentMode"]) ?? DEFAULT_AGENT_MODE;
   return {

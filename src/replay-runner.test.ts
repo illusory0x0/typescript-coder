@@ -273,11 +273,8 @@ describe("parseReplayBundle", () => {
       "pinned-repair",
     );
     expect(parseReplayBundle(JSON.stringify({ ...base, agentMode: "plan-exec" })).agentMode).toBe(
-      "plan-exec-review",
+      "plan-exec",
     );
-    expect(
-      parseReplayBundle(JSON.stringify({ ...base, agentMode: "plan-exec-review" })).agentMode,
-    ).toBe("plan-exec-review");
     expect(parseReplayBundle(JSON.stringify({ ...base, agentMode: "yaml" })).agentMode).toBe(
       "pinned-repair",
     );

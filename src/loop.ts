@@ -1324,27 +1324,25 @@ export interface ProviderLike {
 
 /**
  * The loop shape: `pinned-repair` repairs one pinned selection through
- * Edit -> Verify; `plan-exec-review` plans, executes, and reviews a
+ * Edit -> Verify; `plan-exec` plans, executes, and reviews a
  * Plan -> Execute -> Review edit tree.
  */
-export type AgentMode = "pinned-repair" | "plan-exec-review";
+export type AgentMode = "pinned-repair" | "plan-exec";
 
 /** Canonical loop modes, in display/iteration order. */
-export const AGENT_MODES: readonly AgentMode[] = ["pinned-repair", "plan-exec-review"];
+export const AGENT_MODES: readonly AgentMode[] = ["pinned-repair", "plan-exec"];
 /** The single-target loop remains the default. */
 export const DEFAULT_AGENT_MODE: AgentMode = "pinned-repair";
 
-// Deprecated input aliases: `edit` and `plan-exec` remain readable (old
-// reports, replay bundles, and CLI invocations), but new output always names
-// the canonical mode.
+// Deprecated input alias: `edit` remains readable (old reports, replay bundles,
+// and CLI invocations), but new output always names the canonical mode.
 const AGENT_MODE_ALIASES: Readonly<Record<string, AgentMode>> = {
   "pinned-repair": "pinned-repair",
   edit: "pinned-repair",
-  "plan-exec-review": "plan-exec-review",
-  "plan-exec": "plan-exec-review",
+  "plan-exec": "plan-exec",
 };
 
-/** Canonicalize a loop-mode value, accepting the deprecated aliases. */
+/** Canonicalize a loop-mode value, accepting the deprecated alias. */
 export function canonicalAgentMode(value: unknown): AgentMode | null {
   if (typeof value !== "string") {
     return null;
@@ -1442,11 +1440,11 @@ export interface LoopOptions {
   protocolFormat?: ProtocolFormat;
   /**
    * Loop shape (`--mode`): `pinned-repair` (default) is the single-target
-   * Edit → Verify loop; `plan-exec-review` runs the planning/execution/review
+   * Edit → Verify loop; `plan-exec` runs the planning/execution/review
    * loop of `docs/spec.md`, where a planner emits a
    * Plan -> Execute -> Review edit tree and the harness executes one edit at a
-   * time. The deprecated `edit`/`plan-exec` spellings are accepted only at
-   * input boundaries and map to these canonical values.
+   * time. The deprecated `edit` spelling is accepted only at input boundaries
+   * and maps to pinned-repair.
    */
   agentMode?: AgentMode;
   /**
@@ -7795,9 +7793,9 @@ async function runEditDslLoop(options: LoopOptions): Promise<LoopResult> {
 }
 
 export async function runLoop(options: LoopOptions): Promise<LoopResult> {
-  // Canonicalize here too so a legacy caller passing `plan-exec` still routes
-  // to the planned loop; canonical values are the only ones written onward.
-  if (canonicalAgentMode(options.agentMode) === "plan-exec-review") {
+  // Canonicalize here too so a legacy caller passing `edit` still routes to
+  // pinned-repair; canonical values are the only ones written onward.
+  if (canonicalAgentMode(options.agentMode) === "plan-exec") {
     // Lazy: the task driver imports from this module, so a static import here
     // would be a load-time cycle.
     const { runTaskLoop } = await import("./task-loop");

@@ -17,7 +17,7 @@ import {
   TASK_PLAN_COMPLEX_EXAMPLE,
   TASK_PLAN_EXAMPLE,
 } from "./task";
-import { initialState } from "../tasks";
+import { initialState, MAX_EDITS_PER_TASK } from "../tasks";
 import type { EditNode, Stage, TaskNode, TaskRunState } from "../tasks";
 import { parsePlan, parsePlanPatch, serializePlanDsl } from "../plan-dsl";
 
@@ -86,6 +86,11 @@ describe("planning prompts", () => {
     expect(prompt).toContain("finish");
     expect(prompt).toContain("exactly one current Stage and one current Task");
     expect(prompt).toContain("The first reply is ONLY the initial Plan DSL");
+    expect(prompt).toContain("Initial Plan contract");
+    expect(prompt).toContain(`1-${MAX_EDITS_PER_TASK} edit records`);
+    expect(prompt).toContain("every task record comes before every edit record");
+    expect(prompt).toContain("no second Task and no finish");
+    expect(prompt).toContain("Invalid shape (rejected)");
     expect(prompt).toContain("Every later planning turn replies with exactly one patch");
     expect(prompt).toContain('task+ "');
     expect(prompt).toContain('edit+ "');
@@ -122,13 +127,21 @@ describe("planning prompts", () => {
     const prompt = buildTaskPlanningUserPrompt("add a helper", "select helper in src/a.ts");
     expect(prompt).toContain("# Requirement\n\nadd a helper");
     expect(prompt).toContain("select helper in src/a.ts");
-    expect(prompt).toContain("exactly one current Stage and one current Task");
+    expect(prompt).toContain("exactly one current Stage and exactly one current Task");
+    expect(prompt).toContain(`1-${MAX_EDITS_PER_TASK} edits`);
+    expect(prompt).toContain("Put every task record before every edit record");
+    expect(prompt).toContain("Do not add a second Task or finish");
   });
 
   test("the retry prompt names the rejection and appends initial Plan help", () => {
     const prompt = buildTaskPlanRetryPrompt("stage: task-tree\n- bad");
     expect(prompt).toContain("stage: task-tree");
     expect(prompt).toContain("one current Stage and one current Task");
+    expect(prompt).toContain("Hard repair rules");
+    expect(prompt).toContain("keep only the first Task");
+    expect(prompt).toContain(`keep the first ${MAX_EDITS_PER_TASK} edits`);
+    expect(prompt).toContain("Put every task record before every edit record");
+    expect(prompt).toContain("Do not emit finish");
     expect(prompt).toContain(TASK_PLAN_COMPLEX_EXAMPLE);
     expect(buildTaskPlanRetryPrompt("bad", false)).not.toContain(TASK_PLAN_COMPLEX_EXAMPLE);
   });
@@ -226,7 +239,10 @@ describe("review prompts", () => {
     expect(prompt).toContain("-  return 1;");
     expect(prompt).toContain("+  return 2;");
     expect(prompt).toContain("Reply with exactly `approve` or one `patch`");
-    expect(prompt).toContain(`task~ "#${TASK.id}"`);
+    expect(prompt).toContain(`task~ "${TASK.id}"`);
+    expect(prompt).toContain(`edit~ "${EDIT.id}"`);
+    expect(prompt).toContain("Do not repeat `task`");
+    expect(prompt).not.toContain('task~ "#');
     expect(prompt).toContain("It may carry `finish`");
     expect(prompt).toContain("Do not add a Stage or Task");
     // The requirement and full source live in the cached planning prefix.

@@ -1,7 +1,7 @@
 # AGENTS.md
 
 `tc` — a TypeScript coding agent: a pinned-repair Edit → Verify loop plus a
-plan-exec-review Plan → Execute → Review loop, driven by an OpenAI-compatible
+plan-exec Plan → Execute → Review loop, driven by an OpenAI-compatible
 gateway and packaged as a sub-agent for opencode. Bun runtime, no build step.
 
 ## Boundaries
@@ -64,17 +64,17 @@ Strictly forbidden, with no exception: **do not run `--side oc` and do not run
 benchmark now rejects both. tc reports run `--side tc` with the default
 `--protocol-format edit-dsl` and report savings against **both** frozen
 baselines (oc and tc json) in a four-way table;
-`--agent-mode pinned-repair|plan-exec-review|both` selects the tc loop mode(s),
-where `both` is the benchmark's multi-mode selector; the `edit` and `plan-exec`
-aliases are deprecated.
+`--agent-mode pinned-repair|plan-exec|both` selects the tc loop mode(s),
+where `both` is the benchmark's multi-mode selector; the `edit` alias is
+deprecated.
 
 ## Layout / entrypoints
 
 - `src/main.ts` — CLI entry (`#!/usr/bin/env bun`, piped-stdin contract `tc < task.txt`; a TTY stdin prints help).
-- `src/loop.ts` — `runLoop` dispatcher (default pinned-repair; plan-exec-review route) + `buildSystemPrompt` (the model-facing prompt is a literal in this file; prompt text is benchmark-sensitive).
-- `src/tasks.ts` / `src/task-loop.ts` — Plan → Stage → Task → edit tree contract and the `--mode plan-exec-review` driver: incremental one-Task execution, post-execution review, usage buckets; spec in `docs/spec.md`.
+- `src/loop.ts` — `runLoop` dispatcher (default pinned-repair; plan-exec route) + `buildSystemPrompt` (the model-facing prompt is a literal in this file; prompt text is benchmark-sensitive).
+- `src/tasks.ts` / `src/task-loop.ts` — Plan → Stage → Task → edit tree contract and the `--mode plan-exec` driver: incremental one-Task execution, post-execution review, usage buckets; spec in `docs/spec.md`.
 - `src/plan-dsl.ts` — flat Plan and patch DSL parser/serializer; `src/dsl-diagnostics.ts` — shared tolerant diagnostics renderer.
-- `src/prompts/task.ts` — planning/execution/review prompt text for plan-exec-review.
+- `src/prompts/task.ts` — planning/execution/review prompt text for plan-exec.
 - `src/tools.ts` — check/test tools; default verify commands are `bunx tsc --noEmit` and `bun test`.
 - `src/editor.ts` — splice + oxfmt + parse gate. `src/utility.ts` — symbol index (path×symbol×kind).
 - `src/openai.ts` — provider config from env, retries/timeouts. `src/result.ts` — the `typescript-coder-result@2` sub-agent result contract.

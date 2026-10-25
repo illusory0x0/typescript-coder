@@ -372,11 +372,11 @@ export const scenarios: Scenario[] = [
     ],
   },
   {
-    id: "plan-exec-review-fix-answer",
+    id: "plan-exec-fix-answer",
     title:
       "flat-DSL plan/execute/review plans one task and the executor makes the failing test green",
     fixture: "fix-answer",
-    agentMode: "plan-exec-review",
+    agentMode: "plan-exec",
     issue: TEST_ISSUE,
     responses: [
       `plan "01-main"

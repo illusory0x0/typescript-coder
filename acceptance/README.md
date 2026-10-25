@@ -21,18 +21,18 @@ covered in [Live checks](#live-checks).
 
 ## Scenarios
 
-| id                          | title                                                                                     | slow | live |
-| --------------------------- | ----------------------------------------------------------------------------------------- | ---- | ---- |
-| fix-answer                  | failing test becomes green                                                                | no   | no   |
-| plan-exec-review-fix-answer | flat-DSL plan/execute/review plans one task and the executor makes the failing test green | no   | no   |
-| edit-dsl-viewer-edit        | edit-dsl select viewer opens details then an edit lands                                   | no   | no   |
-| edit-dsl-rename             | edit-dsl rename updates a declaration and its references                                  | no   | no   |
-| live-fix-answer             | real model makes the failing test pass                                                    | no   | yes  |
-| keep-progress-retry         | type-invalid replacement stays and the next iteration builds on it                        | no   | no   |
-| persistent-failure          | exhausted Edit budget keeps the attempted state and explains                              | no   | no   |
-| context-correctness         | context YAML exposes dotted signatures                                                    | no   | no   |
-| check-test-propagation      | test-only failure feeds back diagnostics                                                  | no   | no   |
-| self-host                   | agent edits its own sources and the copied suite stays green                              | yes  | no   |
+| id                     | title                                                                                     | slow | live |
+| ---------------------- | ----------------------------------------------------------------------------------------- | ---- | ---- |
+| fix-answer             | failing test becomes green                                                                | no   | no   |
+| plan-exec-fix-answer   | flat-DSL plan/execute/review plans one task and the executor makes the failing test green | no   | no   |
+| edit-dsl-viewer-edit   | edit-dsl select viewer opens details then an edit lands                                   | no   | no   |
+| edit-dsl-rename        | edit-dsl rename updates a declaration and its references                                  | no   | no   |
+| live-fix-answer        | real model makes the failing test pass                                                    | no   | yes  |
+| keep-progress-retry    | type-invalid replacement stays and the next iteration builds on it                        | no   | no   |
+| persistent-failure     | exhausted Edit budget keeps the attempted state and explains                              | no   | no   |
+| context-correctness    | context YAML exposes dotted signatures                                                    | no   | no   |
+| check-test-propagation | test-only failure feeds back diagnostics                                                  | no   | no   |
+| self-host              | agent edits its own sources and the copied suite stays green                              | yes  | no   |
 
 ## Report and exit codes
 

@@ -54,6 +54,11 @@ interface JobLike {
   agentMode: string | null;
 }
 
+interface ScheduledJobLike {
+  index: number;
+  job: JobLike;
+}
+
 interface RunModule {
   computeAggregates(
     runs: readonly unknown[],
@@ -75,6 +80,7 @@ interface RunModule {
     protocols: readonly string[],
     agentModes?: readonly string[],
   ): JobLike[];
+  scheduleJobGroups(jobs: readonly JobLike[]): ScheduledJobLike[][];
   runPool<Job, Result>(
     jobs: readonly Job[],
     concurrency: number,
@@ -506,7 +512,7 @@ describe("cache balance", () => {
           { input: 1000, output: 100, cacheRead: 100 },
           null,
           "edit-dsl",
-          "plan-exec-review",
+          "plan-exec",
         ),
       ];
       const aggregates = computeAggregates(
@@ -514,7 +520,7 @@ describe("cache balance", () => {
         ["json-parser"],
         ["tc"],
         ["edit-dsl"],
-        ["pinned-repair", "plan-exec-review"],
+        ["pinned-repair", "plan-exec"],
       );
       expect(aggregates.bySide.map((row) => row.cache?.hitRate)).toEqual([0.9, 0.1]);
       const warning = cacheBalanceWarning(aggregates.bySide);
@@ -732,6 +738,42 @@ describe("concurrent protocol variants (#16)", () => {
   );
 
   test.skipIf(!runModulePresent)(
+    "scheduleJobGroups keeps each cache-stable prompt prefix together",
+    async () => {
+      const { buildJobs, scheduleJobGroups } = await loadRunModule();
+      const jobs = buildJobs(
+        ["json-parser", "sexp-parser"],
+        ["tc"],
+        2,
+        ["edit-dsl"],
+        ["pinned-repair", "plan-exec"],
+      );
+      const groups = scheduleJobGroups(jobs);
+      expect(groups).toHaveLength(2);
+      expect(groups.map((group) => group.map(({ job }) => job.agentMode))).toEqual([
+        ["pinned-repair", "pinned-repair", "pinned-repair", "pinned-repair"],
+        ["plan-exec", "plan-exec", "plan-exec", "plan-exec"],
+      ]);
+      expect(groups[0]?.map(({ job }) => `${job.task}/rep${job.rep}`)).toEqual([
+        "json-parser/rep1",
+        "json-parser/rep2",
+        "sexp-parser/rep1",
+        "sexp-parser/rep2",
+      ]);
+      expect(
+        groups
+          .flatMap((group) => group.map(({ index }) => index))
+          .sort((left, right) => left - right),
+      ).toEqual([0, 1, 2, 3, 4, 5, 6, 7]);
+
+      const single = scheduleJobGroups(
+        buildJobs(["json-parser"], ["tc"], 1, ["edit-dsl"], ["pinned-repair"]),
+      );
+      expect(single).toHaveLength(1);
+    },
+  );
+
+  test.skipIf(!runModulePresent)(
     "one pool claims json, edit-dsl, and oc jobs concurrently (stubbed runner)",
     async () => {
       const { buildJobs, runPool } = await loadRunModule();
@@ -793,44 +835,42 @@ describe("concurrent protocol variants (#16)", () => {
   );
 
   test.skipIf(!runModulePresent)(
-    "parses the two agent modes, aliases, and both; expands tc jobs once per mode",
+    "parses the two agent modes, alias, and both; expands tc jobs once per mode",
     async () => {
       const { parseAgentModes, buildJobs, parseArgs } = await loadRunModule();
       expect(parseArgs([]).agentModes).toEqual(["pinned-repair"]);
-      expect(parseArgs(["--agent-mode", "plan-exec-review"]).agentModes).toEqual([
-        "plan-exec-review",
-      ]);
+      expect(parseArgs(["--agent-mode", "plan-exec"]).agentModes).toEqual(["plan-exec"]);
       expect(parseArgs(["--agent-mode", "both"]).agentModes).toEqual([
         "pinned-repair",
-        "plan-exec-review",
+        "plan-exec",
       ]);
-      expect(parseAgentModes("both")).toEqual(["pinned-repair", "plan-exec-review"]);
-      expect(parseAgentModes("both,edit")).toEqual(["pinned-repair", "plan-exec-review"]);
-      // Deprecated aliases map to canonical values; input order never matters.
-      expect(parseAgentModes("plan-exec")).toEqual(["plan-exec-review"]);
+      expect(parseAgentModes("both")).toEqual(["pinned-repair", "plan-exec"]);
+      expect(parseAgentModes("both,edit")).toEqual(["pinned-repair", "plan-exec"]);
+      // The deprecated alias maps to its canonical value; input order never matters.
+      expect(parseAgentModes("plan-exec")).toEqual(["plan-exec"]);
       expect(parseAgentModes("edit")).toEqual(["pinned-repair"]);
-      expect(parseAgentModes("plan-exec,edit")).toEqual(["pinned-repair", "plan-exec-review"]);
-      expect(parseAgentModes("plan-exec-review,pinned-repair,plan-exec")).toEqual([
+      expect(parseAgentModes("plan-exec,edit")).toEqual(["pinned-repair", "plan-exec"]);
+      expect(parseAgentModes("plan-exec,pinned-repair,plan-exec")).toEqual([
         "pinned-repair",
-        "plan-exec-review",
+        "plan-exec",
       ]);
       expect(() => parseAgentModes("yaml")).toThrow("invalid --agent-mode value: yaml");
       expect(() => parseAgentModes("yaml")).toThrow(
-        'expected "pinned-repair", "plan-exec-review", or "both"',
+        'expected "pinned-repair", "plan-exec", or "both"; alias: edit',
       );
       const jobs = buildJobs(
         ["json-parser"],
         ["tc", "oc"],
         2,
         ["edit-dsl"],
-        ["pinned-repair", "plan-exec-review"],
+        ["pinned-repair", "plan-exec"],
       );
       expect(jobs).toHaveLength(6);
       expect(jobs.filter((job) => job.side === "tc").map((job) => job.agentMode)).toEqual([
         "pinned-repair",
-        "plan-exec-review",
+        "plan-exec",
         "pinned-repair",
-        "plan-exec-review",
+        "plan-exec",
       ]);
       expect(jobs.filter((job) => job.side === "oc").every((job) => job.agentMode === null)).toBe(
         true,
@@ -839,7 +879,7 @@ describe("concurrent protocol variants (#16)", () => {
   );
 
   test.skipIf(!runModulePresent)(
-    "keeps pinned-repair and plan-exec-review aggregates separate",
+    "keeps pinned-repair and plan-exec aggregates separate",
     async () => {
       const { computeAggregates } = await loadRunModule();
       const runs = [
@@ -851,36 +891,28 @@ describe("concurrent protocol variants (#16)", () => {
           "edit-dsl",
           "pinned-repair",
         ),
-        makeRun(
-          "json-parser",
-          "tc",
-          { input: 100, output: 50 },
-          null,
-          "edit-dsl",
-          "plan-exec-review",
-        ),
+        makeRun("json-parser", "tc", { input: 100, output: 50 }, null, "edit-dsl", "plan-exec"),
       ];
       const aggregates = computeAggregates(
         runs,
         ["json-parser"],
         ["tc"],
         ["edit-dsl"],
-        ["pinned-repair", "plan-exec-review"],
+        ["pinned-repair", "plan-exec"],
       );
       expect(aggregates.byTaskSide.map((row) => [row.agentMode, row.tokens.total.mean])).toEqual([
         ["pinned-repair", 600],
-        ["plan-exec-review", 150],
+        ["plan-exec", 150],
       ]);
     },
   );
 
   test.skipIf(!runModulePresent)(
-    "reads historical edit/plan-exec rows through the alias mapping",
+    "reads historical edit rows and missing modes through the alias mapping",
     async () => {
       const { computeAggregates } = await loadRunModule();
       const runs = [
         makeRun("json-parser", "tc", { input: 400, output: 200 }, null, "edit-dsl", "edit"),
-        makeRun("json-parser", "tc", { input: 100, output: 50 }, null, "edit-dsl", "plan-exec"),
         // A legacy tc row with no mode reads as pinned-repair.
         makeRun("json-parser", "tc", { input: 50, output: 50 }, null, "edit-dsl", null),
       ];
@@ -889,11 +921,11 @@ describe("concurrent protocol variants (#16)", () => {
         ["json-parser"],
         ["tc"],
         ["edit-dsl"],
-        ["pinned-repair", "plan-exec-review"],
+        ["pinned-repair", "plan-exec"],
       );
       expect(aggregates.byTaskSide.map((row) => [row.agentMode, row.tokens.total.mean])).toEqual([
         ["pinned-repair", 350],
-        ["plan-exec-review", 150],
+        ["plan-exec", null],
       ]);
       // Defaults inferred from legacy runs are canonical too.
       const inferred = computeAggregates(runs.slice(0, 1), ["json-parser"], ["tc"]);
@@ -936,7 +968,7 @@ describe("concurrent protocol variants (#16)", () => {
         tasks,
         ["tc"],
         ["edit-dsl"],
-        ["pinned-repair", "plan-exec-review"],
+        ["pinned-repair", "plan-exec"],
       );
       const rows = fourWayComparison(current.byTaskSide, oc.byTaskSide, json.byTaskSide, tasks);
       const jsonRow = rows.find((row) => row.task === "json-parser" && row.variant === "tc-edit");
@@ -946,14 +978,14 @@ describe("concurrent protocol variants (#16)", () => {
       const planRow = rows.find(
         (row) => row.task === "json-parser" && row.variant === "tc-plan-exec",
       );
-      expect(planRow?.label).toBe("tc plan-exec-review");
+      expect(planRow?.label).toBe("tc plan-exec");
       expect(planRow?.vsOc?.toFixed(2)).toBe("4.00");
       expect(planRow?.vsJson?.toFixed(2)).toBe("2.00");
       const overall = rows.find((row) => row.task === null && row.variant === "tc-edit");
       expect(overall?.vsOc?.toFixed(2)).toBe("2.00");
       const sentence = fourWaySavingsSentence(rows);
-      expect(sentence).toContain("vs oc — tc pinned-repair 2.00x, tc plan-exec-review 4.00x");
-      expect(sentence).toContain("vs tc json — tc pinned-repair 1.00x, tc plan-exec-review 2.00x");
+      expect(sentence).toContain("vs oc — tc pinned-repair 2.00x, tc plan-exec 4.00x");
+      expect(sentence).toContain("vs tc json — tc pinned-repair 1.00x, tc plan-exec 2.00x");
     },
   );
 
@@ -971,21 +1003,14 @@ describe("concurrent protocol variants (#16)", () => {
           "edit-dsl",
           "pinned-repair",
         ),
-        makeRun(
-          "json-parser",
-          "tc",
-          { input: 250, output: 100 },
-          null,
-          "edit-dsl",
-          "plan-exec-review",
-        ),
+        makeRun("json-parser", "tc", { input: 250, output: 100 }, null, "edit-dsl", "plan-exec"),
       ];
       const aggregates = computeAggregates(
         runs,
         tasks,
         ["tc"],
         ["edit-dsl"],
-        ["pinned-repair", "plan-exec-review"],
+        ["pinned-repair", "plan-exec"],
       );
       const report = {
         generatedAt: "2026-10-20T00:00:00.000Z",
@@ -1001,7 +1026,7 @@ describe("concurrent protocol variants (#16)", () => {
         multiPayload: false,
         protocolFormat: "edit-dsl",
         protocolFormats: ["edit-dsl"],
-        agentModes: ["pinned-repair", "plan-exec-review"],
+        agentModes: ["pinned-repair", "plan-exec"],
         tokenBudget: null,
         bunVersion: "1.0.0",
         opencodeVersion: null,
@@ -1017,7 +1042,7 @@ describe("concurrent protocol variants (#16)", () => {
         const md = join(dir, "four-way.md");
         writeMarkdownReport(md, report);
         const markdown = readFileSync(md, "utf8");
-        expect(markdown).toContain("- agent modes: pinned-repair, plan-exec-review");
+        expect(markdown).toContain("- agent modes: pinned-repair, plan-exec");
         expect(markdown).toContain("````\n# Task: JSON parser");
         expect(markdown).toContain("## Baseline comparison unavailable");
         expect(markdown).toContain("different task-spec text");

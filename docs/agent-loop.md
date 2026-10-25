@@ -8,17 +8,17 @@ and the harness owns discovery, splicing, formatting, and verification.
 
 Implementation: `runLoop` in `src/loop.ts` is a dispatcher. The default
 `pinned-repair` mode routes to `runEditDslLoop` (explicit targets and
-`--protocol-format=json` route to `runJsonLoop`); `--mode plan-exec-review`
-lazily routes to `runTaskLoop` in `src/task-loop.ts`. `edit` and `plan-exec` are
-deprecated aliases for the canonical modes. The drivers are independent: each
-owns its run driver (budget, rounds, records) and shares only the lower-level
+`--protocol-format=json` route to `runJsonLoop`); `--mode plan-exec`
+lazily routes to `runTaskLoop` in `src/task-loop.ts`. `edit` is the deprecated
+alias for pinned-repair. The drivers are independent: each owns its run driver
+(budget, rounds, records) and shares only the lower-level
 primitives (index and context, selection resolution, gates). Protocol prompt
 text lives in `src/prompts/{json,edit-dsl,task}.ts` and the commit/gate pipeline
 in `src/commit.ts`.
 
 ## Plan → execute → review mode
 
-`--mode plan-exec-review` adds a second loop ([`spec.md`](spec.md)): a planner
+`--mode plan-exec` adds a second loop ([`spec.md`](spec.md)): a planner
 emits one current Stage/Task in the flat Plan DSL (`src/plan-dsl.ts`), the
 executor carries out one Task's edits, and the planner reviews the applied
 result before the Task settles.

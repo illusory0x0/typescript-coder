@@ -93,10 +93,9 @@ export interface LoopConfig {
   readonly reps: number;
   readonly multiPayload: boolean;
   /**
-   * Historical hash literal for the plan/execute loop (#34): the mode is now
-   * `plan-exec-review`, but writing the old `plan-exec` string keeps every
-   * recorded plan-exec provenance hash byte-identical. Pinned-repair omits the
-   * field, preserving the historical edit-loop hashes.
+   * Hash literal for the plan/execute loop (#34). The canonical `plan-exec`
+   * writes this string, keeping recorded plan-exec provenance byte-identical.
+   * Pinned-repair omits the field, preserving the historical edit-loop hashes.
    */
   readonly agentMode?: "plan-exec";
   readonly taskMaxExchanges?: number;
@@ -178,10 +177,9 @@ export function loopConfigHashInput(options: {
     reps: options.reps,
     multiPayload: options.multiPayload,
   };
-  // Canonicalize the option (legacy `plan-exec` callers still map), but write
-  // the historical `plan-exec` literal into the hash so recorded plan-exec
-  // provenance stays byte-identical (#34).
-  return canonicalAgentMode(options.agentMode) === "plan-exec-review"
+  // Canonicalize the option and write the plan-exec literal into the hash so
+  // recorded provenance stays byte-identical across the rename (#34).
+  return canonicalAgentMode(options.agentMode) === "plan-exec"
     ? {
         ...base,
         agentMode: "plan-exec",
@@ -240,7 +238,7 @@ export function currentInputHashes(root: string, options: CurrentInputOptions): 
     issues[task] = normalizeText(options.taskIssues[task] ?? "");
     fixtures[task] = readFixtureContents(join(root, "benchmark", "fixtures", task));
   }
-  const planning = canonicalAgentMode(options.agentMode) === "plan-exec-review";
+  const planning = canonicalAgentMode(options.agentMode) === "plan-exec";
   return computeInputHashes({
     model: options.model,
     taskIssue: stableStringify(issues),

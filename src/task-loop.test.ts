@@ -165,7 +165,7 @@ function baseOptions(dir: string, provider: ProviderLike) {
     cwd: dir,
     issue: "make the failing test pass",
     provider,
-    agentMode: "plan-exec-review" as const,
+    agentMode: "plan-exec" as const,
     checkCommand: TSC,
     testCommand: ["bun", "test"],
     tokenBudget: 1_000_000,
@@ -173,7 +173,7 @@ function baseOptions(dir: string, provider: ProviderLike) {
 }
 
 describe("runLoop dispatch", () => {
-  test("agentMode plan-exec-review routes through the task driver", async () => {
+  test("agentMode plan-exec routes through the task driver", async () => {
     const dir = project();
     const provider = new ScriptedProvider([
       planText([stageSpec(1, [taskSpec(1)])], true),
@@ -637,19 +637,43 @@ describe("runTaskLoop", () => {
     expect(reviewPrompts(provider).length).toBe(1);
   }, 30000);
 
-  test("a review reply that is not approve or one patch terminates without a retry", async () => {
+  test("a malformed review patch gets one format retry and can repair the task", async () => {
+    const dir = project();
+    const plan = planText([stageSpec(1, [taskSpec(1)])], true);
+    const reviewPatch = patchText(
+      `task~ "${nodeId("task", 1)}"`,
+      "instruction: Repair the answer after review.",
+      "end",
+      `edit+ "${nodeId("edit", 1002)}" task "${nodeId("task", 1)}" modify value answer in src/helper.ts`,
+      "instruction: Return 2.",
+      "end",
+    );
+    const provider = new ScriptedProvider(
+      [plan, editDsl("export function answer(): number {\n  return 3;\n}"), GOOD_EDIT],
+      [plan, reviewPatch],
+    );
+    const result = await runTaskLoop(baseOptions(dir, provider));
+    expect(result.ok).toBe(true);
+    expect(reviewPrompts(provider).length).toBe(2);
+    const retry = reviewPrompts(provider)[1]?.at(-1)?.content ?? "";
+    expect(retry).toContain("The previous review reply was rejected.");
+    expect(retry).toContain("do not repeat `task`");
+    expect(readFileSync(join(dir, "src", "helper.ts"), "utf8")).toContain("return 2;");
+  }, 30000);
+
+  test("two malformed review replies terminate after one format retry", async () => {
     const dir = project();
     const plan = planText([stageSpec(1, [taskSpec(1)])]);
     const provider = new ScriptedProvider(
       [plan, editDsl("export function answer(): number {\n  return 3;\n}")],
-      [plan],
+      [plan, plan],
     );
     const result = await runTaskLoop(baseOptions(dir, provider));
     expect(result.ok).toBe(false);
     expect(result.terminationReason).toBe("task-exhausted");
     expect(result.diagnostics).toContain("neither approve nor one valid repair patch");
     expect(result.diagnostics).toContain("expected the patch header");
-    expect(reviewPrompts(provider).length).toBe(1);
+    expect(reviewPrompts(provider).length).toBe(2);
   }, 30000);
 
   test("the review prompt carries the gate result and only the applied diff", async () => {
@@ -686,7 +710,10 @@ describe("runTaskLoop", () => {
     expect(review).toContain("+  return 2;");
     expect(review).toContain(`Task #${nodeId("task", 1)} (verify test) — review`);
     expect(review).toContain("Reply with exactly `approve` or one `patch`");
-    expect(review).toContain(`task~ "#${nodeId("task", 1)}"`);
+    expect(review).toContain(`task~ "${nodeId("task", 1)}"`);
+    expect(review).toContain(`edit~ "${nodeId("edit", 1001)}"`);
+    expect(review).toContain("Do not repeat `task`");
+    expect(review).not.toContain('task~ "#');
     expect(review).toContain("Do not add a Stage or Task");
     // The requirement and unchanged source stay in the cached planning prefix,
     // not in the review turn.
@@ -841,6 +868,37 @@ end`;
     expect(retry).toContain("PLAN_UNKNOWN_PARENT");
     expect(retry).toContain("99-missing");
     expect(result.tasks?.map((entry) => entry.status)).toEqual(["done"]);
+  }, 30000);
+
+  test("a multi-task initial plan is retried with explicit compression rules", async () => {
+    const dir = project();
+    const valid = planText([stageSpec(1, [taskSpec(1)])], true);
+    const malformed = `plan "01-main"
+goal: g
+
+stage "02-current" plan "01-main"
+goal: g
+end
+
+task "03-first" stage "02-current" verify tsc
+instruction: first
+end
+
+edit "04-change" task "03-first" modify value answer in src/helper.ts
+instruction: change
+end
+
+task "05-second" stage "02-current" verify test
+instruction: second
+end`;
+    const provider = new ScriptedProvider([malformed, valid, GOOD_EDIT]);
+    const result = await runTaskLoop(baseOptions(dir, provider));
+    expect(result.ok).toBe(true);
+    const retry = provider.calls[1]?.at(-1)?.content ?? "";
+    expect(retry).toContain("task records must come before edit records");
+    expect(retry).toContain("keep only the first Task");
+    expect(retry).toContain("Put every task record before every edit record");
+    expect(retry).toContain("Do not emit finish");
   }, 30000);
 
   test("a failed edit is reported to the planner, which changes its definition", async () => {

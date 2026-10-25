@@ -33,9 +33,9 @@ below), `--effort <none|low|high|max>` (tc side only: force this reasoning_effor
 on every Edit-loop call, overriding the default described below),
 `--protocol-format edit-dsl` (the only allowed value; `json` is frozen and
 `compact` is a deprecated alias for `edit-dsl`), `--agent-mode
-pinned-repair|plan-exec-review|both` (the tc loop; `pinned-repair` is the
-default, `both` measures the pinned-repair and plan-exec-review loops in one
-report, and `edit`/`plan-exec` remain deprecated input aliases), `--help`.
+pinned-repair|plan-exec|both` (the tc loop; `pinned-repair` is the
+default, `both` measures the pinned-repair and plan-exec loops in one
+report, and `edit` remains the deprecated input alias), `--help`.
 Non-pilot results default to `benchmark/results/<date>.json`.
 
 The tc side runs every Edit-loop call at `reasoning_effort: none` by default
@@ -63,7 +63,7 @@ different inputs. Re-freeze both baselines against `benchmark/specs/` before
 using the four-way factors again.
 
 A tc-only report loads **both** frozen baselines and renders a
-`## Four-way comparison (oc / tc json / tc pinned-repair / tc plan-exec-review)` section when
+`## Four-way comparison (oc / tc json / tc pinned-repair / tc plan-exec)` section when
 `json-format-baseline.json` is present: per task and overall, with two factor
 columns — `vs oc baseline` and `vs tc json baseline`. A factor is the baseline's
 mean cache-excluded total divided by the variant's mean, so `2.5x` means the
@@ -85,15 +85,19 @@ its own git repo, so the agent cannot reach this repository's
 equality of the fixture's `src/*.test.ts` and `tsconfig.json`. On failure the
 loop keeps the attempted state in the workspace (no rollback), so a failing
 run's judged workspace holds the last attempted content rather than the pristine
-fixture. The task × side × rep matrix runs through a bounded worker pool
-(`--concurrency`, default 4); each run keeps its own workspace, git repo,
-session, and logs, and `report.runs` stays in matrix order even though runs
-finish in arbitrary order. The protocol matrix still exists for historical
+fixture. The task × side × rep matrix is scheduled in **cache-stable prompt
+groups** (side, loop mode, protocol); one group runs at a time, with up to
+`--concurrency` workers (default 4) claiming jobs within it. This keeps workers
+from alternating between pinned-repair and plan-exec prompts while jobs of the
+same mode share a warm prefix. Each run keeps its own workspace, git repo,
+session, and logs; `report.runs` stays in matrix order even though runs finish
+in arbitrary order. `report.concurrency` records the effective bound,
+`min(requested, largest group)`. The protocol matrix still exists for historical
 reports, but the only selectable edit protocol is now `edit-dsl`: `json` is
 frozen and `oc` is frozen. The live variant dimension is the tc loop mode
-(`--agent-mode pinned-repair|plan-exec-review`); each tc run records `protocol`
+(`--agent-mode pinned-repair|plan-exec`); each tc run records `protocol`
 and `agentMode` (null for `oc`) and aggregates/report tables keep variants in
-separate rows. Legacy `edit`/`plan-exec` values are read through the aliases.
+separate rows. Legacy `edit` values are read through the alias.
 
 ## Fixtures and the held-out task
 
@@ -132,9 +136,9 @@ reported in each row's `Notes` and never as a tuned column.
 - `steps`: tc = number of recorded loop rows (`records`, exchanges +
   verifications); oc = assistant messages in the session export (null when
   unavailable).
-- `agentMode` (tc side): `"pinned-repair"` or `"plan-exec-review"`; null for the
-  oc side. Legacy rows may carry `"edit"` or `"plan-exec"`, read through the
-  aliases as `pinned-repair` / `plan-exec-review`.
+- `agentMode` (tc side): `"pinned-repair"` or `"plan-exec"`; null for the
+  oc side. Legacy rows may carry `"edit"`, read through the alias as
+  `pinned-repair`.
 - `records` (tc side): per-record summaries with `row`, `iteration`, `kind`
   (`exchange` or `verification`), `exchange` (1-based index inside the Run
   iteration's shared ≤3 budget; null for verification rows), `outcome`
@@ -164,9 +168,9 @@ reported in each row's `Notes` and never as a tuned column.
   `typescript-coder-replay@1`) with the task issue, fixture path, the recorded
   edit protocol (`protocolFormat`: `"json"` or `"edit-dsl"`; legacy bundles
   recorded before the #15 rename carry `"compact"`, which reads as `"edit-dsl"`),
-  the loop mode (`agentMode`: `"pinned-repair"` or `"plan-exec-review"`; absent
-  reads as `"pinned-repair"`, and legacy `"edit"` / `"plan-exec"` values read
-  through the aliases), and the ordered
+  the loop mode (`agentMode`: `"pinned-repair"` or `"plan-exec"`; absent
+  reads as `"pinned-repair"`, and legacy `"edit"` values read through the
+  alias), and the ordered
   chat calls (request messages, response content, finishReason, usage). In a
   multi-variant run the bundle name carries the protocol
   (`<task>-tc-<protocol>-rep<n>.json`) so both variants can be replayed;
@@ -212,7 +216,7 @@ recorded baselines.
 
 Before a measured run, the benchmark warms only the cache-stable system prompts
 (the edit system prompt, or the planning and execution system prompts for
-plan-exec-review); task-specific user prompts are not warmed. Warm-up usage is recorded
+plan-exec); task-specific user prompts are not warmed. Warm-up usage is recorded
 under `warmups` and excluded from every measured table. Reports also print a
 per-variant cache-hit ratio (`cacheRead / raw prompt tokens`) and emit a
 `Cache warning` when any task or the overall ratios span 20 or more percentage
@@ -425,8 +429,8 @@ json,edit-dsl`) carries `protocolFormats: [...]` and a `provenanceByProtocol`
 map keyed by variant, so each ledger row is checked against the prompt its
 protocol actually measured; `protocolFormat` is null for such a report, while
 legacy scalar reports and `"compact"` values stay readable. A multi-mode report
-(`--agent-mode pinned-repair,plan-exec-review`) instead carries
-`agentModes: [...]` and a `provenanceByAgentMode` map; the plan-exec-review block
+(`--agent-mode pinned-repair,plan-exec`) instead carries
+`agentModes: [...]` and a `provenanceByAgentMode` map; the plan-exec block
 hashes the planning+execution prompts and the task caps, while the pinned-repair
 block keeps the historical edit-loop hash. The ledger has no mode column yet, so
 a multi-mode row is not selected by `check` until that column lands.
@@ -436,7 +440,7 @@ a multi-mode row is not selected by `check` until that column lands.
 | `model`        | the gateway model id                                                                  | `report.model`                                                            |
 | `taskIssue`    | the task spec text of every task in the report, keyed by task                         | `TASK_SPECS` (`benchmark/specs/<task>.md`)                                |
 | `fixture`      | the on-disk content of `benchmark/fixtures/<task>/`, keyed by task and relative path  | current tree                                                              |
-| `systemPrompt` | the model-facing system + protocol text (plan-exec-review hashes planning+execution prompts) | `buildSystemPrompt` / task prompts (`src/loop.ts`, `src/prompts/task.ts`) |
+| `systemPrompt` | the model-facing system + protocol text (plan-exec hashes planning+execution prompts) | `buildSystemPrompt` / task prompts (`src/loop.ts`, `src/prompts/task.ts`) |
 | `loopConfig`   | token budget, edit/iteration/stall caps, `effort`, `reps`, `multiPayload`             | loop constants + run flags                                                |
 | `pricing`      | the peak/off-peak rate table plus `PRICING_FETCHED_ON`                                | `src/benchmark-pricing.ts`                                                |
 

@@ -1,0 +1,680 @@
+{
+  "generatedAt": "2026-10-25T06:02:37.359Z",
+  "date": "2026-10-25",
+  "mode": "pilot",
+  "tasks": [
+    "json-parser"
+  ],
+  "sides": [
+    "tc"
+  ],
+  "reps": 1,
+  "concurrency": 1,
+  "model": "deepseek-flash",
+  "ocModel": null,
+  "effort": null,
+  "multiPayload": false,
+  "protocolFormat": "edit-dsl",
+  "protocolFormats": [
+    "edit-dsl"
+  ],
+  "agentModes": [
+    "plan-exec"
+  ],
+  "tokenBudget": null,
+  "bunVersion": "1.3.13",
+  "opencodeVersion": null,
+  "pilotReference": null,
+  "infraErrors": [],
+  "runs": [
+    {
+      "task": "json-parser",
+      "side": "tc",
+      "protocol": "edit-dsl",
+      "agentMode": "plan-exec",
+      "rep": 1,
+      "ok": true,
+      "sideOk": true,
+      "tokens": {
+        "input": 65844,
+        "output": 4139,
+        "cacheRead": 39680,
+        "cacheWrite": null,
+        "reasoning": null,
+        "total": 69983,
+        "billable": {
+          "in": 26164,
+          "out": 4139,
+          "total": 30303
+        }
+      },
+      "usageAvailable": true,
+      "usageSource": "chat-completions",
+      "rawUsage": [
+        {
+          "prompt_tokens": 3576,
+          "completion_tokens": 1070,
+          "total_tokens": 4646,
+          "prompt_tokens_details": {
+            "cached_tokens": 128
+          },
+          "prompt_cache_hit_tokens": 128,
+          "prompt_cache_miss_tokens": 3448
+        },
+        {
+          "prompt_tokens": 6276,
+          "completion_tokens": 561,
+          "total_tokens": 6837,
+          "prompt_tokens_details": {
+            "cached_tokens": 4608
+          },
+          "prompt_cache_hit_tokens": 4608,
+          "prompt_cache_miss_tokens": 1668
+        },
+        {
+          "prompt_tokens": 1511,
+          "completion_tokens": 50,
+          "total_tokens": 1561,
+          "prompt_tokens_details": {
+            "cached_tokens": 384
+          },
+          "prompt_cache_hit_tokens": 384,
+          "prompt_cache_miss_tokens": 1127
+        },
+        {
+          "prompt_tokens": 1553,
+          "completion_tokens": 30,
+          "total_tokens": 1583,
+          "prompt_tokens_details": {
+            "cached_tokens": 1024
+          },
+          "prompt_cache_hit_tokens": 1024,
+          "prompt_cache_miss_tokens": 529
+        },
+        {
+          "prompt_tokens": 1598,
+          "completion_tokens": 93,
+          "total_tokens": 1691,
+          "prompt_tokens_details": {
+            "cached_tokens": 1024
+          },
+          "prompt_cache_hit_tokens": 1024,
+          "prompt_cache_miss_tokens": 574
+        },
+        {
+          "prompt_tokens": 1743,
+          "completion_tokens": 482,
+          "total_tokens": 2225,
+          "prompt_tokens_details": {
+            "cached_tokens": 1024
+          },
+          "prompt_cache_hit_tokens": 1024,
+          "prompt_cache_miss_tokens": 719
+        },
+        {
+          "prompt_tokens": 2360,
+          "completion_tokens": 439,
+          "total_tokens": 2799,
+          "prompt_tokens_details": {
+            "cached_tokens": 1024
+          },
+          "prompt_cache_hit_tokens": 1024,
+          "prompt_cache_miss_tokens": 1336
+        },
+        {
+          "prompt_tokens": 2935,
+          "completion_tokens": 122,
+          "total_tokens": 3057,
+          "prompt_tokens_details": {
+            "cached_tokens": 1024
+          },
+          "prompt_cache_hit_tokens": 1024,
+          "prompt_cache_miss_tokens": 1911
+        },
+        {
+          "prompt_tokens": 8002,
+          "completion_tokens": 2,
+          "total_tokens": 8004,
+          "prompt_tokens_details": {
+            "cached_tokens": 6784
+          },
+          "prompt_cache_hit_tokens": 6784,
+          "prompt_cache_miss_tokens": 1218
+        },
+        {
+          "prompt_tokens": 9203,
+          "completion_tokens": 498,
+          "total_tokens": 9701,
+          "prompt_tokens_details": {
+            "cached_tokens": 7936
+          },
+          "prompt_cache_hit_tokens": 7936,
+          "prompt_cache_miss_tokens": 1267
+        },
+        {
+          "prompt_tokens": 3600,
+          "completion_tokens": 233,
+          "total_tokens": 3833,
+          "prompt_tokens_details": {
+            "cached_tokens": 512
+          },
+          "prompt_cache_hit_tokens": 512,
+          "prompt_cache_miss_tokens": 3088
+        },
+        {
+          "prompt_tokens": 3900,
+          "completion_tokens": 306,
+          "total_tokens": 4206,
+          "prompt_tokens_details": {
+            "cached_tokens": 1536
+          },
+          "prompt_cache_hit_tokens": 1536,
+          "prompt_cache_miss_tokens": 2364
+        },
+        {
+          "prompt_tokens": 4242,
+          "completion_tokens": 163,
+          "total_tokens": 4405,
+          "prompt_tokens_details": {
+            "cached_tokens": 1536
+          },
+          "prompt_cache_hit_tokens": 1536,
+          "prompt_cache_miss_tokens": 2706
+        },
+        {
+          "prompt_tokens": 4427,
+          "completion_tokens": 88,
+          "total_tokens": 4515,
+          "prompt_tokens_details": {
+            "cached_tokens": 1536
+          },
+          "prompt_cache_hit_tokens": 1536,
+          "prompt_cache_miss_tokens": 2891
+        },
+        {
+          "prompt_tokens": 10918,
+          "completion_tokens": 2,
+          "total_tokens": 10920,
+          "prompt_tokens_details": {
+            "cached_tokens": 9600
+          },
+          "prompt_cache_hit_tokens": 9600,
+          "prompt_cache_miss_tokens": 1318
+        }
+      ],
+      "durationMs": 25382,
+      "startedAt": "2026-10-25T06:02:38.624Z",
+      "finishedAt": "2026-10-25T06:03:04.006Z",
+      "cost": 0.00652704,
+      "rateClass": "off-peak",
+      "steps": 12,
+      "records": [
+        {
+          "row": 1,
+          "iteration": 1,
+          "kind": "exchange",
+          "exchange": 1,
+          "outcome": "applied",
+          "diagnosticsHead": null,
+          "replacementChars": 177,
+          "finishReason": "stop",
+          "cause": null,
+          "payloads": 1,
+          "toolCalls": 0,
+          "selectors": null,
+          "stages": null,
+          "matcherKinds": null
+        },
+        {
+          "row": 2,
+          "iteration": 2,
+          "kind": "exchange",
+          "exchange": 1,
+          "outcome": "applied",
+          "diagnosticsHead": null,
+          "replacementChars": 114,
+          "finishReason": "stop",
+          "cause": null,
+          "payloads": 1,
+          "toolCalls": 0,
+          "selectors": null,
+          "stages": null,
+          "matcherKinds": null
+        },
+        {
+          "row": 3,
+          "iteration": 3,
+          "kind": "exchange",
+          "exchange": 1,
+          "outcome": "applied",
+          "diagnosticsHead": null,
+          "replacementChars": 302,
+          "finishReason": "stop",
+          "cause": null,
+          "payloads": 1,
+          "toolCalls": 0,
+          "selectors": null,
+          "stages": null,
+          "matcherKinds": null
+        },
+        {
+          "row": 4,
+          "iteration": 4,
+          "kind": "exchange",
+          "exchange": 1,
+          "outcome": "applied",
+          "diagnosticsHead": null,
+          "replacementChars": 1804,
+          "finishReason": "stop",
+          "cause": null,
+          "payloads": 1,
+          "toolCalls": 0,
+          "selectors": null,
+          "stages": null,
+          "matcherKinds": null
+        },
+        {
+          "row": 5,
+          "iteration": 5,
+          "kind": "exchange",
+          "exchange": 1,
+          "outcome": "applied",
+          "diagnosticsHead": null,
+          "replacementChars": 1332,
+          "finishReason": "stop",
+          "cause": null,
+          "payloads": 1,
+          "toolCalls": 0,
+          "selectors": null,
+          "stages": null,
+          "matcherKinds": null
+        },
+        {
+          "row": 6,
+          "iteration": 6,
+          "kind": "exchange",
+          "exchange": 1,
+          "outcome": "applied",
+          "diagnosticsHead": null,
+          "replacementChars": 423,
+          "finishReason": "stop",
+          "cause": null,
+          "payloads": 1,
+          "toolCalls": 0,
+          "selectors": null,
+          "stages": null,
+          "matcherKinds": null
+        },
+        {
+          "row": 7,
+          "iteration": 7,
+          "kind": "verification",
+          "exchange": null,
+          "outcome": "ok",
+          "diagnosticsHead": null,
+          "replacementChars": null,
+          "finishReason": null,
+          "cause": null,
+          "payloads": 0,
+          "toolCalls": 0,
+          "selectors": null,
+          "stages": null,
+          "matcherKinds": null
+        },
+        {
+          "row": 8,
+          "iteration": 8,
+          "kind": "exchange",
+          "exchange": 1,
+          "outcome": "applied",
+          "diagnosticsHead": null,
+          "replacementChars": 807,
+          "finishReason": "stop",
+          "cause": null,
+          "payloads": 1,
+          "toolCalls": 0,
+          "selectors": null,
+          "stages": null,
+          "matcherKinds": null
+        },
+        {
+          "row": 9,
+          "iteration": 9,
+          "kind": "exchange",
+          "exchange": 1,
+          "outcome": "applied",
+          "diagnosticsHead": null,
+          "replacementChars": 1044,
+          "finishReason": "stop",
+          "cause": null,
+          "payloads": 1,
+          "toolCalls": 0,
+          "selectors": null,
+          "stages": null,
+          "matcherKinds": null
+        },
+        {
+          "row": 10,
+          "iteration": 10,
+          "kind": "exchange",
+          "exchange": 1,
+          "outcome": "applied",
+          "diagnosticsHead": null,
+          "replacementChars": 540,
+          "finishReason": "stop",
+          "cause": null,
+          "payloads": 1,
+          "toolCalls": 0,
+          "selectors": null,
+          "stages": null,
+          "matcherKinds": null
+        },
+        {
+          "row": 11,
+          "iteration": 11,
+          "kind": "exchange",
+          "exchange": 1,
+          "outcome": "applied",
+          "diagnosticsHead": null,
+          "replacementChars": 333,
+          "finishReason": "stop",
+          "cause": null,
+          "payloads": 1,
+          "toolCalls": 0,
+          "selectors": null,
+          "stages": null,
+          "matcherKinds": null
+        },
+        {
+          "row": 12,
+          "iteration": 12,
+          "kind": "verification",
+          "exchange": null,
+          "outcome": "ok",
+          "diagnosticsHead": null,
+          "replacementChars": null,
+          "finishReason": null,
+          "cause": null,
+          "payloads": 0,
+          "toolCalls": 0,
+          "selectors": null,
+          "stages": null,
+          "matcherKinds": null
+        }
+      ],
+      "exchangeStats": {
+        "turns": 10,
+        "payloads": 10,
+        "toolCalls": 0,
+        "applied": 10,
+        "rejected": 0,
+        "selected": 0,
+        "stopped": 0,
+        "selfChecks": 0,
+        "range": 0,
+        "matcher": 0,
+        "wholeSymbol": 0,
+        "stageWholeSymbol": 0,
+        "stageMatch": 0,
+        "stagePick": 0,
+        "snippet": 0,
+        "regex": 0,
+        "creates": 0
+      },
+      "loopDiagnostics": null,
+      "terminationReason": null,
+      "model": "deepseek-flash",
+      "workspace": "tmp/benchmark/2026-10-25T06-02-38-613Z-63674e00/json-parser-tc-plan-exec-rep1",
+      "logs": {
+        "side": "tmp/benchmark/2026-10-25T06-02-38-613Z-63674e00/logs/json-parser-tc-plan-exec-rep1/side.log",
+        "judge": "tmp/benchmark/2026-10-25T06-02-38-613Z-63674e00/logs/json-parser-tc-plan-exec-rep1/judge.log",
+        "session": null,
+        "stats": null
+      },
+      "versions": {
+        "bun": "1.3.13",
+        "opencode": null
+      },
+      "judge": {
+        "testsOk": true,
+        "tscOk": true,
+        "fixtureOk": true,
+        "detail": null
+      },
+      "error": null,
+      "infraError": null
+    }
+  ],
+  "aggregates": {
+    "byTaskSide": [
+      {
+        "task": "json-parser",
+        "side": "tc",
+        "protocol": "edit-dsl",
+        "agentMode": "plan-exec",
+        "runs": 1,
+        "ok": 1,
+        "failed": 0,
+        "successRate": 1,
+        "usageRuns": 1,
+        "tokens": {
+          "in": {
+            "mean": 26164,
+            "total": 26164
+          },
+          "out": {
+            "mean": 4139,
+            "total": 4139
+          },
+          "total": {
+            "mean": 30303,
+            "total": 30303
+          }
+        },
+        "cost": {
+          "mean": 0.00652704,
+          "total": 0.00652704
+        },
+        "cache": {
+          "read": {
+            "mean": 39680,
+            "total": 39680
+          },
+          "hitRate": 0.6026365348399246
+        },
+        "durationMsMean": 25382,
+        "stepsMean": 12,
+        "tokensPerSuccess": {
+          "in": 26164,
+          "out": 4139,
+          "total": 30303
+        },
+        "costPerSuccess": 0.00652704,
+        "selectors": {
+          "range": 0,
+          "matcher": 0,
+          "wholeSymbol": 0
+        },
+        "stages": {
+          "wholeSymbol": 0,
+          "match": 0,
+          "pick": 0
+        },
+        "matcherKinds": {
+          "snippet": 0,
+          "regex": 0
+        },
+        "creates": 0
+      }
+    ],
+    "bySide": [
+      {
+        "task": null,
+        "side": "tc",
+        "protocol": "edit-dsl",
+        "agentMode": "plan-exec",
+        "runs": 1,
+        "ok": 1,
+        "failed": 0,
+        "successRate": 1,
+        "usageRuns": 1,
+        "tokens": {
+          "in": {
+            "mean": 26164,
+            "total": 26164
+          },
+          "out": {
+            "mean": 4139,
+            "total": 4139
+          },
+          "total": {
+            "mean": 30303,
+            "total": 30303
+          }
+        },
+        "cost": {
+          "mean": 0.00652704,
+          "total": 0.00652704
+        },
+        "cache": {
+          "read": {
+            "mean": 39680,
+            "total": 39680
+          },
+          "hitRate": 0.6026365348399246
+        },
+        "durationMsMean": 25382,
+        "stepsMean": 12,
+        "tokensPerSuccess": {
+          "in": 26164,
+          "out": 4139,
+          "total": 30303
+        },
+        "costPerSuccess": 0.00652704,
+        "selectors": {
+          "range": 0,
+          "matcher": 0,
+          "wholeSymbol": 0
+        },
+        "stages": {
+          "wholeSymbol": 0,
+          "match": 0,
+          "pick": 0
+        },
+        "matcherKinds": {
+          "snippet": 0,
+          "regex": 0
+        },
+        "creates": 0
+      }
+    ],
+    "overall": [
+      {
+        "task": null,
+        "side": "tc",
+        "protocol": "edit-dsl",
+        "agentMode": "plan-exec",
+        "runs": 1,
+        "ok": 1,
+        "failed": 0,
+        "successRate": 1,
+        "usageRuns": 1,
+        "tokens": {
+          "in": {
+            "mean": 26164,
+            "total": 26164
+          },
+          "out": {
+            "mean": 4139,
+            "total": 4139
+          },
+          "total": {
+            "mean": 30303,
+            "total": 30303
+          }
+        },
+        "cost": {
+          "mean": 0.00652704,
+          "total": 0.00652704
+        },
+        "cache": {
+          "read": {
+            "mean": 39680,
+            "total": 39680
+          },
+          "hitRate": 0.6026365348399246
+        },
+        "durationMsMean": 25382,
+        "stepsMean": 12,
+        "tokensPerSuccess": {
+          "in": 26164,
+          "out": 4139,
+          "total": 30303
+        },
+        "costPerSuccess": 0.00652704,
+        "selectors": {
+          "range": 0,
+          "matcher": 0,
+          "wholeSymbol": 0
+        },
+        "stages": {
+          "wholeSymbol": 0,
+          "match": 0,
+          "pick": 0
+        },
+        "matcherKinds": {
+          "snippet": 0,
+          "regex": 0
+        },
+        "creates": 0
+      }
+    ]
+  },
+  "provenance": {
+    "inputs": {
+      "model": "7d963f65d1ede1bd9416a5f55575efe0d202e0a00519ef04e47dae20c3180445",
+      "taskIssue": "a81c9af120a84a26d1649dc5c5c68b3365b008f7af4e8cfb2762f8a48d93326e",
+      "fixture": "df7890f54bd6eefbfe8b661857ebbd9485ddb1d42eab515abe07b8265624b444",
+      "systemPrompt": "19f42b9b3d45005461342ace8b9a71bd575170dbb98c663764479f323e2a41a6",
+      "loopConfig": "b67b7834f9db63644fbf4271976a3a0db3bfd0fef169044807eb74e91cc48f4a",
+      "pricing": "aab6f45ac055bdc46329be2c46279a8ce322bfa62c0c61f0ef177d8b67766560"
+    },
+    "inputHash": "e7bec1f34d50c219f36e6f4aa961611c3dd80a59574a0ac35e6ec1bfe1d796f4",
+    "computedAt": "2026-10-25T06:02:37.359Z"
+  },
+  "warmups": [
+    {
+      "agentMode": "plan-exec",
+      "kind": "planning",
+      "promptChars": 8845,
+      "tokens": {
+        "input": null,
+        "output": null,
+        "cacheRead": null,
+        "cacheWrite": null,
+        "reasoning": null,
+        "total": null
+      },
+      "usageAvailable": false,
+      "durationMs": 688,
+      "error": null
+    },
+    {
+      "agentMode": "plan-exec",
+      "kind": "execution",
+      "promptChars": 2472,
+      "tokens": {
+        "input": null,
+        "output": null,
+        "cacheRead": null,
+        "cacheWrite": null,
+        "reasoning": null,
+        "total": null
+      },
+      "usageAvailable": false,
+      "durationMs": 560,
+      "error": null
+    }
+  ],
+  "cacheWarning": null
+}

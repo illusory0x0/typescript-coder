@@ -282,6 +282,7 @@ export interface Report {
   tasks: TaskName[];
   sides: Side[];
   reps: number;
+  /** Effective worker bound: min(requested, largest cache-stable group). */
   concurrency: number;
   model: string;
   /** oc-side model override (`--oc-model`); null when the oc side uses `model`. */
@@ -491,12 +492,11 @@ Options:
                                              json is frozen at
                                              benchmark/results/json-format-baseline.json).
                                              compact is a deprecated alias for edit-dsl
-  --agent-mode pinned-repair|plan-exec-review|both
+  --agent-mode pinned-repair|plan-exec|both
                                              tc loop mode(s); pinned-repair is the default.
                                              Use both to measure pinned-repair and
-                                             plan-exec-review in one report. Deprecated
-                                             aliases: edit (pinned-repair), plan-exec
-                                             (plan-exec-review)
+                                             plan-exec in one report. Deprecated
+                                             alias: edit (pinned-repair)
   --help, -h                                 print this help and exit
 `);
 }
@@ -572,13 +572,13 @@ export function parseProtocolFormats(value: string): ProtocolFormat[] {
   return PROTOCOL_ORDER.filter((protocol) => selected.has(protocol));
 }
 
-/** Canonical mode order: `pinned-repair` before `plan-exec-review`. */
-const AGENT_MODE_ORDER: readonly AgentMode[] = ["pinned-repair", "plan-exec-review"];
+/** Canonical mode order: `pinned-repair` before `plan-exec`. */
+const AGENT_MODE_ORDER: readonly AgentMode[] = ["pinned-repair", "plan-exec"];
 
 /**
  * Parse `--agent-mode`: one value, a comma list, or `both`. Canonical names,
- * the deprecated `edit`/`plan-exec` aliases, and `both` (both canonical modes)
- * are accepted; duplicates collapse and the canonical order is returned.
+ * the deprecated `edit` alias, and `both` (both canonical modes) are accepted;
+ * duplicates collapse and the canonical order is returned.
  */
 export function parseAgentModes(value: string): AgentMode[] {
   if (value.trim() === "") {
@@ -599,7 +599,7 @@ export function parseAgentModes(value: string): AgentMode[] {
     const mode = canonicalAgentMode(element);
     if (mode === null) {
       throw new Error(
-        `invalid --agent-mode value: ${element === "" ? raw : element} (expected "pinned-repair", "plan-exec-review", or "both"; aliases: edit, plan-exec)`,
+        `invalid --agent-mode value: ${element === "" ? raw : element} (expected "pinned-repair", "plan-exec", or "both"; alias: edit)`,
       );
     }
     selected.add(mode);
@@ -1031,7 +1031,7 @@ class RecordingProvider implements ProviderLike {
 
 /**
  * Warm only the cache-stable system prefixes: the pinned-repair system prompt,
- * or the planning and execution system prompts for plan-exec-review. Task-specific user
+ * or the planning and execution system prompts for plan-exec. Task-specific user
  * prompts are deliberately not warmed. These calls are recorded separately and
  * never enter the measured aggregates.
  */
@@ -1773,7 +1773,7 @@ function numberStats(values: readonly number[]): TokenStats {
   return { mean: total / values.length, total };
 }
 
-/** A tc row/run's mode, mapped through the legacy aliases; missing reads as pinned-repair. */
+/** A tc row/run's mode, mapped through the legacy alias; missing reads as pinned-repair. */
 function modeOf(value: unknown): AgentMode {
   return canonicalAgentMode(value) ?? DEFAULT_AGENT_MODE;
 }
@@ -1913,7 +1913,7 @@ function protocolsFromRuns(runs: readonly RunRecord[]): (ProtocolFormat | null)[
 }
 
 // Modes present among tc runs; a legacy run without the field reads as
-// pinned-repair, and legacy `edit`/`plan-exec` values map to canonical modes.
+// pinned-repair, and legacy `edit` values map to canonical modes.
 function agentModesFromRuns(runs: readonly RunRecord[]): AgentMode[] {
   const modes = new Set<AgentMode>();
   for (const run of runs) {
@@ -2402,7 +2402,7 @@ const FOUR_WAY_LABELS: Record<FourWayVariant, string> = {
   oc: "oc baseline",
   "tc-json": "tc json baseline",
   "tc-edit": "tc pinned-repair",
-  "tc-plan-exec": "tc plan-exec-review",
+  "tc-plan-exec": "tc plan-exec",
 };
 
 function meanFor(
@@ -2481,7 +2481,7 @@ export function fourWayComparison(
       (row) =>
         row.side === "tc" &&
         (row.protocol ?? "edit-dsl") === "edit-dsl" &&
-        modeOf(row.agentMode) === "plan-exec-review",
+        modeOf(row.agentMode) === "plan-exec",
     );
     const values: [FourWayVariant, number | null, number | null][] = [
       ["oc", oc, cacheHitFor(ocBaselineByTaskSide, task, (row) => row.side === "oc")],
@@ -2515,7 +2515,7 @@ export function fourWayComparison(
           (row) =>
             row.side === "tc" &&
             (row.protocol ?? "edit-dsl") === "edit-dsl" &&
-            modeOf(row.agentMode) === "plan-exec-review",
+            modeOf(row.agentMode) === "plan-exec",
         ),
       ],
     ];
@@ -2619,9 +2619,9 @@ export function fourWaySavingsSentence(rows: readonly FourWayRow[]): string | nu
     value === null ? "n/a" : `${value.toFixed(2)}x`;
   return `Four-way savings (cache-excluded total): vs oc — tc pinned-repair ${factor(
     edit.vsOc,
-  )}, tc plan-exec-review ${factor(plan.vsOc)}; vs tc json — tc pinned-repair ${factor(
+  )}, tc plan-exec ${factor(plan.vsOc)}; vs tc json — tc pinned-repair ${factor(
     edit.vsJson,
-  )}, tc plan-exec-review ${factor(plan.vsJson)}.`;
+  )}, tc plan-exec ${factor(plan.vsJson)}.`;
 }
 
 // The references tree names one file per task (json/sexp/lisp today); probe the
@@ -2862,10 +2862,7 @@ export function writeMarkdownReport(mdPath: string, report: Report): void {
         const reps = baseline.reps === null ? "n/a" : `${baseline.reps} reps`;
         return `\`${baseline.path}\` (${model}, ${reps}, ${baseline.date ?? "date n/a"})`;
       };
-      lines.push(
-        "## Four-way comparison (oc / tc json / tc pinned-repair / tc plan-exec-review)",
-        "",
-      );
+      lines.push("## Four-way comparison (oc / tc json / tc pinned-repair / tc plan-exec)", "");
       lines.push(
         `Baselines: oc ${note(ocBaseline, "oc")}; tc json ${note(jsonBaseline, "tc json")}.`,
         "Factor = baseline mean / variant mean; above 1 means the variant used that many times fewer cache-excluded tokens.",
@@ -3141,8 +3138,8 @@ export async function runPool<Job, Result>(
 /**
  * Expand the task × side × rep matrix with the tc protocol and loop-mode
  * dimensions (#16). `oc` has no variant: it gets exactly one job per task/rep
- * however many tc variants are selected. The pool in `main` claims all jobs
- * from one array, so variants run concurrently rather than in serial phases.
+ * however many tc variants are selected. The matrix order is canonical; the
+ * scheduler groups it by cache-stable prompt prefix before running.
  */
 export function buildJobs(
   tasks: readonly TaskName[],
@@ -3168,6 +3165,35 @@ export function buildJobs(
     }
   }
   return jobs;
+}
+
+interface ScheduledJob {
+  readonly index: number;
+  readonly job: BenchmarkJob;
+}
+
+/**
+ * Group jobs by their cache-stable prompt prefix (side + loop mode + protocol).
+ * Groups run one at a time so workers do not alternate between different
+ * system prompts; first-occurrence order keeps the canonical mode order.
+ * Returned indices refer to the original matrix, preserving report order.
+ */
+export function scheduleJobGroups(jobs: readonly BenchmarkJob[]): ScheduledJob[][] {
+  const groups = new Map<string, ScheduledJob[]>();
+  for (let index = 0; index < jobs.length; index += 1) {
+    const job = jobs[index];
+    if (job === undefined) {
+      continue;
+    }
+    const key = `${job.side}\u0000${job.agentMode ?? ""}\u0000${job.protocol ?? ""}`;
+    let group = groups.get(key);
+    if (group === undefined) {
+      group = [];
+      groups.set(key, group);
+    }
+    group.push({ index, job });
+  }
+  return [...groups.values()];
 }
 
 async function main(): Promise<number> {
@@ -3202,6 +3228,9 @@ async function main(): Promise<number> {
   const protocols = args.protocolFormats;
 
   const jobs = buildJobs(tasks, sides, reps, protocols, args.agentModes);
+  const jobGroups = scheduleJobGroups(jobs);
+  const largestGroup = jobGroups.reduce((largest, group) => Math.max(largest, group.length), 0);
+  const effectiveConcurrency = Math.min(args.concurrency, largestGroup);
 
   // The full run on the pilot's date references the pilot report when it has
   // already been written; other days (and missing files) stay null.
@@ -3249,7 +3278,7 @@ async function main(): Promise<number> {
     tasks,
     sides,
     reps,
-    concurrency: Math.min(args.concurrency, jobs.length),
+    concurrency: effectiveConcurrency,
     model: args.model,
     ocModel: args.ocModel === null || args.ocModel === args.model ? null : args.ocModel,
     effort: args.effort,
@@ -3338,28 +3367,43 @@ async function main(): Promise<number> {
     agentModes: args.agentModes,
   };
 
-  // Bounded worker pool: workers claim jobs by index so each run keeps its own
-  // workspace, session, and logs. Completion order only affects the interleaved
-  // prints; `records` stays in job order. A single protocol keeps today's
+  // Run one cache-stable prefix group at a time. Workers claim jobs within the
+  // group, so one process never alternates between pinned-repair and plan-exec
+  // (or between protocols). Completion order only affects interleaved prints;
+  // records are placed back in matrix order. A single protocol keeps today's
   // `task side repN` console shape (#16); variants are named only when the
   // matrix measures more than one.
   const showProtocol = protocols.length > 1;
   const showMode = args.agentModes.length > 1;
-  const records = await runPool(jobs, Math.min(args.concurrency, jobs.length), async (job, i) => {
-    const variant =
-      (showProtocol && job.protocol !== null ? ` ${job.protocol}` : "") +
-      (job.agentMode !== null && (showMode || modeOf(job.agentMode) !== DEFAULT_AGENT_MODE)
-        ? ` ${modeOf(job.agentMode)}`
-        : "");
-    process.stdout.write(
-      `starting ${job.task} ${job.side}${variant} rep${job.rep} (${i + 1}/${jobs.length})\n`,
+  const records: (RunRecord | undefined)[] = new Array(jobs.length);
+  for (const group of jobGroups) {
+    const groupResults = await runPool(
+      group,
+      Math.min(args.concurrency, group.length),
+      async ({ job, index }) => {
+        const variant =
+          (showProtocol && job.protocol !== null ? ` ${job.protocol}` : "") +
+          (job.agentMode !== null && (showMode || modeOf(job.agentMode) !== DEFAULT_AGENT_MODE)
+            ? ` ${modeOf(job.agentMode)}`
+            : "");
+        process.stdout.write(
+          `starting ${job.task} ${job.side}${variant} rep${job.rep} (${index + 1}/${jobs.length})\n`,
+        );
+        const record = await runOnce(job, context);
+        printRecord(record, showProtocol, showMode);
+        return { index, record };
+      },
     );
-    const record = await runOnce(job, context);
-    printRecord(record, showProtocol, showMode);
-    return record;
-  });
+    for (const result of groupResults) {
+      records[result.index] = result.record;
+    }
+  }
 
-  for (const record of records) {
+  for (let index = 0; index < records.length; index += 1) {
+    const record = records[index];
+    if (record === undefined) {
+      throw new Error(`scheduled job ${index + 1} did not produce a result`);
+    }
     report.runs.push(record);
     if (record.infraError !== null) {
       report.infraErrors.push(record.infraError);

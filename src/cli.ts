@@ -6,7 +6,7 @@ import type { Locator } from "./utility";
 export interface CliOptions {
   help: boolean;
   model: string;
-  /** Loop shape: pinned-repair (default) or plan-exec-review. */
+  /** Loop shape: pinned-repair (default) or plan-exec. */
   agentMode?: AgentMode;
   /** Opt-in multi-payload exchanges (#69); default off. */
   multiPayload: boolean;
@@ -202,13 +202,13 @@ export function parseArgs(argv: string[]): CliOptions {
         // `both` is the benchmark's multi-mode selector; one CLI process runs
         // one loop, so accepting it here would silently drop a mode.
         throw new Error(
-          `${flag} "both" is only valid for the benchmark's --agent-mode; use "pinned-repair" or "plan-exec-review"`,
+          `${flag} "both" is only valid for the benchmark's --agent-mode; use "pinned-repair" or "plan-exec"`,
         );
       }
       const mode = canonicalAgentMode(value);
       if (mode === null) {
         throw new Error(
-          `${flag} must be "pinned-repair" or "plan-exec-review" (aliases: edit, plan-exec; got ${JSON.stringify(value)})`,
+          `${flag} must be "pinned-repair" or "plan-exec" (alias: edit; got ${JSON.stringify(value)})`,
         );
       }
       agentMode = mode;
@@ -268,15 +268,15 @@ export function parseArgs(argv: string[]): CliOptions {
     }
     throw new Error(`unknown argument: ${arg}`);
   }
-  if (agentMode === "plan-exec-review") {
+  if (agentMode === "plan-exec") {
     if (targets !== null) {
       throw new Error(
-        "--targets edits explicit addresses through the single-target pinned-repair loop; it cannot be combined with --mode plan-exec-review",
+        "--targets edits explicit addresses through the single-target pinned-repair loop; it cannot be combined with --mode plan-exec",
       );
     }
     if (protocolFormat === "json") {
       throw new Error(
-        "--mode plan-exec-review executes tasks with the edit-dsl protocol; --protocol-format json cannot be combined with it",
+        "--mode plan-exec executes tasks with the edit-dsl protocol; --protocol-format json cannot be combined with it",
       );
     }
   }
@@ -301,17 +301,17 @@ export function helpText(): string {
     "typescript-coder — read an issue on stdin and apply a verified LLM edit",
     "",
     "Usage:",
-    "  tc [--model <id>] [--mode <pinned-repair|plan-exec-review>] [--format <text|json>] [--protocol-format <json|edit-dsl>] [--token-budget <n>] [--multi-payload] [--targets <file>] < issue.txt",
-    "  bun run src/main.ts [--model <id>] [--mode <pinned-repair|plan-exec-review>] [--format <text|json>] [--protocol-format <json|edit-dsl>] [--token-budget <n>] [--multi-payload] [--targets <file>] < issue.txt",
+    "  tc [--model <id>] [--mode <pinned-repair|plan-exec>] [--format <text|json>] [--protocol-format <json|edit-dsl>] [--token-budget <n>] [--multi-payload] [--targets <file>] < issue.txt",
+    "  bun run src/main.ts [--model <id>] [--mode <pinned-repair|plan-exec>] [--format <text|json>] [--protocol-format <json|edit-dsl>] [--token-budget <n>] [--multi-payload] [--targets <file>] < issue.txt",
     "",
     "Options:",
     "  --model <id>       model id for the OpenAI-compatible provider (default: deepseek-v4.1-flash)",
-    "  --mode <pinned-repair|plan-exec-review>",
+    "  --mode <pinned-repair|plan-exec>",
     "                     loop shape (default: pinned-repair); pinned-repair",
     "                     repairs one pinned selection through Edit -> Verify;",
-    "                     plan-exec-review plans, executes, and reviews a",
+    "                     plan-exec plans, executes, and reviews a",
     "                     Plan -> Execute -> Review edit tree",
-    "                     (alias --agent-mode; deprecated aliases: edit, plan-exec)",
+    "                     (alias --agent-mode; deprecated alias: edit)",
     "  --format <text|json>",
     "                     stdout format (default: text); json prints exactly one",
     "                     typescript-coder-result@2 object on stdout",

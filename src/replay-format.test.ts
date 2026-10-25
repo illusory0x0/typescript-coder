@@ -61,9 +61,9 @@ describe("ReplayRecorder", () => {
       issue: "issue text",
       fixture: "benchmark/fixtures/json-parser",
       protocolFormat: "edit-dsl",
-      agentMode: "plan-exec-review",
+      agentMode: "plan-exec",
     });
     expect(editDsl.protocolFormat).toBe("edit-dsl");
-    expect(editDsl.agentMode).toBe("plan-exec-review");
+    expect(editDsl.agentMode).toBe("plan-exec");
   });
 });
