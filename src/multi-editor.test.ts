@@ -25,27 +25,27 @@ function resolve(text: string, files: Record<string, string>, unsafe?: ReadonlyS
 
 describe("resolveMultiEditor file commands", () => {
   test("create queues an empty file and rejects an existing path", () => {
-    const ok = resolve("create src/new.ts done", {});
+    const ok = resolve("create src/new.ts end", {});
     expect(ok.failures).toEqual([]);
     expect(ok.creates).toEqual([{ index: 0, path: "src/new.ts" }]);
 
-    const exists = resolve("create src/a.ts done", { "src/a.ts": "x" });
+    const exists = resolve("create src/a.ts end", { "src/a.ts": "x" });
     expect(exists.creates).toEqual([]);
     expect(exists.failures[0]?.diagnostics).toContain("already exists");
   });
 
   test("delete queues an existing file and rejects a missing path", () => {
-    const ok = resolve("delete src/a.ts done", { "src/a.ts": "x" });
+    const ok = resolve("delete src/a.ts end", { "src/a.ts": "x" });
     expect(ok.deletes).toEqual([{ index: 0, path: "src/a.ts" }]);
 
-    const missing = resolve("delete src/a.ts done", {});
+    const missing = resolve("delete src/a.ts end", {});
     expect(missing.deletes).toEqual([]);
     expect(missing.failures[0]?.diagnostics).toContain("does not exist");
   });
 
   test("read returns whole-file lines or selected lines without writing", () => {
     const files = { "src/a.ts": "one\ntwo\nthree\n" };
-    const whole = resolve("read src/a.ts done", files);
+    const whole = resolve("read src/a.ts end", files);
     expect(whole.reads[0]?.lines).toEqual([
       { line: 1, text: "one" },
       { line: 2, text: "two" },
@@ -53,20 +53,20 @@ describe("resolveMultiEditor file commands", () => {
     ]);
     expect(whole.regions).toEqual([]);
 
-    const selected = resolve("read src/a.ts within 2 done", files);
+    const selected = resolve("read src/a.ts within 2 end", files);
     expect(selected.reads[0]?.lines).toEqual([{ line: 2, text: "two" }]);
   });
 
   test("a huge read result folds to three head and three tail lines", () => {
     const source = Array.from({ length: 10 }, (_, index) => `line ${index + 1}`).join("\n");
-    const read = resolve("read src/a.ts done", { "src/a.ts": source });
+    const read = resolve("read src/a.ts end", { "src/a.ts": source });
     const feedback = renderReadFeedback(read.reads);
     expect(feedback).toContain("src/a.ts (whole file, 10 lines; showing 6):");
     expect(feedback).toContain("1 | line 1");
     expect(feedback).toContain("3 | line 3");
     expect(feedback).toContain("... // content folded, source range: 4-7");
     expect(feedback).toContain("(4 of 10 lines hidden)");
-    expect(feedback).toContain("expand with read src/a.ts within 4-7 done");
+    expect(feedback).toContain("expand with read src/a.ts within 4-7 end");
     expect(feedback).toContain("8 | line 8");
     expect(feedback).toContain("10 | line 10");
     expect(feedback).not.toContain("4 | line 4");
@@ -74,7 +74,7 @@ describe("resolveMultiEditor file commands", () => {
 
   test("a selected-lines read is the expansion and comes back unfolded", () => {
     const source = Array.from({ length: 40 }, (_, index) => `line ${index + 1}`).join("\n");
-    const read = resolve("read src/a.ts within 1-20 done", { "src/a.ts": source });
+    const read = resolve("read src/a.ts within 1-20 end", { "src/a.ts": source });
     const feedback = renderReadFeedback(read.reads);
     expect(feedback).toContain("src/a.ts (selected lines, 20 lines):");
     expect(feedback).toContain("1 | line 1");
@@ -84,7 +84,7 @@ describe("resolveMultiEditor file commands", () => {
   });
 
   test("a short read keeps the quiet header shape", () => {
-    const read = resolve("read src/a.ts done", { "src/a.ts": "one\ntwo\nthree\n" });
+    const read = resolve("read src/a.ts end", { "src/a.ts": "one\ntwo\nthree\n" });
     const feedback = renderReadFeedback(read.reads);
     expect(feedback).toContain("src/a.ts (whole file):");
     expect(feedback).not.toContain("showing 6");
@@ -97,7 +97,6 @@ describe("resolveMultiEditor file commands", () => {
         "<<<TC_EDIT_BEGIN>>>",
         "export const a = 2;",
         "<<<TC_EDIT_END>>>",
-        "done",
       ].join("\n"),
       { "src/a.ts": "export const a = 1;\n" },
     );
@@ -118,7 +117,6 @@ describe("resolveMultiEditor file commands", () => {
         "<<<TC_EDIT_BEGIN>>>",
         "two changed",
         "<<<TC_EDIT_END>>>",
-        "done",
       ].join("\n"),
       { "src/a.ts": "one\ntwo\nthree\n" },
     );
@@ -137,7 +135,6 @@ describe("resolveMultiEditor file commands", () => {
         "<<<TC_EDIT_BEGIN>>>",
         "export const a = 1;",
         "<<<TC_EDIT_END>>>",
-        "done",
       ].join("\n"),
       {},
     );
@@ -146,7 +143,7 @@ describe("resolveMultiEditor file commands", () => {
   });
 
   test("rejects unsafe paths", () => {
-    const result = resolve("create ../outside.ts done", {}, new Set(["../outside.ts"]));
+    const result = resolve("create ../outside.ts end", {}, new Set(["../outside.ts"]));
     expect(result.creates).toEqual([]);
     expect(result.failures[0]?.diagnostics).toContain("outside the editable workspace");
   });
@@ -154,12 +151,11 @@ describe("resolveMultiEditor file commands", () => {
   test("conflicts create/delete with another operation on the same path", () => {
     const createWrite = resolve(
       [
-        "create src/a.ts done",
+        "create src/a.ts end",
         "write src/a.ts with",
         "<<<TC_EDIT_BEGIN>>>",
         "x",
         "<<<TC_EDIT_END>>>",
-        "done",
       ].join("\n"),
       {},
     );
@@ -173,7 +169,6 @@ describe("resolveMultiEditor file commands", () => {
         "<<<TC_EDIT_BEGIN>>>",
         "x",
         "<<<TC_EDIT_END>>>",
-        "done",
       ].join("\n"),
       { "src/a.ts": "one\ntwo\nthree\n" },
     );
@@ -188,8 +183,7 @@ describe("resolveMultiEditor file commands", () => {
         "<<<TC_EDIT_BEGIN>>>",
         "two",
         "<<<TC_EDIT_END>>>",
-        "done",
-        "read src/a.ts within 99 done",
+        "read src/a.ts within 99 end",
       ].join("\n"),
       { "src/a.ts": "one\n" },
     );
@@ -203,7 +197,7 @@ describe("resolveMultiEditor file commands", () => {
 
   test("a read-only reply keeps successful reads beside the failed one", () => {
     const result = resolve(
-      ["read src/a.ts within 1 done", "read src/a.ts within 99 done"].join("\n"),
+      ["read src/a.ts within 1 end", "read src/a.ts within 99 end"].join("\n"),
       { "src/a.ts": "one\ntwo\n" },
     );
     expect(result.reads).toHaveLength(1);

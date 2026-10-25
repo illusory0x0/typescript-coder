@@ -651,10 +651,10 @@ describe("resolveEditDslReply (#111)", () => {
 
   test("the fold marker stays self-describing with or without a total", () => {
     expect(foldMarker(4, 7)).toBe(
-      "... // content folded, source range: 4-7; expand with read <path> within 4-7 done",
+      "... // content folded, source range: 4-7; expand with read <path> within 4-7 end",
     );
     expect(foldMarker(4, 7, 10, "src/a.ts")).toBe(
-      "... // content folded, source range: 4-7 (4 of 10 lines hidden); expand with read src/a.ts within 4-7 done",
+      "... // content folded, source range: 4-7 (4 of 10 lines hidden); expand with read src/a.ts within 4-7 end",
     );
   });
 
@@ -679,7 +679,7 @@ describe("resolveEditDslReply (#111)", () => {
     expect(feedback).toContain("3 |   const b = 2;");
     expect(feedback).toContain("... // content folded, source range: 4-8");
     expect(feedback).toContain("(5 of 11 lines hidden)");
-    expect(feedback).toContain("expand with read a.ts within 4-8 done");
+    expect(feedback).toContain("expand with read a.ts within 4-8 end");
     expect(feedback).toContain("9 |   const h = 8;");
     expect(feedback).toContain("11 | }");
     expect(feedback).not.toContain("4 |   const c = 3;");

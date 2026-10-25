@@ -686,7 +686,7 @@ export function foldMarker(
       ? endLine - startLine + 1
       : Math.max(0, totalLines - FOLD_HEAD_LINES - FOLD_TAIL_LINES);
   const counts = totalLines === undefined ? "" : ` (${hidden} of ${totalLines} lines hidden)`;
-  return `... // content folded, source range: ${startLine}-${endLine}${counts}; expand with read ${path ?? "<path>"} within ${startLine}-${endLine} done`;
+  return `... // content folded, source range: ${startLine}-${endLine}${counts}; expand with read ${path ?? "<path>"} within ${startLine}-${endLine} end`;
 }
 
 /**

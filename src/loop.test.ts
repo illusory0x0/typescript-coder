@@ -8784,7 +8784,6 @@ describe("edit-dsl protocol (#111/#119)", () => {
         "<<<TC_EDIT_BEGIN>>>",
         "export const touched = 1;",
         "<<<TC_EDIT_END>>>",
-        "done",
       ].join("\n"),
     ].join("\n\n");
     const provider = new ScriptedProvider([
@@ -8838,7 +8837,6 @@ describe("edit-dsl protocol (#111/#119)", () => {
         "<<<TC_EDIT_BEGIN>>>",
         "export const touched = 1;",
         "<<<TC_EDIT_END>>>",
-        "done",
       ].join("\n"),
     ].join("\n\n");
     const provider = new ScriptedProvider([
@@ -9158,18 +9156,18 @@ describe("edit-dsl protocol (#111/#119)", () => {
 
     // The one detailed fold explanation lives in the system prompt.
     expect(system).toContain(
-      "... // content folded, source range: N-M (H of T lines hidden); expand with read <path> within N-M done",
+      "... // content folded, source range: N-M (H of T lines hidden); expand with read <path> within N-M end",
     );
     expect(system).toContain("whole-file `read` is folded the same way");
     expect(system).toContain("returns the selected lines unfolded");
-    expect(system).toContain("write <path> with <fence> done");
+    expect(system).toContain("write <path> with <fence>");
     expect(system).toContain("When a repair spans several declarations");
 
     // Every edit-phase and read prompt teaches the expansion and its caveat.
     for (const prompt of [read, details, command, retry]) {
-      expect(prompt).toContain("read <path> within <start>-<end> done");
+      expect(prompt).toContain("read <path> within <start>-<end> end");
       expect(prompt).toContain("whole-file `read` is folded the same way");
-      expect(prompt).toContain("write <path> with <fence> done");
+      expect(prompt).toContain("write <path> with <fence>");
     }
     for (const prompt of [read, command]) {
       expect(prompt).toContain("returns those lines unfolded");
@@ -9178,18 +9176,18 @@ describe("edit-dsl protocol (#111/#119)", () => {
     expect(retry).toContain("selected lines come back unfolded");
     // The read prompt surfaces the concrete folded result and the real path.
     expect(read).toContain(marker);
-    expect(command).toContain("expand with read src/a.ts within 4-7 done");
+    expect(command).toContain("expand with read src/a.ts within 4-7 end");
 
     // The instruction carries the ordered workflow and its triggers.
     expect(instruction).toContain("a block that shows `... // content folded ...` is large");
     expect(instruction).toContain(
-      "Expand the hidden range with `read <path> within <start>-<end> done`",
+      "Expand the hidden range with `read <path> within <start>-<end> end`",
     );
     expect(instruction).toContain("never repeat the same whole-file `read`");
     expect(instruction).toContain(
       "when a repair spans several declarations, or repeated localized edits keep introducing new tsc/test errors",
     );
-    expect(instruction).toContain("switch to a whole-file `write <path> with <fence> done`");
+    expect(instruction).toContain("switch to a whole-file `write <path> with <fence>`");
     expect(instruction).toContain("No listed micro-operation fits");
     expect(instruction).toContain("explore autonomously");
     expect(instruction).toContain("do not burn exchanges repeating a read you already made");
@@ -9197,10 +9195,10 @@ describe("edit-dsl protocol (#111/#119)", () => {
     // The examples pair each trigger with the concrete command form.
     expect(examples).toContain("Folded view");
     expect(examples).toContain("(332 of 338 lines hidden)");
-    expect(examples).toContain("read src/lisp.ts within 4-335 done");
+    expect(examples).toContain("read src/lisp.ts within 4-335 end");
     expect(examples).toContain("Whole-file repair");
     expect(examples).toContain("write src/lisp.ts with");
-    expect(instruction).toContain("read src/lisp.ts within 4-335 done");
+    expect(instruction).toContain("read src/lisp.ts within 4-335 end");
 
     // The JSON protocol prompts stay byte-identical: no fold guidance leaks in.
     const jsonSystem = buildSystemPrompt(false, "json");
@@ -10221,7 +10219,7 @@ describe("edit-dsl protocol (#111/#119)", () => {
           pairEditor("one", "return 2;", { kind: "snippet", value: "return 1;" }),
           pairEditor("two", "return 3;", { kind: "snippet", value: "return 1;" }),
         ),
-        "read src/pair.ts within 99 done",
+        "read src/pair.ts within 99 end",
       ].join("\n\n"),
       "Great! I resolve this problem!",
     ]);
@@ -10244,7 +10242,7 @@ describe("edit-dsl protocol (#111/#119)", () => {
     const dir = sameFileFixtureDir();
     const provider = new ScriptedProvider([
       editDslSelect("one", "src/pair.ts"),
-      "read src/pair.ts within 99 done",
+      "read src/pair.ts within 99 end",
       editDslReply(
         pairEditor("one", "return 2;", { kind: "snippet", value: "return 1;" }),
         pairEditor("two", "return 3;", { kind: "snippet", value: "return 1;" }),
@@ -10597,9 +10595,7 @@ describe("edit-dsl protocol (#111/#119)", () => {
     const dir = fixtureDir();
     const body = "export function answer(): number {\n  return 2;\n}";
     const provider = new ScriptedProvider([
-      ["write src/helper.ts with", "<<<TC_EDIT_BEGIN>>>", body, "<<<TC_EDIT_END>>>", "done"].join(
-        "\n",
-      ),
+      ["write src/helper.ts with", "<<<TC_EDIT_BEGIN>>>", body, "<<<TC_EDIT_END>>>"].join("\n"),
       "Great! I resolve this problem!",
     ]);
     const result = await runLoop({
@@ -10619,10 +10615,8 @@ describe("edit-dsl protocol (#111/#119)", () => {
     const dir = fixtureDir();
     const body = "export function answer(): number {\n  return 2;\n}";
     const provider = new ScriptedProvider([
-      "read src/helper.ts done",
-      ["write src/helper.ts with", "<<<TC_EDIT_BEGIN>>>", body, "<<<TC_EDIT_END>>>", "done"].join(
-        "\n",
-      ),
+      "read src/helper.ts end",
+      ["write src/helper.ts with", "<<<TC_EDIT_BEGIN>>>", body, "<<<TC_EDIT_END>>>"].join("\n"),
       "Great! I resolve this problem!",
     ]);
     const result = await runLoop({
@@ -10646,9 +10640,7 @@ describe("edit-dsl protocol (#111/#119)", () => {
     const body = "export function answer(): number {\n  return 2;\n}";
     const provider = new ScriptedProvider([
       editDslSelect("answer", "src/helper.ts", "value"),
-      ["write src/helper.ts with", "<<<TC_EDIT_BEGIN>>>", body, "<<<TC_EDIT_END>>>", "done"].join(
-        "\n",
-      ),
+      ["write src/helper.ts with", "<<<TC_EDIT_BEGIN>>>", body, "<<<TC_EDIT_END>>>"].join("\n"),
       "Great! I resolve this problem!",
     ]);
     const result = await runLoop({
@@ -10668,12 +10660,11 @@ describe("edit-dsl protocol (#111/#119)", () => {
     const body = "export function answer(): number {\n  return 2;\n}";
     const provider = new ScriptedProvider([
       [
-        "create src/new.ts done",
+        "create src/new.ts end",
         "write src/helper.ts with",
         "<<<TC_EDIT_BEGIN>>>",
         body,
         "<<<TC_EDIT_END>>>",
-        "done",
       ].join("\n"),
       "Great! I resolve this problem!",
     ]);
@@ -10695,10 +10686,8 @@ describe("edit-dsl protocol (#111/#119)", () => {
     writeFileSync(join(dir, "src", "extra.ts"), "export const extra = 1;\n");
     const body = "export function answer(): number {\n  return 2;\n}";
     const provider = new ScriptedProvider([
-      "delete src/extra.ts done",
-      ["write src/helper.ts with", "<<<TC_EDIT_BEGIN>>>", body, "<<<TC_EDIT_END>>>", "done"].join(
-        "\n",
-      ),
+      "delete src/extra.ts end",
+      ["write src/helper.ts with", "<<<TC_EDIT_BEGIN>>>", body, "<<<TC_EDIT_END>>>"].join("\n"),
       "Great! I resolve this problem!",
     ]);
     const result = await runLoop({

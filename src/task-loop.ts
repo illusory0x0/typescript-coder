@@ -566,7 +566,7 @@ function writeTargetFromReply(
   if (statement?.type !== "fs" || statement.statement.op !== "write") {
     return {
       ok: false,
-      diagnostics: `stage: protocol\n${editLabel(task)}: reply with \`write ${task.loc.path} with <fence> done\``,
+      diagnostics: `stage: protocol\n${editLabel(task)}: reply with \`write ${task.loc.path} with <fence>\``,
     };
   }
   const write = statement.statement;

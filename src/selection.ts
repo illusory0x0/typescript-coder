@@ -42,26 +42,30 @@ export interface Selection {
   rename?: RenameSpec | null;
 }
 
-/** A `create <path> done` file command. */
+/** A `create <path> end` file command. */
 export interface CreateFileStatement {
   op: "create";
   path: string;
 }
 
-/** A `delete <path> done` file command. */
+/** A `delete <path> end` file command. */
 export interface DeleteFileStatement {
   op: "delete";
   path: string;
 }
 
-/** A `read <path> [within <selecters>] done` viewer command. */
+/** A `read <path> [within <selecters>] end` viewer command. */
 export interface ReadFileStatement {
   op: "read";
   path: string;
   ranges: EditRange[] | null;
 }
 
-/** A `write <path> [within <selecters>] with <sentinel fence> done` file command. */
+/**
+ * A `write <path> [within <selecters>] with <sentinel fence>` file command.
+ * The sentinel close terminates the statement: a `write` has no trailing
+ * `end` (or retired `done`).
+ */
 export interface WriteFileStatement {
   op: "write";
   path: string;
@@ -353,9 +357,18 @@ class SelectionReader {
       }
       this.clauseIndex += 1;
       const attempt = this.clauseIndex;
+      // `lastFenceClosed` is per-statement parse context; never let a previous
+      // statement's fence colour this one's missing-end diagnostics.
+      this.lastFenceClosed = false;
       try {
         if (mode === "selection") {
           if (!this.keywordAt("select")) {
+            if (this.keywordAt("done")) {
+              this.rejectRetiredDone(
+                "`done` is no longer an edit-action terminator: a clause ends with `end`",
+                "remove `done`; select clauses end with `end`",
+              );
+            }
             this.syntax(
               "EDIT_MISSING_FIELD",
               value.length === 0
@@ -390,6 +403,13 @@ class SelectionReader {
         if (this.keywordAt("write")) {
           value.push({ type: "fs", statement: this.parseWrite() });
           continue;
+        }
+        if (this.keywordAt("done")) {
+          this.rejectRetiredDone(
+            "`done` is no longer an edit-action terminator: clauses end with `end`, and a `write` ends at its sentinel close",
+            "remove `done`; use `end` for a clause or file command, and no terminator after a `write`",
+            ["select", "create", "delete", "read", "write"],
+          );
         }
         this.syntax(
           "EDIT_MISSING_FIELD",
@@ -464,17 +484,26 @@ class SelectionReader {
     }
   }
 
+  /**
+   * Reject a retired `done` used as an edit-action terminator. The grammar has
+   * no `done`: the diagnostic always points at `end`, or at the sentinel close
+   * for a `write`, instead of silently accepting the old form.
+   */
+  private rejectRetiredDone(detail: string, hint: string, expected: string[] = ["end"]): never {
+    this.syntax("EDIT_RETIRED_DONE", detail, { expected, found: "done", hint });
+  }
+
   private parseCreate(): CreateFileStatement {
     this.expectKeyword("create", "expected `create` to begin a file command");
     const path = this.readToken("expected a file path after `create`");
-    this.expectKeyword("done", "expected `done` to terminate the `create` command");
+    this.consumeEnd("`create` command");
     return { op: "create", path };
   }
 
   private parseDelete(): DeleteFileStatement {
     this.expectKeyword("delete", "expected `delete` to begin a file command");
     const path = this.readToken("expected a file path after `delete`");
-    this.expectKeyword("done", "expected `done` to terminate the `delete` command");
+    this.consumeEnd("`delete` command");
     return { op: "delete", path };
   }
 
@@ -482,7 +511,7 @@ class SelectionReader {
     this.expectKeyword("read", "expected `read` to begin a file command");
     const path = this.readToken("expected a file path after `read`");
     const ranges = this.parseWithin();
-    this.expectKeyword("done", "expected `done` to terminate the `read` command");
+    this.consumeEnd("`read` command");
     return { op: "read", path, ranges };
   }
 
@@ -494,23 +523,37 @@ class SelectionReader {
     this.lastFenceClosed = false;
     const replacement = this.parseFence();
     this.skipWhitespace();
-    if (
-      !this.atEnd() &&
-      !this.keywordAt("done") &&
-      this.lastFenceClosed &&
-      !this.statementStartAt()
-    ) {
-      this.syntax(
-        "EDIT_EMBEDDED_FENCE_END",
-        `the write body contains the literal line ${EDIT_FENCE_END}; a fence body cannot carry the end marker, and no text may follow the close on its line`,
-        {
-          expected: ["done", EDIT_FENCE_END],
-          found: this.atEnd() ? "<eof>" : this.peekToken(),
-          hint: `close the body with ${EDIT_FENCE_END} on its own line, then write done on the next line`,
-        },
-      );
+    if (!this.atEnd()) {
+      if (this.keywordAt("done")) {
+        this.rejectRetiredDone(
+          `\`done\` is no longer a terminator: a \`write\` ends at its ${EDIT_FENCE_END} close`,
+          `remove \`done\`; the sentinel close ${EDIT_FENCE_END} already terminates the write`,
+          [EDIT_FENCE_END],
+        );
+      }
+      if (this.keywordAt("end")) {
+        this.syntax(
+          "EDIT_STRAY_END",
+          `a \`write\` ends at its ${EDIT_FENCE_END} close; the trailing \`end\` has no open statement to close`,
+          {
+            expected: [EDIT_FENCE_END],
+            found: "end",
+            hint: `remove the trailing \`end\`; the sentinel close ${EDIT_FENCE_END} already terminates the write`,
+          },
+        );
+      }
+      if (!this.statementStartAt()) {
+        this.syntax(
+          "EDIT_EMBEDDED_FENCE_END",
+          `the write body contains the literal line ${EDIT_FENCE_END}; a fence body cannot carry the end marker, and no text may follow the close on its line`,
+          {
+            expected: [EDIT_FENCE_END],
+            found: this.peekToken(),
+            hint: `close the body with ${EDIT_FENCE_END} on its own line; the sentinel close terminates the write`,
+          },
+        );
+      }
     }
-    this.expectKeyword("done", "expected `done` to terminate the `write` command");
     this.lastFenceClosed = false;
     return { op: "write", path, ranges, replacement };
   }
@@ -684,16 +727,23 @@ class SelectionReader {
   }
 
   /**
-   * Consume `end`, or recover a missing one when the clause is complete and the
-   * next token is unambiguously a new statement (or the reply ended). A missing
-   * `end` before a field or arbitrary text is still a hard error.
+   * Consume `end`, or recover a missing one when the statement is complete and
+   * the next token is unambiguously a new statement (or the reply ended). A
+   * missing `end` before a field or arbitrary text is still a hard error. The
+   * retired `done` terminator is rejected rather than consumed.
    */
-  private consumeEnd(): void {
+  private consumeEnd(label = "clause"): void {
     this.skipWhitespace();
     if (this.keywordAt("end")) {
       this.pos += 3;
       this.lastFenceClosed = false;
       return;
+    }
+    if (this.keywordAt("done")) {
+      this.rejectRetiredDone(
+        `\`done\` is no longer a terminator: the ${label} ends with \`end\``,
+        "replace `done` with `end`",
+      );
     }
     if (!this.atEnd() && !this.statementStartAt() && this.lastFenceClosed) {
       this.syntax(
@@ -710,20 +760,23 @@ class SelectionReader {
       const where = this.atEnd() ? "at the end of the reply" : `before \`${this.peekToken()}\``;
       this.warn(
         "EDIT_MISSING_END",
-        `expected \`end\` to terminate the clause; recovered ${where}`,
+        `expected \`end\` to terminate the ${label}; recovered ${where}`,
         {
           offset: this.atEnd() ? Math.max(0, this.text.trimEnd().length) : this.pos,
           expected: ["end"],
           found: this.atEnd() ? "<eof>" : this.peekToken(),
-          hint: "add `end` on its own line after the clause",
+          hint: "add `end` on its own line after the statement",
         },
       );
+      // The recovered statement ends here, so a fence from an earlier statement
+      // must not colour the next statement's diagnostics.
+      this.lastFenceClosed = false;
       return;
     }
-    this.syntax("EDIT_MISSING_END", "expected `end` to terminate the clause", {
+    this.syntax("EDIT_MISSING_END", `expected \`end\` to terminate the ${label}`, {
       expected: ["end"],
       found: this.peekToken(),
-      hint: "add `end` on its own line after the clause",
+      hint: "add `end` on its own line after the statement",
     });
   }
 
@@ -993,7 +1046,7 @@ class SelectionReader {
             offset: bodyLineStart + line.indexOf(EDIT_FENCE_END) + EDIT_FENCE_END.length,
             expected: [EDIT_FENCE_END],
             found: trimmed,
-            hint: `put ${EDIT_FENCE_END} on its own line, then end on the next line`,
+            hint: `put ${EDIT_FENCE_END} on its own line; the sentinel close must be the whole line`,
           },
         );
       }
@@ -1233,18 +1286,19 @@ export function serializeSelections(selections: Selection[]): string {
 export function serializeFileStatement(statement: FileStatement): string {
   switch (statement.op) {
     case "create":
-      return `create ${statement.path} done`;
+      return `create ${statement.path} end`;
     case "delete":
-      return `delete ${statement.path} done`;
+      return `delete ${statement.path} end`;
     case "read": {
       const within =
         statement.ranges === null ? "" : ` within ${renderMultiRange(statement.ranges)}`;
-      return `read ${statement.path}${within} done`;
+      return `read ${statement.path}${within} end`;
     }
     case "write": {
       const within =
         statement.ranges === null ? "" : ` within ${renderMultiRange(statement.ranges)}`;
-      return `write ${statement.path}${within} with\n${renderFence(statement.replacement)}\ndone`;
+      // The sentinel close terminates a `write`; there is no trailing terminator.
+      return `write ${statement.path}${within} with\n${renderFence(statement.replacement)}`;
     }
   }
 }

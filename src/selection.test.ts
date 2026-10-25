@@ -802,14 +802,13 @@ describe("toEditPayload", () => {
 describe("parseMultiEditor", () => {
   test("parses create, delete, read, write, and editor statements", () => {
     const text = [
-      "create src/new.ts done",
-      "delete src/old.ts done",
-      "read src/a.ts within {1, 3:2-4} done",
+      "create src/new.ts end",
+      "delete src/old.ts end",
+      "read src/a.ts within {1, 3:2-4} end",
       "write src/a.ts within 2 with",
       BEGIN,
       "return 2;",
       END,
-      "done",
       "select answer in src/a.ts resolve value end",
     ].join("\n");
     const statements = parseMultiEditor(text);
@@ -845,9 +844,9 @@ describe("parseMultiEditor", () => {
     expect(statements[4]?.type).toBe("editor");
   });
 
-  test("write with no within replaces the whole file", () => {
+  test("write with no within replaces the whole file at EOF", () => {
     const [statement] = parseMultiEditor(
-      ["write src/a.ts with", BEGIN, "export const a = 1;", END, "done"].join("\n"),
+      ["write src/a.ts with", BEGIN, "export const a = 1;", END].join("\n"),
     );
     expect(statement).toEqual({
       type: "fs",
@@ -860,8 +859,20 @@ describe("parseMultiEditor", () => {
     });
   });
 
+  test("write followed by the next statement parses both", () => {
+    const statements = parseMultiEditor(
+      ["write src/a.ts with", BEGIN, "x", END, "read src/a.ts end"].join("\n"),
+    );
+    expect(statements).toHaveLength(2);
+    expect(statements[0]?.type).toBe("fs");
+    expect(statements[1]).toEqual({
+      type: "fs",
+      statement: { op: "read", path: "src/a.ts", ranges: null },
+    });
+  });
+
   test("write with an empty sentinel body replaces the file with empty text", () => {
-    const [statement] = parseMultiEditor(["write src/a.ts with", BEGIN, END, "done"].join("\n"));
+    const [statement] = parseMultiEditor(["write src/a.ts with", BEGIN, END].join("\n"));
     expect(statement).toEqual({
       type: "fs",
       statement: { op: "write", path: "src/a.ts", ranges: null, replacement: "" },
@@ -871,7 +882,7 @@ describe("parseMultiEditor", () => {
   test("rejects a legacy write fence with EDIT_LEGACY_FENCE", () => {
     for (const fence of [LEGACY_TICKS, LEGACY_DASH]) {
       try {
-        parseMultiEditor(["write src/a.ts with", fence, "x", fence, "done"].join("\n"));
+        parseMultiEditor(["write src/a.ts with", fence, "x", fence].join("\n"));
         throw new Error("expected a syntax error");
       } catch (error) {
         expect(error).toBeInstanceOf(SelectionSyntaxError);
@@ -883,7 +894,7 @@ describe("parseMultiEditor", () => {
   });
 
   test("rejects a write body containing an exact close sentinel line", () => {
-    const text = ["write src/a.ts with", BEGIN, "before", END, "after", END, "done"].join("\n");
+    const text = ["write src/a.ts with", BEGIN, "before", END, "after", END].join("\n");
     try {
       parseMultiEditor(text);
       throw new Error("expected a syntax error");
@@ -897,42 +908,129 @@ describe("parseMultiEditor", () => {
 
   test("round-trips every fs statement", () => {
     const text = [
-      "create src/new.ts done",
-      "delete src/old.ts done",
-      "read src/a.ts done",
-      "read src/a.ts within 1 done",
+      "create src/new.ts end",
+      "delete src/old.ts end",
+      "read src/a.ts end",
+      "read src/a.ts within 1 end",
       "write src/a.ts with",
       BEGIN,
       "export const a = 1;",
       END,
-      "done",
       "select answer in src/a.ts end",
     ].join("\n");
     expect(serializeMultiEditor(parseMultiEditor(text))).toBe(
       [
-        "create src/new.ts done",
-        "delete src/old.ts done",
-        "read src/a.ts done",
-        "read src/a.ts within 1 done",
-        ["write src/a.ts with", BEGIN, "export const a = 1;", END, "done"].join("\n"),
+        "create src/new.ts end",
+        "delete src/old.ts end",
+        "read src/a.ts end",
+        "read src/a.ts within 1 end",
+        ["write src/a.ts with", BEGIN, "export const a = 1;", END].join("\n"),
         "select answer in src/a.ts\nend",
       ].join("\n\n"),
     );
   });
 
-  test("requires done after a create", () => {
-    expect(() => parseMultiEditor("create src/new.ts")).toThrow(/done/);
+  test("recovers a missing end after create, delete, and read", () => {
+    for (const text of ["create src/new.ts", "delete src/old.ts", "read src/a.ts within 1"]) {
+      const parsed = parseMultiEditorDetailed(text);
+      expect(parsed.ok).toBe(true);
+      expect(parsed.value).toHaveLength(1);
+      const warning = parsed.issues.find((issue) => issue.code === "EDIT_MISSING_END");
+      expect(warning?.severity).toBe("warning");
+    }
+    const beforeNext = parseMultiEditorDetailed("create src/new.ts\ndelete src/old.ts end");
+    expect(beforeNext.ok).toBe(true);
+    expect(beforeNext.value).toHaveLength(2);
+    expect(beforeNext.issues.some((issue) => issue.code === "EDIT_MISSING_END")).toBe(true);
+  });
+
+  test("a missing end before arbitrary text is a hard error", () => {
+    for (const text of [
+      "create src/new.ts nonsense",
+      "delete src/old.ts nonsense",
+      "read src/a.ts nonsense",
+    ]) {
+      try {
+        parseMultiEditor(text);
+        throw new Error("expected a syntax error");
+      } catch (error) {
+        expect(error).toBeInstanceOf(SelectionSyntaxError);
+        const syntax = error as SelectionSyntaxError;
+        expect(syntax.issues[0]?.code).toBe("EDIT_MISSING_END");
+        expect(syntax.issues[0]?.found).toBe("nonsense");
+      }
+    }
+  });
+
+  test("rejects the retired done after a file command or a select clause", () => {
+    const replies = [
+      "create src/new.ts done",
+      "delete src/old.ts done",
+      "read src/a.ts within 1 done",
+      "select foo in src/a.ts done",
+      ["select foo in src/a.ts", "replace with", BEGIN, "x", END, "done"].join("\n"),
+    ];
+    for (const reply of replies) {
+      try {
+        parseMultiEditor(reply);
+        throw new Error("expected a syntax error");
+      } catch (error) {
+        expect(error).toBeInstanceOf(SelectionSyntaxError);
+        const syntax = error as SelectionSyntaxError;
+        expect(syntax.issues[0]?.code).toBe("EDIT_RETIRED_DONE");
+        expect(syntax.issues[0]?.hint).toContain("end");
+        expect(syntax.issues[0]?.hint).toContain("done");
+      }
+    }
+  });
+
+  test("rejects a stray done after a write close", () => {
+    const text = ["write src/a.ts with", BEGIN, "x", END, "done"].join("\n");
+    try {
+      parseMultiEditor(text);
+      throw new Error("expected a syntax error");
+    } catch (error) {
+      expect(error).toBeInstanceOf(SelectionSyntaxError);
+      const syntax = error as SelectionSyntaxError;
+      expect(syntax.issues[0]?.code).toBe("EDIT_RETIRED_DONE");
+      expect(syntax.issues[0]?.hint).toContain("remove");
+      expect(syntax.issues[0]?.hint).toContain("sentinel close");
+    }
+  });
+
+  test("rejects a trailing end after a write close", () => {
+    const text = ["write src/a.ts with", BEGIN, "x", END, "end"].join("\n");
+    try {
+      parseMultiEditor(text);
+      throw new Error("expected a syntax error");
+    } catch (error) {
+      expect(error).toBeInstanceOf(SelectionSyntaxError);
+      const syntax = error as SelectionSyntaxError;
+      expect(syntax.issues[0]?.code).toBe("EDIT_STRAY_END");
+      expect(syntax.issues[0]?.hint).toContain("remove");
+      expect(syntax.issues[0]?.hint).toContain("sentinel close");
+    }
+  });
+
+  test("an unclosed write fence remains EDIT_UNCLOSED_FENCE", () => {
+    const text = ["write src/a.ts with", BEGIN, "x"].join("\n");
+    try {
+      parseMultiEditor(text);
+      throw new Error("expected a syntax error");
+    } catch (error) {
+      expect(error).toBeInstanceOf(SelectionSyntaxError);
+      const syntax = error as SelectionSyntaxError;
+      expect(syntax.issues[0]?.code).toBe("EDIT_UNCLOSED_FENCE");
+    }
   });
 
   test("requires with before the write fence", () => {
-    expect(() => parseMultiEditor(["write src/a.ts", BEGIN, "x", END, "done"].join("\n"))).toThrow(
-      /with/,
-    );
+    expect(() => parseMultiEditor(["write src/a.ts", BEGIN, "x", END].join("\n"))).toThrow(/with/);
   });
 
   test("a shorter delimiter run inside the fence body is ordinary text (#25)", () => {
     const [statement] = parseMultiEditor(
-      ["write src/a.ts with", BEGIN, "one", "---", "two", END, "done"].join("\n"),
+      ["write src/a.ts with", BEGIN, "one", "---", "two", END].join("\n"),
     );
     expect(statement).toEqual({
       type: "fs",
@@ -959,6 +1057,6 @@ describe("parseMultiEditor", () => {
   });
 
   test("rejects an unknown statement keyword", () => {
-    expect(() => parseMultiEditor("rename src/a.ts done")).toThrow(/select/);
+    expect(() => parseMultiEditor("rename src/a.ts")).toThrow(/select/);
   });
 });

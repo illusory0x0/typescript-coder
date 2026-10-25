@@ -929,7 +929,6 @@ end`;
         "  return 2;",
         "}",
         "<<<TC_EDIT_END>>>",
-        "done",
       ].join("\n"),
     ]);
     const result = await runTaskLoop(baseOptions(dir, provider));

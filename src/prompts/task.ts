@@ -353,7 +353,7 @@ const TASK_ACTION_RULES: Record<string, string> = {
   rename:
     "Reply with `select … rename <current> to <newName> end`; the harness rewrites the declaration name and its same-file references and refuses a colliding name.",
   write:
-    "The task replaces the whole file. Reply with exactly `write <path> with <fence> done`; the fence carries the complete file. Do not send `select`, `match`, `pick`, or `within`.",
+    "The task replaces the whole file. Reply with exactly `write <path> with <fence>`; the sentinel close terminates the statement and the fence carries the complete file. Do not send `select`, `match`, `pick`, or `within`.",
 };
 
 /** The bounded self-check offer on an edit turn's repair prompt. */
@@ -367,11 +367,11 @@ export const TASK_SELF_CHECK_OFFER =
  */
 export function taskEditDslInstruction(): string {
   return [
-    "A declaration edit is one or more `select … end` clauses; a whole-file edit is one `write <path> with <fence> done` statement. No prose, no JSON edit payload.",
+    "A declaration edit is one or more `select … end` clauses; a whole-file edit is one `write <path> with <fence>` statement. No prose, no JSON edit payload.",
     "",
     "Clause: `select <symbol> in <path> [ resolve <value|type|namespace> ] [ match (<snippet> | /regex/) ] [ [ pick <range> ] replace with <fence> | rename <old> to <new> ] end`.",
     "`match` locates a span inside the declaration; `pick` narrows a match and requires `replace`; omit `match` to rewrite the whole declaration; an empty body deletes it. Open the body with `<<<TC_EDIT_BEGIN>>>` on its own line and close it with `<<<TC_EDIT_END>>>` on its own line; the body is raw text (hyphen runs, backticks, `done`, and `end` are ordinary body lines). `pick` coordinates are the 1-based file-absolute lines of the content view.",
-    "For a whole-file edit, `write <path> with <<<TC_EDIT_BEGIN>>> … <<<TC_EDIT_END>>> done` replaces the file with the raw body.",
+    "For a whole-file edit, `write <path> with <<<TC_EDIT_BEGIN>>> … <<<TC_EDIT_END>>>` replaces the file with the raw body; no terminator follows the sentinel close.",
     "",
     "You do not run the type check; the harness runs the task gate after every edit in the task settles. An edit may also change the same-file declarations listed in its `related` field.",
   ].join("\n");
@@ -417,7 +417,6 @@ export function taskEditDslHelp(action: EditNode["action"]): string {
       "  return 2;",
       "}",
       "<<<TC_EDIT_END>>>",
-      "done",
     ].join("\n"),
   };
   return `Example for this action:\n\n${examples[action]}`;

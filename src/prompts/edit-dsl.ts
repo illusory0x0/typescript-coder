@@ -23,7 +23,7 @@ export const EDIT_DSL_EDIT_SYSTEM_PARAGRAPH =
 export const EDIT_DSL_CREATE_DELETE_SYSTEM_PARAGRAPH =
   'A "create" selection asks for the COMPLETE declaration between `<<<TC_EDIT_BEGIN>>>` and `<<<TC_EDIT_END>>>`; the harness appends it to the target file as a new top-level declaration, creating the file and any parent directories when needed. A complete top-level declaration is appended verbatim; otherwise the clause\'s `resolve` picks the wrapper: no `resolve` or `resolve value` wraps the body as `let <symbol> = <body>;`, `resolve type` as `type <symbol> = <body>;`, and `resolve namespace` as a `namespace <symbol> { … }` block. A "delete" selection carries no clause: the harness removes the declaration. To remove only part of a declaration, use `match` with an empty body. The syntax gate discards any clause that leaves the file unparseable and writes nothing; the clauses that resolve apply independently.';
 export const EDIT_DSL_FS_SYSTEM_PARAGRAPH =
-  "Raw file commands may accompany or replace the select workflow: `create <path> done` creates an empty file (it must not already exist), `delete <path> done` removes it, `read <path> [within <selecters>] done` shows the file or selected lines without writing, and `write <path> [within <selecters>] with <fence> done` writes the whole file or replaces the selected lines (creating the file when absent). A path that does not exist is created by `write`; a missing symbol in an editor still appends. A reply may carry several statements; the editing statements apply atomically, while a failed `read` only reports its error and never discards them. A `read` sees the source as it was before the reply. File commands and a `select` may not be mixed in the first reply; after the first target is pinned they may be mixed.";
+  "Raw file commands may accompany or replace the select workflow: `create <path> end` creates an empty file (it must not already exist), `delete <path> end` removes it, `read <path> [within <selecters>] end` shows the file or selected lines without writing, and `write <path> [within <selecters>] with <fence>` writes the whole file or replaces the selected lines (creating the file when absent). A path that does not exist is created by `write`; a missing symbol in an editor still appends. A reply may carry several statements; the editing statements apply atomically, while a failed `read` only reports its error and never discards them. A `read` sees the source as it was before the reply. File commands and a `select` may not be mixed in the first reply; after the first target is pinned they may be mixed.";
 
 // The first thing the model reads: name the protocol and show the reply shape
 // before the motivation paragraphs. The detailed grammar still follows below;
@@ -42,14 +42,14 @@ export const EDIT_DSL_MOTIVATION =
 // The one detailed fold explanation (system prompt). The read/command prompts
 // carry only the short hint below; the edit instruction teaches the workflow.
 export const EDIT_DSL_FOLD_DETAIL =
-  "A source block longer than 6 lines keeps only its first 3 and last 3 lines. The folded line is `... // content folded, source range: N-M (H of T lines hidden); expand with read <path> within N-M done`: it names the hidden file-absolute lines, how many of the block's lines are hidden, and the command that expands exactly that range. A whole-file `read` is folded the same way, so repeating it returns the same six lines; a `read within` is the expansion and returns the selected lines unfolded (`within {a-b, c-d}` expands several ranges). When a repair spans several declarations, or repeated localized edits keep introducing new tsc/test errors, use a whole-file `write <path> with <fence> done` instead of more local edits.";
+  "A source block longer than 6 lines keeps only its first 3 and last 3 lines. The folded line is `... // content folded, source range: N-M (H of T lines hidden); expand with read <path> within N-M end`: it names the hidden file-absolute lines, how many of the block's lines are hidden, and the command that expands exactly that range. A whole-file `read` is folded the same way, so repeating it returns the same six lines; a `read within` is the expansion and returns the selected lines unfolded (`within {a-b, c-d}` expands several ranges). When a repair spans several declarations, or repeated localized edits keep introducing new tsc/test errors, use a whole-file `write <path> with <fence>` instead of more local edits.";
 
 export const EDIT_DSL_WORKFLOW_SUMMARY =
   "Workflow: pin one target with `select` (or a raw command), inspect it, then edit the smallest span with `match`/`pick`; on a verification failure repair the same declaration; escalate to a whole-file `write` when the repair outgrows one declaration or localized edits keep adding errors; if no operation fits, explore with `read`/`select` viewers first.";
 
 // #25: read turns are the token storm, so they carry only this terse hint.
 export const EDIT_DSL_FOLD_HINT =
-  "A folded block names its hidden range and line counts; a whole-file `read` is folded the same way. Expand it with `read <path> within <start>-<end> done`, which returns those lines unfolded, instead of repeating the read; when a repair outgrows one declaration, use `write <path> with <fence> done`.";
+  "A folded block names its hidden range and line counts; a whole-file `read` is folded the same way. Expand it with `read <path> within <start>-<end> end`, which returns those lines unfolded, instead of repeating the read; when a repair outgrows one declaration, use `write <path> with <fence>`.";
 
 export const EDIT_DSL_ROUNDS_SYSTEM_PARAGRAPH =
   "A round allows at most 3 exchanges: picking the target, writing the edit, and re-asking after a rejected edit share that budget. When an edit verifies, the run is done; when verification fails, the next round shows the current source and the failing diagnostics, and it may either revise the pinned declaration or re-pin to a different declaration in the same file by naming it in the clause's own `select` (the new address must resolve uniquely in the current source). A round that exhausts its 3 exchanges without a valid edit continues through a continuation prompt: reply `STOP` to end the run, or return a corrected edit (or, when no target is pinned, a corrected selection) to open a fresh round with a new 3-exchange budget; the run is capped at 32 rounds, after which it ends with the failure summary.";
@@ -344,9 +344,9 @@ export const EDIT_DSL_EXAMPLE_FORMS: EditDslExampleForm[] = [
     label:
       "7. Folded view: a large file shows only six lines; the marker names the exact range, and `read … within …` returns those lines unfolded.",
     raw: [
-      "... // content folded, source range: 4-335 (332 of 338 lines hidden); expand with read <path> within 4-335 done",
+      "... // content folded, source range: 4-335 (332 of 338 lines hidden); expand with read <path> within 4-335 end",
       "",
-      "read src/lisp.ts within 4-335 done",
+      "read src/lisp.ts within 4-335 end",
     ].join("\n"),
   },
   {
@@ -357,7 +357,6 @@ export const EDIT_DSL_EXAMPLE_FORMS: EditDslExampleForm[] = [
       "<<<TC_EDIT_BEGIN>>>",
       "// ... the complete repaired file ...",
       "<<<TC_EDIT_END>>>",
-      "done",
     ].join("\n"),
   },
 ];
@@ -384,7 +383,7 @@ export function renderEditDslExamples(): string {
  */
 export function editDslInstruction(): string {
   return [
-    "A reply is one or more `select … end` clauses (see the examples below), optionally mixed with raw file commands (`create <path> done`, `delete <path> done`, `read <path> [within <selecters>] done`, `write <path> [within <selecters>] with <fence> done`), with no markdown fences around the reply and no explanations. Statements apply in document order and independently; a clause with neither `replace` nor `rename` is a viewer that writes nothing unless it contains `pick`; `pick` requires `replace` and is not a viewer form. `rename <old> to <new>` is the other editor form: it renames the selected declaration and its same-file references and cannot be combined with `pick` or `replace`.",
+    "A reply is one or more `select … end` clauses (see the examples below), optionally mixed with raw file commands (`create <path> end`, `delete <path> end`, `read <path> [within <selecters>] end`, `write <path> [within <selecters>] with <fence>`), with no markdown fences around the reply and no explanations. Statements apply in document order and independently; a clause with neither `replace` nor `rename` is a viewer that writes nothing unless it contains `pick`; `pick` requires `replace` and is not a viewer form. `rename <old> to <new>` is the other editor form: it renames the selected declaration and its same-file references and cannot be combined with `pick` or `replace`.",
     "",
     "Each clause: `select <symbol> in <path>` names the declaration (an optional `kind` may precede the symbol), and `resolve <value|type|namespace>` selects the TypeScript symbol space when the name is declared in more than one. `match <snippet | /regex/>` locates a span inside it (narrow a tie with `pick <range>`, which requires `replace`); `replace with <fence>` rewrites the target: open the body with `<<<TC_EDIT_BEGIN>>>` on its own line and close it with `<<<TC_EDIT_END>>>` on its own line. The body is raw, so hyphen runs, backticks, `done`, and `end` are ordinary body lines. Alternatively, `rename <old> to <new>` renames the target declaration and every reference that resolves to it, including dotted namespace and member targets. Omit `match` for a whole-declaration rewrite; use an empty body to delete. Coordinates are the 1-based file-absolute positions of the numbered source block.",
     "",
@@ -399,10 +398,10 @@ export function editDslInstruction(): string {
     "Workflow — choose the smallest micro-operation that fits:",
     "",
     "1. Pin one target with `select … end` (or pin a file with a raw command).",
-    "2. Inspect before editing: a block that shows `... // content folded ...` is large, and a whole-file `read` is folded the same way. Expand the hidden range with `read <path> within <start>-<end> done`, whose selected lines come back unfolded; never repeat the same whole-file `read`, because it returns the same folded view.",
+    "2. Inspect before editing: a block that shows `... // content folded ...` is large, and a whole-file `read` is folded the same way. Expand the hidden range with `read <path> within <start>-<end> end`, whose selected lines come back unfolded; never repeat the same whole-file `read`, because it returns the same folded view.",
     "3. Localized repair: use `match` (add `pick` when a tie remains) to change the smallest span; use a bare declaration `replace` only when rewriting the whole declaration.",
     "4. Verification failure: use the diagnostics to repair the same declaration; do not resend an identical edit.",
-    "5. Escalation: when a repair spans several declarations, or repeated localized edits keep introducing new tsc/test errors, switch to a whole-file `write <path> with <fence> done`.",
+    "5. Escalation: when a repair spans several declarations, or repeated localized edits keep introducing new tsc/test errors, switch to a whole-file `write <path> with <fence>`.",
     "6. No listed micro-operation fits: explore autonomously with `read`/`select` viewers (narrow reads first), then edit; do not burn exchanges repeating a read you already made.",
   ].join("\n");
 }

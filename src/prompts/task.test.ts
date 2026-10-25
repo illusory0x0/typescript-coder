@@ -321,7 +321,7 @@ describe("execution prompts", () => {
       help: true,
     });
     expect(prompt).toContain('Target: file "src/helper.ts"');
-    expect(prompt).toContain("write <path> with <fence> done");
+    expect(prompt).toContain("write <path> with <fence>");
     expect(prompt).toContain("write src/a.ts with");
     expect(prompt).toContain(taskEditDslHelp("write"));
   });

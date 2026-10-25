@@ -1780,7 +1780,7 @@ function addressUndeclaredEscalation(name: string): string {
 // derived from the live target: the bare select that omits the kind, and the
 // raw whole-file write that bypasses address resolution entirely.
 function repeatedAddressFallback(path: string, name: string): string {
-  const write = `write ${path} with <<<TC_EDIT_BEGIN>>> … <<<TC_EDIT_END>>> done`;
+  const write = `write ${path} with <<<TC_EDIT_BEGIN>>> … <<<TC_EDIT_END>>>`;
   if (name === "") {
     return `The address keeps failing, so stop trying to select it. Repair the whole file with a raw \`${write}\` (open the body with \`<<<TC_EDIT_BEGIN>>>\` and close it with \`<<<TC_EDIT_END>>>\`).`;
   }

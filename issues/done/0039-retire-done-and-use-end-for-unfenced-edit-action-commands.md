@@ -1,7 +1,7 @@
 ---
 id: 39
 title: "Retire done and use end for unfenced edit-action commands"
-status: todo
+status: done
 priority: medium
 milestone: null
 parent: 37
@@ -64,3 +64,4 @@ with `end`; `write` ends with the sentinel close and has no trailing terminator.
 - Prompt and few-shot changes are handled by the prompt migration child, but
   this issue's acceptance requires the parser/serializer behavior to be final.
 - Additional acceptance: reuse the existing tolerant select-clause recovery for create/delete/read. If 'end' is missing but the next statement starts (select/create/delete/read/write) or the reply ends, accept it with EDIT_MISSING_END and a warning. Missing 'end' before arbitrary text remains a hard syntax error. Prompt/few-shot examples still always include 'end' (#41).
+- Resolved done retirement. Verified: create/delete/read now use end and recover a missing end at EOF/next statement with EDIT_MISSING_END; write ends at the sentinel close with targeted EDIT_RETIRED_DONE / EDIT_STRAY_END for trailing done/end. Serializer emits end for file commands and no trailing write terminator. just typecheck && just test -> 1451 pass, 0 fail; just accept -> 9 pass, 0 fail; git diff --check clean. No live benchmark run.
