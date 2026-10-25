@@ -31,6 +31,7 @@ const TASKS: FixtureTask[] = [
   { name: "sexp-parser", module: "sexp" },
   { name: "minilisp", module: "lisp" },
   { name: "csv-parser", module: "csv" },
+  { name: "mini-spreadsheet", module: "workbook" },
 ];
 
 const OUTPUT_LIMIT = 500;

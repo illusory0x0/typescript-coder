@@ -34,7 +34,12 @@ import type { BillableTokens, RateClass } from "../src/benchmark-pricing";
 import type { RecordedProvenance } from "../src/provenance";
 import type { ChatMessage, ChatResponse, ReasoningEffort, ToolDefinition } from "../src/openai";
 
-export type TaskName = "json-parser" | "sexp-parser" | "minilisp" | "csv-parser";
+export type TaskName =
+  | "json-parser"
+  | "sexp-parser"
+  | "minilisp"
+  | "csv-parser"
+  | "mini-spreadsheet";
 export type Side = "tc" | "oc";
 type SideSelection = Side | "both";
 
@@ -369,6 +374,7 @@ const TASKS: readonly TaskSpec[] = [
   { name: "sexp-parser" },
   { name: "minilisp" },
   { name: "csv-parser" },
+  { name: "mini-spreadsheet" },
 ];
 
 /**
@@ -386,10 +392,25 @@ export const TASK_SPECS: Record<TaskName, string> = {
   minilisp: readTaskSpec("minilisp"),
   // Held-out task (#67): never a target of prompt or loop iteration.
   "csv-parser": readTaskSpec("csv-parser"),
+  // Larger task added after the 2026-10-25 freeze; it has no baseline rows.
+  "mini-spreadsheet": readTaskSpec("mini-spreadsheet"),
 };
 
 /** Historical name kept for provenance/checking code; it is the spec text. */
 export const TASK_ISSUES: Record<TaskName, string> = TASK_SPECS;
+
+/**
+ * Tasks covered by the frozen 2026-10-25 oc/json baselines. The baseline spec
+ * hash must stay pinned to exactly these four tasks: `mini-spreadsheet` was
+ * added later and has no baseline run, so including it would falsely mark both
+ * frozen baselines stale and withhold every existing four-way comparison.
+ */
+const BASELINE_TASKS: readonly TaskName[] = [
+  "json-parser",
+  "sexp-parser",
+  "minilisp",
+  "csv-parser",
+];
 
 /**
  * Same text hash the provenance record uses for `taskIssue`. Frozen baselines
@@ -401,9 +422,7 @@ const TASK_SPEC_HASH = createHash("sha256")
     normalizeText(
       stableStringify(
         Object.fromEntries(
-          (Object.keys(TASK_SPECS) as TaskName[])
-            .sort()
-            .map((task) => [task, normalizeText(TASK_SPECS[task])]),
+          [...BASELINE_TASKS].sort().map((task) => [task, normalizeText(TASK_SPECS[task])]),
         ),
       ),
     ),
@@ -411,12 +430,13 @@ const TASK_SPEC_HASH = createHash("sha256")
   .digest("hex");
 
 // Reference implementations live in benchmark/references/ under short names
-// rather than task names (json.ts, sexp.ts, lisp.ts today).
+// rather than task names (json.ts, sexp.ts, lisp.ts, csv.ts, workbook.ts).
 const TASK_REFERENCE_BASENAMES: Record<TaskName, string> = {
   "json-parser": "json",
   "sexp-parser": "sexp",
   minilisp: "lisp",
   "csv-parser": "csv",
+  "mini-spreadsheet": "workbook",
 };
 
 const DEFAULT_MODEL = "deepseek-flash";
@@ -466,7 +486,8 @@ function printUsage(): void {
   process.stdout.write(`Usage: bun run benchmark/run.ts [options]
 
 Options:
-  --task <json-parser|sexp-parser|minilisp|csv-parser>  run a single task (default: all)
+  --task <json-parser|sexp-parser|minilisp|csv-parser|mini-spreadsheet>
+                                             run a single task (default: all)
   --all                                      run all tasks (default)
   --reps <n>                                 repetitions per task and side (default: 5; minimum 5, pilot uses 1)
   --concurrency <n>                          max parallel runs (default: ${DEFAULT_CONCURRENCY})

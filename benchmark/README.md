@@ -109,6 +109,14 @@ Four frozen fixtures live under `benchmark/fixtures/`: `json-parser`,
 is frozen by #61's discipline: its model-facing issue text is fixed in
 `TASK_SPECS` (`benchmark/run.ts`, from `benchmark/specs/<task>.md`) and only same-text runs are compared.
 
+A fifth, larger fixture, `mini-spreadsheet`, was added after the 2026-10-25
+freeze. It is an in-memory spreadsheet formula engine with a ~2,000-line
+implementation target and lives under `benchmark/fixtures/mini-spreadsheet/`
+with its reference at `benchmark/references/workbook.ts`. It is not part of the
+frozen baseline matrix: the baseline spec hash deliberately covers only the
+four tasks above, so `mini-spreadsheet` has no baseline rows and is available
+for targeted tc runs without invalidating existing comparisons.
+
 **`csv-parser` is held out (#67):** it is never the target of prompt or loop
 iteration. Prompt/loop changes must not be tuned against it, and a held-out
 result is never a change-set's evidence of _prompt fit_ — it gates only
