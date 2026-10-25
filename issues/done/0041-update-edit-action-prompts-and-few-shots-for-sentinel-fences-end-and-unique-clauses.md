@@ -1,7 +1,7 @@
 ---
 id: 41
 title: "Update edit-action prompts and few-shots for sentinel fences, end, and unique clauses"
-status: todo
+status: done
 priority: medium
 milestone: null
 parent: 37
@@ -59,3 +59,5 @@ few-shots.
 - Do not change the outer whole-reply Markdown-fence tolerance; it is separate
   from edit-action fences.
 - Canonical examples always include 'end' after select/create/delete/read; do not teach the missing-end recovery. The parser tolerance in #39 is recovery-only.
+- Integration note from #40: the retry lead for cause duplicate still says 'The file already declares that symbol, so adding a second top-level copy cannot succeed.' New duplicate-target rejections (viewer+editor, rename+replace, different match/pick spans on one declaration) are not duplicate top-level declarations, so the prompt/few-shot migration should also make this retry guidance format-aware: address one declaration once and split its edits across exchanges.
+- Resolved prompt/few-shot migration. Added the one-target-per-declaration rule to the edit-dsl system/instruction, task edit instruction, and protocol correction; example 6 now views parse and edits format; duplicate retry guidance covers duplicate top-level copies and repeated clauses. just typecheck && just test -> 1467 pass, 0 fail; just accept -> 9 pass, 0 fail; no legacy fence lines in prompts/loop; git diff --check clean. No live benchmark run.

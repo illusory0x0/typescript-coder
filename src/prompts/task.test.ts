@@ -279,6 +279,16 @@ describe("execution prompts", () => {
     expect(prompt).toContain("whole-file edit");
   });
 
+  test("the edit instruction requires distinct declarations across clauses", () => {
+    const prompt = buildTaskExecutionSystemPrompt();
+    expect(prompt).toContain(
+      "Every clause in one reply must resolve to a different declaration `(path, symbol, kind)`",
+    );
+    expect(prompt).toContain("target one declaration at most once per reply");
+    expect(prompt).toContain("even with different `match` or `pick` spans");
+    expect(prompt).toContain("split edits to one declaration across exchanges");
+  });
+
   test("the system prompt carries the same functional constraints as planning", () => {
     const prompt = buildTaskExecutionSystemPrompt();
     expect(prompt).toContain(FUNCTIONAL_STYLE);
@@ -324,6 +334,24 @@ describe("execution prompts", () => {
     expect(prompt).toContain("write <path> with <fence>");
     expect(prompt).toContain("write src/a.ts with");
     expect(prompt).toContain(taskEditDslHelp("write"));
+  });
+
+  test("action help examples use sentinel fences and canonical terminators", () => {
+    for (const action of ["modify", "create", "delete", "rename"] as const) {
+      const help = taskEditDslHelp(action);
+      expect(help.trimEnd().endsWith("end")).toBe(true);
+      expect(help).not.toMatch(/^-{5,}$/m);
+      expect(help).not.toMatch(/^`{6,}$/m);
+      expect(help).not.toMatch(/\bdone\b/);
+    }
+    for (const action of ["modify", "create", "delete"] as const) {
+      const help = taskEditDslHelp(action);
+      expect(help).toContain("<<<TC_EDIT_BEGIN>>>");
+      expect(help).toContain("<<<TC_EDIT_END>>>");
+    }
+    const write = taskEditDslHelp("write");
+    expect(write.trimEnd().endsWith("<<<TC_EDIT_END>>>")).toBe(true);
+    expect(write).not.toMatch(/\b(done|end)\b/);
   });
 
   test("format help is injected only on the help turn", () => {

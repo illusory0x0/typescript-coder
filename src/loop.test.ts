@@ -6613,8 +6613,14 @@ describe("runLoop", () => {
       if (duplicate.action !== "retry") {
         throw new Error("expected a retryable duplicate policy");
       }
-      expect(duplicate.correction).toContain("already declares that symbol");
+      // #41: the lead covers both a duplicate top-level declaration and two
+      // clauses addressing one resolved declaration.
+      expect(duplicate.correction).toContain("second top-level copy");
+      expect(duplicate.correction).toContain("two clauses target the same resolved declaration");
+      expect(duplicate.correction).toContain("Address one declaration once per reply");
+      expect(duplicate.correction).toContain("split its edits across exchanges");
       expect(duplicate.escalation).toContain("MUST return a replacement that differs");
+      expect(duplicate.escalation).toContain("more than one clause");
       // A duplicated-modifier format failure exits instead of retrying.
       expect(rejectionPolicy("format-export-duplication")).toEqual({
         action: "terminate",
@@ -6633,6 +6639,8 @@ describe("runLoop", () => {
         throw new Error("expected a retryable protocol policy");
       }
       expect(editDsl.correction).toContain("`select … end`");
+      expect(editDsl.correction).toContain("different resolved declaration");
+      expect(editDsl.correction).toContain("split its edits across exchanges");
       expect(editDsl.correction).not.toContain("flat JSON object");
       expect(editDsl.escalation).toContain("`select … end`");
       expect(editDsl.escalation).not.toContain("flat JSON object");
@@ -9401,8 +9409,9 @@ describe("edit-dsl protocol (#111/#119)", () => {
     );
     expect(edit).toContain("A reply is one or more `select … end` clauses");
     expect(edit).toContain(
-      "a clause with neither `replace` nor `rename` is a viewer that writes nothing unless it contains `pick`; `pick` requires `replace`",
+      "A clause with neither `replace` nor `rename` is a viewer that writes nothing unless it contains `pick`; `pick` requires `replace`",
     );
+    expect(edit).toContain("every clause in one reply must resolve to a different declaration");
     // The four forms are rendered from the grammar's own serializer.
     expect(edit).toContain("select function f in src/x.ts resolve value");
     expect(edit).toContain("select const MAX_TOKENS in src/x.ts");
@@ -11049,6 +11058,13 @@ describe("edit-dsl protocol (#111/#119)", () => {
     expect(prompt).toContain("an empty body deletes it");
     expect(prompt).toContain("no JSON edit payload");
     expect(prompt).toContain("naming it in the clause's own `select`");
+    // #41: one declaration may be addressed at most once per reply, whatever
+    // spans its clauses name.
+    expect(prompt).toContain(
+      "every clause in one reply must resolve to a different declaration `(path, symbol, kind)`",
+    );
+    expect(prompt).toContain("target one declaration at most once per reply");
+    expect(prompt).toContain("split edits to one declaration across exchanges");
     // The pick turn is edit-dsl too: a select viewer leads to `# details`.
     expect(prompt).toContain(
       "First you will be asked to select the target or act on files directly. Reply with ONLY one `select <symbol> in <path>",
@@ -11114,7 +11130,18 @@ describe("edit-dsl protocol (#111/#119)", () => {
     expect(edit).toContain("5. Create:");
     expect(edit).toContain("select function make in src/new.ts");
     expect(edit).toContain("6. Viewer then editor:");
-    expect(edit).toContain("select function parse in src/x.ts");
+    // #41: the viewer and editor clauses target different declarations, so the
+    // example never teaches the duplicate-address rejection.
+    const viewerThenEditor = edit.slice(
+      edit.indexOf("6. Viewer then editor:"),
+      edit.indexOf("7. Folded view:"),
+    );
+    expect(viewerThenEditor).toContain("select function parse in src/x.ts");
+    expect(viewerThenEditor).toContain("select function format in src/x.ts");
+    expect(viewerThenEditor).toContain("match `return null;`");
+    expect(viewerThenEditor).toContain("<<<TC_EDIT_BEGIN>>>\nreturn undefined;\n<<<TC_EDIT_END>>>");
+    expect(viewerThenEditor).toContain("end");
+    expect(viewerThenEditor.match(/select function parse in src\/x\.ts/g)).toHaveLength(1);
     // The four base forms, create, and viewer-then-editor remain; the extra
     // per-action examples live in the on-demand format help instead.
     expect(edit).not.toContain("9. Rename:");
@@ -11122,6 +11149,15 @@ describe("edit-dsl protocol (#111/#119)", () => {
     // The examples are bare blocks, not wrapped in one outer markdown fence.
     expect(edit).not.toContain("```````");
     expect(edit).toContain("End of examples.");
+    // #41: no legacy edit fences, and the write form stops at the sentinel.
+    expect(edit).not.toMatch(/^-{5,}$/m);
+    expect(edit).not.toMatch(/^`{6,}$/m);
+    const writeExample = edit.slice(
+      edit.indexOf("8. Whole-file repair:"),
+      edit.indexOf("End of examples."),
+    );
+    expect(writeExample.trimEnd().endsWith("<<<TC_EDIT_END>>>")).toBe(true);
+    expect(writeExample).not.toMatch(/\b(done|end)\b/);
   });
 
   test("under edit-dsl a JSON edit payload is a protocol rejection and an edit-dsl reply is accepted", async () => {

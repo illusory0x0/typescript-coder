@@ -185,7 +185,7 @@ function editDslParseDiagnostics(content: string, error: SelectionSyntaxError): 
 // straight back to the payload this mode rejects (the observed rep1
 // `address ↔ protocol` loop).
 const EDIT_DSL_PROTOCOL_CORRECTION =
-  "Reply with one or more `select … end` clauses or a file command (`create`, `delete`, `read`, `write`) as the entire response (`select <symbol> in <path> [ resolve <value|type|namespace> ] [ match (<snippet> | /regex/) ] [ [ pick <range> ] replace with <fence> | rename <old> to <new> ] end`, where the fence opens with `<<<TC_EDIT_BEGIN>>>` on its own line and closes with `<<<TC_EDIT_END>>>` on its own line; a `pick` requires `replace`, and `rename` cannot be combined with either); a JSON edit payload is not accepted in this mode.";
+  "Reply with one or more `select … end` clauses or a file command (`create`, `delete`, `read`, `write`) as the entire response (`select <symbol> in <path> [ resolve <value|type|namespace> ] [ match (<snippet> | /regex/) ] [ [ pick <range> ] replace with <fence> | rename <old> to <new> ] end`, where the fence opens with `<<<TC_EDIT_BEGIN>>>` on its own line and closes with `<<<TC_EDIT_END>>>` on its own line; a `pick` requires `replace`, and `rename` cannot be combined with either; every clause in one reply must target a different resolved declaration `(path, symbol, kind)`, so address one declaration at most once and split its edits across exchanges); a JSON edit payload is not accepted in this mode.";
 const EDIT_DSL_PROTOCOL_ESCALATION =
   "This attempt MUST reply with only `select … end` clauses or file commands — with no prose, no markdown fences, and no JSON edit payload.";
 
@@ -1736,19 +1736,20 @@ function omissionMarker(
 }
 
 // #65 resend classes: `repeat` means the byte-identical payload was already
-// submitted (applied and still failing, or rejected), `duplicate` means the
+// submitted (applied and still failing, or rejected), `duplicate` means a
 // candidate would add a second top-level copy of a declaration the file
-// already carries. Either way the file already reflects the outcome, so the
-// lead states that and forces the next attempt to differ — the rejected
+// already carries or (#40/#41) a reply addresses one resolved declaration more
+// than once. Either way the file already reflects the outcome, so the lead
+// states that and forces the next attempt to differ — the rejected
 // replacements themselves are never re-echoed into the prompt.
 const REPEAT_CORRECTION =
   "That exact submission was already sent, and the file already reflects its outcome — the change is in place or nothing was written — so resending it cannot change anything. Change the target, the matcher, or the replacement so the next attempt actually differs and addresses the diagnostics below.";
 const REPEAT_ESCALATION =
   "That exact submission has now been rejected repeatedly, and resending it cannot change the file. This attempt MUST differ from the previous attempts — a different target, matcher, or replacement form — and must address the diagnostics below.";
 const DUPLICATE_CORRECTION =
-  "The file already declares that symbol, so adding a second top-level copy cannot succeed. Change the replacement so it edits the existing declaration instead of adding another copy, and address the diagnostics below.";
+  "The reply either adds a second top-level copy of a symbol the file already declares, or two clauses target the same resolved declaration `(path, symbol, kind)`; neither can succeed. Address one declaration once per reply and split its edits across exchanges; change the replacement so it is not a second copy, and address the diagnostics below.";
 const DUPLICATE_ESCALATION =
-  "This edit keeps adding another top-level copy of a symbol the file already declares. This attempt MUST return a replacement that differs from the current source and edits the existing declaration instead of re-declaring it.";
+  "This edit keeps adding another top-level copy of a symbol the file already declares or keeps targeting one declaration with more than one clause. This attempt MUST return a replacement that differs from the current source, address one declaration once, and edit the existing declaration instead of re-declaring it.";
 
 // #65 no-op: the replacement equals the text it replaces, i.e. the intended
 // change is already in the file. The sharpened lead says so and directs the

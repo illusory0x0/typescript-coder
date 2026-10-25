@@ -369,6 +369,8 @@ export function taskEditDslInstruction(): string {
   return [
     "A declaration edit is one or more `select … end` clauses; a whole-file edit is one `write <path> with <fence>` statement. No prose, no JSON edit payload.",
     "",
+    "Every clause in one reply must resolve to a different declaration `(path, symbol, kind)`; target one declaration at most once per reply, even with different `match` or `pick` spans, and split edits to one declaration across exchanges.",
+    "",
     "Clause: `select <symbol> in <path> [ resolve <value|type|namespace> ] [ match (<snippet> | /regex/) ] [ [ pick <range> ] replace with <fence> | rename <old> to <new> ] end`.",
     "`match` locates a span inside the declaration; `pick` narrows a match and requires `replace`; omit `match` to rewrite the whole declaration; an empty body deletes it. Open the body with `<<<TC_EDIT_BEGIN>>>` on its own line and close it with `<<<TC_EDIT_END>>>` on its own line; the body is raw text (hyphen runs, backticks, `done`, and `end` are ordinary body lines). `pick` coordinates are the 1-based file-absolute lines of the content view.",
     "For a whole-file edit, `write <path> with <<<TC_EDIT_BEGIN>>> … <<<TC_EDIT_END>>>` replaces the file with the raw body; no terminator follows the sentinel close.",
