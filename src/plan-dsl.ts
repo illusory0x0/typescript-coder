@@ -392,26 +392,48 @@ function readText(
     });
   }
   const inline = trimmed.slice(label.length).trim();
-  if (inline !== "") {
-    return inline;
-  }
-  const opener = peekNonBlank(cursor);
-  if (opener === null) {
-    cursor.truncated = true;
+  let opener: Line;
+  let inlineOpener = false;
+  if (inline === EDIT_FENCE_BEGIN) {
+    inlineOpener = true;
+    // Allow the opener to share the label line. The raw body still starts on
+    // the next line, and the close sentinel remains whole-line.
+    opener = line;
+  } else if (inline.startsWith(EDIT_FENCE_BEGIN) || inline.startsWith(EDIT_FENCE_END)) {
     fail(
       cursor,
-      "PLAN_TRUNCATED",
-      `${label} for ${where} is empty; put the text after ${label} or open ${EDIT_FENCE_BEGIN} on a new line`,
+      "PLAN_MALFORMED_FENCE",
+      `the ${label} fence marker for ${where} on line ${line.number} must be ${EDIT_FENCE_BEGIN} on its own line`,
       {
         line: line.number,
-        expected: [label, EDIT_FENCE_BEGIN],
-        found: "<eof>",
+        expected: [EDIT_FENCE_BEGIN],
+        found: inline,
         recordId,
+        hint: `put ${EDIT_FENCE_BEGIN} on its own line, then the raw text, then ${EDIT_FENCE_END}`,
       },
     );
+  } else if (inline !== "") {
+    return inline;
+  } else {
+    const next = peekNonBlank(cursor);
+    if (next === null) {
+      cursor.truncated = true;
+      fail(
+        cursor,
+        "PLAN_TRUNCATED",
+        `${label} for ${where} is empty; put the text after ${label} or open ${EDIT_FENCE_BEGIN} on a new line`,
+        {
+          line: line.number,
+          expected: [label, EDIT_FENCE_BEGIN],
+          found: "<eof>",
+          recordId,
+        },
+      );
+    }
+    cursor.position += 1;
+    opener = next;
   }
-  cursor.position += 1;
-  const marker = opener.text.trim();
+  const marker = inlineOpener ? EDIT_FENCE_BEGIN : opener.text.trim();
   if (
     (marker.startsWith(EDIT_FENCE_BEGIN) || marker.startsWith(EDIT_FENCE_END)) &&
     marker !== EDIT_FENCE_BEGIN

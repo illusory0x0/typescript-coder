@@ -216,6 +216,39 @@ describe("parseSelection", () => {
     expect(selection.replacement).toBe("return 1;");
   });
 
+  test("accepts an inline opener after with", () => {
+    const text = [
+      "select answer in src/a.ts",
+      `replace with ${BEGIN}`,
+      "return 2;",
+      END,
+      "end",
+    ].join("\n");
+    const detailed = parseSelectionDetailed(text);
+    expect(detailed.ok).toBe(true);
+    expect(detailed.issues.some((issue) => issue.code === "EDIT_INLINE_FENCE_OPEN")).toBe(true);
+    expect(detailed.value?.[0]?.replacement).toBe("return 2;");
+
+    const [statement] = parseMultiEditor(
+      [`write src/a.ts with ${BEGIN}`, "export const a = 2;", END].join("\n"),
+    );
+    expect(statement?.type).toBe("fs");
+    if (statement?.type === "fs" && statement.statement.op === "write") {
+      expect(statement.statement.replacement).toBe("export const a = 2;");
+    } else {
+      throw new Error("expected a write statement");
+    }
+  });
+
+  test("rejects text after an inline opener", () => {
+    expectSyntax(
+      [`select answer in src/a.ts`, `replace with ${BEGIN} extra`, "return 2;", END, "end"].join(
+        "\n",
+      ),
+      "own line",
+    );
+  });
+
   test("parses a delete (empty fence body)", () => {
     const text = [
       "select const MAX_TOKENS in src/lexer.ts",

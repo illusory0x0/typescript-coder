@@ -201,6 +201,57 @@ end`;
     expect(plan.stages[0]?.tasks[0]?.edits[0]?.instruction).toBe("raw ``` inner");
   });
 
+  test("accepts inline fence openers after goal and instruction labels", () => {
+    const content = `plan "01-main"
+goal: <<<TC_EDIT_BEGIN>>>
+line one
+<<<TC_EDIT_END>>>
+
+stage "02-current" plan "01-main"
+goal: <<<TC_EDIT_BEGIN>>>
+stage goal
+<<<TC_EDIT_END>>>
+end
+
+task "03-first" stage "02-current" verify test
+instruction: <<<TC_EDIT_BEGIN>>>
+task instruction
+<<<TC_EDIT_END>>>
+end
+
+edit "04-change" task "03-first" modify value answer in src/a.ts
+instruction: <<<TC_EDIT_BEGIN>>>
+edit instruction
+<<<TC_EDIT_END>>>
+end`;
+    const plan = accepted(content);
+    expect(plan.goal).toBe("line one");
+    expect(plan.stages[0]?.goal).toBe("stage goal");
+    expect(plan.stages[0]?.tasks[0]?.instruction).toBe("task instruction");
+    expect(plan.stages[0]?.tasks[0]?.edits[0]?.instruction).toBe("edit instruction");
+  });
+
+  test("rejects text after an inline Plan fence opener", () => {
+    expect(
+      rejected(`plan "01-main"
+goal: <<<TC_EDIT_BEGIN>>> extra
+line
+<<<TC_EDIT_END>>>
+
+stage "02-current" plan "01-main"
+goal: g
+end
+
+task "03-first" stage "02-current" verify test
+instruction: x
+end
+
+edit "04-change" task "03-first" modify value answer in src/a.ts
+instruction: x
+end`),
+    ).toContain("own line");
+  });
+
   test("keeps legacy delimiter runs, done, and end as raw fenced text", () => {
     const body = ["alpha", "-----", "``````", "done", "end", "select inside"].join("\n");
     const content = `plan "01-main"

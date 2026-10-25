@@ -732,6 +732,41 @@ describe("runTaskLoop", () => {
     expect(readFileSync(join(dir, "src", "helper.ts"), "utf8")).toContain("return 2;");
   }, 30000);
 
+  test("a review edit~ on a done edit gets one correction retry", async () => {
+    const dir = project();
+    const plan = planText([stageSpec(1, [taskSpec(1)])], true);
+    const doneEditPatch = patchText(
+      `edit~ "${nodeId("edit", 1001)}"`,
+      "instruction: Repair the done edit.",
+      "end",
+    );
+    const provider = new ScriptedProvider([plan, GOOD_EDIT], [doneEditPatch, "approve"]);
+    const result = await runTaskLoop(baseOptions(dir, provider));
+    expect(result.ok).toBe(true);
+    expect(reviewPrompts(provider)).toHaveLength(2);
+    const retry = reviewPrompts(provider)[1]?.at(-1)?.content ?? "";
+    expect(retry).toContain("done edit");
+    expect(retry).toContain("Do not use `edit~`");
+    expect(retry).toContain("edit+");
+    expect(readFileSync(join(dir, "src", "helper.ts"), "utf8")).toContain("return 2;");
+  }, 30000);
+
+  test("a second done-edit review mutation terminates", async () => {
+    const dir = project();
+    const plan = planText([stageSpec(1, [taskSpec(1)])], true);
+    const doneEditPatch = patchText(
+      `edit~ "${nodeId("edit", 1001)}"`,
+      "instruction: Repair the done edit.",
+      "end",
+    );
+    const provider = new ScriptedProvider([plan, GOOD_EDIT], [doneEditPatch, doneEditPatch]);
+    const result = await runTaskLoop(baseOptions(dir, provider));
+    expect(result.ok).toBe(false);
+    expect(result.terminationReason).toBe("task-exhausted");
+    expect(result.diagnostics).toContain("done edit");
+    expect(reviewPrompts(provider)).toHaveLength(2);
+  }, 30000);
+
   test("two malformed review replies terminate after one format retry", async () => {
     const dir = project();
     const plan = planText([stageSpec(1, [taskSpec(1)])]);
@@ -782,8 +817,9 @@ describe("runTaskLoop", () => {
     expect(review).toContain(`Task #${nodeId("task", 1)} (verify test) — review`);
     expect(review).toContain("Reply with exactly `approve` or one `patch`");
     expect(review).toContain(`task~ "${nodeId("task", 1)}"`);
-    expect(review).toContain(`edit~ "${nodeId("edit", 1001)}"`);
     expect(review).toContain("Do not repeat `task`");
+    expect(review).toContain("A done edit is immutable");
+    expect(review).toContain("Never use `edit~` on a done edit");
     expect(review).not.toContain('task~ "#');
     expect(review).toContain("Do not add a Stage or Task");
     // The requirement and unchanged source stay in the cached planning prefix,
@@ -1008,6 +1044,43 @@ end`;
       "export function answer(): number",
     );
     expect(result.tasks?.map((entry) => entry.action)).toEqual(["write"]);
+  }, 30000);
+
+  test("an inline write opener applies without a protocol retry", async () => {
+    const dir = project();
+    const plan = planText(
+      [
+        stageSpec(1, [
+          taskSpec(1, {
+            verify: "test",
+            edits: [
+              editSpec(1001, {
+                loc: { path: "src/helper.ts", symbol: "", kind: "file" },
+                action: "write",
+                instruction: "Write the complete module.",
+              }),
+            ],
+          }),
+        ]),
+      ],
+      true,
+    );
+    const provider = new ScriptedProvider([
+      plan,
+      [
+        "write src/helper.ts with <<<TC_EDIT_BEGIN>>>",
+        "export function answer(): number {",
+        "  return 2;",
+        "}",
+        "<<<TC_EDIT_END>>>",
+      ].join("\n"),
+    ]);
+    const result = await runTaskLoop(baseOptions(dir, provider));
+    expect(result.ok).toBe(true);
+    expect(result.records.map((record) => record.outcome)).toEqual(["applied", "ok"]);
+    expect(readFileSync(join(dir, "src", "helper.ts"), "utf8")).toContain(
+      "export function answer(): number",
+    );
   }, 30000);
 
   test("a failed edit is reported to the planner, which changes its definition", async () => {

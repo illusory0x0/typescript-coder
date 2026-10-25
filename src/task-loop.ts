@@ -76,6 +76,7 @@ import {
   buildTaskPlanningSystemPrompt,
   buildTaskPlanningUserPrompt,
   buildTaskReplanPrompt,
+  buildTaskReviewDoneEditRetryPrompt,
   buildTaskReviewPrompt,
   buildTaskReviewRetryPrompt,
   buildTaskTurnPrompt,
@@ -1418,6 +1419,14 @@ function appliedDiff(cwd: string, bases: ReadonlyMap<string, string>): string {
 // ---------------------------------------------------------------------------
 // Review patch scope (#32)
 
+/** A review patch tried to mutate a done edit or a passed task. */
+function immutableReviewError(diagnostics: string | null): boolean {
+  return (
+    diagnostics !== null &&
+    /(done edit #\S+ is immutable|passed task #\S+ is immutable)/.test(diagnostics)
+  );
+}
+
 /**
  * A review patch may repair only the current Task. Check the wire ops before
  * applying so a future Stage/Task or a foreign edit is rejected by name; the
@@ -2002,6 +2011,18 @@ export async function runTaskLoop(options: LoopOptions): Promise<LoopResult> {
       }),
     });
     let viewerUsed = false;
+    let immutableRetryUsed = false;
+    const retryImmutablePatch = (diagnostics: string | null): boolean => {
+      if (immutableRetryUsed || !immutableReviewError(diagnostics)) {
+        return false;
+      }
+      immutableRetryUsed = true;
+      planningMessages.push({
+        role: "user",
+        content: buildTaskReviewDoneEditRetryPrompt(diagnostics ?? "a done edit is immutable"),
+      });
+      return true;
+    };
     for (let attempt = 1; attempt <= MAX_REVIEW_ATTEMPTS; attempt += 1) {
       let response: ChatResponse;
       try {
@@ -2067,14 +2088,26 @@ export async function runTaskLoop(options: LoopOptions): Promise<LoopResult> {
       }
       const scope = reviewPatchProblems(state, task, parsed.value);
       if (scope !== null) {
+        if (retryImmutablePatch(scope)) {
+          attempt -= 1;
+          continue;
+        }
         return rejected(scope);
       }
       const merged = applyPlanPatch(state, parsed.value);
       if (!merged.ok) {
+        if (retryImmutablePatch(merged.diagnostics)) {
+          attempt -= 1;
+          continue;
+        }
         return rejected(merged.diagnostics);
       }
       const after = reviewMergeProblems(state, merged.state, task);
       if (after !== null) {
+        if (retryImmutablePatch(after)) {
+          attempt -= 1;
+          continue;
+        }
         return rejected(after);
       }
       if (fingerprintState(merged.state) === fingerprintState(state)) {

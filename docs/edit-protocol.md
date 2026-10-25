@@ -137,12 +137,13 @@ A select clause is never a file command. A select clause with `replace` or
 - **`replace with <fence>`**: the sentinel-only fence shared with the Plan DSL
   ([`plan-exec.md`](plan-exec.md) §3). `<<<TC_EDIT_BEGIN>>>` and
   `<<<TC_EDIT_END>>>` are exact whole lines, optionally indented or with
-  trailing whitespace; the body is raw, so hyphen runs, six-backtick runs,
-  `done`, and `end` are ordinary body lines. Only an exact close-marker line
-  closes the fence. Trailing text on the close-marker line is rejected, and a
-  body cannot contain an exact close-marker line: the first exact line closes it
-  and later content is rejected, with no escape form. An empty fence deletes the
-  target.
+  trailing whitespace. The opener may share the `with` line when it is the last
+  non-whitespace token; the raw body still starts on the next line. The body is
+  raw, so hyphen runs, six-backtick runs, `done`, and `end` are ordinary body
+  lines. Only an exact close-marker line closes the fence. Trailing text on the
+  close-marker line is rejected, and a body cannot contain an exact close-marker
+  line: the first exact line closes it and later content is rejected, with no
+  escape form. An empty fence deletes the target.
 - **`rename <old> to <new>`**: the other editor form. It rewrites the selected
   declaration name and every same-file reference that lexically resolves to it.
   Shadowed bindings and out-of-scope names are untouched; dotted targets rename
@@ -234,11 +235,12 @@ symbol       = ? declared identifier ? ;
 identifier   = ? TypeScript identifier ? ;
 snippet      = ? '`' , verbatim source, '`' ; only \` and \\ are escapes ? ;
 regex        = ? '/' , ECMA-262 pattern, no flags, '/' ? ;
-fence        = ? a line exactly <<<TC_EDIT_BEGIN>>>, raw body lines, then a
-                 line exactly <<<TC_EDIT_END>>>; each marker may have leading
-                 or trailing whitespace; the first exact close line terminates
-                 and nothing may follow it on that line (a later statement may
-                 start on the next line); the body may be empty ? ;
+fence        = ? a line exactly <<<TC_EDIT_BEGIN>>>, or an opener at the end
+                 of the `with` line, then raw body lines, then a line exactly
+                 <<<TC_EDIT_END>>>; each marker may have leading or trailing
+                 whitespace; the first exact close line terminates and nothing
+                 may follow it on that line (a later statement may start on the
+                 next line); the body may be empty ? ;
 ```
 
 A select clause is never a file command. A coordinate is digits only: `0`
@@ -269,7 +271,9 @@ a partial destructive result. In particular:
   malformed sentinel reports `EDIT_MALFORMED_FENCE`, trailing text on a
   close-marker line reports `EDIT_FENCE_TRAILING_TEXT`, and content after a
   closed fence that is not a new statement reports `EDIT_EMBEDDED_FENCE_END`
-  (there is no escape for a body containing the close marker).
+  (there is no escape for a body containing the close marker). An opener sharing
+  the `with` line is recovered with an `EDIT_INLINE_FENCE_OPEN` warning; it is
+  not a rejection.
 - The retired `done` terminator reports `EDIT_RETIRED_DONE`; a trailing `end`
   after a `write` close reports `EDIT_STRAY_END`.
 - `match` without a snippet/regex reports `EDIT_MATCHER_MISSING` with the
@@ -341,9 +345,10 @@ write  <path> [ within <selecters> ] with
   `read <path> within <start>-<end> end` returns that range unfolded.
 - **`write`** replaces the whole file when `within` is absent, or the selected
   text when it is present, and creates the file if it does not exist. The
-  sentinel close terminates the statement; no `end` follows. The replacement
-  goes through the same parse gate, duplicate guard, formatter, and no-op check
-  as an editor region.
+  sentinel close terminates the statement; no `end` follows. The opener may
+  share the `with` line when it is the last token. The replacement goes through
+  the same parse gate, duplicate guard, formatter, and no-op check as an editor
+  region.
 
 `within` uses the same 1-based, inclusive `selecters` syntax as `pick`
 (`12`, `12:3`, `12:3-14`, `12:3-14:5`, or a `{…}` set). Multiple selecters are

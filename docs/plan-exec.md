@@ -247,9 +247,12 @@ The review checks:
 
 The review reply is either `approve` or a patch. Review uses the same planner
 conversation in its own turn, not a fresh reviewer. A syntactically malformed
-review reply gets one bounded format retry with its diagnostics; a scope or
-merge violation still terminates. A review patch may only repair the current
-Task (`task~`, `edit+`, `edit~`, `edit-`) and may not add a future Stage/Task.
+review reply gets one bounded format retry with its diagnostics. A scope or
+merge violation still terminates, except that a patch which tries to mutate a
+done edit gets one correction retry: the planner must approve or use `edit+`
+for a new repair edit, never `edit~` on the done edit. A review patch may only
+repair the current Task (`task~`, `edit+`, `edit~`, `edit-`) and may not add a
+future Stage/Task.
 A done edit is immutable; after a gate failure, append a new repair edit with
 `edit+` rather than changing the landed edit.
 A review patch may carry `finish` for the current final Task, but may not add
@@ -305,7 +308,7 @@ references its parent by id. No nesting, no JSON fallback.
                     leading/trailing whitespace; no raw line may trim to exactly
                     <<<TC_EDIT_END>>>; the first exact close line ends the
                     fence; the body may be empty for an edit-action delete ?
-<text>        ::= <line-text> | NL <fence>
+<text>        ::= <line-text> | NL <fence> | <fence> ? inline opener after the label ?
 ```
 
 Rules:
@@ -326,9 +329,11 @@ Rules:
 - Stage order is stage-record order; task order within a stage is task-record
   order; edit order within a task is edit-record order.
 - `goal:` / `instruction:` may be one-line text or a following sentinel fence.
-  The fence body is raw, so hyphen runs, backtick runs, `done`, and `end` are
-  ordinary lines; it must be non-empty after trimming, and only an exact
-  `<<<TC_EDIT_END>>>` line closes it (there is no escape). The same sentinel
+  The opener may also share the label line when it is the last token; the raw
+  body still starts on the next line. The fence body is raw, so hyphen runs,
+  backtick runs, `done`, and `end` are ordinary lines; it must be non-empty
+  after trimming, and only an exact `<<<TC_EDIT_END>>>` line closes it (there is
+  no escape). The same sentinel
   `<fence>` production is used by the edit-action reply;
   [`edit-protocol.md`](edit-protocol.md) §2 owns the canonical fence rules.
   Legacy hyphen/backtick fences are rejected (`PLAN_LEGACY_FENCE`).

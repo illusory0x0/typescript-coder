@@ -6,6 +6,7 @@ import {
   buildTaskPlanningSystemPrompt,
   buildTaskPlanningUserPrompt,
   buildTaskReplanPrompt,
+  buildTaskReviewDoneEditRetryPrompt,
   buildTaskReviewPrompt,
   buildTaskTurnPrompt,
   replanDelta,
@@ -255,16 +256,27 @@ describe("review prompts", () => {
     expect(prompt).toContain("+  return 2;");
     expect(prompt).toContain("Reply with exactly `approve` or one `patch`");
     expect(prompt).toContain(`task~ "${TASK.id}"`);
-    expect(prompt).toContain(`edit~ "${EDIT.id}"`);
     expect(prompt).toContain("Do not repeat `task`");
     expect(prompt).toContain("A done edit is immutable");
+    expect(prompt).toContain("Never use `edit~` on a done edit");
     expect(prompt).toContain("append a new repair edit with `edit+`");
+    expect(prompt).toContain("A passed scaffold is approved");
     expect(prompt).not.toContain('task~ "#');
     expect(prompt).toContain("It may carry `finish`");
     expect(prompt).toContain("Do not add a Stage or Task");
     // The requirement and full source live in the cached planning prefix.
     expect(prompt).not.toContain(PLAN_GOAL);
     expect(prompt).not.toContain("helperOne");
+  });
+
+  test("the done-edit retry tells the planner to approve or use edit+", () => {
+    const prompt = buildTaskReviewDoneEditRetryPrompt(
+      "stage: task-tree\n- done edit #04 is immutable",
+    );
+    expect(prompt).toContain("done edit");
+    expect(prompt).toContain("Do not use `edit~`");
+    expect(prompt).toContain("`edit+");
+    expect(prompt).toContain("approve");
   });
 
   test("a failed gate carries its diagnostics and does not approve", () => {

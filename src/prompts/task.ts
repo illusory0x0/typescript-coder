@@ -600,7 +600,6 @@ export function buildTaskReviewPrompt(input: TaskReviewInput): string {
   const edits = task.edits.map(
     (edit) => `- #${edit.id} ${edit.action} ${formatTaskLoc(edit.loc)}: ${edit.instruction}`,
   );
-  const editExample = task.edits[0]?.id ?? "04-change";
   const blocks = ["# Review", "", `Gate: ${verify} ${gate.ok ? "passed" : "failed"}.`];
   if (gate.diagnostics !== null && gate.diagnostics.trim() !== "") {
     blocks.push("", "```", gate.diagnostics.trim(), "```");
@@ -623,13 +622,9 @@ export function buildTaskReviewPrompt(input: TaskReviewInput): string {
     "- `approve` when this Task needs no repair: the gate passed and the applied diff matches the instruction; if the gate failed, prefer a repair patch unless the failure lies outside this Task.",
     `- A patch may only repair this Task #${task.id}. Use \`task~ "${task.id}"\` for the Task, or \`edit+ "<new-id>" task "${task.id}" ...\`, \`edit~ "<edit-id>"\`, and \`edit- "<edit-id>"\` for its edits. It may carry \`finish\` when this is the last \`test\` Task.`,
     `- \`edit+\` keeps \`task "${task.id}"\`; \`edit~\` and \`edit-\` take only the edit id. Do not repeat \`task\`; the parent is the current Task #${task.id}.`,
-    "- A done edit is immutable. If the gate failed after an edit landed, append a new repair edit with `edit+`; prefer a targeted `modify`. Use a whole-file `write` only when this Task is explicitly a file-level rewrite. Do not use `edit~` on a done edit.",
-    "- Example (replace the id with the edit you are repairing):",
-    "",
-    "```",
-    `edit~ "${editExample}"`,
-    "instruction: Repair only this edit.",
-    "```",
+    "- A passed scaffold is approved when its diff matches the instruction; put any semantic correction in a later Task/Stage.",
+    "- A done edit is immutable. Never use `edit~` on a done edit. If the gate failed after an edit landed, append a new repair edit with `edit+`; prefer a targeted `modify`. Use a whole-file `write` only when this Task is explicitly a file-level rewrite.",
+    "- To repair a failed edit that has not landed, `edit~` is allowed; to repair after a done edit, use `edit+`.",
     "- Do not add a Stage or Task, do not edit another Task, and do not re-emit the Plan.",
   );
   return blocks.join("\n");
@@ -648,6 +643,29 @@ ${diagnostics}
 \`\`\`
 
 Reply with exactly \`approve\` or one corrected \`patch\`; no prose. A patch may only repair the current Task. \`edit~\` and \`edit-\` take only the edit id; do not repeat \`task\`.`;
+}
+
+/**
+ * One bounded correction after a review patch tries to mutate a done edit. The
+ * edit is immutable; the planner either approves the scaffold/current result or
+ * appends a fresh repair edit with the next unused id.
+ */
+export function buildTaskReviewDoneEditRetryPrompt(diagnostics: string): string {
+  return `# Review retry
+
+The previous review patch tried to change a done edit.
+
+Diagnostics:
+
+\`\`\`
+${diagnostics}
+\`\`\`
+
+Do not use \`edit~\` or \`edit-\` on a done edit. Either:
+- reply \`approve\` when the current result is acceptable and put follow-up work in a later Task; or
+- append a new repair edit with \`edit+ "<new-id>" task "<current-task>" ...\` and its instruction.
+
+Reply with exactly \`approve\` or one corrected \`patch\`; no prose. A done edit is immutable.`;
 }
 
 /** The planner's patch-delta sentence for the common causes. */

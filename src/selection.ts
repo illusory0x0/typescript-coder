@@ -1024,7 +1024,12 @@ class SelectionReader {
     const markerLine = this.text.slice(markerStart, lineEnd).replace(/\r$/, "");
     const marker = markerLine.trim();
     const lineStart = this.text.lastIndexOf("\n", Math.max(0, markerStart - 1)) + 1;
-    if (this.text.slice(lineStart, markerStart).trim() !== "") {
+    const prefix = this.text.slice(lineStart, markerStart).trim();
+    // The opener may share the `with` line. This is unambiguous because the
+    // next line starts the raw body; the close sentinel remains whole-line.
+    const inlineWithOpener =
+      prefix !== "" && /(?:^|\s)with$/.test(prefix) && marker === EDIT_FENCE_BEGIN;
+    if (prefix !== "" && !inlineWithOpener) {
       this.syntax(
         "EDIT_MALFORMED_FENCE",
         `the fence opener ${EDIT_FENCE_BEGIN} must be on its own line`,
@@ -1033,6 +1038,18 @@ class SelectionReader {
           expected: [EDIT_FENCE_BEGIN],
           found: marker === "" ? "<eof>" : marker,
           hint: `put ${EDIT_FENCE_BEGIN} on its own line after replace with`,
+        },
+      );
+    }
+    if (inlineWithOpener) {
+      this.warn(
+        "EDIT_INLINE_FENCE_OPEN",
+        `the fence opener ${EDIT_FENCE_BEGIN} shares a line with \`with\`; normalized it to start the raw body on the next line`,
+        {
+          offset: markerStart,
+          expected: [EDIT_FENCE_BEGIN],
+          found: prefix,
+          hint: `put ${EDIT_FENCE_BEGIN} on its own line after \`with\``,
         },
       );
     }
