@@ -164,7 +164,7 @@ const TASK_PLAN_FIELDS = `- The initial reply is the flat Plan DSL. Start with t
 - An edit record can write a whole file: \`edit "<id>" task "<task-id>" write <path>\`, then \`instruction:\` and \`end\`. It has no space or symbol.
 - Every id is a quoted "NN-slug": two or more digits, a hyphen, then lowercase kebab words (for example "01-main"). Ids are globally unique across the Plan, stages, tasks, and edits. Record order is execution order. There are no deps, todo, or status fields; the harness owns status.
 - All stage records come before all task records, and all task records come before all edit records. A parent ref must point at an earlier record: a stage's \`plan\`, a task's \`stage\`, an edit's \`task\`.
-- \`goal:\` and \`instruction:\` carry one-line text after the label, or an empty label followed by a fence: 5+ hyphens (for example \`-----\`) or 6+ backticks on its own line, the raw text lines, then the same fence. A stage, task, or edit record ends with \`end\`.
+- \`goal:\` and \`instruction:\` carry one-line text after the label, or an empty label followed by \`<<<TC_EDIT_BEGIN>>>\` on its own line, the raw text lines, then \`<<<TC_EDIT_END>>>\` on its own line. The body is raw: hyphen runs, backticks, \`done\`, and \`end\` are ordinary text lines. A stage, task, or edit record ends with \`end\`.
 - A trailing \`finish\` line marks the last task final. It is valid only as the last line, and only when that task verifies \`test\`. Only the task marked by \`finish\` must verify \`test\`; a work-in-progress tree may end in a \`tsc\` task.`;
 
 const TASK_PLAN_RULES = `Rules:
@@ -370,8 +370,8 @@ export function taskEditDslInstruction(): string {
     "A declaration edit is one or more `select … end` clauses; a whole-file edit is one `write <path> with <fence> done` statement. No prose, no JSON edit payload.",
     "",
     "Clause: `select <symbol> in <path> [ resolve <value|type|namespace> ] [ match (<snippet> | /regex/) ] [ [ pick <range> ] replace with <fence> | rename <old> to <new> ] end`.",
-    "`match` locates a span inside the declaration; `pick` narrows a match and requires `replace`; omit `match` to rewrite the whole declaration; an empty fence deletes it. The fence opens with 5+ hyphens (for example `-----`) or 6+ backticks and closes with the same run. `pick` coordinates are the 1-based file-absolute lines of the content view.",
-    "For a whole-file edit, `write <path> with <fence> done` replaces the file with the fence body.",
+    "`match` locates a span inside the declaration; `pick` narrows a match and requires `replace`; omit `match` to rewrite the whole declaration; an empty body deletes it. Open the body with `<<<TC_EDIT_BEGIN>>>` on its own line and close it with `<<<TC_EDIT_END>>>` on its own line; the body is raw text (hyphen runs, backticks, `done`, and `end` are ordinary body lines). `pick` coordinates are the 1-based file-absolute lines of the content view.",
+    "For a whole-file edit, `write <path> with <<<TC_EDIT_BEGIN>>> … <<<TC_EDIT_END>>> done` replaces the file with the raw body.",
     "",
     "You do not run the type check; the harness runs the task gate after every edit in the task settles. An edit may also change the same-file declarations listed in its `related` field.",
   ].join("\n");
@@ -385,26 +385,26 @@ export function taskEditDslHelp(action: EditNode["action"]): string {
       "match `return 1;`",
       "pick 2",
       "replace with",
-      "-----",
+      "<<<TC_EDIT_BEGIN>>>",
       "return 2;",
-      "-----",
+      "<<<TC_EDIT_END>>>",
       "end",
     ].join("\n"),
     create: [
       "select double in src/a.ts resolve value",
       "replace with",
-      "-----",
+      "<<<TC_EDIT_BEGIN>>>",
       "export function double(value: number): number {",
       "  return value * 2;",
       "}",
-      "-----",
+      "<<<TC_EDIT_END>>>",
       "end",
     ].join("\n"),
     delete: [
       "select unused in src/a.ts resolve value",
       "replace with",
-      "-----",
-      "-----",
+      "<<<TC_EDIT_BEGIN>>>",
+      "<<<TC_EDIT_END>>>",
       "end",
     ].join("\n"),
     rename: ["select answer in src/a.ts resolve value", "rename answer to result", "end"].join(
@@ -412,11 +412,11 @@ export function taskEditDslHelp(action: EditNode["action"]): string {
     ),
     write: [
       `write src/a.ts with`,
-      "-----",
+      "<<<TC_EDIT_BEGIN>>>",
       "export function answer(): number {",
       "  return 2;",
       "}",
-      "-----",
+      "<<<TC_EDIT_END>>>",
       "done",
     ].join("\n"),
   };

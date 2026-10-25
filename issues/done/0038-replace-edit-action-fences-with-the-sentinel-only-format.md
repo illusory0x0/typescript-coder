@@ -1,7 +1,7 @@
 ---
 id: 38
 title: "Replace edit-action fences with the sentinel-only format"
-status: todo
+status: done
 priority: medium
 milestone: null
 parent: 37
@@ -65,3 +65,4 @@ hyphen/backtick fence parsing and serialization.
 - This is a breaking wire-format change; no dual-read fallback is retained.
 - Historical benchmark reports and generated replay bundles are not migrated.
 - The write `done` removal is a separate child issue.
+- Resolved sentinel-only fences. Verified: just typecheck && just test -> 1445 pass, 0 fail; just accept -> 9 pass, 0 fail; current edit-action fence examples grep clean; git diff --check clean. Sentinel bodies allow raw legacy delimiter runs, done, and end; legacy openers and embedded close content are rejected with EDIT_/PLAN_ diagnostics. No live benchmark run.

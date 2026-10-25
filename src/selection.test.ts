@@ -13,8 +13,10 @@ import {
 } from "./selection";
 import type { Selection } from "./selection";
 
-const FENCE = "``````";
-const DASH_FENCE = "-----";
+const BEGIN = "<<<TC_EDIT_BEGIN>>>";
+const END = "<<<TC_EDIT_END>>>";
+const LEGACY_TICKS = "``````";
+const LEGACY_DASH = "-----";
 
 function first(text: string): Selection {
   const selections = parseSelection(text);
@@ -140,7 +142,7 @@ describe("parseSelection", () => {
 
   test("parses a single-range pick (sugar) as one range", () => {
     const selection = first(
-      "select function tokenize in src/lexer.ts\nmatch /^if \\(/\npick 12\nreplace with\n``````\ny\n``````\nend",
+      `select function tokenize in src/lexer.ts\nmatch /^if \\(/\npick 12\nreplace with\n${BEGIN}\ny\n${END}\nend`,
     );
     expect(selection.pick).toEqual([
       { line: 12, column: 1, endLine: 12, endColumn: END_OF_LINE_COLUMN },
@@ -149,7 +151,7 @@ describe("parseSelection", () => {
 
   test("parses a multi-range pick", () => {
     const selection = first(
-      "select function tokenize in src/lexer.ts\nmatch /^if \\(/\npick {10, 12:3-14:5}\nreplace with\n``````\ny\n``````\nend",
+      `select function tokenize in src/lexer.ts\nmatch /^if \\(/\npick {10, 12:3-14:5}\nreplace with\n${BEGIN}\ny\n${END}\nend`,
     );
     expect(selection.pick).toEqual([
       { line: 10, column: 1, endLine: 10, endColumn: END_OF_LINE_COLUMN },
@@ -159,7 +161,7 @@ describe("parseSelection", () => {
 
   test("parses a single character range", () => {
     const selection = first(
-      "select foo in a.ts\nmatch `x`\npick 7:2\nreplace with\n``````\ny\n``````\nend",
+      `select foo in a.ts\nmatch \`x\`\npick 7:2\nreplace with\n${BEGIN}\ny\n${END}\nend`,
     );
     expect(selection.pick).toEqual([{ line: 7, column: 2, endLine: 7, endColumn: 2 }]);
   });
@@ -169,9 +171,9 @@ describe("parseSelection", () => {
       "select function clamp in src/math.ts",
       "match `Number.isNaN`",
       "replace with",
-      FENCE,
+      BEGIN,
       "Number.isFinite",
-      FENCE,
+      END,
       "end",
     ].join("\n");
     const selection = first(text);
@@ -183,9 +185,9 @@ describe("parseSelection", () => {
     const text = [
       "select const MAX in src/lexer.ts",
       "replace with",
-      FENCE,
+      BEGIN,
       "return 1;",
-      FENCE,
+      END,
       "end",
     ].join("\n");
     const selection = first(text);
@@ -198,8 +200,8 @@ describe("parseSelection", () => {
     const text = [
       "select const MAX_TOKENS in src/lexer.ts",
       "replace with",
-      FENCE,
-      FENCE,
+      BEGIN,
+      END,
       "end",
     ].join("\n");
     expect(first(text).replacement).toBe("");
@@ -207,39 +209,24 @@ describe("parseSelection", () => {
 
   test("preserves a multi-line fence body verbatim", () => {
     const body = "if (x) {\n  return 1;\n}";
-    const text = ["select foo in a.ts", "replace with", FENCE, body, FENCE, "end"].join("\n");
+    const text = ["select foo in a.ts", "replace with", BEGIN, body, END, "end"].join("\n");
     expect(first(text).replacement).toBe(body);
   });
 
-  test("accepts `end` on the closing fence line", () => {
-    const text = ["select foo in a.ts replace with", DASH_FENCE, "x", `${DASH_FENCE} end`].join(
-      "\n",
-    );
+  test("accepts `end` on the line after the close sentinel", () => {
+    const text = ["select foo in a.ts replace with", BEGIN, "x", END, "end"].join("\n");
     expect(first(text).replacement).toBe("x");
   });
 
   test("accepts a body with one or two backticks", () => {
-    const text = ["select foo in a.ts", "replace with", FENCE, "a``b", FENCE, "end"].join("\n");
+    const text = ["select foo in a.ts", "replace with", BEGIN, "a``b", END, "end"].join("\n");
     expect(first(text).replacement).toBe("a``b");
   });
 
-  test("accepts a longer opening when the closing run matches", () => {
-    const ticks = "````````";
-    const text = ["select foo in a.ts", "replace with", ticks, "x", ticks, "end"].join("\n");
-    expect(first(text).replacement).toBe("x");
-  });
-
-  test("parses a five-hyphen fence", () => {
-    const text = ["select foo in a.ts", "replace with", DASH_FENCE, "x", DASH_FENCE, "end"].join(
-      "\n",
-    );
-    expect(first(text).replacement).toBe("x");
-  });
-
-  test("accepts a longer hyphen fence when the closing run matches", () => {
-    const dashes = "-".repeat(8);
-    const text = ["select foo in a.ts", "replace with", dashes, "x", dashes, "end"].join("\n");
-    expect(first(text).replacement).toBe("x");
+  test("accepts a body with an eight-backtick line", () => {
+    const body = "````````";
+    const text = ["select foo in a.ts", "replace with", BEGIN, body, END, "end"].join("\n");
+    expect(first(text).replacement).toBe(body);
   });
 
   test("strips a whole-reply markdown fence with a warning", () => {
@@ -254,9 +241,9 @@ describe("parseSelection", () => {
       "select function clamp in src/math.ts",
       "match `Number.isNaN`",
       "replace with",
-      FENCE,
+      BEGIN,
       "Number.isFinite",
-      FENCE,
+      END,
       "end",
       "",
       "select function sum in src/math.ts",
@@ -331,9 +318,9 @@ describe("parseSelection failures", () => {
       "select function tokenize in src/lexer.ts",
       "pick 12:3-14:5",
       "replace with",
-      FENCE,
+      BEGIN,
       "y",
-      FENCE,
+      END,
       "end",
     ].join("\n");
     const selection = first(text);
@@ -348,9 +335,9 @@ describe("parseSelection failures", () => {
       "match `x`",
       "pick 12",
       "replace with",
-      FENCE,
+      BEGIN,
       "y",
-      FENCE,
+      END,
       "end",
     ].join("\n");
     const selection = first(text);
@@ -376,11 +363,11 @@ describe("parseSelection failures", () => {
 
   test("rejects a rename combined with replace", () => {
     expectSyntax(
-      `select value in a.ts\nrename value to total\nreplace with\n${FENCE}\nx\n${FENCE}\nend`,
+      `select value in a.ts\nrename value to total\nreplace with\n${BEGIN}\nx\n${END}\nend`,
       "rename cannot be combined with `replace`",
     );
     expectSyntax(
-      `select value in a.ts\nreplace with\n${FENCE}\nx\n${FENCE}\nrename value to total\nend`,
+      `select value in a.ts\nreplace with\n${BEGIN}\nx\n${END}\nrename value to total\nend`,
       "rename cannot be combined with `replace`",
     );
   });
@@ -412,9 +399,9 @@ describe("parseSelection failures", () => {
     const text = [
       "select foo in a.ts",
       "replace with",
-      FENCE,
+      BEGIN,
       "select inside the fence",
-      FENCE,
+      END,
       "end",
       "select bar in b.ts",
       "end",
@@ -447,42 +434,71 @@ describe("parseSelection failures", () => {
     expectSyntax("select foo in a.ts\nmatch /abc\nend", "regex");
   });
 
-  test("names an unclosed six-tick fence with EDIT_UNCLOSED_FENCE", () => {
-    const error = expectSyntax(`select foo in a.ts\nreplace with\n${FENCE}\nfoo\nend`, "fence");
+  test("names an unclosed sentinel fence with EDIT_UNCLOSED_FENCE", () => {
+    const error = expectSyntax(`select foo in a.ts\nreplace with\n${BEGIN}\nfoo\nend`, "fence");
     expect(error.issues[0]?.code).toBe("EDIT_UNCLOSED_FENCE");
     expect(error.truncated).toBe(true);
   });
 
-  test("rejects a three-tick fence opening", () => {
-    expectSyntax("select foo in a.ts\nreplace with\n```\nx\n```\nend", "6");
-  });
-
-  test("rejects a four-hyphen fence opening", () => {
-    expectSyntax("select foo in a.ts\nreplace with\n----\nx\n----\nend", "5");
-  });
-
-  test("rejects a closing hyphen run that differs from the opening", () => {
-    expectSyntax(`select foo in a.ts\nreplace with\n${DASH_FENCE}\nx\n------\nend`, "fence");
-  });
-
-  test("accepts a hyphen fence body with three hyphens (#25)", () => {
-    const [selection] = parseSelection(
-      `select foo in a.ts\nreplace with\n${DASH_FENCE}\na---b\n${DASH_FENCE}\nend`,
+  test("rejects a legacy six-tick fence with EDIT_LEGACY_FENCE", () => {
+    const error = expectSyntax(
+      `select foo in a.ts\nreplace with\n${LEGACY_TICKS}\nx\n${LEGACY_TICKS}\nend`,
+      BEGIN,
     );
-    expect(selection?.replacement).toBe("a---b");
+    expect(error.issues[0]?.code).toBe("EDIT_LEGACY_FENCE");
+    expect(error.issues[0]?.hint).toContain(BEGIN);
   });
 
-  test("rejects a closing run that differs from the opening", () => {
-    const seven = "`".repeat(7);
-    expectSyntax(`select foo in a.ts\nreplace with\n${FENCE}\nx\n${seven}\nend`, "fence");
+  test("rejects a legacy five-hyphen fence with EDIT_LEGACY_FENCE", () => {
+    const error = expectSyntax(
+      `select foo in a.ts\nreplace with\n${LEGACY_DASH}\nx\n${LEGACY_DASH}\nend`,
+      BEGIN,
+    );
+    expect(error.issues[0]?.code).toBe("EDIT_LEGACY_FENCE");
   });
 
-  test("accepts a fence body with three backticks (#25)", () => {
-    const body = `a${"`".repeat(3)}b`;
+  test("rejects a fence-looking opener that is not the sentinel", () => {
+    expectSyntax("select foo in a.ts\nreplace with\n```\nx\n```\nend", BEGIN);
+    expectSyntax("select foo in a.ts\nreplace with\n----\nx\n----\nend", BEGIN);
+  });
+
+  test("rejects trailing text after the close sentinel on the same line", () => {
+    const error = expectSyntax(
+      `select foo in a.ts\nreplace with\n${BEGIN}\nx\n${END} end`,
+      "own line",
+    );
+    expect(error.issues[0]?.code).toBe("EDIT_FENCE_TRAILING_TEXT");
+  });
+
+  test("accepts a raw body with legacy fences, six backticks, done, and end (#25)", () => {
+    const body = ["alpha", "-----", "``````", "done", "end", "select inside"].join("\n");
     const [selection] = parseSelection(
-      `select foo in a.ts\nreplace with\n${FENCE}\n${body}\n${FENCE}\nend`,
+      `select foo in a.ts\nreplace with\n${BEGIN}\n${body}\n${END}\nend`,
     );
     expect(selection?.replacement).toBe(body);
+  });
+
+  test("accepts leading and trailing whitespace on both sentinel lines", () => {
+    const [selection] = parseSelection(
+      `select foo in a.ts\nreplace with\n  ${BEGIN}  \n${"x"}\n\t${END}\t\nend`,
+    );
+    expect(selection?.replacement).toBe("x");
+  });
+
+  test("rejects a body containing an exact close sentinel line", () => {
+    const text = [
+      "select foo in a.ts",
+      "replace with",
+      BEGIN,
+      "before",
+      END,
+      "after",
+      END,
+      "end",
+    ].join("\n");
+    const error = expectSyntax(text, END);
+    expect(error.issues[0]?.code).toBe("EDIT_EMBEDDED_FENCE_END");
+    expect(error.issues[0]?.hint).toContain(END);
   });
 
   test("rejects a non-1-based pick coordinate", () => {
@@ -643,7 +659,7 @@ describe("serializeSelection", () => {
     expect(serializeSelection(selection)).toBe("select answer in a.ts resolve value\nend");
   });
 
-  test("uses a five-hyphen fence", () => {
+  test("uses the sentinel fence", () => {
     const selection: Selection = {
       locator: { path: "a.ts", name: "foo", kind: "" },
       space: null,
@@ -651,18 +667,18 @@ describe("serializeSelection", () => {
       pick: null,
       replacement: "y",
     };
-    expect(serializeSelection(selection)).toContain(`${DASH_FENCE}\ny\n${DASH_FENCE}`);
+    expect(serializeSelection(selection)).toContain(`${BEGIN}\ny\n${END}`);
   });
 
-  test("falls back to a six-tick fence when the body contains a hyphen run", () => {
+  test("serializes a body containing hyphen and backtick runs", () => {
     const selection: Selection = {
       locator: { path: "a.ts", name: "foo", kind: "" },
       space: null,
       matcher: null,
       pick: null,
-      replacement: "a---b",
+      replacement: "---\n``````\na---b",
     };
-    expect(serializeSelection(selection)).toContain(`${FENCE}\na---b\n${FENCE}`);
+    expect(serializeSelection(selection)).toContain(`${BEGIN}\n---\n\`\`\`\`\`\`\na---b\n${END}`);
     expect(parseSelection(serializeSelection(selection))).toEqual([selection]);
   });
 
@@ -690,7 +706,7 @@ describe("serializeSelection", () => {
     expect(parseSelection(serializeSelection(selection))).toEqual([selection]);
   });
 
-  test("serializes a body containing three backticks with a hyphen fence", () => {
+  test("serializes a body containing three backticks inside the sentinel", () => {
     const selection: Selection = {
       locator: { path: "a.ts", name: "foo", kind: "" },
       space: null,
@@ -698,29 +714,27 @@ describe("serializeSelection", () => {
       pick: null,
       replacement: "before\n```\nafter",
     };
-    expect(serializeSelection(selection)).toContain(
-      `${DASH_FENCE}\nbefore\n\`\`\`\nafter\n${DASH_FENCE}`,
-    );
+    expect(serializeSelection(selection)).toContain(`${BEGIN}\nbefore\n\`\`\`\nafter\n${END}`);
     expect(parseSelection(serializeSelection(selection))).toEqual([selection]);
   });
 
-  test("throws when the body contains both delimiter runs", () => {
+  test("throws when the body contains the close sentinel line", () => {
     const selection: Selection = {
       locator: { path: "a.ts", name: "foo", kind: "" },
       space: null,
       matcher: null,
       pick: null,
-      replacement: "---\n```",
+      replacement: `before\n${END}\nafter`,
     };
     expect(() => serializeSelection(selection)).toThrow(SelectionSyntaxError);
-    expect(() => serializeSelection(selection)).toThrow(/3 or more backticks or hyphens/);
+    expect(() => serializeSelection(selection)).toThrow(/literal line/);
   });
 });
 
 describe("toEditPayload", () => {
   test("bridges a snippet editor with no pick", () => {
     const selection = first(
-      `select function clamp in src/math.ts\nmatch \`Number.isNaN\`\nreplace with\n${FENCE}\nNumber.isFinite\n${FENCE}\nend`,
+      `select function clamp in src/math.ts\nmatch \`Number.isNaN\`\nreplace with\n${BEGIN}\nNumber.isFinite\n${END}\nend`,
     );
     expect(toEditPayload(selection)).toEqual({
       locator: { path: "src/math.ts", name: "clamp", kind: "function" },
@@ -732,7 +746,7 @@ describe("toEditPayload", () => {
 
   test("bridges a whole-declaration rewrite and a delete", () => {
     const rewrite = first(
-      `select const MAX in a.ts\nreplace with\n${FENCE}\nreturn 1;\n${FENCE}\nend`,
+      `select const MAX in a.ts\nreplace with\n${BEGIN}\nreturn 1;\n${END}\nend`,
     );
     expect(toEditPayload(rewrite)).toEqual({
       locator: { path: "a.ts", name: "MAX", kind: "const" },
@@ -740,13 +754,13 @@ describe("toEditPayload", () => {
       range: null,
       replacement: "return 1;",
     });
-    const remove = first(`select const MAX in a.ts\nreplace with\n${FENCE}\n${FENCE}\nend`);
+    const remove = first(`select const MAX in a.ts\nreplace with\n${BEGIN}\n${END}\nend`);
     expect(toEditPayload(remove)?.replacement).toBe("");
   });
 
   test("bridges a single-range pick as a payload range", () => {
     const selection = first(
-      `select function tokenize in src/lexer.ts\nmatch \`x\`\npick 12:3-14:5\nreplace with\n${FENCE}\ny\n${FENCE}\nend`,
+      `select function tokenize in src/lexer.ts\nmatch \`x\`\npick 12:3-14:5\nreplace with\n${BEGIN}\ny\n${END}\nend`,
     );
     expect(toEditPayload(selection)).toEqual({
       locator: { path: "src/lexer.ts", name: "tokenize", kind: "function" },
@@ -766,22 +780,20 @@ describe("toEditPayload", () => {
 
   test("has no payload form for a regex matcher", () => {
     expect(
-      toEditPayload(
-        first(`select foo in a.ts\nmatch /x/\nreplace with\n${FENCE}\ny\n${FENCE}\nend`),
-      ),
+      toEditPayload(first(`select foo in a.ts\nmatch /x/\nreplace with\n${BEGIN}\ny\n${END}\nend`)),
     ).toBeNull();
   });
 
   test("has no payload form for a multi-range pick", () => {
     const selection = first(
-      `select foo in a.ts\nmatch \`x\`\npick {1, 2}\nreplace with\n${FENCE}\ny\n${FENCE}\nend`,
+      `select foo in a.ts\nmatch \`x\`\npick {1, 2}\nreplace with\n${BEGIN}\ny\n${END}\nend`,
     );
     expect(toEditPayload(selection)).toBeNull();
   });
 
   test("has no payload form when a resolve space is set", () => {
     const selection = first(
-      `select answer in main.ts resolve value\nreplace with\n${FENCE}\nlet answer = 2;\n${FENCE}\nend`,
+      `select answer in main.ts resolve value\nreplace with\n${BEGIN}\nlet answer = 2;\n${END}\nend`,
     );
     expect(toEditPayload(selection)).toBeNull();
   });
@@ -794,9 +806,9 @@ describe("parseMultiEditor", () => {
       "delete src/old.ts done",
       "read src/a.ts within {1, 3:2-4} done",
       "write src/a.ts within 2 with",
-      DASH_FENCE,
+      BEGIN,
       "return 2;",
-      DASH_FENCE,
+      END,
       "done",
       "select answer in src/a.ts resolve value end",
     ].join("\n");
@@ -835,7 +847,7 @@ describe("parseMultiEditor", () => {
 
   test("write with no within replaces the whole file", () => {
     const [statement] = parseMultiEditor(
-      ["write src/a.ts with", DASH_FENCE, "export const a = 1;", DASH_FENCE, "done"].join("\n"),
+      ["write src/a.ts with", BEGIN, "export const a = 1;", END, "done"].join("\n"),
     );
     expect(statement).toEqual({
       type: "fs",
@@ -848,6 +860,41 @@ describe("parseMultiEditor", () => {
     });
   });
 
+  test("write with an empty sentinel body replaces the file with empty text", () => {
+    const [statement] = parseMultiEditor(["write src/a.ts with", BEGIN, END, "done"].join("\n"));
+    expect(statement).toEqual({
+      type: "fs",
+      statement: { op: "write", path: "src/a.ts", ranges: null, replacement: "" },
+    });
+  });
+
+  test("rejects a legacy write fence with EDIT_LEGACY_FENCE", () => {
+    for (const fence of [LEGACY_TICKS, LEGACY_DASH]) {
+      try {
+        parseMultiEditor(["write src/a.ts with", fence, "x", fence, "done"].join("\n"));
+        throw new Error("expected a syntax error");
+      } catch (error) {
+        expect(error).toBeInstanceOf(SelectionSyntaxError);
+        const syntax = error as SelectionSyntaxError;
+        expect(syntax.issues[0]?.code).toBe("EDIT_LEGACY_FENCE");
+        expect(syntax.issues[0]?.hint).toContain(BEGIN);
+      }
+    }
+  });
+
+  test("rejects a write body containing an exact close sentinel line", () => {
+    const text = ["write src/a.ts with", BEGIN, "before", END, "after", END, "done"].join("\n");
+    try {
+      parseMultiEditor(text);
+      throw new Error("expected a syntax error");
+    } catch (error) {
+      expect(error).toBeInstanceOf(SelectionSyntaxError);
+      const syntax = error as SelectionSyntaxError;
+      expect(syntax.issues[0]?.code).toBe("EDIT_EMBEDDED_FENCE_END");
+      expect(syntax.issues[0]?.message).toContain(END);
+    }
+  });
+
   test("round-trips every fs statement", () => {
     const text = [
       "create src/new.ts done",
@@ -855,9 +902,9 @@ describe("parseMultiEditor", () => {
       "read src/a.ts done",
       "read src/a.ts within 1 done",
       "write src/a.ts with",
-      DASH_FENCE,
+      BEGIN,
       "export const a = 1;",
-      DASH_FENCE,
+      END,
       "done",
       "select answer in src/a.ts end",
     ].join("\n");
@@ -867,7 +914,7 @@ describe("parseMultiEditor", () => {
         "delete src/old.ts done",
         "read src/a.ts done",
         "read src/a.ts within 1 done",
-        ["write src/a.ts with", DASH_FENCE, "export const a = 1;", DASH_FENCE, "done"].join("\n"),
+        ["write src/a.ts with", BEGIN, "export const a = 1;", END, "done"].join("\n"),
         "select answer in src/a.ts\nend",
       ].join("\n\n"),
     );
@@ -878,14 +925,14 @@ describe("parseMultiEditor", () => {
   });
 
   test("requires with before the write fence", () => {
-    expect(() =>
-      parseMultiEditor(["write src/a.ts", DASH_FENCE, "x", DASH_FENCE, "done"].join("\n")),
-    ).toThrow(/with/);
+    expect(() => parseMultiEditor(["write src/a.ts", BEGIN, "x", END, "done"].join("\n"))).toThrow(
+      /with/,
+    );
   });
 
   test("a shorter delimiter run inside the fence body is ordinary text (#25)", () => {
     const [statement] = parseMultiEditor(
-      ["write src/a.ts with", DASH_FENCE, "one", "---", "two", DASH_FENCE, "done"].join("\n"),
+      ["write src/a.ts with", BEGIN, "one", "---", "two", END, "done"].join("\n"),
     );
     expect(statement).toEqual({
       type: "fs",

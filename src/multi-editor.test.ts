@@ -92,7 +92,13 @@ describe("resolveMultiEditor file commands", () => {
 
   test("write with no within replaces the whole file", () => {
     const result = resolve(
-      ["write src/a.ts with", "-----", "export const a = 2;", "-----", "done"].join("\n"),
+      [
+        "write src/a.ts with",
+        "<<<TC_EDIT_BEGIN>>>",
+        "export const a = 2;",
+        "<<<TC_EDIT_END>>>",
+        "done",
+      ].join("\n"),
       { "src/a.ts": "export const a = 1;\n" },
     );
     expect(result.failures).toEqual([]);
@@ -107,7 +113,13 @@ describe("resolveMultiEditor file commands", () => {
 
   test("write with within replaces only the selected line", () => {
     const result = resolve(
-      ["write src/a.ts within 2 with", "-----", "two changed", "-----", "done"].join("\n"),
+      [
+        "write src/a.ts within 2 with",
+        "<<<TC_EDIT_BEGIN>>>",
+        "two changed",
+        "<<<TC_EDIT_END>>>",
+        "done",
+      ].join("\n"),
       { "src/a.ts": "one\ntwo\nthree\n" },
     );
     expect(result.failures).toEqual([]);
@@ -120,7 +132,13 @@ describe("resolveMultiEditor file commands", () => {
 
   test("write creates a missing file at offset 0", () => {
     const result = resolve(
-      ["write src/new.ts with", "-----", "export const a = 1;", "-----", "done"].join("\n"),
+      [
+        "write src/new.ts with",
+        "<<<TC_EDIT_BEGIN>>>",
+        "export const a = 1;",
+        "<<<TC_EDIT_END>>>",
+        "done",
+      ].join("\n"),
       {},
     );
     expect(result.failures).toEqual([]);
@@ -135,7 +153,14 @@ describe("resolveMultiEditor file commands", () => {
 
   test("conflicts create/delete with another operation on the same path", () => {
     const createWrite = resolve(
-      ["create src/a.ts done", "write src/a.ts with", "-----", "x", "-----", "done"].join("\n"),
+      [
+        "create src/a.ts done",
+        "write src/a.ts with",
+        "<<<TC_EDIT_BEGIN>>>",
+        "x",
+        "<<<TC_EDIT_END>>>",
+        "done",
+      ].join("\n"),
       {},
     );
     expect(createWrite.failures[0]?.diagnostics).toContain("conflicts");
@@ -143,7 +168,13 @@ describe("resolveMultiEditor file commands", () => {
 
   test("rejects overlapping write ranges", () => {
     const result = resolve(
-      ["write src/a.ts within {1, 1:2-2:4} with", "-----", "x", "-----", "done"].join("\n"),
+      [
+        "write src/a.ts within {1, 1:2-2:4} with",
+        "<<<TC_EDIT_BEGIN>>>",
+        "x",
+        "<<<TC_EDIT_END>>>",
+        "done",
+      ].join("\n"),
       { "src/a.ts": "one\ntwo\nthree\n" },
     );
     expect(result.regions).toEqual([]);
@@ -152,9 +183,14 @@ describe("resolveMultiEditor file commands", () => {
 
   test("a failed read is feedback and does not discard the reply's write (#25)", () => {
     const result = resolve(
-      ["write src/a.ts with", "-----", "two", "-----", "done", "read src/a.ts within 99 done"].join(
-        "\n",
-      ),
+      [
+        "write src/a.ts with",
+        "<<<TC_EDIT_BEGIN>>>",
+        "two",
+        "<<<TC_EDIT_END>>>",
+        "done",
+        "read src/a.ts within 99 done",
+      ].join("\n"),
       { "src/a.ts": "one\n" },
     );
     expect(result.failures).toEqual([]);

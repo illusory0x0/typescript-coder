@@ -167,38 +167,62 @@ end`);
   test("preserves fenced goal and instruction text raw", () => {
     const content = `plan "01-main"
 goal:
------
+<<<TC_EDIT_BEGIN>>>
 line one
 
   line two
------
+<<<TC_EDIT_END>>>
 
 stage "02-current" plan "01-main"
 goal:
-\`\`\`\`\`\`
+<<<TC_EDIT_BEGIN>>>
   indented goal
-\`\`\`\`\`\`
+<<<TC_EDIT_END>>>
 end
 
 task "03-first" stage "02-current" verify test
 instruction:
---------
+<<<TC_EDIT_BEGIN>>>
 alpha
   beta
---------
+<<<TC_EDIT_END>>>
 end
 
 edit "04-change" task "03-first" modify value answer in src/helper.ts
 instruction:
-\`\`\`\`\`\`
+<<<TC_EDIT_BEGIN>>>
 raw \`\`\` inner
-\`\`\`\`\`\`
+<<<TC_EDIT_END>>>
 end`;
     const plan = accepted(content);
     expect(plan.goal).toBe("line one\n\n  line two");
     expect(plan.stages[0]?.goal).toBe("  indented goal");
     expect(plan.stages[0]?.tasks[0]?.instruction).toBe("alpha\n  beta");
     expect(plan.stages[0]?.tasks[0]?.edits[0]?.instruction).toBe("raw ``` inner");
+  });
+
+  test("keeps legacy delimiter runs, done, and end as raw fenced text", () => {
+    const body = ["alpha", "-----", "``````", "done", "end", "select inside"].join("\n");
+    const content = `plan "01-main"
+goal:
+${"  <<<TC_EDIT_BEGIN>>>  "}
+${body}
+\t<<<TC_EDIT_END>>>\t
+
+stage "02-current" plan "01-main"
+goal: Current.
+end
+
+task "03-first" stage "02-current" verify test
+instruction: Run the test.
+end
+
+edit "04-change" task "03-first" modify value answer in src/a.ts
+instruction: Change it.
+end`;
+    const plan = accepted(content);
+    expect(plan.goal).toBe(body);
+    expect(accepted(serializePlanDsl(plan))).toEqual(plan);
   });
 
   test("keeps stage, task, and edit record order as sibling order", () => {
@@ -305,12 +329,56 @@ describe("Plan DSL tolerant diagnostics", () => {
   test("rejects an unclosed field fence as truncated", () => {
     const content = `plan "01-main"
 goal:
------
+<<<TC_EDIT_BEGIN>>>
 unterminated`;
     const parsed = parsePlanDslDetailed(content);
     expect(parsed.ok).toBe(false);
     expect(parsed.truncated).toBe(true);
     expect(parsed.issues.some((issue) => issue.code === "PLAN_UNCLOSED_FENCE")).toBe(true);
+  });
+
+  test("rejects legacy hyphen and backtick field fences with PLAN_LEGACY_FENCE", () => {
+    for (const fence of ["-----", "``````"]) {
+      const parsed = parsePlanDslDetailed(`plan "01-main"
+goal:
+${fence}
+text
+${fence}`);
+      expect(parsed.ok).toBe(false);
+      const issue = parsed.issues.find((candidate) => candidate.code === "PLAN_LEGACY_FENCE");
+      expect(issue?.found).toBe(fence);
+      expect(issue?.hint).toContain("<<<TC_EDIT_BEGIN>>>");
+    }
+    const legacyDash = "-----";
+    const patch = parsePlanPatchDetailed(`patch
+task+ "03-first" stage "02-current" verify test
+instruction:
+${legacyDash}
+text
+${legacyDash}`);
+    expect(patch.issues.some((issue) => issue.code === "PLAN_LEGACY_FENCE")).toBe(true);
+  });
+
+  test("rejects an empty sentinel field body", () => {
+    const parsed = parsePlanDslDetailed(`plan "01-main"
+goal:
+<<<TC_EDIT_BEGIN>>>
+<<<TC_EDIT_END>>>`);
+    expect(parsed.ok).toBe(false);
+    const issue = parsed.issues.find((candidate) => candidate.code === "PLAN_MISSING_FIELD");
+    expect(issue?.message).toContain("empty");
+  });
+
+  test("rejects a field body containing an exact close sentinel line", () => {
+    const parsed = parsePlanDslDetailed(`plan "01-main"
+goal:
+<<<TC_EDIT_BEGIN>>>
+before
+<<<TC_EDIT_END>>>
+after
+<<<TC_EDIT_END>>>`);
+    expect(parsed.ok).toBe(false);
+    expect(parsed.issues.some((issue) => issue.code === "PLAN_EMBEDDED_FENCE_END")).toBe(true);
   });
 
   test("reports unknown fields with a code and the record identity", () => {
@@ -489,9 +557,16 @@ describe("Plan DSL serialize", () => {
     );
     const wire = serializePlanDsl(plan);
     expect(wire).toContain("goal: short goal");
-    expect(wire).toContain("goal:\n-----\n  padded goal  \n-----");
-    expect(wire).toContain("instruction:\n------\nalpha\n-----\nbeta\n------");
+    expect(wire).toContain("goal:\n<<<TC_EDIT_BEGIN>>>\n  padded goal  \n<<<TC_EDIT_END>>>");
+    expect(wire).toContain(
+      "instruction:\n<<<TC_EDIT_BEGIN>>>\nalpha\n-----\nbeta\n<<<TC_EDIT_END>>>",
+    );
     expect(accepted(wire)).toEqual(plan);
+  });
+
+  test("throws when Plan text contains the close sentinel line", () => {
+    const plan = planOf([], `before\n<<<TC_EDIT_END>>>\nafter`);
+    expect(() => serializePlanDsl(plan)).toThrow(/literal line/);
   });
 
   test("round-trips every action and space", () => {
@@ -1101,31 +1176,31 @@ end`;
     const content = `patch
 plan~ "01-main"
 goal:
------
+<<<TC_EDIT_BEGIN>>>
 line one
 
   line two
------
+<<<TC_EDIT_END>>>
 end
 stage~ "02-current"
 goal:
-\`\`\`\`\`\`
+<<<TC_EDIT_BEGIN>>>
   padded goal
-\`\`\`\`\`\`
+<<<TC_EDIT_END>>>
 end
 task~ "03-answer"
 verify test
 instruction:
--------
+<<<TC_EDIT_BEGIN>>>
 alpha
   beta
--------
+<<<TC_EDIT_END>>>
 end
 edit+ "04-change" task "03-answer" modify value answer in src/a.ts
 instruction:
-\`\`\`\`\`\`
+<<<TC_EDIT_BEGIN>>>
 raw \`\`\` inner
-\`\`\`\`\`\`
+<<<TC_EDIT_END>>>
 end
 edit~ "05-change"
 modify value other in src/b.ts

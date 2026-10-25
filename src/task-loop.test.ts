@@ -151,9 +151,9 @@ function editDsl(replacement: string): string {
   return [
     "select answer in src/helper.ts resolve value",
     "replace with",
-    "-----",
+    "<<<TC_EDIT_BEGIN>>>",
     replacement,
-    "-----",
+    "<<<TC_EDIT_END>>>",
     "end",
   ].join("\n");
 }
@@ -196,9 +196,9 @@ describe("runLoop dispatch", () => {
       [
         "select answer in src/helper.ts resolve value",
         "replace with",
-        "-----",
+        "<<<TC_EDIT_BEGIN>>>",
         "export function answer(): number {\n  return 2;\n}",
-        "-----",
+        "<<<TC_EDIT_END>>>",
         "end",
       ].join("\n"),
     ]);
@@ -297,9 +297,9 @@ describe("runTaskLoop", () => {
       [
         "select Answer in src/helper.ts resolve type",
         "replace with",
-        "-----",
+        "<<<TC_EDIT_BEGIN>>>",
         "export type Answer = 2;",
-        "-----",
+        "<<<TC_EDIT_END>>>",
         "end",
       ].join("\n"),
       editDsl("export function answer(): Answer {\n  return 2;\n}"),
@@ -349,9 +349,9 @@ describe("runTaskLoop", () => {
       [
         "select other in src/settings.ts resolve value",
         "replace with",
-        "-----",
+        "<<<TC_EDIT_BEGIN>>>",
         "export const other = 2;",
-        "-----",
+        "<<<TC_EDIT_END>>>",
         "end",
       ].join("\n"),
       patch,
@@ -409,11 +409,11 @@ describe("runTaskLoop", () => {
     const createNote = [
       "select note in src/extra.ts resolve value",
       "replace with",
-      "-----",
+      "<<<TC_EDIT_BEGIN>>>",
       "export function note(): number {",
       "  return 1;",
       "}",
-      "-----",
+      "<<<TC_EDIT_END>>>",
       "end",
     ].join("\n");
     const changeNote = editDsl("export function note(): number {\n  return 2;\n}").replace(
@@ -815,9 +815,9 @@ describe("runTaskLoop", () => {
     const partial = [
       "select answer in src/helper.ts resolve value",
       "replace with",
-      "-----",
+      "<<<TC_EDIT_BEGIN>>>",
       "export function answer(): number {\n  return 99;\n}",
-      "-----",
+      "<<<TC_EDIT_END>>>",
       "end",
       "select answer in src/helper.ts resolve value",
       "pick 1",
@@ -924,11 +924,11 @@ end`;
       plan,
       [
         "write src/helper.ts with",
-        "-----",
+        "<<<TC_EDIT_BEGIN>>>",
         "export function answer(): number {",
         "  return 2;",
         "}",
-        "-----",
+        "<<<TC_EDIT_END>>>",
         "done",
       ].join("\n"),
     ]);
@@ -995,22 +995,22 @@ end`;
       [
         "select run in src/extra.ts resolve value",
         "replace with",
-        "-----",
+        "<<<TC_EDIT_BEGIN>>>",
         [
           "type LispValue = number | boolean;",
           "export function run(): number {",
           "  return 2;",
           "}",
         ].join("\n"),
-        "-----",
+        "<<<TC_EDIT_END>>>",
         "end",
       ].join("\n"),
       [
         "select run in src/extra.ts resolve value",
         "replace with",
-        "-----",
+        "<<<TC_EDIT_BEGIN>>>",
         "export function run(): number {\n  return 2;\n}",
-        "-----",
+        "<<<TC_EDIT_END>>>",
         "end",
       ].join("\n"),
     ]);
@@ -1056,15 +1056,15 @@ end`;
       [
         "select Answer in src/helper.ts resolve type",
         "replace with",
-        "-----",
+        "<<<TC_EDIT_BEGIN>>>",
         "export type Answer = 2;",
-        "-----",
+        "<<<TC_EDIT_END>>>",
         "end",
         "select answer in src/helper.ts resolve value",
         "replace with",
-        "-----",
+        "<<<TC_EDIT_BEGIN>>>",
         "export function answer(): Answer {\n  return 2;\n}",
-        "-----",
+        "<<<TC_EDIT_END>>>",
         "end",
       ].join("\n"),
     ]);
@@ -1104,8 +1104,8 @@ end`;
       [
         "select unused in src/unused.ts resolve value",
         "replace with",
-        "-----",
-        "-----",
+        "<<<TC_EDIT_BEGIN>>>",
+        "<<<TC_EDIT_END>>>",
         "end",
       ].join("\n"),
     ]);
@@ -1123,9 +1123,9 @@ end`;
       [
         "select other in src/other.ts resolve value",
         "replace with",
-        "-----",
+        "<<<TC_EDIT_BEGIN>>>",
         "export const other = 2;",
-        "-----",
+        "<<<TC_EDIT_END>>>",
         "end",
       ].join("\n"),
       GOOD_EDIT,

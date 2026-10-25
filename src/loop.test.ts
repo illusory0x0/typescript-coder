@@ -6836,7 +6836,8 @@ describe("runLoop", () => {
       expect(fallback).toContain("select MAXIMUM in src/lisp.ts");
       expect(fallback).toContain("omit the kind");
       expect(fallback).toContain("write src/lisp.ts with");
-      expect(fallback).toContain("five or more hyphens");
+      expect(fallback).toContain("<<<TC_EDIT_BEGIN>>>");
+      expect(fallback).toContain("<<<TC_EDIT_END>>>");
       // The fallback is only for the edit-dsl protocol.
       expect(rejectionLead("address", 2, { addressFailures: 2, address: live })).toBe(
         "This attempt MUST echo the pinned address exactly as shown; the diagnostics name no other declaration to re-pin to.",
@@ -8778,7 +8779,13 @@ describe("edit-dsl protocol (#111/#119)", () => {
         replacement: null,
         rename: { from: "answer", to: "result" },
       }),
-      ["write src/other.ts with", "-----", "export const touched = 1;", "-----", "done"].join("\n"),
+      [
+        "write src/other.ts with",
+        "<<<TC_EDIT_BEGIN>>>",
+        "export const touched = 1;",
+        "<<<TC_EDIT_END>>>",
+        "done",
+      ].join("\n"),
     ].join("\n\n");
     const provider = new ScriptedProvider([
       editDslSelect("answer", "src/helper.ts", "value"),
@@ -8826,7 +8833,13 @@ describe("edit-dsl protocol (#111/#119)", () => {
         replacement: null,
         rename: { from: "answer", to: "result" },
       }),
-      ["write src/other.ts with", "-----", "export const touched = 1;", "-----", "done"].join("\n"),
+      [
+        "write src/other.ts with",
+        "<<<TC_EDIT_BEGIN>>>",
+        "export const touched = 1;",
+        "<<<TC_EDIT_END>>>",
+        "done",
+      ].join("\n"),
     ].join("\n\n");
     const provider = new ScriptedProvider([
       editDslSelect("answer", "src/helper.ts", "value"),
@@ -9397,7 +9410,7 @@ describe("edit-dsl protocol (#111/#119)", () => {
     expect(edit).toContain("select const MAX_TOKENS in src/x.ts");
     expect(edit).toContain("pick 2");
     expect(edit).toContain(`match ${TICK}return 1;${TICK}`);
-    expect(edit).toContain("-----\nreturn 2;\n-----");
+    expect(edit).toContain("<<<TC_EDIT_BEGIN>>>\nreturn 2;\n<<<TC_EDIT_END>>>");
     expect(edit).toContain("select function clamp in src/x.ts");
     const retry = buildRetryPrompt({
       exchangeNumber: 2,
@@ -10584,7 +10597,9 @@ describe("edit-dsl protocol (#111/#119)", () => {
     const dir = fixtureDir();
     const body = "export function answer(): number {\n  return 2;\n}";
     const provider = new ScriptedProvider([
-      ["write src/helper.ts with", "-----", body, "-----", "done"].join("\n"),
+      ["write src/helper.ts with", "<<<TC_EDIT_BEGIN>>>", body, "<<<TC_EDIT_END>>>", "done"].join(
+        "\n",
+      ),
       "Great! I resolve this problem!",
     ]);
     const result = await runLoop({
@@ -10605,7 +10620,9 @@ describe("edit-dsl protocol (#111/#119)", () => {
     const body = "export function answer(): number {\n  return 2;\n}";
     const provider = new ScriptedProvider([
       "read src/helper.ts done",
-      ["write src/helper.ts with", "-----", body, "-----", "done"].join("\n"),
+      ["write src/helper.ts with", "<<<TC_EDIT_BEGIN>>>", body, "<<<TC_EDIT_END>>>", "done"].join(
+        "\n",
+      ),
       "Great! I resolve this problem!",
     ]);
     const result = await runLoop({
@@ -10629,7 +10646,9 @@ describe("edit-dsl protocol (#111/#119)", () => {
     const body = "export function answer(): number {\n  return 2;\n}";
     const provider = new ScriptedProvider([
       editDslSelect("answer", "src/helper.ts", "value"),
-      ["write src/helper.ts with", "-----", body, "-----", "done"].join("\n"),
+      ["write src/helper.ts with", "<<<TC_EDIT_BEGIN>>>", body, "<<<TC_EDIT_END>>>", "done"].join(
+        "\n",
+      ),
       "Great! I resolve this problem!",
     ]);
     const result = await runLoop({
@@ -10648,9 +10667,14 @@ describe("edit-dsl protocol (#111/#119)", () => {
     const dir = fixtureDir();
     const body = "export function answer(): number {\n  return 2;\n}";
     const provider = new ScriptedProvider([
-      ["create src/new.ts done", "write src/helper.ts with", "-----", body, "-----", "done"].join(
-        "\n",
-      ),
+      [
+        "create src/new.ts done",
+        "write src/helper.ts with",
+        "<<<TC_EDIT_BEGIN>>>",
+        body,
+        "<<<TC_EDIT_END>>>",
+        "done",
+      ].join("\n"),
       "Great! I resolve this problem!",
     ]);
     const result = await runLoop({
@@ -10672,7 +10696,9 @@ describe("edit-dsl protocol (#111/#119)", () => {
     const body = "export function answer(): number {\n  return 2;\n}";
     const provider = new ScriptedProvider([
       "delete src/extra.ts done",
-      ["write src/helper.ts with", "-----", body, "-----", "done"].join("\n"),
+      ["write src/helper.ts with", "<<<TC_EDIT_BEGIN>>>", body, "<<<TC_EDIT_END>>>", "done"].join(
+        "\n",
+      ),
       "Great! I resolve this problem!",
     ]);
     const result = await runLoop({
@@ -11012,7 +11038,8 @@ describe("edit-dsl protocol (#111/#119)", () => {
     const prompt = buildSystemPrompt(false, "edit-dsl");
     // The edit-dsl edit rule and its create/delete semantics replace the JSON rule.
     expect(prompt).toContain("`select <symbol> in <path> [ resolve <value|type|namespace> ]");
-    expect(prompt).toContain("fence opens with 5 or more hyphens");
+    expect(prompt).toContain("open the body with `<<<TC_EDIT_BEGIN>>>`");
+    expect(prompt).toContain("close it with `<<<TC_EDIT_END>>>`");
     expect(prompt).toContain(
       "a clause with neither `replace` nor `rename` is a viewer that locates and writes nothing unless it contains `pick`; `pick` requires `replace`",
     );
@@ -11023,7 +11050,7 @@ describe("edit-dsl protocol (#111/#119)", () => {
     expect(prompt).toContain(
       "A bare `select … replace with … end` with no `match` rewrites the whole declaration",
     );
-    expect(prompt).toContain("an empty fence deletes it");
+    expect(prompt).toContain("an empty body deletes it");
     expect(prompt).toContain("no JSON edit payload");
     expect(prompt).toContain("naming it in the clause's own `select`");
     // The pick turn is edit-dsl too: a select viewer leads to `# details`.
@@ -11085,7 +11112,7 @@ describe("edit-dsl protocol (#111/#119)", () => {
     expect(edit).toContain("select const MAX_TOKENS in src/x.ts");
     expect(edit).toContain("pick 2");
     expect(edit).toContain(`match ${TICK}return 1;${TICK}`);
-    expect(edit).toContain("-----\nreturn 2;\n-----");
+    expect(edit).toContain("<<<TC_EDIT_BEGIN>>>\nreturn 2;\n<<<TC_EDIT_END>>>");
     expect(edit).toContain("select function clamp in src/x.ts");
     // #117 adds the create and the viewer-then-editor forms, labelled apart.
     expect(edit).toContain("5. Create:");

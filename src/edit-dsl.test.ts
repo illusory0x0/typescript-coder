@@ -44,7 +44,7 @@ function deps(source: string): EditDslDeps {
 describe("resolveEditDslReply (#111)", () => {
   test("resolves an editor clause with its cascade stage and matcher kind", () => {
     const selections = parseSelection(
-      "select function once in a.ts\nmatch `return 1;`\nreplace with\n``````\nreturn 2;\n``````\nend",
+      "select function once in a.ts\nmatch `return 1;`\nreplace with\n<<<TC_EDIT_BEGIN>>>\nreturn 2;\n<<<TC_EDIT_END>>>\nend",
     );
     const result = resolveEditDslReply(selections, deps(ONCE));
     expect(result.failures).toEqual([]);
@@ -59,7 +59,7 @@ describe("resolveEditDslReply (#111)", () => {
 
   test("a whole-declaration replace records the whole-symbol stage and no matcher kind", () => {
     const selections = parseSelection(
-      "select function once in a.ts\nreplace with\n``````\nfunction once(): number {\n  return 2;\n}\n``````\nend",
+      "select function once in a.ts\nreplace with\n<<<TC_EDIT_BEGIN>>>\nfunction once(): number {\n  return 2;\n}\n<<<TC_EDIT_END>>>\nend",
     );
     const result = resolveEditDslReply(selections, deps(ONCE));
     const region = result.regions[0];
@@ -69,7 +69,7 @@ describe("resolveEditDslReply (#111)", () => {
 
   test("a pick-only multi-range applies the same fence to every picked span", () => {
     const selections = parseSelection(
-      "select function twice in a.ts\npick {2, 3}\nreplace with\n``````\n  return 2;\n``````\nend",
+      "select function twice in a.ts\npick {2, 3}\nreplace with\n<<<TC_EDIT_BEGIN>>>\n  return 2;\n<<<TC_EDIT_END>>>\nend",
     );
     const result = resolveEditDslReply(selections, deps(TWICE));
     expect(result.failures).toEqual([]);
@@ -92,7 +92,7 @@ describe("resolveEditDslReply (#111)", () => {
 
   test("a pick-only multi-range with overlapping ranges fails at the range stage", () => {
     const selections = parseSelection(
-      "select function twice in a.ts\npick {2, 2:5}\nreplace with\n``````\n  return 2;\n``````\nend",
+      "select function twice in a.ts\npick {2, 2:5}\nreplace with\n<<<TC_EDIT_BEGIN>>>\n  return 2;\n<<<TC_EDIT_END>>>\nend",
     );
     const result = resolveEditDslReply(selections, deps(TWICE));
     expect(result.regions).toEqual([]);
@@ -104,7 +104,7 @@ describe("resolveEditDslReply (#111)", () => {
 
   test("a pick-only multi-range fails the whole clause when one range is a no-op", () => {
     const selections = parseSelection(
-      "select function twice in a.ts\npick {2, 4}\nreplace with\n``````\n}\n``````\nend",
+      "select function twice in a.ts\npick {2, 4}\nreplace with\n<<<TC_EDIT_BEGIN>>>\n}\n<<<TC_EDIT_END>>>\nend",
     );
     const result = resolveEditDslReply(selections, deps(TWICE));
     expect(result.regions).toEqual([]);
@@ -136,7 +136,7 @@ describe("resolveEditDslReply (#111)", () => {
 
   test("an ambiguous editor fails at the matcher stage with its cascade cause", () => {
     const selections = parseSelection(
-      "select function twice in a.ts\nmatch `return 1;`\nreplace with\n``````\nreturn 2;\n``````\nend",
+      "select function twice in a.ts\nmatch `return 1;`\nreplace with\n<<<TC_EDIT_BEGIN>>>\nreturn 2;\n<<<TC_EDIT_END>>>\nend",
     );
     const result = resolveEditDslReply(selections, deps(TWICE));
     expect(result.regions).toEqual([]);
@@ -147,7 +147,7 @@ describe("resolveEditDslReply (#111)", () => {
 
   test("a malformed regex fails as regex-invalid on the matcher stage", () => {
     const selections = parseSelection(
-      "select function once in a.ts\nmatch /(/\nreplace with\n``````\nreturn 2;\n``````\nend",
+      "select function once in a.ts\nmatch /(/\nreplace with\n<<<TC_EDIT_BEGIN>>>\nreturn 2;\n<<<TC_EDIT_END>>>\nend",
     );
     const result = resolveEditDslReply(selections, deps(ONCE));
     expect(result.failures[0]?.stage).toBe("matcher");
@@ -156,7 +156,7 @@ describe("resolveEditDslReply (#111)", () => {
 
   test("a matched editor on an undeclared name still creates (match is ignored)", () => {
     const selections = parseSelection(
-      "select function missing in a.ts\nmatch `return 1;`\nreplace with\n``````\nfunction missing(): number {\n  return 0;\n}\n``````\nend",
+      "select function missing in a.ts\nmatch `return 1;`\nreplace with\n<<<TC_EDIT_BEGIN>>>\nfunction missing(): number {\n  return 0;\n}\n<<<TC_EDIT_END>>>\nend",
     );
     const result = resolveEditDslReply(selections, deps(ONCE));
     expect(result.failures).toEqual([]);
@@ -167,7 +167,7 @@ describe("resolveEditDslReply (#111)", () => {
 
   test("a whole-declaration editor on an undeclared name resolves to a create region", () => {
     const selections = parseSelection(
-      "select function missing in a.ts\nreplace with\n``````\nfunction missing(): number {\n  return 0;\n}\n``````\nend",
+      "select function missing in a.ts\nreplace with\n<<<TC_EDIT_BEGIN>>>\nfunction missing(): number {\n  return 0;\n}\n<<<TC_EDIT_END>>>\nend",
     );
     const result = resolveEditDslReply(selections, deps(ONCE));
     expect(result.failures).toEqual([]);
@@ -183,7 +183,7 @@ describe("resolveEditDslReply (#111)", () => {
 
   test("a create appends with no leading newline to an empty file", () => {
     const selections = parseSelection(
-      "select const NEW in src/new.ts\nreplace with\n``````\nconst NEW = 1;\n``````\nend",
+      "select const NEW in src/new.ts\nreplace with\n<<<TC_EDIT_BEGIN>>>\nconst NEW = 1;\n<<<TC_EDIT_END>>>\nend",
     );
     const result = resolveEditDslReply(selections, deps(""));
     expect(result.regions[0]?.create).toBe(true);
@@ -192,7 +192,7 @@ describe("resolveEditDslReply (#111)", () => {
 
   test("a no-kind whole-declaration editor on an undeclared name also creates", () => {
     const selections = parseSelection(
-      "select missing in a.ts\nreplace with\n``````\nfunction missing(): number {\n  return 0;\n}\n``````\nend",
+      "select missing in a.ts\nreplace with\n<<<TC_EDIT_BEGIN>>>\nfunction missing(): number {\n  return 0;\n}\n<<<TC_EDIT_END>>>\nend",
     );
     const result = resolveEditDslReply(selections, deps(ONCE));
     expect(result.failures).toEqual([]);
@@ -210,31 +210,31 @@ describe("resolveEditDslReply (#111)", () => {
       [
         "select const JsonValue in src/json.ts",
         "replace with",
-        "``````",
+        "<<<TC_EDIT_BEGIN>>>",
         "export type JsonValue = string | number;",
-        "``````",
+        "<<<TC_EDIT_END>>>",
         "end",
         "select function parseJson in src/json.ts",
         "replace with",
-        "``````",
+        "<<<TC_EDIT_BEGIN>>>",
         "export function parseJson(text: string): JsonValue {",
         "  return text;",
         "}",
-        "``````",
+        "<<<TC_EDIT_END>>>",
         "end",
         "select type JsonValue in src/json.ts resolve type",
         "replace with",
-        "``````",
+        "<<<TC_EDIT_BEGIN>>>",
         "export type JsonValue = string | number;",
-        "``````",
+        "<<<TC_EDIT_END>>>",
         "end",
         "select function parseJson in src/json.ts resolve value",
         "replace with",
-        "``````",
+        "<<<TC_EDIT_BEGIN>>>",
         "export function parseJson(text: string): JsonValue {",
         "  return text;",
         "}",
-        "``````",
+        "<<<TC_EDIT_END>>>",
         "end",
       ].join("\n"),
     );
@@ -261,7 +261,7 @@ describe("resolveEditDslReply (#111)", () => {
   test("a no-kind clause resolves a declaration of any kind", () => {
     // The empty kind is the edit-dsl wildcard: path + name only.
     const selections = parseSelection(
-      "select once in a.ts\nreplace with\n``````\nfunction once(): number {\n  return 2;\n}\n``````\nend",
+      "select once in a.ts\nreplace with\n<<<TC_EDIT_BEGIN>>>\nfunction once(): number {\n  return 2;\n}\n<<<TC_EDIT_END>>>\nend",
     );
     const result = resolveEditDslReply(selections, deps(ONCE));
     expect(result.failures).toEqual([]);
@@ -323,7 +323,9 @@ describe("resolveEditDslReply (#111)", () => {
   test("without resolve a name declared in two spaces is ambiguous", () => {
     const source = "interface Dual {}\nconst Dual = 1;\n";
     const result = resolveEditDslReply(
-      parseSelection("select Dual in a.ts\nreplace with\n``````\n42\n``````\nend"),
+      parseSelection(
+        "select Dual in a.ts\nreplace with\n<<<TC_EDIT_BEGIN>>>\n42\n<<<TC_EDIT_END>>>\nend",
+      ),
       deps(source),
     );
     expect(result.regions).toEqual([]);
@@ -336,7 +338,7 @@ describe("resolveEditDslReply (#111)", () => {
     const source = "interface Thing {}\nconst Thing = 1;\n";
     const result = resolveEditDslReply(
       parseSelection(
-        "select Thing in a.ts resolve namespace\nreplace with\n``````\n42\n``````\nend",
+        "select Thing in a.ts resolve namespace\nreplace with\n<<<TC_EDIT_BEGIN>>>\n42\n<<<TC_EDIT_END>>>\nend",
       ),
       deps(source),
     );
@@ -350,7 +352,7 @@ describe("resolveEditDslReply (#111)", () => {
 
   test("a no-resolve non-declaration body creates a let binding", () => {
     const selections = parseSelection(
-      "select missing in a.ts\nreplace with\n``````\n42\n``````\nend",
+      "select missing in a.ts\nreplace with\n<<<TC_EDIT_BEGIN>>>\n42\n<<<TC_EDIT_END>>>\nend",
     );
     const result = resolveEditDslReply(selections, deps(ONCE));
     expect(result.failures).toEqual([]);
@@ -360,7 +362,7 @@ describe("resolveEditDslReply (#111)", () => {
 
   test("a resolve value non-declaration body creates a let binding", () => {
     const selections = parseSelection(
-      "select missing in a.ts resolve value\nreplace with\n``````\n42\n``````\nend",
+      "select missing in a.ts resolve value\nreplace with\n<<<TC_EDIT_BEGIN>>>\n42\n<<<TC_EDIT_END>>>\nend",
     );
     const result = resolveEditDslReply(selections, deps(ONCE));
     expect(result.failures).toEqual([]);
@@ -370,7 +372,7 @@ describe("resolveEditDslReply (#111)", () => {
 
   test("a resolve type non-declaration body creates a type alias", () => {
     const selections = parseSelection(
-      "select missing in a.ts resolve type\nreplace with\n``````\n{ n: number }\n``````\nend",
+      "select missing in a.ts resolve type\nreplace with\n<<<TC_EDIT_BEGIN>>>\n{ n: number }\n<<<TC_EDIT_END>>>\nend",
     );
     const result = resolveEditDslReply(selections, deps(ONCE));
     expect(result.failures).toEqual([]);
@@ -380,7 +382,7 @@ describe("resolveEditDslReply (#111)", () => {
 
   test("a resolve namespace non-declaration body creates a namespace block", () => {
     const selections = parseSelection(
-      "select missing in a.ts resolve namespace\nreplace with\n``````\n42\n``````\nend",
+      "select missing in a.ts resolve namespace\nreplace with\n<<<TC_EDIT_BEGIN>>>\n42\n<<<TC_EDIT_END>>>\nend",
     );
     const result = resolveEditDslReply(selections, deps(ONCE));
     expect(result.failures).toEqual([]);
@@ -405,7 +407,7 @@ describe("resolveEditDslReply (#111)", () => {
     }`, () => {
       const resolve = space === null ? "" : ` resolve ${space}`;
       const selections = parseSelection(
-        `select missing in a.ts${resolve}\nreplace with\n\`\`\`\`\`\`\n${complete}\n\`\`\`\`\`\`\nend`,
+        `select missing in a.ts${resolve}\nreplace with\n<<<TC_EDIT_BEGIN>>>\n${complete}\n<<<TC_EDIT_END>>>\nend`,
       );
       const result = resolveEditDslReply(selections, deps(ONCE));
       expect(result.failures).toEqual([]);
@@ -416,7 +418,7 @@ describe("resolveEditDslReply (#111)", () => {
 
   test("a pick on an undeclared name still creates (pick is ignored)", () => {
     const selections = parseSelection(
-      "select function missing in a.ts\npick 2\nreplace with\n``````\nfunction missing(): number {\n  return 0;\n}\n``````\nend",
+      "select function missing in a.ts\npick 2\nreplace with\n<<<TC_EDIT_BEGIN>>>\nfunction missing(): number {\n  return 0;\n}\n<<<TC_EDIT_END>>>\nend",
     );
     const result = resolveEditDslReply(selections, deps(ONCE));
     expect(result.failures).toEqual([]);
@@ -427,7 +429,7 @@ describe("resolveEditDslReply (#111)", () => {
   test("a class+interface merge is rejected as multiple same-name declarations", () => {
     const body = "class missing {}\ninterface missing {}";
     const selections = parseSelection(
-      `select missing in a.ts\nreplace with\n\`\`\`\`\`\`\n${body}\n\`\`\`\`\`\`\nend`,
+      `select missing in a.ts\nreplace with\n<<<TC_EDIT_BEGIN>>>\n${body}\n<<<TC_EDIT_END>>>\nend`,
     );
     const result = resolveEditDslReply(selections, deps(ONCE));
     expect(result.regions).toEqual([]);
@@ -440,7 +442,7 @@ describe("resolveEditDslReply (#111)", () => {
     const body =
       "function missing(x: string): string;\nfunction missing(x: any): any {\n  return x;\n}";
     const selections = parseSelection(
-      `select missing in a.ts\nreplace with\n\`\`\`\`\`\`\n${body}\n\`\`\`\`\`\`\nend`,
+      `select missing in a.ts\nreplace with\n<<<TC_EDIT_BEGIN>>>\n${body}\n<<<TC_EDIT_END>>>\nend`,
     );
     const result = resolveEditDslReply(selections, deps(ONCE));
     expect(result.regions).toEqual([]);
@@ -451,7 +453,7 @@ describe("resolveEditDslReply (#111)", () => {
   test("a function+type merge is rejected as multiple same-name declarations", () => {
     const body = "function missing() {}\ntype missing = number;";
     const selections = parseSelection(
-      `select missing in a.ts\nreplace with\n\`\`\`\`\`\`\n${body}\n\`\`\`\`\`\`\nend`,
+      `select missing in a.ts\nreplace with\n<<<TC_EDIT_BEGIN>>>\n${body}\n<<<TC_EDIT_END>>>\nend`,
     );
     const result = resolveEditDslReply(selections, deps(ONCE));
     expect(result.regions).toEqual([]);
@@ -473,7 +475,7 @@ describe("resolveEditDslReply (#111)", () => {
     }`, () => {
       const resolve = space === null ? "" : ` resolve ${space}`;
       const selections = parseSelection(
-        `select missing in a.ts${resolve}\nreplace with\n\`\`\`\`\`\`\n${body}\n\`\`\`\`\`\`\nend`,
+        `select missing in a.ts${resolve}\nreplace with\n<<<TC_EDIT_BEGIN>>>\n${body}\n<<<TC_EDIT_END>>>\nend`,
       );
       const result = resolveEditDslReply(selections, deps(ONCE));
       expect(result.failures).toEqual([]);
@@ -484,7 +486,7 @@ describe("resolveEditDslReply (#111)", () => {
 
   test("a resolve type create with a function body fails at the address stage", () => {
     const selections = parseSelection(
-      `select missing in a.ts resolve type\nreplace with\n\`\`\`\`\`\`\n${COMPLETE}\n\`\`\`\`\`\`\nend`,
+      `select missing in a.ts resolve type\nreplace with\n<<<TC_EDIT_BEGIN>>>\n${COMPLETE}\n<<<TC_EDIT_END>>>\nend`,
     );
     const result = resolveEditDslReply(selections, deps(ONCE));
     expect(result.regions).toEqual([]);
@@ -498,7 +500,7 @@ describe("resolveEditDslReply (#111)", () => {
 
   test("a resolve namespace create with a type alias body fails at the address stage", () => {
     const selections = parseSelection(
-      `select missing in a.ts resolve namespace\nreplace with\n\`\`\`\`\`\`\n${COMPLETE_TYPE}\n\`\`\`\`\`\`\nend`,
+      `select missing in a.ts resolve namespace\nreplace with\n<<<TC_EDIT_BEGIN>>>\n${COMPLETE_TYPE}\n<<<TC_EDIT_END>>>\nend`,
     );
     const result = resolveEditDslReply(selections, deps(ONCE));
     expect(result.regions).toEqual([]);
@@ -509,7 +511,7 @@ describe("resolveEditDslReply (#111)", () => {
 
   test("a declaration body with a different name fails instead of wrapping", () => {
     const selections = parseSelection(
-      "select missing in a.ts\nreplace with\n``````\nfunction other(): number {\n  return 0;\n}\n``````\nend",
+      "select missing in a.ts\nreplace with\n<<<TC_EDIT_BEGIN>>>\nfunction other(): number {\n  return 0;\n}\n<<<TC_EDIT_END>>>\nend",
     );
     const result = resolveEditDslReply(selections, deps(ONCE));
     expect(result.regions).toEqual([]);
@@ -521,7 +523,7 @@ describe("resolveEditDslReply (#111)", () => {
   test("a declaration list with exactly one declaration named the symbol is appended verbatim", () => {
     const body = "const before = 1;\nfunction missing(): number {\n  return 0;\n}";
     const selections = parseSelection(
-      `select missing in a.ts\nreplace with\n\`\`\`\`\`\`\n${body}\n\`\`\`\`\`\`\nend`,
+      `select missing in a.ts\nreplace with\n<<<TC_EDIT_BEGIN>>>\n${body}\n<<<TC_EDIT_END>>>\nend`,
     );
     const result = resolveEditDslReply(selections, deps(ONCE));
     expect(result.failures).toEqual([]);
@@ -532,7 +534,7 @@ describe("resolveEditDslReply (#111)", () => {
   test("a declaration list with two declarations named the symbol fails", () => {
     const body = "function missing(): number {\n  return 0;\n}\nconst missing = 1;";
     const selections = parseSelection(
-      `select missing in a.ts\nreplace with\n\`\`\`\`\`\`\n${body}\n\`\`\`\`\`\`\nend`,
+      `select missing in a.ts\nreplace with\n<<<TC_EDIT_BEGIN>>>\n${body}\n<<<TC_EDIT_END>>>\nend`,
     );
     const result = resolveEditDslReply(selections, deps(ONCE));
     expect(result.regions).toEqual([]);
@@ -542,7 +544,7 @@ describe("resolveEditDslReply (#111)", () => {
 
   test("a kind miss is not a create", () => {
     const selections = parseSelection(
-      "select const once in a.ts\nreplace with\n``````\n42\n``````\nend",
+      "select const once in a.ts\nreplace with\n<<<TC_EDIT_BEGIN>>>\n42\n<<<TC_EDIT_END>>>\nend",
     );
     const result = resolveEditDslReply(selections, deps(ONCE));
     expect(result.regions).toEqual([]);
@@ -552,7 +554,7 @@ describe("resolveEditDslReply (#111)", () => {
 
   test("an empty fence on an undeclared name is not a create", () => {
     const selections = parseSelection(
-      "select function missing in a.ts\nreplace with\n``````\n``````\nend",
+      "select function missing in a.ts\nreplace with\n<<<TC_EDIT_BEGIN>>>\n<<<TC_EDIT_END>>>\nend",
     );
     const result = resolveEditDslReply(selections, deps(ONCE));
     expect(result.regions).toEqual([]);
@@ -711,7 +713,7 @@ describe("resolveEditDslReply (#111)", () => {
 
   test("an editor with an invalid pick range reports stage range and renders no block", () => {
     const selections = parseSelection(
-      "select function twice in a.ts\nmatch `return 1;`\npick 99\nreplace with\n``````\n  return 2;\n``````\nend",
+      "select function twice in a.ts\nmatch `return 1;`\npick 99\nreplace with\n<<<TC_EDIT_BEGIN>>>\n  return 2;\n<<<TC_EDIT_END>>>\nend",
     );
     const result = resolveEditDslReply(selections, deps(TWICE));
     expect(result.viewers).toEqual([]);

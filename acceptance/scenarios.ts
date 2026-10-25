@@ -333,8 +333,8 @@ const GOOD_EDIT = editResponse("return 1;", "return 2;");
 const TEST_ISSUE = "make the failing test pass";
 
 // An edit-dsl select-first viewer (`resolve value`, no `replace`) and a
-// `match` + whole-line `pick 2` editor with a six-tick fence, mirroring the §8
-// examples the model sees. Multi-line replies are assembled from arrays for
+// `match` + whole-line `pick 2` editor with the sentinel fence, mirroring the
+// §8 examples the model sees. Multi-line replies are assembled from arrays for
 // readability.
 const EDIT_DSL_VIEWER = ["select answer in src/helper.ts resolve value", "end"].join("\n");
 const EDIT_DSL_PICK_EDIT = [
@@ -342,9 +342,9 @@ const EDIT_DSL_PICK_EDIT = [
   "match `return 1;`",
   "pick 2",
   "replace with",
-  "``````",
+  "<<<TC_EDIT_BEGIN>>>",
   "return 2;",
-  "``````",
+  "<<<TC_EDIT_END>>>",
   "end",
 ].join("\n");
 const EDIT_DSL_CONFIRMATION = "Great! I resolve this problem!";
@@ -398,11 +398,11 @@ finish`,
       [
         "select answer in src/helper.ts resolve value",
         "replace with",
-        "-----",
+        "<<<TC_EDIT_BEGIN>>>",
         "export function answer(): number {",
         "  return 2;",
         "}",
-        "-----",
+        "<<<TC_EDIT_END>>>",
         "end",
       ].join("\n"),
       "approve",
@@ -413,6 +413,61 @@ finish`,
       fileEqualsOriginal("src/helper.test.ts"),
       hasCallCount(3),
       messageContains(1, "Change answer so it returns 2 instead of 1."),
+    ],
+  },
+  {
+    id: "plan-exec-write-fix-answer",
+    title:
+      "flat-DSL plan/execute/review accepts sentinel goal, instruction, and whole-file write fences",
+    fixture: "fix-answer",
+    agentMode: "plan-exec",
+    issue: TEST_ISSUE,
+    responses: [
+      `plan "01-main"
+goal:
+<<<TC_EDIT_BEGIN>>>
+Make the failing answer test pass.
+<<<TC_EDIT_END>>>
+
+stage "02-stage-fix" plan "01-main"
+goal:
+<<<TC_EDIT_BEGIN>>>
+Fix the answer behavior.
+<<<TC_EDIT_END>>>
+end
+
+task "03-task-answer" stage "02-stage-fix" verify test
+instruction:
+<<<TC_EDIT_BEGIN>>>
+Replace src/helper.ts so answer returns 2.
+<<<TC_EDIT_END>>>
+end
+
+edit "04-edit-answer" task "03-task-answer" write src/helper.ts
+instruction:
+<<<TC_EDIT_BEGIN>>>
+Write the whole helper module.
+<<<TC_EDIT_END>>>
+end
+
+finish`,
+      [
+        "write src/helper.ts with",
+        "<<<TC_EDIT_BEGIN>>>",
+        "export function answer(): number {",
+        "  return 2;",
+        "}",
+        "<<<TC_EDIT_END>>>",
+        "done",
+      ].join("\n"),
+      "approve",
+    ],
+    assertions: [
+      hasOk(true),
+      fileContains("src/helper.ts", "return 2;"),
+      fileEqualsOriginal("src/helper.test.ts"),
+      hasCallCount(3),
+      messageContains(1, "Replace src/helper.ts so answer returns 2."),
     ],
   },
   {

@@ -23,6 +23,12 @@ import {
 } from "./tasks";
 import { renderDslIssues } from "./dsl-diagnostics";
 import type { DslIssue, DslParseResult, DslStage } from "./dsl-diagnostics";
+import {
+  containsEditFenceEnd,
+  EDIT_FENCE_BEGIN,
+  EDIT_FENCE_END,
+  isLegacyEditFence,
+} from "./selection";
 import type {
   EditNode,
   NodeId,
@@ -294,13 +300,6 @@ function quotedId(
   return value;
 }
 
-function fenceMarker(text: string): string | null {
-  if (/^-{5,}$/.test(text) || /^`{6,}$/.test(text)) {
-    return text;
-  }
-  return null;
-}
-
 function isRecordBoundary(cursor: Cursor, trimmed: string): boolean {
   if (trimmed === "finish") {
     return true;
@@ -353,8 +352,10 @@ function warnMissingEnd(
 
 /**
  * Read `goal:` / `instruction:` text: the rest of the label line, or an empty
- * label followed by a 5+ hyphen / 6+ backtick fence. Fenced raw lines are kept
- * exactly as sent. A missing label, empty text, or unclosed fence is an error.
+ * label followed by a `<<<TC_EDIT_BEGIN>>>` line and raw body lines closed by an
+ * exact `<<<TC_EDIT_END>>>` line. Fenced raw lines are kept exactly as sent. A
+ * missing label, empty text, or unclosed fence is an error; legacy hyphen and
+ * backtick fences are rejected with a hint to use the sentinel.
  */
 function readText(
   cursor: Cursor,
@@ -400,28 +401,59 @@ function readText(
     fail(
       cursor,
       "PLAN_TRUNCATED",
-      `${label} for ${where} is empty; put the text after ${label} or open a fence of 5+ hyphens (or 6+ backticks) on a new line`,
+      `${label} for ${where} is empty; put the text after ${label} or open ${EDIT_FENCE_BEGIN} on a new line`,
       {
         line: line.number,
-        expected: [label, "5+ hyphen fence", "6+ backtick fence"],
+        expected: [label, EDIT_FENCE_BEGIN],
         found: "<eof>",
         recordId,
       },
     );
   }
   cursor.position += 1;
-  const marker = fenceMarker(opener.text.trim());
-  if (marker === null) {
+  const marker = opener.text.trim();
+  if (
+    (marker.startsWith(EDIT_FENCE_BEGIN) || marker.startsWith(EDIT_FENCE_END)) &&
+    marker !== EDIT_FENCE_BEGIN
+  ) {
+    fail(
+      cursor,
+      "PLAN_MALFORMED_FENCE",
+      `the ${label} fence marker for ${where} on line ${opener.number} must be ${EDIT_FENCE_BEGIN} on its own line`,
+      {
+        line: opener.number,
+        expected: [EDIT_FENCE_BEGIN],
+        found: marker,
+        recordId,
+        hint: `put ${EDIT_FENCE_BEGIN} on its own line, then the raw text, then ${EDIT_FENCE_END}`,
+      },
+    );
+  }
+  if (isLegacyEditFence(marker)) {
+    fail(
+      cursor,
+      "PLAN_LEGACY_FENCE",
+      `${label} for ${where} on line ${opener.number} uses the legacy fence ${marker}; edit-action fences use the ${EDIT_FENCE_BEGIN} and ${EDIT_FENCE_END} sentinels only`,
+      {
+        line: opener.number,
+        expected: [EDIT_FENCE_BEGIN],
+        found: marker,
+        recordId,
+        hint: `replace the legacy fence with ${EDIT_FENCE_BEGIN} … ${EDIT_FENCE_END}`,
+      },
+    );
+  }
+  if (marker !== EDIT_FENCE_BEGIN) {
     fail(
       cursor,
       "PLAN_MISSING_FIELD",
-      `${label} for ${where} is empty; put the text after ${label} or open a fence of 5+ hyphens (or 6+ backticks) on line ${opener.number}`,
+      `${label} for ${where} is empty; put the text after ${label} or open ${EDIT_FENCE_BEGIN} on line ${opener.number}`,
       {
         line: opener.number,
-        expected: ["text after the label", "5+ hyphen fence", "6+ backtick fence"],
+        expected: ["text after the label", EDIT_FENCE_BEGIN],
         found: opener.text.trim(),
         recordId,
-        hint: `write ${label} <text>, or put ${label} alone and open a ----- fence`,
+        hint: `write ${label} <text>, or put ${label} alone and open ${EDIT_FENCE_BEGIN} on its own line`,
       },
     );
   }
@@ -432,7 +464,22 @@ function readText(
       break;
     }
     cursor.position += 1;
-    if (raw.text.trim() === marker) {
+    const rawTrimmed = raw.text.trim();
+    if (rawTrimmed.startsWith(EDIT_FENCE_END) && rawTrimmed !== EDIT_FENCE_END) {
+      fail(
+        cursor,
+        "PLAN_FENCE_TRAILING_TEXT",
+        `the closing sentinel ${EDIT_FENCE_END} for ${label} in ${where} must be on its own line; trailing text is not allowed`,
+        {
+          line: raw.number,
+          expected: [EDIT_FENCE_END],
+          found: rawTrimmed,
+          recordId,
+          hint: `put ${EDIT_FENCE_END} on its own line`,
+        },
+      );
+    }
+    if (rawTrimmed === EDIT_FENCE_END) {
       const text = content.join("\n");
       if (text.trim() === "") {
         fail(
@@ -447,6 +494,24 @@ function readText(
           },
         );
       }
+      const next = peekNonBlank(cursor);
+      if (next !== null) {
+        const after = next.text.trim();
+        if (after !== "end" && !isRecordBoundary(cursor, after)) {
+          fail(
+            cursor,
+            "PLAN_EMBEDDED_FENCE_END",
+            `${label} for ${where} contains the literal line ${EDIT_FENCE_END}; the first exact end-marker line closes the fence and no text may follow it`,
+            {
+              line: next.number,
+              expected: ["end", EDIT_FENCE_END],
+              found: after,
+              recordId,
+              hint: `remove the embedded ${EDIT_FENCE_END} line or rewrite the text so it does not contain the marker`,
+            },
+          );
+        }
+      }
       return text;
     }
     content.push(raw.text);
@@ -455,13 +520,13 @@ function readText(
   fail(
     cursor,
     "PLAN_UNCLOSED_FENCE",
-    `${where} has an unclosed ${label} fence opened on line ${opener.number}; close it with ${marker}`,
+    `${where} has an unclosed ${label} fence opened on line ${opener.number}; close it with ${EDIT_FENCE_END}`,
     {
       line: opener.number,
-      expected: [marker],
+      expected: [EDIT_FENCE_END],
       found: "<eof>",
       recordId,
-      hint: `close the fence with ${marker}`,
+      hint: `close the fence with ${EDIT_FENCE_END}`,
     },
   );
 }
@@ -2257,31 +2322,23 @@ export function parsePlanPatch(content: string): PatchParse {
   }
   return { ok: true, patch: value };
 }
-function fenceFor(text: string): string {
-  let length = 5;
-  for (const line of text.split("\n")) {
-    const trimmed = line.trim();
-    if (/^-{5,}$/.test(trimmed)) {
-      length = Math.max(length, trimmed.length + 1);
-    }
-  }
-  return "-".repeat(length);
-}
-
 function pushText(lines: string[], label: string, text: string): void {
   const normalized = text.replace(/\r\n?/g, "\n");
   if (normalized !== "" && !normalized.includes("\n") && normalized === normalized.trim()) {
     lines.push(`${label} ${normalized}`);
     return;
   }
-  const fence = fenceFor(normalized);
-  lines.push(label, fence, ...normalized.split("\n"), fence);
+  if (containsEditFenceEnd(normalized)) {
+    throw new Error(
+      `cannot serialize Plan text containing the literal line ${EDIT_FENCE_END}; the sentinel is the only close and has no escape form`,
+    );
+  }
+  lines.push(label, EDIT_FENCE_BEGIN, ...normalized.split("\n"), EDIT_FENCE_END);
 }
 
 /**
  * Serialize a Plan into the flat DSL. Text is emitted on the label line when
- * that round-trips exactly, otherwise in a fence long enough not to collide
- * with any hyphen-only content line.
+ * that round-trips exactly, otherwise in the sentinel fence.
  */
 export function serializePlanDsl(plan: Plan): string {
   const lines: string[] = [`plan ${quote(plan.id)}`];

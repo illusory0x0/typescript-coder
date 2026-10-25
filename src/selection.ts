@@ -61,7 +61,7 @@ export interface ReadFileStatement {
   ranges: EditRange[] | null;
 }
 
-/** A `write <path> [within <selecters>] with <fence> done` file command. */
+/** A `write <path> [within <selecters>] with <sentinel fence> done` file command. */
 export interface WriteFileStatement {
   op: "write";
   path: string;
@@ -86,6 +86,26 @@ export type EditStatement =
  * §3 "Range arithmetic"). Columns are 1-based, so 0 is never a real position.
  */
 export const END_OF_LINE_COLUMN = 0;
+
+/**
+ * The one edit-action fence (`docs/edit-protocol.md` §2): raw body text between
+ * two sentinel lines. Each marker is a whole line, optionally indented or with
+ * trailing whitespace; the body is otherwise raw and only the exact end marker
+ * terminates it.
+ */
+export const EDIT_FENCE_BEGIN = "<<<TC_EDIT_BEGIN>>>";
+export const EDIT_FENCE_END = "<<<TC_EDIT_END>>>";
+
+/** True for a legacy 5+ hyphen or 6+ backtick fence line (removed wire form). */
+export function isLegacyEditFence(line: string): boolean {
+  const trimmed = line.trim();
+  return /^-{5,}$/.test(trimmed) || /^`{6,}$/.test(trimmed);
+}
+
+/** True when `text` contains an exact end-marker line, which no body may carry. */
+export function containsEditFenceEnd(text: string): boolean {
+  return text.split(/\r\n?|\n/).some((line) => line.trim() === EDIT_FENCE_END);
+}
 
 /** The `kind` keywords the grammar admits (all optional disambiguators). */
 const SELECTION_KINDS: ReadonlySet<string> = new Set([
@@ -172,6 +192,8 @@ class SelectionReader {
   private readonly issues: DslIssue[] = [];
   private truncated = false;
   private clauseIndex = 0;
+  /** True after a fence close, so unexpected trailing text can name the cause. */
+  private lastFenceClosed = false;
 
   constructor(text: string, initialIssues: readonly DslIssue[] = []) {
     this.text = text;
@@ -406,7 +428,7 @@ class SelectionReader {
 
   /**
    * Skip a malformed statement to the next top-level clause/command keyword.
-   * Fenced bodies are skipped whole so a `select` inside a replacement fence is
+   * A sentinel body is skipped whole so a `select` inside a replacement body is
    * never mistaken for a boundary (#33).
    */
   private recoverToNextStatement(): boolean {
@@ -416,7 +438,7 @@ class SelectionReader {
       return false;
     }
     start += 1;
-    let fence: string | null = null;
+    let inBody = false;
     for (;;) {
       let end = this.text.indexOf("\n", start);
       if (end === -1) {
@@ -424,13 +446,12 @@ class SelectionReader {
       }
       const line = this.text.slice(start, end).replace(/\r$/, "");
       const trimmed = line.trim();
-      const marker = /^(-{5,}|`{6,})$/.exec(trimmed)?.[1] ?? null;
-      if (fence !== null) {
-        if (marker === fence) {
-          fence = null;
+      if (inBody) {
+        if (trimmed === EDIT_FENCE_END) {
+          inBody = false;
         }
-      } else if (marker !== null) {
-        fence = marker;
+      } else if (trimmed === EDIT_FENCE_BEGIN) {
+        inBody = true;
       } else if (/^(select|create|delete|read|write)\b/.test(trimmed)) {
         this.pos = start;
         return true;
@@ -470,8 +491,27 @@ class SelectionReader {
     const path = this.readToken("expected a file path after `write`");
     const ranges = this.parseWithin();
     this.expectKeyword("with", "expected `with` before the fence in a `write` command");
+    this.lastFenceClosed = false;
     const replacement = this.parseFence();
+    this.skipWhitespace();
+    if (
+      !this.atEnd() &&
+      !this.keywordAt("done") &&
+      this.lastFenceClosed &&
+      !this.statementStartAt()
+    ) {
+      this.syntax(
+        "EDIT_EMBEDDED_FENCE_END",
+        `the write body contains the literal line ${EDIT_FENCE_END}; a fence body cannot carry the end marker, and no text may follow the close on its line`,
+        {
+          expected: ["done", EDIT_FENCE_END],
+          found: this.atEnd() ? "<eof>" : this.peekToken(),
+          hint: `close the body with ${EDIT_FENCE_END} on its own line, then write done on the next line`,
+        },
+      );
+    }
     this.expectKeyword("done", "expected `done` to terminate the `write` command");
+    this.lastFenceClosed = false;
     return { op: "write", path, ranges, replacement };
   }
 
@@ -596,6 +636,7 @@ class SelectionReader {
       }
       if (this.matchKeyword("replace")) {
         this.expectKeyword("with", "expected `with` after `replace`");
+        this.lastFenceClosed = false;
         replacement = this.parseFence();
       }
       this.skipWhitespace();
@@ -651,7 +692,19 @@ class SelectionReader {
     this.skipWhitespace();
     if (this.keywordAt("end")) {
       this.pos += 3;
+      this.lastFenceClosed = false;
       return;
+    }
+    if (!this.atEnd() && !this.statementStartAt() && this.lastFenceClosed) {
+      this.syntax(
+        "EDIT_EMBEDDED_FENCE_END",
+        `the replacement body contains the literal line ${EDIT_FENCE_END}; the first exact end-marker line closes the fence and no text may follow it`,
+        {
+          expected: ["end", EDIT_FENCE_END],
+          found: this.peekToken(),
+          hint: `remove the embedded ${EDIT_FENCE_END} line or rewrite the body so it does not contain the marker`,
+        },
+      );
     }
     if (this.atEnd() || this.statementStartAt()) {
       const where = this.atEnd() ? "at the end of the reply" : `before \`${this.peekToken()}\``;
@@ -879,123 +932,98 @@ class SelectionReader {
 
   private parseFence(): string {
     this.skipWhitespace();
-    const fenceChar = this.text[this.pos];
-    if (fenceChar !== "`" && fenceChar !== "-") {
+    const markerStart = this.pos;
+    let lineEnd = this.text.indexOf("\n", markerStart);
+    if (lineEnd === -1) {
+      lineEnd = this.length;
+    }
+    const markerLine = this.text.slice(markerStart, lineEnd).replace(/\r$/, "");
+    const marker = markerLine.trim();
+    const lineStart = this.text.lastIndexOf("\n", Math.max(0, markerStart - 1)) + 1;
+    if (this.text.slice(lineStart, markerStart).trim() !== "") {
       this.syntax(
-        "EDIT_MISSING_FIELD",
-        "expected a fence opening with 5 or more hyphens or 6 or more backticks after `replace with`",
+        "EDIT_MALFORMED_FENCE",
+        `the fence opener ${EDIT_FENCE_BEGIN} must be on its own line`,
         {
-          expected: ["5+ hyphen fence", "6+ backtick fence"],
-          found: this.atEnd() ? "<eof>" : this.peekToken(),
-          hint: "open the replacement with ----- or ``````",
+          offset: markerStart,
+          expected: [EDIT_FENCE_BEGIN],
+          found: marker === "" ? "<eof>" : marker,
+          hint: `put ${EDIT_FENCE_BEGIN} on its own line after replace with`,
         },
       );
     }
-    let open = 0;
-    while (this.text[this.pos] === fenceChar) {
-      open += 1;
-      this.pos += 1;
-    }
-    if (fenceChar === "`" ? open < 6 : open < 5) {
+    if (marker !== EDIT_FENCE_BEGIN) {
+      if (isLegacyEditFence(marker)) {
+        this.syntax(
+          "EDIT_LEGACY_FENCE",
+          `legacy fence ${marker} is no longer accepted; edit-action fences use the ${EDIT_FENCE_BEGIN} and ${EDIT_FENCE_END} sentinels only`,
+          {
+            offset: markerStart,
+            expected: [EDIT_FENCE_BEGIN],
+            found: marker === "" ? "<eof>" : marker,
+            hint: `replace the legacy fence with ${EDIT_FENCE_BEGIN} … ${EDIT_FENCE_END}`,
+          },
+        );
+      }
       this.syntax(
         "EDIT_MISSING_FIELD",
-        "expected a fence opening with 5 or more hyphens or 6 or more backticks after `replace with`",
+        `expected the fence opener ${EDIT_FENCE_BEGIN} on its own line after \`replace with\``,
         {
-          offset: Math.max(0, this.pos - open),
-          expected: ["5+ hyphen fence", "6+ backtick fence"],
-          found: fenceChar.repeat(open),
-          hint: "use at least five hyphens or six backticks",
+          offset: markerStart,
+          expected: [EDIT_FENCE_BEGIN],
+          found: this.atEnd() || marker === "" ? "<eof>" : marker,
+          hint: `open the replacement with ${EDIT_FENCE_BEGIN}`,
         },
       );
     }
-    // The opening run must end its line; the body is raw until a closing line.
-    let lineEnd = this.pos;
-    while (lineEnd < this.length && (this.text[lineEnd] === " " || this.text[lineEnd] === "\t")) {
-      lineEnd += 1;
-    }
-    if (lineEnd < this.length && this.text[lineEnd] === "\r") {
-      lineEnd += 1;
-    }
-    if (lineEnd >= this.length || this.text[lineEnd] !== "\n") {
-      this.syntax(
-        "EDIT_MISSING_FIELD",
-        "malformed fence: the opening fence run must be followed by a newline",
-        {
-          expected: ["newline after the fence opener"],
-          found: this.atEnd() ? "<eof>" : this.text.slice(lineEnd, lineEnd + 1),
-          hint: "put the opening fence on its own line",
-        },
-      );
-    }
-    const bodyStart = lineEnd + 1;
-    let lineStart = bodyStart;
+    const bodyStart = lineEnd >= this.length ? this.length : lineEnd + 1;
+    let bodyLineStart = bodyStart;
     for (;;) {
-      let end = this.text.indexOf("\n", lineStart);
+      let end = this.text.indexOf("\n", bodyLineStart);
       if (end === -1) {
         end = this.length;
       }
-      const line = this.text.slice(lineStart, end).replace(/\r$/, "");
-      const close = closingFence(line, open, fenceChar);
-      if (close !== null) {
-        let body = this.text.slice(bodyStart, lineStart);
+      const line = this.text.slice(bodyLineStart, end).replace(/\r$/, "");
+      const trimmed = line.trim();
+      if (trimmed.startsWith(EDIT_FENCE_END) && trimmed !== EDIT_FENCE_END) {
+        this.syntax(
+          "EDIT_FENCE_TRAILING_TEXT",
+          `the closing sentinel ${EDIT_FENCE_END} must be on its own line; trailing text ${JSON.stringify(trimmed.slice(EDIT_FENCE_END.length).trim())} is not allowed and a body cannot carry ${EDIT_FENCE_END}`,
+          {
+            offset: bodyLineStart + line.indexOf(EDIT_FENCE_END) + EDIT_FENCE_END.length,
+            expected: [EDIT_FENCE_END],
+            found: trimmed,
+            hint: `put ${EDIT_FENCE_END} on its own line, then end on the next line`,
+          },
+        );
+      }
+      if (trimmed === EDIT_FENCE_END) {
+        let body = this.text.slice(bodyStart, bodyLineStart);
         if (body.endsWith("\r\n")) {
           body = body.slice(0, -2);
         } else if (body.endsWith("\n") || body.endsWith("\r")) {
           body = body.slice(0, -1);
         }
-        // Only a line whose delimiter run equals the opener closes the fence
-        // (see `closingFence`), so a shorter run such as a `---` divider is
-        // ordinary body text. Rejecting it forced a full retry over a
-        // harmless markdown separator (#25). `----- end` is accepted because
-        // small models often place the clause terminator on the closing line.
-        this.pos =
-          close.endStart === null
-            ? end >= this.length
-              ? this.length
-              : end + 1
-            : lineStart + close.endStart;
+        this.pos = end >= this.length ? this.length : end + 1;
+        this.lastFenceClosed = true;
         return body;
       }
       if (end >= this.length) {
         this.truncated = true;
         this.syntax(
           "EDIT_UNCLOSED_FENCE",
-          `unclosed fence: expected a closing ${fenceChar === "`" ? "backtick" : "hyphen"} run`,
+          `unclosed fence: expected the closing sentinel line ${EDIT_FENCE_END}`,
           {
             offset: bodyStart - 1,
-            expected: [fenceChar.repeat(open)],
+            expected: [EDIT_FENCE_END],
             found: "<eof>",
-            hint: `close the replacement with ${fenceChar.repeat(open)}`,
+            hint: `close the replacement with ${EDIT_FENCE_END}`,
           },
         );
       }
-      lineStart = end + 1;
+      bodyLineStart = end + 1;
     }
   }
-}
-
-function closingFence(
-  line: string,
-  open: number,
-  fenceChar: "`" | "-",
-): { endStart: number | null } | null {
-  let run = 0;
-  while (run < line.length && line[run] === fenceChar) {
-    run += 1;
-  }
-  if (run !== open) {
-    return null;
-  }
-  const rest = line.slice(run);
-  const trimmed = rest.trim();
-  if (trimmed === "") {
-    return { endStart: null };
-  }
-  if (!/^end\b/i.test(trimmed)) {
-    return null;
-  }
-  // Leave `end` for the clause parser; only the fence line is consumed here.
-  return { endStart: run + rest.search(/end\b/i) };
 }
 
 /**
@@ -1160,35 +1188,13 @@ function renderMultiRange(pick: EditRange[]): string {
   return `{${pick.map(renderRange).join(", ")}}`;
 }
 
-function longestRun(body: string, fenceChar: "`" | "-"): number {
-  let longest = 0;
-  let current = 0;
-  for (const char of body) {
-    if (char === fenceChar) {
-      current += 1;
-      longest = Math.max(longest, current);
-    } else {
-      current = 0;
-    }
-  }
-  return longest;
-}
-
 function renderFence(body: string): string {
-  // Prefer the five-hyphen fence the edit-dsl prompt teaches; fall back to six
-  // backticks only when the body itself contains a hyphen-run the fence would
-  // close on. A body with both delimiter runs cannot be serialized.
-  if (longestRun(body, "-") < 3) {
-    const dashes = "-".repeat(5);
-    return `${dashes}\n${body}\n${dashes}`;
+  if (containsEditFenceEnd(body)) {
+    throw new SelectionSyntaxError(
+      `cannot serialize a replacement body containing the literal line ${EDIT_FENCE_END}; the sentinel is the only close and has no escape form`,
+    );
   }
-  if (longestRun(body, "`") < 3) {
-    const ticks = "`".repeat(6);
-    return `${ticks}\n${body}\n${ticks}`;
-  }
-  throw new SelectionSyntaxError(
-    "cannot serialize a fence body containing a run of 3 or more backticks or hyphens",
-  );
+  return `${EDIT_FENCE_BEGIN}\n${body}\n${EDIT_FENCE_END}`;
 }
 
 /** Render one selection back to the edit-dsl grammar (one `select … end` clause). */
