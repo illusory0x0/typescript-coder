@@ -1,7 +1,7 @@
 ---
 id: 25
 title: "Teach the edit-dsl prompt to expand folded source views"
-status: review
+status: wontfix
 priority: medium
 milestone: null
 parent: null
@@ -90,3 +90,4 @@ run does not burn its budget on repeated whole-file reads.
 - Follow-up analysis of the v2 rep2 failure: 19 model calls against a ~19-call budget; 6 of 12 edit payloads rejected (3 pure syntax), and a `read` range failure discarded a valid edit in the same reply. Two harness fixes landed: (1) `read` failures are now a non-fatal `readFailures` channel rendered as feedback, so they never discard the reply's writes; (2) syntax rejections now carry line/column plus a short excerpt, and a fence body may contain a delimiter run shorter than the opener (e.g. `---`). `just typecheck && bun test` -> 1252 pass. Criterion 4 still needs a fresh 5-rep run; issue remains in review.
 - Offline verification 2026-10-24: just typecheck clean; just test -> 1252 pass, 0 fail. Only criterion 4 (fresh 5-rep minilisp live run after the read-failure/syntax-diagnostic fixes) remains; user chose to defer the live run, so the issue stays in review pending sign-off.
 - Live run 2026-10-24 (benchmark/results/2026-10-24-fold-prompt-v3.json): minilisp tc edit-dsl 5 reps against the official DeepSeek endpoint with --model deepseek-flash (gateway id deepseek-v4.1-flash does not exist on api.deepseek.com), 2/5 pass. rep1 token-budget 125,096/28 steps (6 protocol rejections), rep2 token-budget 122,031/23 steps (4 no-ops), rep4 token-budget 122,064/26 steps (10 protocol rejections); rep3 31,398/9 and rep5 27,113/8 pass. Criterion 4 NOT met. The fold loop itself is gone: failing reps used 7-10 selected-range viewers (read...within) and only 1-2 whole-file views, so the new storm is repeated 'expected end to terminate the clause' syntax rejections (6 in rep1, 10 in rep4), often on a replacement body containing a template literal with a backtick. Diagnostic excerpts point into the second reply line at the body text. Needs a replay-captured raw reply to pin the parser/format mismatch; this is a distinct finding from the fold-read storm. Endpoint/model changed vs the 2026-10-23 v2 baseline, so the pass-rate drop is not a clean prompt comparison.
+- Wontfix (2026-10-25): stale: folded-view prompt issue; the fold loop was replaced by the edit-action protocol rework and no longer blocks the current queue
