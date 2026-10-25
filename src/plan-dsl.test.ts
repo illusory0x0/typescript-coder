@@ -96,7 +96,7 @@ function planOf(stages: Stage[], goal = "Make the change."): Plan {
 }
 
 describe("Plan DSL parse", () => {
-  test("parses the spec §3.1 initial Plan example", () => {
+  test("parses the plan-exec §3.1 initial Plan example", () => {
     const plan = accepted(SPEC_EXAMPLE);
     expect(plan).toEqual(SPEC_PLAN);
     expect(parsePlan(SPEC_EXAMPLE).ok).toBe(true);
@@ -500,7 +500,7 @@ end`);
 });
 
 describe("Plan DSL serialize", () => {
-  test("serializes the spec example byte-for-byte", () => {
+  test("serializes the plan-exec example byte-for-byte", () => {
     expect(serializePlanDsl(SPEC_PLAN)).toBe(SPEC_EXAMPLE);
     expect(serializePlanDsl(SPEC_PLAN)).not.toMatch(/^finish$/m);
   });

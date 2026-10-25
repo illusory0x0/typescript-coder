@@ -1,8 +1,8 @@
 /**
- * The plan/execute tree contract (`docs/spec.md`). The planning model emits a
- * flat Plan DSL (`src/plan-dsl.ts`); this module owns the Plan/Stage/Task/Edit
- * types, validates the tree, and owns the scheduling state the harness (never
- * the model) advances.
+ * The plan/execute tree contract (`docs/plan-exec.md`). The planning model
+ * emits a flat Plan DSL (`src/plan-dsl.ts`); this module owns the
+ * Plan/Stage/Task/Edit types, validates the tree, and owns the scheduling state
+ * the harness (never the model) advances.
  *
  * A stage is planning context. A task is the verification boundary: its gate
  * runs after every edit in the task is settled. An edit is one declaration

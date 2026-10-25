@@ -8558,8 +8558,9 @@ describe("explicit targets (#81)", () => {
   }, 30000);
 });
 
-// The four §8 forms of `docs/edit-protocol.md`: a viewer, a bare declaration
-// replace, a `match` + `pick` disambiguation, and a `match` + `replace` rewrite.
+// The four canonical edit-action forms (`docs/edit-protocol.md` §2): a viewer,
+// a bare declaration replace, a `match` + `pick` disambiguation, and a
+// `match` + `replace` rewrite.
 describe("edit-dsl protocol (#111/#119)", () => {
   const TICK = "\u0060";
 
@@ -9400,7 +9401,7 @@ describe("edit-dsl protocol (#111/#119)", () => {
     expect(expected).not.toContain("select function");
   });
 
-  test("with the edit-dsl format the fresh edit and retry prompts teach all four §8 forms", () => {
+  test("with the edit-dsl format the fresh edit and retry prompts teach all four canonical forms", () => {
     const edit = buildEditPrompt(
       '{"path":"src/a.ts","symbol":"make","kind":"function"}',
       "const x = 1;\n",

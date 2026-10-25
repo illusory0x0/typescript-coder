@@ -1,11 +1,11 @@
 /**
- * The flat Plan DSL (`docs/spec.md` §3) and patch DSL (§4): strict parsers and
- * serializers for the planner's initial reply and incremental re-plans. Records
- * are independent and name their parent by id: a `plan` header, then all
- * `stage` records, then all `task` records, then all `edit` records. A patch
- * applies the same records with `+` / `~` / `-` operators to a clone of the
- * current tree. The tree validator lives in `src/tasks.ts`; this module only
- * turns the wire form into that tree and runs the merge.
+ * The flat Plan DSL (`docs/plan-exec.md` §3) and patch DSL (§4): strict parsers
+ * and serializers for the planner's initial reply and incremental re-plans.
+ * Records are independent and name their parent by id: a `plan` header, then
+ * all `stage` records, then all `task` records, then all `edit` records. A
+ * patch applies the same records with `+` / `~` / `-` operators to a clone of
+ * the current tree. The tree validator lives in `src/tasks.ts`; this module
+ * only turns the wire form into that tree and runs the merge.
  *
  * The #33 layer makes both parsers tolerant: a whole-reply fence, a bare id,
  * and an unambiguous missing `end` recover with warnings; structure is still
@@ -1379,7 +1379,7 @@ export const parsePlan = parsePlanDsl;
 export const readPlan = parsePlanDsl;
 
 // ---------------------------------------------------------------------------
-// Patch DSL (`docs/spec.md` §4)
+// Patch DSL (`docs/plan-exec.md` §4)
 
 /** One strict patch operation; `+` appends, `~` replaces present fields, `-` removes. */
 export type PlanPatchOp =
@@ -2393,7 +2393,7 @@ function pushRelated(lines: string[], related: readonly TaskLoc[] | undefined): 
   }
 }
 
-/** Serialize a patch in the strict wire form (`docs/spec.md` §4). */
+/** Serialize a patch in the strict wire form (`docs/plan-exec.md` §4). */
 export function serializePlanPatch(patch: PlanPatch): string {
   const lines: string[] = ["patch"];
   for (const op of patch.ops) {

@@ -1,8 +1,8 @@
 /**
- * The plan/execute driver (`docs/spec.md`): a planner starts with one current
- * Stage and Task, then patches one new Task (or one new Stage with its first
- * Task) per planning turn. An executor carries out one Task's edits at a time
- * with edit-dsl clauses (or one whole-file write). The harness owns status,
+ * The plan/execute driver (`docs/plan-exec.md`): a planner starts with one
+ * current Stage and Task, then patches one new Task (or one new Stage with its
+ * first Task) per planning turn. An executor carries out one Task's edits at a
+ * time with edit-dsl clauses (or one whole-file write). The harness owns status,
  * scheduling, and verification.
  *
  * This module orchestrates. It reuses the edit-dsl machinery rather than

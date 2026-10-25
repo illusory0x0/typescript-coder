@@ -7,7 +7,7 @@
  *
  * This module is reached under the edit-dsl edit protocol
  * (`--protocol-format=edit-dsl`); the loop parses `select … end` clauses first
- * and a JSON edit payload is rejected. The address stage is delegated to the
+ * and a JSON payload is rejected. The address stage is delegated to the
  * loop's `resolveCurrentEntry` so the echo/kind rules stay identical on both
  * paths.
  */
@@ -59,7 +59,7 @@ export interface EditDslRegion {
   /**
    * True when the clause is an implicit create: a whole-declaration editor
    * whose symbol is absent, so its fence body is appended as a new declaration
-   * (`docs/edit-protocol.md` §9). Only the edit-dsl path ever sets this.
+   * (`docs/edit-protocol.md` §6). Only the edit-dsl path ever sets this.
    */
   create: boolean;
 }

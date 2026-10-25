@@ -1,13 +1,25 @@
-# Plan → execute → review agent loop
+# Plan → execute → review loop
 
 Status: **implemented, as-built.** This document describes the shipped
 `plan-exec` loop; the code and its tests are the source of truth. It
 describes the V3 soft-guidance design and is kept in step with the
 implementation.
 
+Canonical ownership: this document owns the Plan/Stage/Task/Edit model, the flat
+Plan DSL and patch DSL, planning and review, validation/merge, scheduling,
+plan-exec execution context, the plan-exec target guard and action mapping, task
+gates, plan-exec-specific caps, and the plan-exec CLI, result, limitations,
+implementation, and verification.
+[`feedback-loop.md`](feedback-loop.md) owns the shared loop lifecycle, AgentMode
+routing, round/exchange policy, retry/termination, shared caps, and
+records/result. [`edit-protocol.md`](edit-protocol.md) owns the edit-action reply
+language, select clause/file command grammar, resolution cascade,
+application/gating, and repair feedback. Vocabulary is canonical in
+[`README.md`](README.md).
+
 The loop is **additive**. `--mode pinned-repair` (default) keeps the single-target
-Edit → Verify driver byte-identical. `--mode plan-exec` runs the
-Plan → Execute → Review flow over this hierarchy:
+Edit → Verify driver byte-identical ([`feedback-loop.md`](feedback-loop.md)).
+`--mode plan-exec` runs the Plan → Execute → Review flow over this hierarchy:
 
 - **Plan** — the root: `id`, `goal`, and ordered stages;
 - **Stage** — a coherent phase: `id`, `plan`, `goal`, and ordered tasks;
@@ -309,9 +321,10 @@ Rules:
 - `goal:` / `instruction:` may be one-line text or a following sentinel fence.
   The fence body is raw, so hyphen runs, backtick runs, `done`, and `end` are
   ordinary lines; it must be non-empty after trimming, and only an exact
-  `<<<TC_EDIT_END>>>` line closes it (there is no escape). The same `<fence>`
-  production is used by the edit-action reply (§8.2); legacy hyphen/backtick
-  fences are rejected (`PLAN_LEGACY_FENCE`).
+  `<<<TC_EDIT_END>>>` line closes it (there is no escape). The same sentinel
+  `<fence>` production is used by the edit-action reply;
+  [`edit-protocol.md`](edit-protocol.md) §2 owns the canonical fence rules.
+  Legacy hyphen/backtick fences are rejected (`PLAN_LEGACY_FENCE`).
 - `create` is top-level only; dotted create is rejected.
 - `write` targets one whole file: `<path>` only, no space or symbol. Its edit
   loc is `{path, symbol: "", kind: "file"}`; `related` and `renameTo` are
@@ -562,21 +575,22 @@ type DslParseResult<T> = {
 };
 ```
 
-Rules shared by the Plan DSL and edit-action DSL:
+Rules shared by the Plan DSL and the edit-action reply language:
 
 - CRLF, blank lines, and indentation are ignored where the grammar is line
   oriented.
 - A whole-reply Markdown fence is stripped when it unambiguously wraps the
   entire reply and its first content line is a Plan, patch, or edit-action
   statement keyword; this produces a warning (`PLAN_WHOLE_REPLY_FENCE` or
-  `EDIT_WHOLE_REPLY_FENCE`), not a silent success. This outer Markdown fence is
-  separate from the edit-action sentinel fence (§8.2): it wraps the whole reply
-  and is not part of a clause or a replacement body.
+  `EDIT_WHOLE_REPLY_FENCE`), not a silent success. This **outer wrapper** is
+  separate from the edit-action sentinel fence
+  ([`edit-protocol.md`](edit-protocol.md) §2): it wraps the whole reply and is
+  not part of a statement or a replacement body.
 - A missing closing `end` is recovered at EOF or before the next sibling
   record/statement header, but only when the record/statement boundary is
   unambiguous; it is a warning, not a rejection, when the remaining fields are
-  valid. In the edit-action DSL this applies to `select`, `create`, `delete`,
-  and `read`; a `write` has no `end` and is terminated by its sentinel close.
+  valid. The per-form edit-action rules are owned by
+  [`edit-protocol.md`](edit-protocol.md) §2.
 - An unclosed sentinel fence is recovered at EOF for diagnostics; the reply is
   rejected.
 - Truncation is reported as `truncated`; the reply is rejected.
@@ -586,8 +600,10 @@ Rules shared by the Plan DSL and edit-action DSL:
   duplicate location or nearest id suggestions.
 - Case/whitespace normalization is limited to unambiguous keywords; never
   guess a different action, target, path, symbol, or parent.
-- Invalid view-only clauses may still produce feedback; invalid editor/write
-  clauses reject the whole reply and write nothing.
+- Invalid view-only statements may still produce feedback; invalid
+  editor/write statements reject the whole reply and write nothing. The
+  edit-action split is owned by [`edit-protocol.md`](edit-protocol.md) §2 and
+  §4.
 - A patch is all-or-nothing: a malformed op rejects the whole patch. Valid ops
   are still parsed so the diagnostic can list every problem.
 - An initial Plan reply is all-or-nothing: a malformed record rejects the plan.
@@ -599,8 +615,8 @@ Plan-specific recovery:
 
 - Accept a bare `NN-slug` id where the grammar expects a quoted id, with a
   warning; quote it internally.
-- Accept `plan`/`patch` headers surrounded by a whole-reply Markdown fence (the
-  outer-fence rule above).
+- Accept `plan`/`patch` headers surrounded by the outer wrapper (the rule
+  above).
 - A missing `goal:` or `instruction:` is an error; the plan/patch is rejected.
 - A record whose parent is missing gets a nearest-id hint; no partial tree.
 - A `finish` without a last `test` task is an error with the exact last task
@@ -608,38 +624,16 @@ Plan-specific recovery:
 - Dotted `create` gets a dedicated code (`PLAN_CREATE_MEMBER`) and a hint:
   modify the class with stubs, then modify the member.
 
-Edit-action recovery:
-
-- Clause splitting recognizes `select` … `end` and respects sentinel bodies, so
-  `select` inside a replacement body is not a boundary.
-- A missing `end` after `select`, `create`, `delete`, or `read` is recovered
-  with an `EDIT_MISSING_END` warning at EOF or before an unambiguous next
-  statement (`select`, `create`, `delete`, `read`, or `write`); the reply is
-  not rejected solely for this. Arbitrary following text is a hard
-  `EDIT_MISSING_END`, and a `write` has no `end` to recover. A truncated fence
-  or mid-clause EOF still rejects.
-- Legacy hyphen/backtick fences report `EDIT_LEGACY_FENCE`; a misplaced or
-  malformed sentinel reports `EDIT_MALFORMED_FENCE`, trailing text on a
-  close-marker line reports `EDIT_FENCE_TRAILING_TEXT`, and content after a
-  closed fence that is not a new statement reports `EDIT_EMBEDDED_FENCE_END`
-  (there is no escape for a body containing the close marker).
-- The retired `done` terminator reports `EDIT_RETIRED_DONE`; a trailing `end`
-  after a `write` close reports `EDIT_STRAY_END`.
-- `match` without a snippet/regex reports `EDIT_MATCHER_MISSING` with the
-  accepted forms and an example.
-- `pick` without `replace`, `rename` mixed with `replace`, unknown
-  `resolve` space, and a malformed fence each get a dedicated code and a
-  one-line hint.
-- Multiple clauses are all parsed before any application. One bad editor clause
-  rejects all writes; good view-only clauses may still return feedback.
+Edit-action recovery and its `EDIT_*` codes are owned by
+[`edit-protocol.md`](edit-protocol.md) §2 and §5.
 
 ### 5.3 Diagnostics format
 
-Every Plan/edit diagnostic rendered to the model has:
+Every Plan or edit-action diagnostic rendered to the model has:
 
 - a `stage:` header using the parser vocabulary: `task-protocol` or `task-tree`
   for the Plan DSL, and `syntax`, `address`, `matcher`, or `range` for the
-  edit-action DSL;
+  edit-action reply language;
 - a stable `code:` line;
 - `severity: warning` for a recovered issue (errors omit the line);
 - a `message:` line;
@@ -683,30 +677,26 @@ hint: use `match \`return 1;\`` or omit match to rewrite the whole declaration
 ```
 
 The Plan parser reports syntax/protocol failures as `stage: task-protocol` and
-Plan/tree validator failures as `stage: task-tree`; the edit-action DSL reports
-`stage: syntax` for clause syntax and `address`, `matcher`, or `range` for the
-matching cascade stage. Both use the same `renderDslIssues` renderer in
-`src/dsl-diagnostics.ts`.
+Plan/tree validator failures as `stage: task-tree`; the edit-action reply
+language reports `stage: syntax` for clause syntax and `address`, `matcher`, or
+`range` for the matching cascade stage. Both use the same `renderDslIssues`
+renderer in `src/dsl-diagnostics.ts`.
 
-Shipped error-code families:
-
-- `PLAN_*`: `MISSING_END`, `MISSING_FIELD`, `UNKNOWN_FIELD`, `UNKNOWN_PARENT`,
-  `DUPLICATE_ID`, `CREATE_MEMBER`, `FINISH_NOT_LAST`, `STRUCTURE`, `BARE_ID`,
-  `WHOLE_REPLY_FENCE`, `UNCLOSED_FENCE`, `MALFORMED_FENCE`, `LEGACY_FENCE`,
-  `FENCE_TRAILING_TEXT`, `EMBEDDED_FENCE_END`, `TRUNCATED`;
-- `EDIT_*`: `MISSING_END`, `MISSING_FIELD`, `UNKNOWN_FIELD`, `UNCLOSED_FENCE`,
-  `WHOLE_REPLY_FENCE`, `MALFORMED_FENCE`, `LEGACY_FENCE`,
-  `FENCE_TRAILING_TEXT`, `EMBEDDED_FENCE_END`, `RETIRED_DONE`, `STRAY_END`,
-  `MATCHER_MISSING`, `PICK_WITHOUT_REPLACE`, `RENAME_MIXED`, `UNKNOWN_SPACE`,
-  `TARGET_MISMATCH`, `TRUNCATED`.
+Shipped `PLAN_*` error codes: `MISSING_END`, `MISSING_FIELD`, `UNKNOWN_FIELD`,
+`UNKNOWN_PARENT`, `DUPLICATE_ID`, `CREATE_MEMBER`, `FINISH_NOT_LAST`,
+`STRUCTURE`, `BARE_ID`, `WHOLE_REPLY_FENCE`, `UNCLOSED_FENCE`,
+`MALFORMED_FENCE`, `LEGACY_FENCE`, `FENCE_TRAILING_TEXT`,
+`EMBEDDED_FENCE_END`, `TRUNCATED`. The edit-action `EDIT_*` family is owned by
+[`edit-protocol.md`](edit-protocol.md) §2 and §5.
 
 A repeated resolved target is a `stage: duplicate` rejection from the resolver,
-not a parser error code; the diagnostic names both clause numbers and the
-resolved `(path, symbol, kind)`.
+not a parser error code; the diagnostic names both statement numbers and the
+resolved `(path, symbol, kind)`. The one-target-per-reply rule is owned by
+[`edit-protocol.md`](edit-protocol.md) §2.
 
-The same renderer is used for plan and action diagnostics so the model sees one
-stable shape. Warnings are surfaced on `LoopResult.warnings`; only errors block
-application.
+The same renderer is used for plan and edit-action diagnostics so the model sees
+one stable shape. Warnings are surfaced on `LoopResult.warnings`; only errors
+block application.
 
 ## 6. Scheduling
 
@@ -808,8 +798,10 @@ Execution deliberately does not receive the requirement or test files
 
 ### 8.1 Target guard
 
-An edit owns one main address plus an optional same-file `related` list. Before
-the reply is applied:
+An edit owns one main address plus an optional same-file `related` list. The
+edit-action grammar itself is owned by
+[`edit-protocol.md`](edit-protocol.md) §2; this guard is plan-exec-specific.
+Before the reply is applied:
 
 - the path must be safe and writable (`human/` and ignored directories are
   rejected);
@@ -819,181 +811,18 @@ the reply is applied:
 - `create` needs the symbol absent in that space and must be top-level;
 - a `write` edit needs one safe file path; its previous parse is irrelevant
   because the reply replaces the whole file;
-- every editor clause that writes must name the edit's target or a related loc;
-  off-target writes reject the whole reply. A `write` action accepts exactly one
-  whole-file `write <path> with <fence>` and no other statement; the sentinel
-  close terminates it and no `end` follows;
+- every editor select clause that writes must name the edit's target or a
+  related loc; off-target writes reject the whole reply. A `write` action
+  accepts exactly one whole-file `write <path> with <fence>` and no other
+  statement; the sentinel close terminates it and no `end` follows;
 - other writing file commands (`create`/`delete`/`write`) are rejected;
   `read` and viewer clauses are allowed and only produce feedback.
 
-### 8.2 Edit-action reply BNF
+### 8.2 Action forms
 
-Both the pinned-repair loop and the plan-exec executor read this reply language;
-`src/selection.ts` is its parser. Resolution, range arithmetic, cascade stages,
-atomic application, and the shared gate order are specified in
-[`editing-protocol.md`](editing-protocol.md); that document links back here for
-the plan-exec contract.
-
-```bnf
-<edit-reply>   ::= { <statement> }
-<statement>    ::= <editor> | <file-command>
-
-<editor>       ::= "select" [ <kind> ] <symbol> "in" <path>
-                   [ "resolve" <space> ]
-                   [ "match" ( <snippet> | <regex> ) ]
-                   [ <replacer> | <renamer> ]
-                   "end"
-
-<replacer>     ::= [ "pick" <selecters> ] "replace" "with" <fence>
-<renamer>      ::= "rename" <identifier> "to" <identifier>
-
-<file-command> ::= "create" <path> "end"
-                 | "delete" <path> "end"
-                 | "read" <path> [ "within" <selecters> ] "end"
-                 | "write" <path> [ "within" <selecters> ] "with" <fence>
-                   (* terminated by <<<TC_EDIT_END>>>; no trailing "end" *)
-
-<selecters>    ::= "{" <range> { "," <range> } "}" | <range>
-<range>        ::= <line> [ ":" <column> [ "-" <line> [ ":" <column> ] ] ]
-
-<kind>         ::= "function" | "const" | "let" | "var" | "class"
-                 | "type" | "interface" | "enum" | "namespace"
-<space>        ::= "value" | "type" | "namespace"
-<path>         ::= ? file path token, no whitespace ?
-<symbol>       ::= ? declared identifier ?
-<identifier>   ::= ? TypeScript identifier ?
-<line>         ::= ? positive 1-based integer ?
-<column>       ::= ? positive 1-based integer ?
-<snippet>      ::= ? "`" , source text, "`" ; only \` and \\ are escapes ?
-<regex>        ::= ? "/" , ECMA-262 pattern, "/" ; no flags; \/ decodes to / ?
-<fence>        ::= ? the shared sentinel production in §3: an exact
-                     <<<TC_EDIT_BEGIN>>> line, raw body lines, then an exact
-                     <<<TC_EDIT_END>>> line ?
-```
-
-`<edit-reply>` is the parser's `multiEditor`. Whitespace is insignificant
-between tokens, except inside a `<fence>` body and a `/regex/`. Each statement
-is one `select` clause or one raw file command, and statements apply in
-document order. The reader accepts an empty reply as zero statements, but a
-useful reply carries at least one.
-
-Canonical forms:
-
-- `select … end`; `create <path> end`; `delete <path> end`; and
-  `read <path> [within <selecters>] end` terminate with `end`.
-- `write <path> [within <selecters>] with <fence>` has no trailing `end` (or
-  retired `done`); the `<<<TC_EDIT_END>>>` sentinel closes the statement. A
-  whole-file `write` omits `within`; a ranged write replaces the selected
-  lines.
-- `pick` requires `replace`; `rename` cannot be combined with `pick` or
-  `replace`. A clause with neither `replace` nor `rename` is a viewer; a
-  `pick` clause is never a viewer. An empty fence deletes the target.
-- The optional `<kind>` is the declaration-kind disambiguator. One bare token
-  before `in` is the symbol; with two, the first must be an admitted kind, and
-  any other leading token is a syntax error rather than a symbol name.
-  `resolve <space>` filters the TypeScript symbol space.
-- `pick` and `within` use the same 1-based, inclusive `<selecters>`; braces
-  cannot be empty and a coordinate must be positive.
-- `read` is a viewer: it writes nothing. A failed `read` is feedback and does
-  not discard the reply's editing statements. `create` and `delete` are path
-  commands without a fence; `write` creates a missing file and replaces the
-  whole file or the selected lines through the same gate as an editor.
-
-Fence and terminator rules:
-
-- `<fence>` is the sentinel-only fence shared with the Plan DSL (§3), not a
-  Markdown fence. `<<<TC_EDIT_BEGIN>>>` and `<<<TC_EDIT_END>>>` are exact whole
-  lines, with optional leading or trailing whitespace. The body is raw, so
-  hyphen runs, six-backtick runs, `done`, and `end` are ordinary body lines.
-  Only an exact `<<<TC_EDIT_END>>>` line closes the fence; trailing text on the
-  close line is rejected. A body containing an exact end-marker line has no
-  escape: the first exact line closes it and later content is rejected.
-- A `write` is terminated by its sentinel close. A trailing `end` is
-  `EDIT_STRAY_END`; the retired `done` terminator is `EDIT_RETIRED_DONE` in any
-  statement.
-- The parser may warn and recover a missing `end` after `select`, `create`,
-  `delete`, or `read` at EOF or before an unambiguous next statement
-  (`select`, `create`, `delete`, `read`, or `write`). Arbitrary following text
-  is a hard `EDIT_MISSING_END`. `write` has no `end` to recover. The grammar
-  above still requires `end`, and the prompt and examples always emit it;
-  recovery is tolerance, not a canonical form.
-- The outer whole-reply Markdown fence tolerated by §5.2 is a separate rule; it
-  is not `<fence>` and cannot delimit a replacement body.
-
-**One target per reply.** Within one reply, every `select` clause — viewer or
-editor — plus every `rename` and every implicit create must resolve to a
-distinct `(path, symbol, kind)`. `resolve`, `match`, and `pick` choose a space
-or a span of the same declaration and do not make a new target. A repeat fails
-at `stage: duplicate` before any matcher or write runs; the diagnostic names
-both 1-based clause numbers and the resolved address, and the whole reply
-writes nothing. Split edits to one declaration across exchanges. Raw
-`create`/`delete`/`write` commands have their own path conflicts: create or
-delete a path at most once per reply, and do not combine a create/delete with a
-write or editor on that path.
-
-Examples:
-
-A viewer for one declaration and an editor for another in one reply:
-
-```text
-select function answer in src/helper.ts
-end
-
-select function parse in src/helper.ts
-match `return input;`
-replace with
-<<<TC_EDIT_BEGIN>>>
-return input.trim();
-<<<TC_EDIT_END>>>
-end
-```
-
-A rename uses the same clause shape:
-
-```text
-select answer in src/helper.ts
-rename answer to answerOf
-end
-```
-
-An empty sentinel fence deletes the target:
-
-```text
-select function unused in src/helper.ts
-replace with
-<<<TC_EDIT_BEGIN>>>
-<<<TC_EDIT_END>>>
-end
-```
-
-File commands end with `end` except `write`, whose sentinel close terminates
-it:
-
-```text
-create src/parser.ts end
-delete src/legacy-parser.ts end
-read src/helper.ts within 1-12 end
-```
-
-```text
-write src/parser.ts with
-<<<TC_EDIT_BEGIN>>>
-export function parse(input: string): string {
-  return input.trim();
-}
-<<<TC_EDIT_END>>>
-```
-
-```text
-write src/parser.ts within 2-4 with
-<<<TC_EDIT_BEGIN>>>
-export function parse(input: string): string {
-  return input.trim();
-}
-<<<TC_EDIT_END>>>
-```
-
-### 8.3 Action forms
+The reply grammar and select clause/file command forms are owned by
+[`edit-protocol.md`](edit-protocol.md) §2. This table maps a Plan action to the
+reply shape plan-exec accepts.
 
 | Action   | Required reply                                                                                                                                                                                                                                                                           |
 | -------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
@@ -1015,25 +844,26 @@ and does not expand.
 The driver tolerates a leading `export` the source omitted or the reply re-added,
 matching the edit-dsl #48 rule.
 
-### 8.4 Apply and verify
+### 8.3 Apply and verify
 
-1. Parse with the tolerant edit-action parser. If `ok=false` or any editor
-   clause is invalid, reject the whole reply and write nothing; warnings alone
-   do not block. Diagnostics list every parsed clause issue.
-2. A `write` edit accepts exactly one `write <path> with <fence>` statement
+Plan-exec applies the edit-action parser and application pipeline owned by
+[`edit-protocol.md`](edit-protocol.md) §2 and §6. The plan-exec-specific rules
+are:
+
+1. A `write` edit accepts exactly one `write <path> with <fence>` statement
    with no `within`; the sentinel close terminates it and no `end` follows. The
    new source runs through the parse gate and formatter, then replaces the
    file. The previous parse is irrelevant because the reply replaces the whole
    file.
-3. Other edits resolve with `resolveMultiEditor` against the current sources; a
-   repeated resolved `(path, symbol, kind)` rejects the reply at
-   `stage: duplicate` before any matcher runs.
-4. Apply with `applyResolvedRegions`: overlap, parse gate, duplicate guard,
-   formatter, post-format no-op.
-5. Write only after every guard passes; nothing is written on a rejection.
-6. An applied edit marks the edit `done` immediately; there is no per-edit type
+2. Other edits resolve with `resolveMultiEditor` against the current sources;
+   the one-target-per-reply rule is owned by
+   [`edit-protocol.md`](edit-protocol.md) §2.
+3. Apply with `applyResolvedRegions`; the shared guard and gate order is owned
+   by [`edit-protocol.md`](edit-protocol.md) §6. Write only after every guard
+   passes; nothing is written on a rejection.
+4. An applied edit marks the edit `done` immediately; there is no per-edit type
    check.
-7. After every edit in the task is `done` or `failed`, run the task gate.
+5. After every edit in the task is `done` or `failed`, run the task gate.
 
 A rejected reply or a read-only viewer costs one exchange. Per edit: at most 3
 exchanges. Two consecutive `EDIT_TARGET_MISMATCH` replies end the edit with
@@ -1045,7 +875,7 @@ The executor may make **one** bounded self-check per edit:
 `{"request":"read"}` returns the numbered target source; any other request is
 refused.
 
-### 8.5 Task gates and tests
+### 8.4 Task gates and tests
 
 Every task has a gate that runs **once**, after every edit in that task settles:
 
@@ -1092,33 +922,32 @@ Caps:
 The 32-turn cap counts planning replies, including initial planning, next
 Task/Stage planning, and repair planning. Review turns are additional and are
 bounded by one per executed Task. Stage, task, and edit counts are not capped
-individually; the 96-node limit and token budget bound runaway plans.
+individually; the 96-node limit and token budget bound runaway plans. The token
+budget and the three-consecutive-output-limit path are shared with pinned-repair
+and defined in [`feedback-loop.md`](feedback-loop.md) under "Failure handling";
+plan-exec adds `task-exhausted` to the termination matrix.
 
 Failure paths use the existing termination matrix plus `task-exhausted`; the
-run still makes one summary call. Provider errors keep their own path.
+run still makes one summary call. `task-exhausted` covers a planning or review
+turn that cannot produce valid work within its caps (including a no-progress
+patch), or a review reply that is neither `approve` nor one valid repair patch.
+Provider errors keep their own path.
 
 ## 10. CLI and result
 
 ```sh
-tc --mode pinned-repair < issue.txt       # default
 tc --mode plan-exec < issue.txt
 tc --agent-mode plan-exec < issue.txt
 ```
 
-- `--mode` and its alias `--agent-mode` accept the two canonical loop modes:
-  `pinned-repair` (default) and `plan-exec`.
-- Deprecated alias: `edit` → `pinned-repair`. Historical benchmark/replay
-  rows keep their old `edit` strings and are read through this mapping.
-- `both` is the benchmark's multi-mode selector, not a single-run CLI mode:
-  `bun run benchmark/run.ts --agent-mode both` measures `pinned-repair` and
-  `plan-exec`, while `tc --mode both` is rejected with a clear
-  benchmark-only message because one CLI process runs one loop.
-- `pinned-repair` is the default and is unchanged.
+`--mode` / `--agent-mode` and the `AgentMode` vocabulary are defined in
+[`feedback-loop.md`](feedback-loop.md). Plan-exec-specific constraints:
+
 - `plan-exec` rejects `--targets` (single-target JSON loop) and
   `--protocol-format json` (execution is edit-dsl); `edit-dsl` and the default
   are accepted.
 - `--multi-payload` is irrelevant in `plan-exec` (execution replies are
-  edit-dsl clauses).
+  edit-dsl statements).
 - Text stdout names the completed edit/file summary; `--format json` prints
   `typescript-coder-result@2`.
 - `LoopResult.tasks` carries one entry per edit (`id`, `stage`, `task`,
@@ -1223,8 +1052,8 @@ Implementation notes:
 - `bun test src/prompts/task.test.ts` — planning, review, execution prompt shape,
   workflow guidance, one-stage/task/write example, functional-style and
   dotted-create rules.
-- `bun test src/edit-dsl.test.ts` / `src/selection.test.ts` — tolerant clause
-  boundaries, unclosed fences, matcher/pick/rename diagnostics, per-clause
+- `bun test src/edit-dsl.test.ts` / `src/selection.test.ts` — tolerant statement
+  boundaries, unclosed fences, matcher/pick/rename diagnostics, per-statement
   issues, no partial writes.
 - `bun test src/task-loop.test.ts` — incremental Task loop, one-unit planning,
   whole-file write execution, address-failure escalation, post-execution review

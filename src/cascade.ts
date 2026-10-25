@@ -25,8 +25,9 @@ export type SelectionStage = "whole-symbol" | "match" | "pick";
 /**
  * Typed rejection cause for a cascade clause. Mirrors `RejectionCause`'s
  * matcher/range/no-op members and adds `regex-invalid` for a malformed or
- * over-bounded `/regex/` matcher (docs/edit-protocol.md §5); the address and
- * syntax causes are owned by their own stages (`select` resolution and parse).
+ * over-bounded `/regex/` matcher (`docs/edit-protocol.md` §3 and §5); the
+ * address and syntax causes are owned by their own stages (`select` resolution
+ * and parse).
  */
 export type CascadeCause =
   | "matcher-unparseable"

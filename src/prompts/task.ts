@@ -1,5 +1,6 @@
 /**
- * Planning and execution prompts for the plan/execute loop (`docs/spec.md`).
+ * Planning and execution prompts for the plan/execute loop
+ * (`docs/plan-exec.md`).
  *
  * Planning context (stability-descending): role -> requirement + symbol index
  * -> (re-plan only) tree, status, and diagnostics.
@@ -47,7 +48,7 @@ export const TASK_EXECUTION_WORKFLOW = `Workflow:
 
 /**
  * The functional style shared by the planner and executor prompts
- * (`docs/spec.md` §1.2). Keep this literal identical to the spec block.
+ * (`docs/plan-exec.md` §1.2). Keep this literal identical to the plan-exec block.
  */
 export const TASK_FUNCTIONAL_STYLE = `Prefer ML-style functional TypeScript:
 - Data + functions over classes and prototypes.
@@ -118,7 +119,7 @@ instruction: Make printTotal use the new Formatter shape.
 end`;
 
 /**
- * The canonical next-Task patch (`docs/spec.md` §3.2): one new Task and its
+ * The canonical next-Task patch (`docs/plan-exec.md` §3.2): one new Task and its
  * edits, appended to the current stage.
  */
 export const TASK_PATCH_EXAMPLE = `patch
@@ -131,7 +132,7 @@ end`;
 
 /**
  * A next-Stage patch with the new Stage's first Task and the final test
- * (`docs/spec.md` §3.3).
+ * (`docs/plan-exec.md` §3.3).
  */
 export const TASK_PATCH_FINAL_EXAMPLE = `patch
 stage+ "07-next" plan "01-main"

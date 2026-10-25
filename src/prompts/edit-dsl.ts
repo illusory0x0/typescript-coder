@@ -247,7 +247,7 @@ export function buildEditDslModifiedPrompt(
 }
 
 // #111: the few-shot examples the fresh edit and modify-retry prompts carry
-// under the edit-dsl protocol (`--protocol-format=edit-dsl`). They show the §8
+// under the edit-dsl protocol (`--protocol-format=edit-dsl`). They show the §2
 // forms of `docs/edit-protocol.md` — a `resolve value` viewer, a bare
 // declaration replace, a `match` + `pick` edit, a `match` + `replace` rewrite,
 // a create (#117), and a viewer-then-editor multi-clause reply whose clauses
@@ -376,7 +376,7 @@ export function renderEditDslExamples(): string {
 /**
  * The edit-dsl edit instruction (#111): replaces the JSON instruction in the
  * fresh edit prompt and the modify retry prompt under the edit-dsl format. It
- * states the reply shape and clause semantics, shows the §8 examples (#117 adds
+ * states the reply shape and clause semantics, shows the §2 examples (#117 adds
  * the create and viewer-then-editor forms; #25 adds fold expansion and the
  * whole-file `write` fallback), then teaches the ordered micro-operation
  * workflow. The fold explanation itself stays in the system prompt so read

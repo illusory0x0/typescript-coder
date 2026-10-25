@@ -325,7 +325,7 @@ export interface RetryPromptInput {
   /** 1-based exchange number the prompt requests inside the current Run iteration. */
   exchangeNumber: number;
   maxExchanges: number;
-  /** `create` asks for the complete declaration; `modify` for the flat edit payload. */
+  /** `create` asks for the complete declaration; `modify` for the flat JSON payload. */
   mode: "modify" | "create";
   /** Canonical pinned selection, `{mode, path, symbol, kind}`. */
   locatorJson: string;
@@ -640,7 +640,7 @@ export interface ContinuationPromptInput {
   /** Round that exhausted its exchange budget (1-based). */
   round: number;
   maxRounds: number;
-  /** `create` asks for the complete declaration; `modify` for the flat edit payload. */
+  /** `create` asks for the complete declaration; `modify` for the flat JSON payload. */
   mode: "modify" | "create";
   /** Canonical pinned selection, `{mode, path, symbol, kind}`. */
   locatorJson: string;
@@ -1441,7 +1441,7 @@ export interface LoopOptions {
   /**
    * Loop shape (`--mode`): `pinned-repair` (default) is the single-target
    * Edit → Verify loop; `plan-exec` runs the planning/execution/review
-   * loop of `docs/spec.md`, where a planner emits a
+   * loop of `docs/plan-exec.md`, where a planner emits a
    * Plan -> Execute -> Review edit tree and the harness executes one edit at a
    * time. The deprecated `edit` spelling is accepted only at input boundaries
    * and maps to pinned-repair.

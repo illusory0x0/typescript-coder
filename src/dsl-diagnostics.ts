@@ -1,9 +1,9 @@
 /**
- * Shared diagnostics for the Plan DSL and the edit-action DSL (`docs/spec.md`
- * §5.2-5.3). Both parsers collect `DslIssue`s while recovering structure; one
- * renderer turns them into the bounded, model-facing shape: stage, stable code,
- * line/column, excerpt with a caret, expected/found/hint, and record/clause
- * identity.
+ * Shared diagnostics for the Plan DSL and the edit-action reply language
+ * (`docs/plan-exec.md` §5.2-5.3). Both parsers collect `DslIssue`s while
+ * recovering structure; one renderer turns them into the bounded, model-facing
+ * shape: stage, stable code, line/column, excerpt with a caret,
+ * expected/found/hint, and record/clause identity.
  *
  * The module is deliberately data + functions: parsers own recovery, this
  * module owns presentation. Warnings never block application; errors do.

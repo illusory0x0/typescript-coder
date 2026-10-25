@@ -1,8 +1,14 @@
-# Benchmark and test terminology used across this repository.
+# Benchmark, test, and evaluation terminology used across this repository.
 #
-# Scope: unit tests (src/*.test.ts), the acceptance harness, in-loop
-# verification, the benchmark harness, its judge, metrics, ledger, provenance,
-# replay, and the generated artifacts they share.
+# Scope: unit tests (src/*.test.ts), the acceptance harness, the benchmark
+# harness, its judge, metrics, ledger, provenance, replay, and the generated
+# artifacts they share.
+#
+# Canonical ownership: protocol and loop vocabulary lives in docs/README.md,
+# docs/edit-protocol.md, docs/feedback-loop.md, and docs/plan-exec.md; this file
+# owns benchmark, test, and evaluation terminology. Entries below are
+# benchmark-facing definitions and short cross-references where metrics consume
+# that vocabulary.
 #
 # Every entry has a canonical `term` and a repository-specific `definition`.
 
@@ -85,7 +91,8 @@ categories:
       - term: test file as specification
         definition: >-
           In fixtures, `src/*.test.ts` is the specification and a read-only
-          edit target; an explicit test address still resolves.
+          edit target; an explicit test address still resolves. Select-first
+          indexing is in `docs/edit-protocol.md` §2.
       - term: skipIf
         definition: >-
           Bun test guard used by benchmark-aware suites so the self-host copy
@@ -184,114 +191,6 @@ categories:
       - term: LIVE_TIMEOUT_MS
         definition: 90-second timeout wrapping each live request; live loop runs at temperature 0.
 
-  - id: loop-verification
-    title: In-loop verification
-    terms:
-      - term: AgentMode
-        definition: >-
-          Loop shape. `pinned-repair` (default) is the single-target Edit ->
-          Verify loop; `plan-exec` is the Plan -> Execute -> Review tree
-          loop. The deprecated alias `edit` -> `pinned-repair` stays readable
-          in old flags, reports, and replay bundles; new output names the
-          canonical mode.
-      - term: runLoop
-        definition: >-
-          `src/loop.ts` dispatcher. The default `pinned-repair` route is
-          `runEditDslLoop`; explicit-targets mode and `--protocol-format=json`
-          route to `runJsonLoop`; `plan-exec` lazily imports and routes
-          to `runTaskLoop`.
-      - term: checkCommand
-        definition: The type-check command run during verification; default `bunx tsc --noEmit`.
-      - term: testCommand
-        definition: The test command run during verification; default `bun test`.
-      - term: checkTool
-        definition: >-
-          Runs the check command and returns `{ok, exitCode, output}` plus
-          parsed `CheckDiagnostic[]`.
-      - term: testTool
-        definition: Runs the test command and returns `{ok, exitCode, output}`.
-      - term: parseDiagnostics
-        definition: Parses `TS####` diagnostics into file/line/column/code/message.
-      - term: commandTimeoutMs
-        definition: 120-second bound on check/test commands, not on provider requests.
-      - term: round / iteration
-        definition: >-
-          One Edit to Verification cycle. Each round grants at most 3 model
-          exchanges, shared by target picking, editing, and retries.
-      - term: exchange
-        definition: One model call inside an Edit round; recorded as one row.
-      - term: records
-        definition: >-
-          Ordered per-run rows, one per exchange or verification. `steps` on the
-          tc side is the number of records.
-      - term: verification
-        definition: Harness-run check plus test command after an applied edit; no model call involved.
-      - term: TaskStatus
-        definition: >-
-          Harness-owned Task state in plan-exec: `pending`, `review`,
-          `passed`, or `failed`. `review` is transient: the Task gate has run
-          and its one post-execution review may still repair the Task. A
-          `review` Task is neither runnable nor terminal, and stage closure
-          waits for it.
-      - term: post-execution review
-        definition: >-
-          One compact planner turn after a Task's edits and gate. It sees the
-          gate result plus a concise applied diff and replies `approve` or one
-          patch that may repair only the current Task. A malformed reply gets
-          one format retry. A patched Task re-executes and is not reviewed a
-          second time.
-      - term: usage buckets
-        definition: >-
-          `LoopResult.usage` splits plan-exec spend into `planning`,
-          `review`, and `execution` `LoopTokens` buckets. Their sum is
-          `LoopResult.tokens`, and all three count toward the token budget.
-      - term: keep-progress
-        definition: >-
-          A failed verification leaves the attempted state on disk; diagnostics
-          open the next round and the model builds on the kept state. There is
-          no rollback.
-      - term: rejection retry
-        definition: >-
-          The same round is re-asked with the failure class turned into a
-          correction sentence; repeating the same class escalates.
-      - term: round continuation
-        definition: >-
-          A round that spends its 3 exchanges without a valid edit continues
-          through a STOP continuation prompt with a checkpoint and a fresh
-          budget, rather than ending the run.
-      - term: no-progress ask
-        definition: >-
-          After 8 consecutive failed rounds (then every 4), the model must
-          change the cause or reply STOP. From the second ask it becomes
-          decision-only.
-      - term: STOP
-        definition: The model's only non-editor escape in a continuation or no-progress ask.
-      - term: hard caps
-        definition: 32 rounds, 3 consecutive output-length truncations, and a 120k default token budget.
-      - term: summary call
-        definition: >-
-          Exactly one LLM summary at the end of a termination-matrix run:
-          Accomplished / Failed and why / Remaining / Next step.
-      - term: self-check
-        definition: >-
-          A bounded `{"request":"read" | "check" | "test"}` exchange that may
-          inspect source or run the task commands; it writes nothing.
-      - term: parse gate
-        definition: A file that parsed before an edit must still parse after it, or the edit is discarded.
-      - term: duplicate-declaration guard
-        definition: A top-level function/class/type name may not be added twice.
-      - term: formatter gate
-        definition: The candidate must survive oxfmt; a formatter rejection is a `format` failure.
-      - term: post-format no-op check
-        definition: A candidate that differs only by formatting is rejected as a no-op.
-      - term: explicit-targets mode
-        definition: >-
-          The caller supplies addresses; the JSON driver skips picking, forces
-          the batch shape, and sequences same-file targets across exchanges.
-          JSON-only.
-      - term: provided targets
-        definition: "`LoopOptions.targets`, one Locator per desired declaration."
-
   - id: outcomes
     title: Outcomes, rejection causes, and termination
     terms:
@@ -300,18 +199,20 @@ categories:
           `selected`, `applied`, `stopped`, `self-check`, `viewer`, `confirmed`,
           plus rejection stages `protocol`, `address`, `echo`, `matcher`,
           `range`, `no-op`, `repeat`, `duplicate`, `gate`, `format`, `truncated`,
-          `prev-broken`.
+          `prev-broken`. Rejection stages are canonical in
+          `docs/edit-protocol.md` §5.
       - term: VerificationOutcome
         definition: "`ok`, `tsc`, `tests`, `gate`, `format`, `prev-broken`."
       - term: AttemptOutcome
         definition: Union of ExchangeOutcome and VerificationOutcome.
       - term: failure stage
         definition: >-
-          `syntax` (edit-dsl only), `protocol`, `echo`, `address`, `matcher`,
-          `range`, `no-op`, `repeat`, `duplicate`, `gate`, `format`. Every
-          rejection carries a `stage:` tag and costs one exchange.
+          The `stage:` tag on every edit-action rejection; the canonical table is
+          in `docs/edit-protocol.md` §5. Every rejection costs one exchange.
       - term: syntax stage
-        definition: Edit-dsl only; the reply does not parse as `select ... end`.
+        definition: >-
+          Edit-dsl only; the reply does not parse as a statement. See
+          `docs/edit-protocol.md` §5.
       - term: RejectionCause
         definition: >-
           One class per rejection so retry policy and records never string-sniff
@@ -319,7 +220,8 @@ categories:
           `matcher-not-found`, `matcher-ambiguous`, `regex-invalid`,
           `range-invalid`, `no-op`, `repeat`, `duplicate`, `gate`, `format`,
           `format-export-duplication`, `truncated`, `multi-protocol`,
-          `multi-duplicate`.
+          `multi-duplicate`. The stage table is in `docs/edit-protocol.md` §5;
+          retry policy is in `docs/feedback-loop.md`.
       - term: classifyRejection
         definition: Maps a structured stage plus matcher cause and formatter message to one RejectionCause.
       - term: format-export-duplication
@@ -330,7 +232,9 @@ categories:
         definition: >-
           `token-budget`, `edit-exhausted`, `delete-verification-failed`,
           `prev-broken`, `harness-fault`, `output-limit`, `task-exhausted`. A
-          run ending through this matrix ends with one summary call.
+          run ending through this matrix ends with one summary call. The
+          termination path is in `docs/feedback-loop.md`; plan-exec adds
+          `task-exhausted` (`docs/plan-exec.md` §9).
       - term: token-budget
         definition: >-
           Accumulated provider tokens strictly exceed the budget (default
@@ -339,9 +243,8 @@ categories:
         definition: The run cannot produce a valid edit within the round/iteration caps.
       - term: task-exhausted
         definition: >-
-          The plan-exec driver cannot plan, patch, or review valid work
-          within its caps (including a no-progress patch), or a review reply is
-          neither `approve` nor one valid repair patch.
+          The plan-exec driver cannot plan, patch, or review valid work within
+          its caps; see `docs/plan-exec.md` §9.
       - term: delete-verification-failed
         definition: A deletion fails verification.
       - term: prev-broken
@@ -356,7 +259,8 @@ categories:
           `outcome`, `locator`, `replacement`, `diagnostics`,
           `diagnosticsHead`, `replacementChars`, `finishReason`, `payloads`,
           `toolCalls`, `appliedLocators`, `selectors`, `stages`,
-          `matcherKinds`.
+          `matcherKinds`. Produced by the loop; see
+          `docs/feedback-loop.md` "Records and result".
       - term: LoopResult
         definition: >-
           `ok`, `mode` (the selection mode, not `AgentMode`), `locator`,
@@ -365,7 +269,8 @@ categories:
           `appliedTargets`, and, in plan-exec, `usage`
           (planning/review/execution buckets), `warnings` (recovered parser
           warnings), and `tasks`, one per edit with string `id`, `stage`, and
-          `task` node ids.
+          `task` node ids. See `docs/feedback-loop.md` "Records and result" and
+          `docs/plan-exec.md` §10.
       - term: subagent result
         definition: >-
           `typescript-coder-result@2`, printed by `--format json`: format,
@@ -373,67 +278,8 @@ categories:
           terminationReason, diagnostics, and (plan-exec only) tasks
           whose `id`, `stage`, and `task` fields are string node ids. It keeps
           the single `tokens` object; `LoopResult.usage` and
-          `LoopResult.warnings` are not exposed here.
-
-  - id: protocol
-    title: Edit protocol vocabulary
-    terms:
-      - term: ProtocolFormat
-        definition: "`json` (flat JSON payload) or `edit-dsl` (`select ... end`). Explicit-targets mode stays JSON."
-      - term: compact
-        definition: >-
-          Deprecated alias for `edit-dsl`, kept for old flags, replay bundles,
-          and ledger rows. Reading `compact` normalizes to `edit-dsl`.
-      - term: json payload
-        definition: >-
-          One flat object `{"path","symbol","kind","matcher"?,"range"?,
-          "replacement"}` whose address echoes the pinned selection.
-      - term: edit-dsl clause
-        definition: >-
-          `select ... [resolve ...] [match ...] [pick ...] replace with <fence>
-          | rename <old> to <new> end`; one or more statements per reply.
-      - term: viewer
-        definition: An edit-dsl clause with neither `replace` nor `rename`; locates and writes nothing.
-      - term: editor
-        definition: An edit-dsl clause carrying `replace` or `rename`.
-      - term: select clause
-        definition: The first edit-dsl clause naming a symbol-index entry or a file command.
-      - term: resolve clause
-        definition: Optional `value` / `type` / `namespace` filter on a select clause.
-      - term: match clause
-        definition: Exactly one locator, a backtick snippet compared structurally or a `/regex/`.
-      - term: pick clause
-        definition: One range or a `{a, b, ...}` set; requires `replace`.
-      - term: replace with fence
-        definition: >-
-          The sentinel-only edit-action fence: `<<<TC_EDIT_BEGIN>>>`, the raw
-          body, then `<<<TC_EDIT_END>>>`; an empty fence deletes the target.
-      - term: rename clause
-        definition: >-
-          Rewrites a declaration name and every same-file reference that
-          lexically resolves to it; collisions are address failures.
-      - term: cascade
-        definition: Address, then Match, then Pick, then Rewrite.
-      - term: address stage
-        definition: The address must land on exactly one declaration; a miss or ambiguity is staged.
-      - term: export tolerance
-        definition: A rewrite starting at the declaration start keeps exactly one wrapping `export`.
-      - term: matcher cause
-        definition: "`matcher-unparseable`, `matcher-not-found`, `matcher-ambiguous`, `regex-invalid`."
-      - term: range-invalid
-        definition: A range or pick that is out of bounds, empty, inverted, or outside the declaration.
-      - term: selector adoption
-        definition: Per-run counts of `range`, `matcher`, and `whole-symbol` selectors, summed in aggregates.
-      - term: cascade stage adoption
-        definition: Per-run counts of `whole-symbol`, `match`, and `pick`, summed in aggregates.
-      - term: matcher-kind adoption
-        definition: Per-run counts of `snippet` and `regex`.
-      - term: multi-payload
-        definition: >-
-          Opt-in batch `{"payloads": [...]}` for `modify`; same-file entries must
-          not overlap and the exchange is atomic.
-      - term: implicit create
-        definition: An edit-dsl clause whose miss pins mode `create` and asks for a create clause.
+          `LoopResult.warnings` are not exposed here. See
+          `docs/plan-exec.md` §10.
 
   - id: benchmark-run
     title: Benchmark run model
@@ -515,9 +361,11 @@ categories:
       - term: benchmark --protocol-format
         definition: >-
           tc side: one value or a comma-separated list of `json` and
-          `edit-dsl`; order is canonicalized and duplicates collapse.
+          `edit-dsl`; order is canonicalized and duplicates collapse. Both
+          formats are defined in `docs/edit-protocol.md`; the vocabulary is in
+          `docs/README.md`.
       - term: benchmark --multi-payload
-        definition: Opt-in batched edit payloads on the tc side.
+        definition: Opt-in batched JSON payloads on the tc side; see `docs/edit-protocol.md` §1.
       - term: report mode
         definition: "`pilot` or `full`, recorded in the report."
       - term: pilot reference
@@ -631,14 +479,31 @@ categories:
           Per-run rejected-versus-applied exchange counts plus command/tool-call
           volume: turns, payloads, toolCalls, applied, rejected, selected,
           stopped, selector/stage/matcher-kind counts, and creates.
+      - term: selector adoption
+        definition: >-
+          Per-run counts of `range`, `matcher`, and `whole-symbol` selectors,
+          summed in aggregates. Selector vocabulary is in
+          `docs/edit-protocol.md` §3.
+      - term: cascade stage adoption
+        definition: >-
+          Per-run counts of `whole-symbol`, `match`, and `pick`, summed in
+          aggregates. The cascade is in `docs/edit-protocol.md` §3.
+      - term: matcher-kind adoption
+        definition: >-
+          Per-run counts of `snippet` and `regex`. Matcher forms are in
+          `docs/edit-protocol.md` §2.
       - term: payloads
         definition: >-
           Number of payload objects an exchange carried: 1 for a classic edit,
-          N for a batch, 0 for none.
+          N for a batch, 0 for none. The JSON payload and batch rules are in
+          `docs/edit-protocol.md` §1.
       - term: toolCalls
         definition: Provider tool calls in the reply that produced the row.
       - term: creates
-        definition: Edit-dsl implicit-create clauses carried by the run's replies, summed in aggregates.
+        definition: >-
+          Edit-dsl implicit-create statements carried by the run's replies,
+          summed in aggregates. Implicit create is in
+          `docs/edit-protocol.md` §6.
       - term: loopDiagnostics
         definition: >-
           The loop's final run-level diagnostic: a termination-matrix reason
@@ -756,7 +621,7 @@ categories:
         definition: >-
           The tc edit protocol the row measured (`compact` or `json`
           historically, `edit-dsl` going forward); different values are not
-          comparable.
+          comparable. Protocol vocabulary is canonical in `docs/README.md`.
       - term: Source column
         definition: Repository-relative path of the result JSON the row was copied from.
       - term: Notes column
@@ -837,7 +702,8 @@ categories:
       - term: bundle protocolFormat
         definition: >-
           The protocol recorded with the bundle (`json` or `edit-dsl`); an
-          absent or unknown value replays as `json`.
+          absent or unknown value replays as `json`. Both formats are defined in
+          `docs/edit-protocol.md`.
       - term: ReplayRecorder
         definition: Records request messages, response content, tool calls, finishReason, and usage per call.
       - term: ReplayCall
@@ -910,7 +776,9 @@ categories:
       - term: compact versus edit-dsl
         definition: >-
           `compact` is the legacy name for `edit-dsl`; new reports and ledger
-          rows use `edit-dsl`, while historical rows may say `compact`.
+          rows use `edit-dsl`, while historical rows may say `compact`. The
+          edit-dsl is defined in `docs/edit-protocol.md`; vocabulary is in
+          `docs/README.md`.
       - term: ts versus tc
         definition: >-
           Old replay bundles say `side: "ts"`; current code and reports say `tc`.

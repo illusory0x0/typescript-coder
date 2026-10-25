@@ -20,8 +20,8 @@ export interface RenameSpec {
 }
 
 /**
- * One parsed `select … end` clause. It is payload-equivalent to the JSON edit
- * model (`docs/editing-protocol.md`) only while `space` is null; a clause that
+ * One parsed `select … end` clause. It is equivalent to the JSON payload edit
+ * model (`docs/edit-protocol.md`) only while `space` is null; a clause that
  * names a symbol space has no JSON form (see `toEditPayload`).
  * `replacement === null` is a **viewer** (no `replace`); `matcher === null`
  * means no `match`; `pick === null` means no `pick`. A parsed `pick` always has
@@ -79,15 +79,16 @@ export type FileStatement =
   | ReadFileStatement
   | WriteFileStatement;
 
-/** One parsed reply statement: a symbol editor or a raw file command. */
+/** One parsed reply statement: a symbol editor or a file command. */
 export type EditStatement =
   | { type: "editor"; selection: Selection }
   | { type: "fs"; statement: FileStatement };
 
 /**
  * Sentinel `endColumn` for a range whose end is the end of its line: a bare
- * `line`, or a `line:col-line` span with no end column (`docs/edit-protocol.md`
- * §3 "Range arithmetic"). Columns are 1-based, so 0 is never a real position.
+ * `line`, or a `line:col-line` span with no end column
+ * (`docs/edit-protocol.md` §2 "Range arithmetic"). Columns are 1-based, so 0 is
+ * never a real position.
  */
 export const END_OF_LINE_COLUMN = 0;
 
@@ -1277,12 +1278,12 @@ export function serializeSelection(selection: Selection): string {
   return parts.join("\n");
 }
 
-/** Render several clauses, one blank line apart (the §8 multi-clause layout). */
+/** Render several clauses, one blank line apart (the §2 multi-clause layout). */
 export function serializeSelections(selections: Selection[]): string {
   return selections.map(serializeSelection).join("\n\n");
 }
 
-/** Render one raw file command back to the `multiEditor` grammar. */
+/** Render one file command back to the `multiEditor` grammar. */
 export function serializeFileStatement(statement: FileStatement): string {
   switch (statement.op) {
     case "create":
@@ -1315,11 +1316,11 @@ export function serializeMultiEditor(statements: readonly EditStatement[]): stri
 }
 
 /**
- * The explicit bridge to the shipped JSON payload (`docs/edit-protocol.md` §9).
- * Returns an `EditPayload` only for the subset the payload can express: a
- * `snippet` or no matcher, no `pick` or a single range, and an editor (a
- * `replace`). Regex matchers, a multi-range `pick`, viewers, and renames have
- * no payload form and return `null`.
+ * The explicit bridge to the shipped JSON payload
+ * (`docs/edit-protocol.md` §1). Returns an `EditPayload` only for the subset the
+ * payload can express: a `snippet` or no matcher, no `pick` or a single range,
+ * and an editor (a `replace`). Regex matchers, a multi-range `pick`, viewers,
+ * and renames have no payload form and return `null`.
  */
 export function toEditPayload(selection: Selection): EditPayload | null {
   if (selection.replacement === null) {

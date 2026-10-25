@@ -85,7 +85,7 @@ if that environment changes.
 
 - `src/main.ts` — CLI entry (`#!/usr/bin/env bun`, piped-stdin contract `tc < task.txt`; a TTY stdin prints help).
 - `src/loop.ts` — `runLoop` dispatcher (default pinned-repair; plan-exec route) + `buildSystemPrompt` (the model-facing prompt is a literal in this file; prompt text is benchmark-sensitive).
-- `src/tasks.ts` / `src/task-loop.ts` — Plan → Stage → Task → edit tree contract and the `--mode plan-exec` driver: incremental one-Task execution, post-execution review, usage buckets; spec in `docs/spec.md`.
+- `src/tasks.ts` / `src/task-loop.ts` — Plan → Stage → Task → edit tree contract and the `--mode plan-exec` driver: incremental one-Task execution, post-execution review, usage buckets; spec in `docs/plan-exec.md`.
 - `src/plan-dsl.ts` — flat Plan and patch DSL parser/serializer; `src/dsl-diagnostics.ts` — shared tolerant diagnostics renderer.
 - `src/prompts/task.ts` — planning/execution/review prompt text for plan-exec.
 - `src/tools.ts` — check/test tools; default verify commands are `bunx tsc --noEmit` and `bun test`.
