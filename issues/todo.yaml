@@ -10,3 +10,35 @@
   parent: null
   deps: []
   file: 0043-remove-the-underperforming-tc-json-baseline.md
+- id: 45
+  title: "Make plan-exec matcher failures recover in one bounded correction"
+  status: todo
+  priority: medium
+  milestone: null
+  parent: 44
+  deps: []
+  file: 0045-make-plan-exec-matcher-failures-recover-in-one-bounded-correction.md
+- id: 46
+  title: "Make large-edit tsc advisories actionable in plan-exec"
+  status: todo
+  priority: medium
+  milestone: null
+  parent: 44
+  deps: []
+  file: 0046-make-large-edit-tsc-advisories-actionable-in-plan-exec.md
+- id: 47
+  title: "Align benchmark token-budget with cache-excluded report accounting"
+  status: todo
+  priority: medium
+  milestone: null
+  parent: null
+  deps: []
+  file: 0047-align-benchmark-token-budget-with-cache-excluded-report-accounting.md
+- id: 44
+  title: "Stabilize plan-exec on mini-spreadsheet after guard and matcher changes"
+  status: todo
+  priority: medium
+  milestone: null
+  parent: null
+  deps: [47]
+  file: 0044-stabilize-plan-exec-on-mini-spreadsheet-after-guard-and-matcher-changes.md

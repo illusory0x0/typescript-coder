@@ -48,6 +48,10 @@ digraph issues {
   "41" [label="#41 Update edit-action prompts and few-shots for sentinel fences, end, and unique clauses"];
   "42" [label="#42 Add the edit-action BNF to docs/spec.md and align the protocol docs"];
   "43" [label="#43 Remove the underperforming tc json baseline"];
+  "44" [label="#44 Stabilize plan-exec on mini-spreadsheet after guard and matcher changes"];
+  "45" [label="#45 Make plan-exec matcher failures recover in one bounded correction"];
+  "46" [label="#46 Make large-edit tsc advisories actionable in plan-exec"];
+  "47" [label="#47 Align benchmark token-budget with cache-excluded report accounting"];
 
   // parent edges (parent -> child), solid
   "1" -> "2";
@@ -81,6 +85,8 @@ digraph issues {
   "37" -> "40";
   "37" -> "41";
   "37" -> "42";
+  "44" -> "45";
+  "44" -> "46";
 
   // dependency edges (blocker -> blocked), dashed
   "2" -> "3" [style=dashed, label="blocks"];
@@ -122,4 +128,5 @@ digraph issues {
   "39" -> "42" [style=dashed, label="blocks"];
   "40" -> "41" [style=dashed, label="blocks"];
   "40" -> "42" [style=dashed, label="blocks"];
+  "47" -> "44" [style=dashed, label="blocks"];
 }
