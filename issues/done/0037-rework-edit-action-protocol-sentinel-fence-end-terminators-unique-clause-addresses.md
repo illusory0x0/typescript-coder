@@ -1,7 +1,7 @@
 ---
 id: 37
 title: "Rework edit-action protocol: sentinel fence, end terminators, unique clause addresses"
-status: todo
+status: done
 priority: medium
 milestone: null
 parent: null
@@ -67,3 +67,4 @@ rule, with the model-facing examples and `docs/spec.md` BNF in sync.
 - A future metrics change can record statement and file-command counts; it is
   not part of this protocol migration.
 - Parser tolerance decision: a missing 'end' after select/create/delete/read is recovered with an EDIT_MISSING_END warning when the next statement boundary or EOF is unambiguous. The prompt and few-shot examples always emit 'end'; the tolerance is recovery only, never taught as the canonical form. The tolerant path is covered by #39; #41 keeps examples canonical; #42 documents the warning.
+- All children #38-#42 are done. Final offline verification: just typecheck && just test -> 1467 pass, 0 fail; just accept -> 9 pass, 0 fail; no legacy fence lines in src/acceptance/docs; remaining done hits are edit status, prose, or deliberate raw-body/negative-test text, not terminator examples. The live 3-rep both-modes benchmark remains human-gated and was not run. #25 remains in review outside this protocol batch.
