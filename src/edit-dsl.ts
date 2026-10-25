@@ -121,6 +121,33 @@ export interface EditDslResolution {
   failures: EditDslFailure[];
 }
 
+/**
+ * One resolved `select` target in the symbol index's address vocabulary. The
+ * kind is the declaration's resolved kind, never the raw locator text: `select
+ * X` and `select function X` are the same target, and a class selected as
+ * value or type is still one declaration.
+ */
+export interface EditDslTargetAddress {
+  path: string;
+  name: string;
+  kind: string;
+}
+
+/** A resolved target one clause already claimed, and which clause claimed it. */
+export interface EditDslTargetClaim {
+  /** 0-based position of the claiming clause in the original reply. */
+  index: number;
+  /** True when the claiming clause was an implicit create. */
+  create: boolean;
+}
+
+/**
+ * The addresses claimed by the `select` clauses resolved so far in one reply.
+ * Shared by editors/viewers/creates (`resolveEditDslReply`) and renames
+ * (`resolveMultiEditor`) so every clause uses the same uniqueness key.
+ */
+export type EditDslTargetClaims = Map<string, EditDslTargetClaim>;
+
 // One cascade cause maps to the loop's rejection stage. Everything matcher-like
 // (including `regex-invalid`, #109) is the `matcher` stage; the loop's
 // classifier reads the cause to pick the exact `RejectionCause`.
@@ -391,6 +418,61 @@ function createConflictDiagnostics(
   ].join("\n");
 }
 
+/**
+ * The uniqueness key for a resolved target. `match`, `pick`, and `resolve`
+ * space are deliberately absent: they select spans/spaces of one declaration,
+ * so every clause addressing that declaration shares the key.
+ */
+export function editDslTargetKey(address: EditDslTargetAddress): string {
+  return `${address.path}\u0000${address.name}\u0000${address.kind}`;
+}
+
+function duplicateTargetDiagnostics(
+  address: EditDslTargetAddress,
+  earlierIndex: number,
+  index: number,
+): string {
+  // Name the clauses in ascending reply order even when the claiming clause
+  // resolved later (a rename is claimed after editors whatever its position).
+  const first = Math.min(earlierIndex, index);
+  const second = Math.max(earlierIndex, index);
+  return [
+    "stage: duplicate",
+    `clause ${first + 1} and clause ${second + 1} both select the same ${address.kind} ${JSON.stringify(address.name)} in ${JSON.stringify(address.path)}; the whole edit-dsl reply is discarded and nothing is written`,
+    `select ${JSON.stringify(address.name)} once per reply, and split edits to one declaration across exchanges`,
+  ].join("\n");
+}
+
+/**
+ * Claim a resolved `select` target for one reply. Viewers, replace editors,
+ * renames, and implicit creates all resolve to the same `(path, name, kind)`
+ * key, so a repeat is a `duplicate` for the later clause before any matcher or
+ * write can apply. Returns the diagnostic, or null after recording the claim.
+ */
+export function claimEditDslTarget(
+  claims: EditDslTargetClaims,
+  address: EditDslTargetAddress,
+  index: number,
+  create: boolean,
+): string | null {
+  const key = editDslTargetKey(address);
+  const earlier = claims.get(key);
+  if (earlier !== undefined) {
+    // Preserve the #13 create wording when both clauses add the same
+    // declaration; every other duplicate names the resolved address only.
+    return earlier.create && create
+      ? createConflictDiagnostics(
+          address.path,
+          { kind: address.kind, name: address.name },
+          earlier.index,
+          index,
+        )
+      : duplicateTargetDiagnostics(address, earlier.index, index);
+  }
+  claims.set(key, { index, create });
+  return null;
+}
+
 interface PickExpansion {
   start: number;
   end: number;
@@ -419,15 +501,17 @@ export function resolveEditDslReply(
   selections: readonly Selection[],
   deps: EditDslDeps,
   indices?: readonly number[],
+  targetClaims?: EditDslTargetClaims,
 ): EditDslResolution {
   const regions: EditDslRegion[] = [];
   const viewers: EditDslViewer[] = [];
   const failures: EditDslFailure[] = [];
-  // #13: the creates a reply has already queued, keyed by file and the
-  // declaration the fence body actually adds. Every create appends at the same
-  // pre-reply offset, so the shared overlap pass cannot see two creates of the
-  // same name; reject the repeat here, naming both clauses.
-  const creates = new Map<string, number>();
+  // #40: every `select` clause claims its resolved target as `(path, name,
+  // kind)` before a matcher can run. A repeat rejects the later clause, and the
+  // loop discards the whole reply: one declaration may be addressed once per
+  // reply, whatever spans its `match`/`pick` name. `resolveMultiEditor` passes
+  // its map in so rename clauses join the same uniqueness set.
+  const claims: EditDslTargetClaims = targetClaims ?? new Map();
 
   for (let position = 0; position < selections.length; position += 1) {
     const selection = selections[position];
@@ -464,22 +548,27 @@ export function resolveEditDslReply(
         }
         // The created declaration's kind comes from the fence body, not the
         // locator: both `select const X` with a type fence and `select type X`
-        // add the same type alias and must not both apply.
-        const createKey = `${path}\u0000${created.declaration.kind}\u0000${created.declaration.name}`;
-        const earlierIndex = creates.get(createKey);
-        if (earlierIndex !== undefined) {
+        // add the same type alias and must not both apply. The claim shares the
+        // editor/viewer/rename key set so a create cannot slip past the
+        // uniqueness rule under a different locator kind (#13/#40).
+        const duplicate = claimEditDslTarget(
+          claims,
+          { path, name: created.declaration.name, kind: created.declaration.kind },
+          index,
+          true,
+        );
+        if (duplicate !== null) {
           failures.push({
             index,
             path,
             locator: selection.locator,
             stage: "duplicate",
             cause: null,
-            diagnostics: createConflictDiagnostics(path, created.declaration, earlierIndex, index),
+            diagnostics: duplicate,
             undeclaredName: null,
           });
           continue;
         }
-        creates.set(createKey, index);
         regions.push({
           index,
           path,
@@ -505,6 +594,31 @@ export function resolveEditDslReply(
         diagnostics: address.diagnostics,
         undeclaredName:
           address.undeclared || address.spaceMiss === true ? selection.locator.name : null,
+      });
+      continue;
+    }
+    // The resolved entry's locator is authoritative: an omitted kind becomes
+    // the declaration's actual kind, and a class addressed through value or
+    // type resolves to the one `class` entry (#40).
+    const duplicate = claimEditDslTarget(
+      claims,
+      {
+        path: address.entry.locator.path,
+        name: address.entry.locator.name,
+        kind: address.entry.locator.kind,
+      },
+      index,
+      false,
+    );
+    if (duplicate !== null) {
+      failures.push({
+        index,
+        path,
+        locator: selection.locator,
+        stage: "duplicate",
+        cause: null,
+        diagnostics: duplicate,
+        undeclaredName: null,
       });
       continue;
     }

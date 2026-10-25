@@ -38,7 +38,20 @@ export interface RenameEdit {
   text: string;
 }
 
-export type RenameResult = { ok: true; edits: RenameEdit[] } | { ok: false; diagnostics: string };
+/**
+ * The declaration a successful rename resolved, in the symbol index's address
+ * vocabulary. `name` is qualified for a namespace/member binding (`A.B`,
+ * `Widget.field`) and plain for an ordinary binding.
+ */
+export interface RenameTarget {
+  path: string;
+  name: string;
+  kind: string;
+}
+
+export type RenameResult =
+  | { ok: true; edits: RenameEdit[]; target: RenameTarget }
+  | { ok: false; diagnostics: string };
 
 /**
  * Optional disambiguators for a locator that names more than one binding (for
@@ -1690,6 +1703,22 @@ function describeBinding(binding: Binding): string {
 }
 
 /**
+ * The resolved rename target in the symbol index's address vocabulary (#40).
+ * `declare` inserts the index-compatible kind first for every bindable form
+ * (`variable` before `const`/`let`/`var`, `variable` before `field`), and a
+ * namespace/member binding carries its qualified path, so this key matches the
+ * entry an editor clause resolves to.
+ */
+function renameTargetOf(binding: Binding, fileName: string): RenameTarget {
+  const kind = binding.kinds.values().next().value;
+  return {
+    path: fileName,
+    name: binding.path ?? binding.name,
+    kind: kind ?? "symbol",
+  };
+}
+
+/**
  * Resolve a same-file local rename to atomic source edits. The declaration and
  * every reference that lexically resolves to the same binding are updated;
  * shadowed bindings and out-of-scope references are left alone.
@@ -1779,5 +1808,9 @@ export function resolveLocalRename(
     };
   }
 
-  return { ok: true, edits: model.editsFor(targetSet, rename.to) };
+  return {
+    ok: true,
+    edits: model.editsFor(targetSet, rename.to),
+    target: renameTargetOf(target, fileName),
+  };
 }

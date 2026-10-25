@@ -10262,7 +10262,7 @@ describe("edit-dsl protocol (#111/#119)", () => {
     expect(rejected?.diagnostics).toContain("Read failed");
   }, 30000);
 
-  test("two overlapping edit-dsl clauses write nothing and the retry applies both", async () => {
+  test("two edit-dsl clauses on one declaration are duplicates and the retry splits them", async () => {
     const dir = sameFileFixtureDir();
     const original = pairSource(dir);
     let afterFailure = "";
@@ -10270,7 +10270,8 @@ describe("edit-dsl protocol (#111/#119)", () => {
       [
         editDslSelect("one", "src/pair.ts"),
         editDslReply(
-          // Both clauses resolve to the same `return 1;` span in `one`.
+          // Both clauses address `one`, whatever span each one matches: the
+          // second resolved target is a duplicate, so neither can apply.
           pairEditor("one", "return 2;", { kind: "snippet", value: "return 1;" }),
           pairEditor("one", "return 9;", { kind: "snippet", value: "return 1;" }),
         ),
@@ -10300,14 +10301,16 @@ describe("edit-dsl protocol (#111/#119)", () => {
     expect(source).toContain("return 2;");
     expect(source).toContain("return 3;");
     expect(source).not.toContain("return 9;");
-    const rejected = result.records.find((record) => record.cause === "multi-duplicate");
+    const rejected = result.records.find(
+      (record) => record.kind === "exchange" && record.outcome === "duplicate",
+    );
     expect(rejected).toBeDefined();
-    expect(rejected?.diagnostics).toContain("overlap");
-    expect(rejected?.diagnostics).toContain("clause 1");
-    expect(rejected?.diagnostics).toContain("clause 2");
+    expect(rejected?.diagnostics).toContain("stage: duplicate");
+    expect(rejected?.diagnostics).toContain(
+      'clause 1 and clause 2 both select the same function "one" in "src/pair.ts"',
+    );
     expect(rejected?.diagnostics).toContain("the whole edit-dsl reply is discarded");
     expect(rejected?.diagnostics).toContain("nothing is written");
-    expect(rejected?.diagnostics).not.toContain("earlier clause wins");
   }, 30000);
 
   test("a four-clause draft-plus-correction reply cannot create the same declarations twice (#13)", async () => {
@@ -10489,7 +10492,7 @@ describe("edit-dsl protocol (#111/#119)", () => {
     expect(rejected?.diagnostics).not.toContain("already applied (do not resend):");
   }, 30000);
 
-  test("a mixed viewer+editor failing reply writes nothing but carries viewer feedback", async () => {
+  test("a mixed viewer+editor reply on one declaration is a duplicate and carries viewer feedback", async () => {
     const dir = fixtureDir();
     const original = helperSource(dir);
     let afterFailure = "";
@@ -10521,7 +10524,11 @@ describe("edit-dsl protocol (#111/#119)", () => {
     expect(afterFailure).toBe(original);
     expect(helperSource(dir)).toContain("return 2;");
     const rejected = result.records.find(
-      (record) => record.kind === "exchange" && record.outcome === "matcher",
+      (record) => record.kind === "exchange" && record.outcome === "duplicate",
+    );
+    expect(rejected?.diagnostics).toContain("stage: duplicate");
+    expect(rejected?.diagnostics).toContain(
+      'clause 1 and clause 2 both select the same function "answer" in "src/helper.ts"',
     );
     expect(rejected?.diagnostics).toContain("the whole edit-dsl reply is discarded");
     expect(rejected?.diagnostics).toContain("Located occurrences");

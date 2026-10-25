@@ -2,6 +2,27 @@ import { describe, expect, test } from "bun:test";
 import { renderReadFailureFeedback, renderReadFeedback, resolveMultiEditor } from "./multi-editor";
 import type { MultiEditorDeps } from "./multi-editor";
 import { parseMultiEditor } from "./selection";
+import { buildIndexTolerant } from "./utility";
+import type { Locator, SymbolSpace } from "./utility";
+
+function resolveEntryIn(
+  current: string,
+  currentPath: string,
+  locator: Locator,
+  space: SymbolSpace | null,
+): ReturnType<MultiEditorDeps["resolveEntry"]> {
+  const { index } = buildIndexTolerant([{ path: currentPath, source: current }]);
+  const matches = index.lookup(locator, space);
+  const entry = matches[0];
+  if (matches.length === 1 && entry !== undefined) {
+    return { ok: true, entry };
+  }
+  return {
+    ok: false,
+    diagnostics: "stage: address\nno unique declaration",
+    undeclared: index.byName(locator.name).length === 0,
+  };
+}
 
 function deps(
   files: Record<string, string>,
@@ -11,11 +32,7 @@ function deps(
     sourceFor: (path) => files[path] ?? "",
     fileExists: (path) => Object.prototype.hasOwnProperty.call(files, path),
     isSafePath: (path) => !unsafe.has(path),
-    resolveEntry: () => ({
-      ok: false,
-      diagnostics: "stage: address\nnot used by file commands",
-      undeclared: true,
-    }),
+    resolveEntry: resolveEntryIn,
   };
 }
 
@@ -203,5 +220,120 @@ describe("resolveMultiEditor file commands", () => {
     expect(result.reads).toHaveLength(1);
     expect(result.readFailures).toHaveLength(1);
     expect(result.failures).toEqual([]);
+  });
+});
+
+const HELPER = [
+  "export function answer(): number {",
+  "  return 1;",
+  "}",
+  "",
+  "export function other(): number {",
+  "  return 2;",
+  "}",
+  "",
+].join("\n");
+
+function replaceClause(name: string, body: string, path = "src/helper.ts"): string {
+  return [
+    `select function ${name} in ${path}`,
+    "match `return 1;`",
+    "replace with",
+    "<<<TC_EDIT_BEGIN>>>",
+    body,
+    "<<<TC_EDIT_END>>>",
+    "end",
+  ].join("\n");
+}
+
+function renameClause(name: string, to: string, path = "src/helper.ts"): string {
+  return `select function ${name} in ${path}\nrename ${name} to ${to}\nend`;
+}
+
+describe("resolveMultiEditor unique resolved targets (#40)", () => {
+  test("rename + replace on one declaration is a duplicate", () => {
+    const result = resolve(
+      [replaceClause("answer", "return 3;"), renameClause("answer", "result")].join("\n\n"),
+      { "src/helper.ts": HELPER },
+    );
+    expect(result.failures).toHaveLength(1);
+    expect(result.failures[0]?.index).toBe(1);
+    expect(result.failures[0]?.stage).toBe("duplicate");
+    expect(result.failures[0]?.diagnostics).toContain(
+      'clause 1 and clause 2 both select the same function "answer" in "src/helper.ts"',
+    );
+    // The first clause is queued; the duplicate rename contributes no edits.
+    expect(result.regions).toHaveLength(1);
+    expect(result.regions[0]?.index).toBe(0);
+  });
+
+  test("two renames of one declaration are duplicates", () => {
+    const result = resolve(
+      [renameClause("answer", "result"), renameClause("answer", "renamed")].join("\n\n"),
+      { "src/helper.ts": HELPER },
+    );
+    expect(result.failures).toHaveLength(1);
+    expect(result.failures[0]?.index).toBe(1);
+    expect(result.failures[0]?.stage).toBe("duplicate");
+    expect(result.failures[0]?.diagnostics).toContain(
+      'clause 1 and clause 2 both select the same function "answer" in "src/helper.ts"',
+    );
+    // Only the first rename's edit is queued.
+    expect(result.regions).toHaveLength(1);
+    expect(result.regions[0]?.index).toBe(0);
+    expect(result.regions[0]?.text).toBe("result");
+  });
+
+  test("a viewer and a rename on one declaration are duplicates", () => {
+    const viewer = "select function answer in src/helper.ts\nmatch `return 1;`\nend";
+    const result = resolve([viewer, renameClause("answer", "result")].join("\n\n"), {
+      "src/helper.ts": HELPER,
+    });
+    expect(result.viewers).toHaveLength(1);
+    expect(result.regions).toEqual([]);
+    expect(result.failures).toHaveLength(1);
+    expect(result.failures[0]?.index).toBe(1);
+    expect(result.failures[0]?.stage).toBe("duplicate");
+    expect(result.failures[0]?.diagnostics).toContain(
+      'clause 1 and clause 2 both select the same function "answer" in "src/helper.ts"',
+    );
+  });
+
+  test("a rename of one declaration and an edit of another are allowed", () => {
+    const result = resolve(
+      [replaceClause("answer", "return 3;"), renameClause("other", "second")].join("\n\n"),
+      { "src/helper.ts": HELPER },
+    );
+    expect(result.failures).toEqual([]);
+    expect(result.regions.map((region) => region.index)).toEqual([0, 1]);
+  });
+
+  test("the same symbol renamed in another file is allowed", () => {
+    const result = resolve(
+      [
+        replaceClause("answer", "return 3;", "src/a.ts"),
+        renameClause("answer", "result", "src/b.ts"),
+      ].join("\n\n"),
+      { "src/a.ts": HELPER, "src/b.ts": HELPER },
+    );
+    expect(result.failures).toEqual([]);
+    expect(result.regions.map((region) => region.path)).toEqual(["src/a.ts", "src/b.ts"]);
+  });
+
+  test("a rename registered before an editor still names both clause numbers", () => {
+    const result = resolve(
+      [renameClause("answer", "result"), replaceClause("answer", "return 3;")].join("\n\n"),
+      { "src/helper.ts": HELPER },
+    );
+    expect(result.failures).toHaveLength(1);
+    expect(result.failures[0]?.stage).toBe("duplicate");
+    expect(result.failures[0]?.diagnostics).toContain(
+      'clause 1 and clause 2 both select the same function "answer" in "src/helper.ts"',
+    );
+    // The editor is claimed first, so the rename (clause 1) is the rejected
+    // clause and its edits are not queued.
+    expect(result.failures[0]?.index).toBe(0);
+    expect(result.regions).toHaveLength(1);
+    expect(result.regions[0]?.index).toBe(1);
   });
 });

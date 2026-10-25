@@ -1,5 +1,17 @@
-import { FOLD_HEAD_LINES, FOLD_TAIL_LINES, foldMarker, resolveEditDslReply } from "./edit-dsl";
-import type { EditDslDeps, EditDslFailure, EditDslRegion, EditDslViewer } from "./edit-dsl";
+import {
+  FOLD_HEAD_LINES,
+  FOLD_TAIL_LINES,
+  claimEditDslTarget,
+  foldMarker,
+  resolveEditDslReply,
+} from "./edit-dsl";
+import type {
+  EditDslDeps,
+  EditDslFailure,
+  EditDslRegion,
+  EditDslTargetClaims,
+  EditDslViewer,
+} from "./edit-dsl";
 import type { EditRange } from "./loop";
 import { resolveLocalRename } from "./rename";
 import { END_OF_LINE_COLUMN } from "./selection";
@@ -139,6 +151,23 @@ function renameFailure(
     stage: "address",
     cause: null,
     diagnostics: detail.startsWith("stage:") ? detail : `stage: address\n${detail}`,
+    undeclaredName: null,
+  };
+}
+
+function duplicateFailure(
+  index: number,
+  path: string,
+  locator: Locator,
+  diagnostics: string,
+): EditDslFailure {
+  return {
+    index,
+    path,
+    locator,
+    stage: "duplicate",
+    cause: null,
+    diagnostics,
     undeclaredName: null,
   };
 }
@@ -303,7 +332,11 @@ export function resolveMultiEditor(
       }
     }
   }
-  const editorResolution = resolveEditDslReply(editors, deps, editorIndices);
+  // #40: every select clause in the reply shares one resolved-address claim
+  // set. Editors/viewers/creates claim inside `resolveEditDslReply`; renames
+  // claim against the same map after their own target resolution.
+  const targetClaims: EditDslTargetClaims = new Map();
+  const editorResolution = resolveEditDslReply(editors, deps, editorIndices, targetClaims);
 
   const regions = [...editorResolution.regions];
   const viewers = [...editorResolution.viewers];
@@ -359,6 +392,14 @@ export function resolveMultiEditor(
     });
     if (!renamed.ok) {
       failures.push(renameFailure(index, path, selection.locator, renamed.diagnostics));
+      continue;
+    }
+    // #40: a rename addresses the same declaration an editor/viewer would, so
+    // it claims the same `(path, name, kind)` key. A repeat rejects this
+    // clause; the loop discards the whole reply, so no rename edit is applied.
+    const duplicate = claimEditDslTarget(targetClaims, renamed.target, index, false);
+    if (duplicate !== null) {
+      failures.push(duplicateFailure(index, path, selection.locator, duplicate));
       continue;
     }
     for (const edit of renamed.edits) {

@@ -1,7 +1,7 @@
 ---
 id: 40
 title: "Enforce unique resolved path, symbol, and kind across edit-action clauses"
-status: todo
+status: done
 priority: medium
 milestone: null
 parent: 37
@@ -64,3 +64,4 @@ apply, with a deterministic diagnostic naming the conflicting clauses.
   `pick`; a class selected as value or type is still one declaration.
 - Resolving a rename target may require a small helper/shared resolution step
   so rename and editor clauses use the same key.
+- Resolved unique resolved targets. Verified: just typecheck && just test -> 1465 pass, 0 fail; just accept -> 9 pass, 0 fail; git diff --check clean. Editors, viewers, renames, and implicit creates share one (path, name, resolved kind) claim set; duplicate rejects stage: duplicate naming both clause numbers and the resolved address, with no write. Existing path and range overlap guards remain. No live benchmark run.

@@ -3,6 +3,7 @@ import { foldMarker, renderViewerFeedback, resolveEditDslReply } from "./edit-ds
 import type { EditDslDeps } from "./edit-dsl";
 import { parseSelection } from "./selection";
 import { buildIndexTolerant, declarationSpaces } from "./utility";
+import type { Locator, SymbolSpace } from "./utility";
 
 const TWICE = ["export function twice(): number {", "  return 1;", "  return 1;", "}", ""].join(
   "\n",
@@ -10,35 +11,55 @@ const TWICE = ["export function twice(): number {", "  return 1;", "  return 1;"
 
 const ONCE = ["export function once(): number {", "  return 1;", "}", ""].join("\n");
 
+function resolveEntryIn(
+  current: string,
+  currentPath: string,
+  locator: Locator,
+  space: SymbolSpace | null,
+): ReturnType<EditDslDeps["resolveEntry"]> {
+  const { index } = buildIndexTolerant([{ path: currentPath, source: current }]);
+  const matches = index.lookup(locator, space);
+  const entry = matches[0];
+  if (matches.length === 1 && entry !== undefined) {
+    return { ok: true, entry };
+  }
+  const byName = index.byName(locator.name);
+  const spaces = [...new Set(byName.flatMap((candidate) => declarationSpaces(candidate)))];
+  const diagnostics =
+    space === null
+      ? "stage: address\nno unique declaration"
+      : `stage: address\nno declaration in the ${space} space; the name is declared in ${spaces.map((candidate) => JSON.stringify(candidate)).join(", ")}`;
+  return {
+    ok: false,
+    diagnostics,
+    // Mirror `resolveCurrentEntry`: the name is undeclared only when it is
+    // absent under every kind, not merely under the requested one.
+    undeclared: byName.length === 0,
+    spaceMiss:
+      space !== null &&
+      byName.length > 0 &&
+      byName.every((candidate) => !declarationSpaces(candidate).includes(space)),
+  };
+}
+
 function deps(source: string): EditDslDeps {
   return {
     sourceFor: () => source,
-    resolveEntry: (current, currentPath, locator, space) => {
-      const { index } = buildIndexTolerant([{ path: currentPath, source: current }]);
-      const matches = index.lookup(locator, space);
-      const entry = matches[0];
-      if (matches.length === 1 && entry !== undefined) {
-        return { ok: true, entry };
-      }
-      const byName = index.byName(locator.name);
-      const spaces = [...new Set(byName.flatMap((candidate) => declarationSpaces(candidate)))];
-      const diagnostics =
-        space === null
-          ? "stage: address\nno unique declaration"
-          : `stage: address\nno declaration in the ${space} space; the name is declared in ${spaces.map((candidate) => JSON.stringify(candidate)).join(", ")}`;
-      return {
-        ok: false,
-        diagnostics,
-        // Mirror `resolveCurrentEntry`: the name is undeclared only when it is
-        // absent under every kind, not merely under the requested one.
-        undeclared: byName.length === 0,
-        spaceMiss:
-          space !== null &&
-          byName.length > 0 &&
-          byName.every((candidate) => !declarationSpaces(candidate).includes(space)),
-      };
-    },
+    resolveEntry: resolveEntryIn,
   };
+}
+
+function multiDeps(files: Record<string, string>): EditDslDeps {
+  return {
+    sourceFor: (path) => files[path] ?? "",
+    resolveEntry: resolveEntryIn,
+  };
+}
+
+/** One whole-declaration editor clause, for the multi-clause #40 tests. */
+function wholeReplace(path: string, kind: string, name: string, body: string): string {
+  const head = kind === "" ? `select ${name} in ${path}` : `select ${kind} ${name} in ${path}`;
+  return [head, "replace with", "<<<TC_EDIT_BEGIN>>>", body, "<<<TC_EDIT_END>>>", "end"].join("\n");
 }
 
 describe("resolveEditDslReply (#111)", () => {
@@ -256,6 +277,169 @@ describe("resolveEditDslReply (#111)", () => {
     expect(second?.diagnostics).toContain(
       'clause 2 and clause 4 both create the same top-level function "parseJson"',
     );
+  });
+
+  test("two editors on one declaration with distinct match spans are duplicates (#40)", () => {
+    const source = [
+      "export function once(): number {",
+      "  const value = 1;",
+      "  return value;",
+      "}",
+      "",
+    ].join("\n");
+    const selections = parseSelection(
+      [
+        "select function once in a.ts",
+        "match `const value = 1;`",
+        "replace with",
+        "<<<TC_EDIT_BEGIN>>>",
+        "const value = 2;",
+        "<<<TC_EDIT_END>>>",
+        "end",
+        "select function once in a.ts",
+        "match `return value;`",
+        "replace with",
+        "<<<TC_EDIT_BEGIN>>>",
+        "return value + 1;",
+        "<<<TC_EDIT_END>>>",
+        "end",
+      ].join("\n"),
+    );
+    const result = resolveEditDslReply(selections, deps(source));
+    // The first clause is queued; the second is rejected before its matcher
+    // can run, even though the two spans do not overlap.
+    expect(result.regions).toHaveLength(1);
+    expect(result.failures).toHaveLength(1);
+    const failure = result.failures[0];
+    expect(failure?.index).toBe(1);
+    expect(failure?.stage).toBe("duplicate");
+    expect(failure?.cause).toBeNull();
+    expect(failure?.diagnostics).toContain("stage: duplicate");
+    expect(failure?.diagnostics).toContain(
+      'clause 1 and clause 2 both select the same function "once" in "a.ts"',
+    );
+    expect(failure?.diagnostics).toContain("nothing is written");
+  });
+
+  test("two pick spans on one declaration are duplicates (#40)", () => {
+    const clause = (line: number, text: string): string =>
+      [
+        "select function twice in a.ts",
+        `pick ${line}`,
+        "replace with",
+        "<<<TC_EDIT_BEGIN>>>",
+        text,
+        "<<<TC_EDIT_END>>>",
+        "end",
+      ].join("\n");
+    const result = resolveEditDslReply(
+      parseSelection([clause(2, "  return 2;"), clause(3, "  return 3;")].join("\n")),
+      deps(TWICE),
+    );
+    expect(result.regions).toHaveLength(1);
+    expect(result.failures[0]?.index).toBe(1);
+    expect(result.failures[0]?.stage).toBe("duplicate");
+    expect(result.failures[0]?.diagnostics).toContain(
+      'clause 1 and clause 2 both select the same function "twice" in "a.ts"',
+    );
+  });
+
+  test("a viewer and an editor on one declaration are duplicates (#40)", () => {
+    const selections = parseSelection(
+      [
+        "select function once in a.ts",
+        "match `return 1;`",
+        "end",
+        wholeReplace("a.ts", "function", "once", "function once(): number {\n  return 2;\n}"),
+      ].join("\n"),
+    );
+    const result = resolveEditDslReply(selections, deps(ONCE));
+    expect(result.viewers).toHaveLength(1);
+    expect(result.regions).toEqual([]);
+    expect(result.failures[0]?.index).toBe(1);
+    expect(result.failures[0]?.stage).toBe("duplicate");
+    expect(result.failures[0]?.diagnostics).toContain(
+      'clause 1 and clause 2 both select the same function "once" in "a.ts"',
+    );
+  });
+
+  test("an omitted kind and an explicit kind resolve to the same target (#40)", () => {
+    const selections = parseSelection(
+      [
+        wholeReplace("a.ts", "", "once", "function once(): number {\n  return 2;\n}"),
+        wholeReplace("a.ts", "function", "once", "function once(): number {\n  return 3;\n}"),
+      ].join("\n"),
+    );
+    const result = resolveEditDslReply(selections, deps(ONCE));
+    expect(result.regions).toHaveLength(1);
+    expect(result.failures[0]?.index).toBe(1);
+    expect(result.failures[0]?.stage).toBe("duplicate");
+    // The key and message use the resolved declaration kind, not the raw
+    // empty locator kind.
+    expect(result.failures[0]?.diagnostics).toContain('same function "once" in "a.ts"');
+    expect(result.failures[0]?.diagnostics).not.toContain('same  "once"');
+  });
+
+  test("two viewers on one declaration are duplicates (#40)", () => {
+    const selections = parseSelection(
+      ["select function once in a.ts end", "select once in a.ts end"].join("\n"),
+    );
+    const result = resolveEditDslReply(selections, deps(ONCE));
+    expect(result.viewers).toHaveLength(1);
+    expect(result.regions).toEqual([]);
+    expect(result.failures).toHaveLength(1);
+    expect(result.failures[0]?.index).toBe(1);
+    expect(result.failures[0]?.stage).toBe("duplicate");
+  });
+
+  test("a class selected through value and type is still one declaration (#40)", () => {
+    const result = resolveEditDslReply(
+      parseSelection(
+        [
+          "select class Widget in a.ts resolve value end",
+          "select Widget in a.ts resolve type end",
+        ].join("\n"),
+      ),
+      deps("export class Widget {}\n"),
+    );
+    expect(result.viewers).toHaveLength(1);
+    expect(result.failures[0]?.index).toBe(1);
+    expect(result.failures[0]?.stage).toBe("duplicate");
+    expect(result.failures[0]?.diagnostics).toContain('same class "Widget" in "a.ts"');
+  });
+
+  test("different declarations in one file are allowed (#40)", () => {
+    const source = [
+      "export function one(): number {",
+      "  return 1;",
+      "}",
+      "export function two(): number {",
+      "  return 2;",
+      "}",
+      "",
+    ].join("\n");
+    const selections = parseSelection(
+      [
+        wholeReplace("a.ts", "function", "one", "function one(): number {\n  return 3;\n}"),
+        wholeReplace("a.ts", "function", "two", "function two(): number {\n  return 4;\n}"),
+      ].join("\n"),
+    );
+    const result = resolveEditDslReply(selections, deps(source));
+    expect(result.failures).toEqual([]);
+    expect(result.regions).toHaveLength(2);
+  });
+
+  test("the same symbol in different files is allowed (#40)", () => {
+    const selections = parseSelection(
+      [
+        wholeReplace("a.ts", "function", "once", "function once(): number {\n  return 2;\n}"),
+        wholeReplace("b.ts", "function", "once", "function once(): number {\n  return 3;\n}"),
+      ].join("\n"),
+    );
+    const result = resolveEditDslReply(selections, multiDeps({ "a.ts": ONCE, "b.ts": ONCE }));
+    expect(result.failures).toEqual([]);
+    expect(result.regions).toHaveLength(2);
+    expect(result.regions.map((region) => region.path)).toEqual(["a.ts", "b.ts"]);
   });
 
   test("a no-kind clause resolves a declaration of any kind", () => {
