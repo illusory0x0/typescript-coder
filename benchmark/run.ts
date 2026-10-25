@@ -501,7 +501,7 @@ Options:
   --keep                                     keep workspaces and logs under ./tmp/benchmark/
   --json <path>                              report output path (default: benchmark/results/)
   --replay-dir <path>                        write per-run tc-side replay bundles to <path>
-  --token-budget <n>                         abort a tc-side run once accumulated provider
+  --token-budget <n>                         abort a tc-side run once accumulated cache-excluded
                                              tokens exceed n (default: 120000)
   --effort <none|low|high|max>               force this reasoning_effort on every tc-side
                                              model call (default: none)
@@ -1205,6 +1205,9 @@ async function runTypescriptCoderSide(options: {
       checkCommand: ["bun", options.tscBin, "--noEmit"],
       testCommand: ["bun", "test"],
       tokenBudget: options.tokenBudget ?? undefined,
+      // The benchmark cap uses the same cache-excluded total as the report;
+      // the core CLI keeps its historical raw provider-token safety cap.
+      tokenBudgetBasis: "cache-excluded",
       effortOverride: options.effort ?? undefined,
       multiPayload: options.multiPayload,
       protocolFormat: options.protocolFormat,

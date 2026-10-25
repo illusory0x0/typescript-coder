@@ -38,6 +38,7 @@ import {
   DEFAULT_TOKEN_BUDGET,
   MAX_CONSECUTIVE_LENGTH,
   addLoopTokens,
+  budgetTokensFromResponse,
   cloneLoopUsage,
   discoverSourceFiles,
   editDslRegionToResolved,
@@ -52,7 +53,6 @@ import {
   safeMutablePath,
   selectSpecFiles,
   tokenBudgetDiagnostics,
-  tokensFromResponse,
   totalLoopTokens,
   withEffort,
   writeTarget,
@@ -169,7 +169,7 @@ async function callModel(
     undefined,
     withEffort(chatOptions, options.effortOverride ?? "none"),
   );
-  usage.consumed += tokensFromResponse(response);
+  usage.consumed += budgetTokensFromResponse(response, options.tokenBudgetBasis ?? "raw");
   addLoopTokens(bucket, loopTokensFromResponse(response));
   return response;
 }
@@ -1094,7 +1094,11 @@ async function executeEdit(
     if (overBudget(usage, budget)) {
       return {
         ok: false,
-        diagnostics: tokenBudgetDiagnostics(usage.consumed, budget),
+        diagnostics: tokenBudgetDiagnostics(
+          usage.consumed,
+          budget,
+          context.options.tokenBudgetBasis ?? "raw",
+        ),
         messages: chat.messages,
       };
     }
@@ -1615,6 +1619,7 @@ function firstEditOfState(state: TaskRunState | null): EditNode | undefined {
 export async function runTaskLoop(options: LoopOptions): Promise<LoopResult> {
   const cwd = options.cwd;
   const tokenBudget = options.tokenBudget ?? DEFAULT_TOKEN_BUDGET;
+  const tokenBudgetBasis = options.tokenBudgetBasis ?? "raw";
   const workspace = workspaceOf(cwd);
   const specFiles = selectSpecFiles(options.issue, workspace.files);
   const indexText = buildContextYaml(workspace.files, {
@@ -1710,7 +1715,10 @@ export async function runTaskLoop(options: LoopOptions): Promise<LoopResult> {
       return terminated("provider-error", providerErrorDiagnostics(error));
     }
     if (overBudget(usageState, tokenBudget)) {
-      return terminated("token-budget", tokenBudgetDiagnostics(usageState.consumed, tokenBudget));
+      return terminated(
+        "token-budget",
+        tokenBudgetDiagnostics(usageState.consumed, tokenBudget, tokenBudgetBasis),
+      );
     }
     return response;
   };
@@ -1902,7 +1910,7 @@ export async function runTaskLoop(options: LoopOptions): Promise<LoopResult> {
           kind: "failed",
           result: await terminated(
             "token-budget",
-            tokenBudgetDiagnostics(usageState.consumed, tokenBudget),
+            tokenBudgetDiagnostics(usageState.consumed, tokenBudget, tokenBudgetBasis),
           ),
         };
       }
@@ -2123,7 +2131,10 @@ export async function runTaskLoop(options: LoopOptions): Promise<LoopResult> {
       priorGateDiagnostics(state, stage, task),
     );
     if (overBudget(usageState, tokenBudget)) {
-      return terminated("token-budget", tokenBudgetDiagnostics(usageState.consumed, tokenBudget));
+      return terminated(
+        "token-budget",
+        tokenBudgetDiagnostics(usageState.consumed, tokenBudget, tokenBudgetBasis),
+      );
     }
     if (!outcome.ok) {
       state.editStatus.set(edit.id, "failed");

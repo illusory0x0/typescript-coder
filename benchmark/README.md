@@ -28,8 +28,8 @@ is frozen), `--model`
 (default `deepseek-flash`), `--keep`, `--json <path>`, `--replay-dir
 <path>` (tc side only: write one replay bundle per run to `<path>/<task>-tc-
 rep<n>.json`; off by default), `--token-budget <n>` (tc side only: abort a run
-once accumulated provider tokens exceed n; default 120000, see "Run budget"
-below), `--effort <none|low|high|max>` (tc side only: force this reasoning_effort
+once accumulated **cache-excluded** tokens exceed n; default 120000, see "Run
+budget" below), `--effort <none|low|high|max>` (tc side only: force this reasoning_effort
 on every Edit-loop call, overriding the default described below),
 `--protocol-format edit-dsl` (the only allowed value; `json` is frozen and
 `compact` is a deprecated alias for `edit-dsl`), `--agent-mode
@@ -310,8 +310,10 @@ exchange) and is recorded in `terminationReason` + `loopDiagnostics`, with a
 `failures/` artifact written by the benchmark runner.
 
 `--token-budget <n>` (default 120,000) aborts a tc-side run as soon as
-accumulated provider tokens strictly exceed `<n>` (exactly at the budget keeps
-running). The in-flight response is neither applied nor verified, the only
+accumulated **cache-excluded** tokens strictly exceed `<n>` (exactly at the
+budget keeps running). This is the same metric as the report headline; the core
+CLI's `--token-budget` remains a raw provider-token safety cap. The in-flight
+response is neither applied nor verified, the only
 remaining provider call is the summary, and the record carries `ok: false`,
 `terminationReason: "token-budget"`, and the reason in `loopDiagnostics`; the
 judge still runs and its fields are recorded as-is. Budget aborts are run

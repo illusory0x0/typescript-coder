@@ -21,6 +21,7 @@ import {
   buildSummaryPrompt,
   buildSystemPrompt,
   buildUserPrompt,
+  budgetTokensFromResponse,
   classifyRejection,
   consecutiveLengthFinishes,
   createAttemptDigestState,
@@ -5439,6 +5440,25 @@ describe("runLoop", () => {
     expect(verificationRows.map((record) => record.signature)).toEqual([3, 2]);
     expect(result.records.filter((record) => record.kind === "exchange")).toHaveLength(7);
   }, 30000);
+
+  test("token budget: cache-excluded basis ignores cached prompt tokens", () => {
+    const response: ChatResponse = {
+      content: null,
+      toolCalls: [],
+      finishReason: "stop",
+      raw: {
+        usage: {
+          prompt_tokens: 100,
+          completion_tokens: 20,
+          total_tokens: 120,
+          prompt_tokens_details: { cached_tokens: 80 },
+        },
+      },
+    };
+    expect(budgetTokensFromResponse(response)).toBe(120);
+    expect(budgetTokensFromResponse(response, "cache-excluded")).toBe(40);
+    expect(budgetTokensFromResponse(response, "raw")).toBe(120);
+  });
 
   test("token budget: terminates with exactly one summary call on a pick", async () => {
     const dir = fixtureDir();

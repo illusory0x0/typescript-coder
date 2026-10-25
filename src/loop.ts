@@ -1411,12 +1411,21 @@ export function isDecisionAsk(stalled: StalledAsk): boolean {
 const IDENTICAL_RETRY_NOTE =
   'the previous attempt failed identically; change the shape of the edit (omit "matcher" for a whole-symbol rewrite, adjust the replacement, or re-pin to a different declaration)';
 
+/** Basis used by the hard per-run token budget (#36). */
+export type TokenBudgetBasis = "raw" | "cache-excluded";
+
 export interface LoopOptions {
   cwd: string;
   issue: string;
   provider: ProviderLike;
   /** Abort the run once accumulated provider tokens exceed this (#36). */
   tokenBudget?: number;
+  /**
+   * Budget accounting basis. The core CLI keeps the historical raw provider
+   * total; benchmarks may request the cache-excluded headline total so their
+   * hard cap uses the same metric as the report.
+   */
+  tokenBudgetBasis?: TokenBudgetBasis;
   temperature?: number;
   checkCommand?: string[];
   testCommand?: string[];
@@ -2391,8 +2400,29 @@ export function loopTokensFromResponse(response: ChatResponse): LoopTokens {
   };
 }
 
-export function tokenBudgetDiagnostics(consumedTokens: number, tokenBudget: number): string {
-  return `token-budget: accumulated ${consumedTokens} tokens exceeded the ${tokenBudget} token budget`;
+/**
+ * Provider tokens charged against the hard budget. `raw` preserves the
+ * historical total; `cache-excluded` mirrors the benchmark headline
+ * (cache-miss input + output) and is passed only by the benchmark harness.
+ */
+export function budgetTokensFromResponse(
+  response: ChatResponse,
+  basis: TokenBudgetBasis = "raw",
+): number {
+  if (basis === "raw") {
+    return tokensFromResponse(response);
+  }
+  const tokens = loopTokensFromResponse(response);
+  return Math.max(0, tokens.input - tokens.cacheRead) + tokens.output;
+}
+
+export function tokenBudgetDiagnostics(
+  consumedTokens: number,
+  tokenBudget: number,
+  basis: TokenBudgetBasis = "raw",
+): string {
+  const label = basis === "cache-excluded" ? "cache-excluded " : "";
+  return `token-budget: accumulated ${consumedTokens} ${label}tokens exceeded the ${tokenBudget} token budget`;
 }
 
 function diagnosticsHeadOf(diagnostics: string | null): string | null {
@@ -4418,6 +4448,7 @@ function repeatDiagnostics(submission: ModifySubmission): string {
 
 async function runJsonLoop(options: LoopOptions): Promise<LoopResult> {
   const tokenBudget = options.tokenBudget ?? DEFAULT_TOKEN_BUDGET;
+  const tokenBudgetBasis = options.tokenBudgetBasis ?? "raw";
   const temperature = options.temperature;
   const chatOptions: ChatOptions | undefined =
     temperature === undefined ? undefined : { temperature };
@@ -4907,12 +4938,12 @@ async function runJsonLoop(options: LoopOptions): Promise<LoopResult> {
             tokens,
           };
         }
-        consumedTokens += tokensFromResponse(response);
+        consumedTokens += budgetTokensFromResponse(response, tokenBudgetBasis);
         addTokens(loopTokensFromResponse(response));
         if (consumedTokens > tokenBudget) {
           return await terminate(
             "token-budget",
-            tokenBudgetDiagnostics(consumedTokens, tokenBudget),
+            tokenBudgetDiagnostics(consumedTokens, tokenBudget, tokenBudgetBasis),
           );
         }
         // Only the continuation prompt offers STOP (#52).
@@ -5192,10 +5223,13 @@ async function runJsonLoop(options: LoopOptions): Promise<LoopResult> {
           tokens,
         };
       }
-      consumedTokens += tokensFromResponse(response);
+      consumedTokens += budgetTokensFromResponse(response, tokenBudgetBasis);
       addTokens(loopTokensFromResponse(response));
       if (consumedTokens > tokenBudget) {
-        return await terminate("token-budget", tokenBudgetDiagnostics(consumedTokens, tokenBudget));
+        return await terminate(
+          "token-budget",
+          tokenBudgetDiagnostics(consumedTokens, tokenBudget, tokenBudgetBasis),
+        );
       }
       // The no-progress ask's STOP (#54), only at its first exchange; the
       // stalled diagnostics stay distinct from #52's exhausted-round text. A
@@ -6052,6 +6086,7 @@ async function runJsonLoop(options: LoopOptions): Promise<LoopResult> {
 
 async function runEditDslLoop(options: LoopOptions): Promise<LoopResult> {
   const tokenBudget = options.tokenBudget ?? DEFAULT_TOKEN_BUDGET;
+  const tokenBudgetBasis = options.tokenBudgetBasis ?? "raw";
   const temperature = options.temperature;
   const chatOptions: ChatOptions | undefined =
     temperature === undefined ? undefined : { temperature };
@@ -6483,12 +6518,12 @@ async function runEditDslLoop(options: LoopOptions): Promise<LoopResult> {
             tokens,
           };
         }
-        consumedTokens += tokensFromResponse(response);
+        consumedTokens += budgetTokensFromResponse(response, tokenBudgetBasis);
         addTokens(loopTokensFromResponse(response));
         if (consumedTokens > tokenBudget) {
           return await terminate(
             "token-budget",
-            tokenBudgetDiagnostics(consumedTokens, tokenBudget),
+            tokenBudgetDiagnostics(consumedTokens, tokenBudget, tokenBudgetBasis),
           );
         }
         // Only the continuation prompt offers STOP (#52).
@@ -7014,12 +7049,12 @@ async function runEditDslLoop(options: LoopOptions): Promise<LoopResult> {
             tokens,
           };
         }
-        consumedTokens += tokensFromResponse(response);
+        consumedTokens += budgetTokensFromResponse(response, tokenBudgetBasis);
         addTokens(loopTokensFromResponse(response));
         if (consumedTokens > tokenBudget) {
           return await terminate(
             "token-budget",
-            tokenBudgetDiagnostics(consumedTokens, tokenBudget),
+            tokenBudgetDiagnostics(consumedTokens, tokenBudget, tokenBudgetBasis),
           );
         }
       }
@@ -7644,7 +7679,7 @@ async function runEditDslLoop(options: LoopOptions): Promise<LoopResult> {
           // must not turn the run into a failure.
           return success(newSource);
         }
-        consumedTokens += tokensFromResponse(confirmation);
+        consumedTokens += budgetTokensFromResponse(confirmation, tokenBudgetBasis);
         addTokens(loopTokensFromResponse(confirmation));
         if (consumedTokens > tokenBudget) {
           // The confirmation is advisory and the verification already passed:
