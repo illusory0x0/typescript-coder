@@ -263,6 +263,25 @@ describe("parseReplayBundle", () => {
     });
     expect(parseReplayBundle(legacy).protocolFormat).toBe("edit-dsl");
   });
+
+  test("maps legacy agent modes and defaults to canonical pinned-repair (#34)", () => {
+    const base = syntheticBundle("project", []);
+    // JSON.stringify drops the undefined field, so this is a bundle recorded
+    // before the mode field existed.
+    expect(parseReplayBundle(JSON.stringify(base)).agentMode).toBe("pinned-repair");
+    expect(parseReplayBundle(JSON.stringify({ ...base, agentMode: "edit" })).agentMode).toBe(
+      "pinned-repair",
+    );
+    expect(parseReplayBundle(JSON.stringify({ ...base, agentMode: "plan-exec" })).agentMode).toBe(
+      "plan-exec-review",
+    );
+    expect(
+      parseReplayBundle(JSON.stringify({ ...base, agentMode: "plan-exec-review" })).agentMode,
+    ).toBe("plan-exec-review");
+    expect(parseReplayBundle(JSON.stringify({ ...base, agentMode: "yaml" })).agentMode).toBe(
+      "pinned-repair",
+    );
+  });
 });
 
 describe("ReplayProvider", () => {
@@ -353,6 +372,7 @@ describe("runReplay", () => {
     );
     const bundle = parseReplayBundle(readFileSync(bundlePath, "utf8"));
     expect(bundle.protocolFormat).toBe("edit-dsl");
+    expect(bundle.agentMode).toBe("pinned-repair");
     const run = await runReplay({
       bundle,
       bundlePath,

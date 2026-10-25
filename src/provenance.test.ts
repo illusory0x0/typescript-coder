@@ -10,6 +10,7 @@ import {
   parseConsumptionRows,
   stableStringify,
 } from "./provenance";
+import type { AgentMode } from "./loop";
 import type { ConsumptionValue, MeasuredInput } from "./provenance";
 
 // Build a minimal `benchmark/fixtures/<task>/` tree under a temp root so the
@@ -107,11 +108,25 @@ describe("currentInputHashes", () => {
       const effort = currentInputHashes(root, { ...base, effort: "high" });
       expect(effort.inputs.loopConfig).not.toBe(first.inputs.loopConfig);
 
-      // Plan/execute pins its own prompt + task caps; edit hashes stay stable.
-      const plan = currentInputHashes(root, { ...base, agentMode: "plan-exec" });
+      // Plan/execute/review pins its own prompt + task caps; pinned-repair
+      // hashes stay stable, and the deprecated plan-exec/edit spellings map to
+      // the same bytes so old plan-exec provenance hashes stay identical (#34).
+      const plan = currentInputHashes(root, { ...base, agentMode: "plan-exec-review" });
       expect(plan.inputs.systemPrompt).not.toBe(first.inputs.systemPrompt);
       expect(plan.inputs.loopConfig).not.toBe(first.inputs.loopConfig);
-      expect(currentInputHashes(root, { ...base, agentMode: "edit" })).toEqual(first);
+      expect(currentInputHashes(root, { ...base, agentMode: "pinned-repair" })).toEqual(first);
+      expect(
+        currentInputHashes(root, {
+          ...base,
+          agentMode: "plan-exec" as unknown as AgentMode,
+        }),
+      ).toEqual(plan);
+      expect(
+        currentInputHashes(root, {
+          ...base,
+          agentMode: "edit" as unknown as AgentMode,
+        }),
+      ).toEqual(first);
 
       // Changing a fixture's on-disk content changes the fixture digest.
       writeFileSync(

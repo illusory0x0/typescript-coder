@@ -168,52 +168,15 @@ export const EDIT_DSL_FORCE_DIAGNOSTICS =
   "stage: protocol\nthe reply must be one or more `select … end` clauses; a JSON edit payload is not accepted in this mode";
 
 // A JSON edit payload is a protocol rejection; any other unparseable reply names
-// its actual syntax error. Dropping the `SelectionSyntaxError` message made a
-// missing `end` look like a rejected JSON payload, sending the model back to the
-// payload form this mode forbids. The reader's offset turns the message into a
-// line/column excerpt, so a retry can see the exact spot instead of guessing
-// (#25: three of rep2's six rejections were pure syntax).
-function syntaxExcerpt(text: string, offset: number | null): string {
-  if (offset === null || text === "") {
-    return "";
-  }
-  const clamped = Math.max(0, Math.min(offset, text.length));
-  const before = text.slice(0, clamped);
-  const rows = before.split("\n");
-  const line = rows.length;
-  const column = (rows.at(-1)?.length ?? 0) + 1;
-  const all = text.split("\n");
-  const from = Math.max(1, line - 2);
-  const to = Math.min(all.length, line + 1);
-  const width = String(to).length;
-  // Cap a long line: show a window around the failure instead of a caret
-  // hundreds of columns to the right of a 5k-character reply line.
-  const maxWidth = 200;
-  const windowStart = Math.max(0, Math.min(column - 1, 80));
-  const rendered: string[] = [];
-  for (let row = from; row <= to; row += 1) {
-    const value = all[row - 1] ?? "";
-    const start = row === line ? windowStart : 0;
-    const slice = value.slice(start, start + maxWidth);
-    const prefix = start > 0 ? "…" : "";
-    const suffix = start + maxWidth < value.length ? "…" : "";
-    rendered.push(`${String(row).padStart(width)} | ${prefix}${slice}${suffix}`);
-    if (row === line) {
-      const caret = prefix.length + (column - 1 - start);
-      rendered.push(`${" ".repeat(width)} | ${" ".repeat(Math.max(0, caret))}^`);
-    }
-  }
-  return `at line ${line}, column ${column}:\n${rendered.join("\n")}`;
-}
-
+// its actual syntax error. `SelectionSyntaxError` already carries the shared
+// renderer's line/column excerpt (#33), so this only keeps the force-JSON
+// classification.
 function editDslParseDiagnostics(content: string, error: SelectionSyntaxError): string {
   const text = stripCodeFences(content);
   if (text.trimStart().startsWith("{")) {
     return EDIT_DSL_FORCE_DIAGNOSTICS;
   }
-  // The reader parsed this exact string, so its offset indexes `text`.
-  const excerpt = syntaxExcerpt(text, error.offset);
-  return excerpt === "" ? error.diagnostics : `${error.diagnostics}\n\n${excerpt}`;
+  return error.diagnostics;
 }
 
 // #117/#119: under the edit-dsl protocol a `protocol` rejection means the reply
@@ -1359,8 +1322,35 @@ export interface ProviderLike {
   ): Promise<ChatResponse>;
 }
 
-/** The loop shape: one pinned target, or a planned Plan -> Stage -> Task -> edit tree. */
-export type AgentMode = "edit" | "plan-exec";
+/**
+ * The loop shape: `pinned-repair` repairs one pinned selection through
+ * Edit -> Verify; `plan-exec-review` plans, executes, and reviews a
+ * Plan -> Execute -> Review edit tree.
+ */
+export type AgentMode = "pinned-repair" | "plan-exec-review";
+
+/** Canonical loop modes, in display/iteration order. */
+export const AGENT_MODES: readonly AgentMode[] = ["pinned-repair", "plan-exec-review"];
+/** The single-target loop remains the default. */
+export const DEFAULT_AGENT_MODE: AgentMode = "pinned-repair";
+
+// Deprecated input aliases: `edit` and `plan-exec` remain readable (old
+// reports, replay bundles, and CLI invocations), but new output always names
+// the canonical mode.
+const AGENT_MODE_ALIASES: Readonly<Record<string, AgentMode>> = {
+  "pinned-repair": "pinned-repair",
+  edit: "pinned-repair",
+  "plan-exec-review": "plan-exec-review",
+  "plan-exec": "plan-exec-review",
+};
+
+/** Canonicalize a loop-mode value, accepting the deprecated aliases. */
+export function canonicalAgentMode(value: unknown): AgentMode | null {
+  if (typeof value !== "string") {
+    return null;
+  }
+  return AGENT_MODE_ALIASES[value] ?? null;
+}
 
 export const DEFAULT_TOKEN_BUDGET = 120_000;
 /** Model exchanges per Run iteration, shared by target picking and content revision (#43). */
@@ -1451,10 +1441,12 @@ export interface LoopOptions {
    */
   protocolFormat?: ProtocolFormat;
   /**
-   * Loop shape (`--mode`): `edit` (default) is the single-target Edit → Verify
-   * loop; `plan-exec` runs the planning/execution loop of `docs/spec.md`, where
-   * a planner emits a Plan -> Stage -> Task -> edit tree and the harness
-   * executes one edit at a time.
+   * Loop shape (`--mode`): `pinned-repair` (default) is the single-target
+   * Edit → Verify loop; `plan-exec-review` runs the planning/execution/review
+   * loop of `docs/spec.md`, where a planner emits a
+   * Plan -> Execute -> Review edit tree and the harness executes one edit at a
+   * time. The deprecated `edit`/`plan-exec` spellings are accepted only at
+   * input boundaries and map to these canonical values.
    */
   agentMode?: AgentMode;
   /**
@@ -2229,6 +2221,52 @@ export function zeroLoopTokens(): LoopTokens {
   return { input: 0, output: 0, total: 0, cacheRead: 0 };
 }
 
+/**
+ * Plan/execute provider spend by conversation bucket (#32): the planner's
+ * initial/patch turns, the post-execution review turns, and the executor's
+ * edit/self-check turns. The three totals sum to `LoopResult.tokens`.
+ */
+export interface LoopUsage {
+  planning: LoopTokens;
+  review: LoopTokens;
+  execution: LoopTokens;
+}
+
+/** A fresh all-zero usage snapshot. */
+export function zeroLoopUsage(): LoopUsage {
+  return {
+    planning: zeroLoopTokens(),
+    review: zeroLoopTokens(),
+    execution: zeroLoopTokens(),
+  };
+}
+
+/** Add one response's token components into a bucket in place. */
+export function addLoopTokens(target: LoopTokens, delta: LoopTokens): void {
+  target.input += delta.input;
+  target.output += delta.output;
+  target.total += delta.total;
+  target.cacheRead += delta.cacheRead;
+}
+
+/** Sum the three buckets; this is the run total that drives the token budget. */
+export function totalLoopTokens(usage: LoopUsage): LoopTokens {
+  const total = zeroLoopTokens();
+  addLoopTokens(total, usage.planning);
+  addLoopTokens(total, usage.review);
+  addLoopTokens(total, usage.execution);
+  return total;
+}
+
+/** A detached copy, safe to return on a `LoopResult`. */
+export function cloneLoopUsage(usage: LoopUsage): LoopUsage {
+  return {
+    planning: { ...usage.planning },
+    review: { ...usage.review },
+    execution: { ...usage.execution },
+  };
+}
+
 export interface LoopResult {
   ok: boolean;
   mode?: SelectionMode;
@@ -2245,15 +2283,23 @@ export interface LoopResult {
   /** Provider token spend of the run (#80); zeros when no provider usage was seen. */
   tokens: LoopTokens;
   /**
+   * Plan/execute mode (#32): the same spend split across the planning, review,
+   * and execution conversations. Absent on the single-target drivers.
+   */
+  usage?: LoopUsage;
+  /**
    * Explicit-targets mode (#81): every requested address that was applied, in
    * order. Absent on the default discovery path.
    */
   appliedTargets?: Locator[];
   /**
    * Plan/execute mode: one entry per edit of the final Plan tree, in tree
-   * order. Absent on the single-target drivers.
+   * order; `id`, `stage`, and `task` are string node ids
+   * (`typescript-coder-result@2`). Absent on the single-target drivers.
    */
   tasks?: TaskSummary[];
+  /** Recovered parser warnings (#33); absent when the reply was clean. */
+  warnings?: string[];
 }
 
 type Selection =
@@ -7749,7 +7795,9 @@ async function runEditDslLoop(options: LoopOptions): Promise<LoopResult> {
 }
 
 export async function runLoop(options: LoopOptions): Promise<LoopResult> {
-  if (options.agentMode === "plan-exec") {
+  // Canonicalize here too so a legacy caller passing `plan-exec` still routes
+  // to the planned loop; canonical values are the only ones written onward.
+  if (canonicalAgentMode(options.agentMode) === "plan-exec-review") {
     // Lazy: the task driver imports from this module, so a static import here
     // would be a load-time cycle.
     const { runTaskLoop } = await import("./task-loop");

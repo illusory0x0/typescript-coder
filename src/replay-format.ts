@@ -1,3 +1,4 @@
+import type { AgentMode } from "./loop";
 import type { ChatMessage, ChatResponse, ToolCall } from "../src/openai";
 
 export const REPLAY_BUNDLE_FORMAT = "typescript-coder-replay@1";
@@ -24,8 +25,11 @@ export interface ReplayBundleMeta {
    * edit-dsl bundles pass `edit-dsl` explicitly.
    */
   readonly protocolFormat?: ReplayProtocolFormat;
-  /** Loop mode recorded for the bundle; omitted means the legacy `edit` loop. */
-  readonly agentMode?: "edit" | "plan-exec";
+  /**
+   * Canonical loop mode recorded for the bundle; omitted means pinned-repair.
+   * Legacy `edit`/`plan-exec` bundles are normalized on read.
+   */
+  readonly agentMode?: AgentMode;
 }
 
 export interface ReplayBundle extends ReplayBundleMeta {
@@ -33,8 +37,8 @@ export interface ReplayBundle extends ReplayBundleMeta {
   readonly side: "tc";
   /** Recorded edit protocol; required on bundles written/parsed here. */
   readonly protocolFormat: ReplayProtocolFormat;
-  /** Recorded loop mode; legacy bundles and direct callers read as `edit`. */
-  readonly agentMode?: "edit" | "plan-exec";
+  /** Recorded loop mode; legacy bundles read as canonical `pinned-repair`. */
+  readonly agentMode?: AgentMode;
   readonly calls: ReplayCall[];
 }
 
@@ -96,7 +100,9 @@ export class ReplayRecorder {
       issue: meta.issue,
       fixture: meta.fixture,
       protocolFormat: meta.protocolFormat ?? "json",
-      agentMode: meta.agentMode ?? "edit",
+      // Literal avoids a runtime cycle with `loop.ts`, which imports
+      // `usageFromRaw` from this module; the canonical default is pinned-repair.
+      agentMode: meta.agentMode ?? "pinned-repair",
       calls: this.calls,
     };
   }

@@ -187,11 +187,19 @@ categories:
   - id: loop-verification
     title: In-loop verification
     terms:
+      - term: AgentMode
+        definition: >-
+          Loop shape. `pinned-repair` (default) is the single-target Edit ->
+          Verify loop; `plan-exec-review` is the Plan -> Execute -> Review tree
+          loop. Deprecated aliases `edit` -> `pinned-repair` and `plan-exec` ->
+          `plan-exec-review` stay readable in old flags, reports, and replay
+          bundles; new output names the canonical mode.
       - term: runLoop
         definition: >-
-          `src/loop.ts` dispatcher. The default route is `runEditDslLoop`;
-          explicit-targets mode and `--protocol-format=json` route to
-          `runJsonLoop`.
+          `src/loop.ts` dispatcher. The default `pinned-repair` route is
+          `runEditDslLoop`; explicit-targets mode and `--protocol-format=json`
+          route to `runJsonLoop`; `plan-exec-review` lazily imports and routes
+          to `runTaskLoop`.
       - term: checkCommand
         definition: The type-check command run during verification; default `bunx tsc --noEmit`.
       - term: testCommand
@@ -218,6 +226,24 @@ categories:
           tc side is the number of records.
       - term: verification
         definition: Harness-run check plus test command after an applied edit; no model call involved.
+      - term: TaskStatus
+        definition: >-
+          Harness-owned Task state in plan-exec-review: `pending`, `review`,
+          `passed`, or `failed`. `review` is transient: the Task gate has run
+          and its one post-execution review may still repair the Task. A
+          `review` Task is neither runnable nor terminal, and stage closure
+          waits for it.
+      - term: post-execution review
+        definition: >-
+          One compact planner turn after a Task's edits and gate. It sees the
+          gate result plus a concise applied diff and replies `approve` or one
+          patch that may repair only the current Task. A patched Task
+          re-executes and is not reviewed a second time.
+      - term: usage buckets
+        definition: >-
+          `LoopResult.usage` splits plan-exec-review spend into `planning`,
+          `review`, and `execution` `LoopTokens` buckets. Their sum is
+          `LoopResult.tokens`, and all three count toward the token budget.
       - term: keep-progress
         definition: >-
           A failed verification leaves the attempted state on disk; diagnostics
@@ -302,14 +328,19 @@ categories:
       - term: TerminationReason
         definition: >-
           `token-budget`, `edit-exhausted`, `delete-verification-failed`,
-          `prev-broken`, `harness-fault`, `output-limit`. A run ending through
-          this matrix ends with one summary call.
+          `prev-broken`, `harness-fault`, `output-limit`, `task-exhausted`. A
+          run ending through this matrix ends with one summary call.
       - term: token-budget
         definition: >-
           Accumulated provider tokens strictly exceed the budget (default
           120000). The in-flight response is not applied or verified.
       - term: edit-exhausted
         definition: The run cannot produce a valid edit within the round/iteration caps.
+      - term: task-exhausted
+        definition: >-
+          The plan-exec-review driver cannot plan, patch, or review valid work
+          within its caps (including a no-progress patch), or a review reply is
+          neither `approve` nor one valid repair patch.
       - term: delete-verification-failed
         definition: A deletion fails verification.
       - term: prev-broken
@@ -327,14 +358,21 @@ categories:
           `matcherKinds`.
       - term: LoopResult
         definition: >-
-          `ok`, `mode`, `locator`, `filePath`, `editedSource`, `records`,
-          `diagnostics`, `explanation`, `messages`, `skipped`,
-          `terminationReason`, `tokens`, `appliedTargets`.
+          `ok`, `mode` (the selection mode, not `AgentMode`), `locator`,
+          `filePath`, `editedSource`, `records`, `diagnostics`, `explanation`,
+          `messages`, `skipped`, `terminationReason`, `tokens`,
+          `appliedTargets`, and, in plan-exec-review, `usage`
+          (planning/review/execution buckets), `warnings` (recovered parser
+          warnings), and `tasks`, one per edit with string `id`, `stage`, and
+          `task` node ids.
       - term: subagent result
         definition: >-
-          `typescript-coder-result@1`, printed by `--format json`: format,
+          `typescript-coder-result@2`, printed by `--format json`: format,
           status, verified, files, targets, records, tokens,
-          terminationReason, diagnostics.
+          terminationReason, diagnostics, and (plan-exec-review only) tasks
+          whose `id`, `stage`, and `task` fields are string node ids. It keeps
+          the single `tokens` object; `LoopResult.usage` and
+          `LoopResult.warnings` are not exposed here.
 
   - id: protocol
     title: Edit protocol vocabulary

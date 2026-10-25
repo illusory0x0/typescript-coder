@@ -3,7 +3,9 @@ import {
   END_OF_LINE_COLUMN,
   SelectionSyntaxError,
   parseMultiEditor,
+  parseMultiEditorDetailed,
   parseSelection,
+  parseSelectionDetailed,
   serializeMultiEditor,
   serializeSelection,
   serializeSelections,
@@ -240,6 +242,13 @@ describe("parseSelection", () => {
     expect(first(text).replacement).toBe("x");
   });
 
+  test("strips a whole-reply markdown fence with a warning", () => {
+    const parsed = parseSelectionDetailed(`\`\`\`\nselect foo in a.ts\nend\n\`\`\``);
+    expect(parsed.ok).toBe(true);
+    expect(parsed.value?.[0]?.locator).toEqual({ path: "a.ts", name: "foo", kind: "" });
+    expect(parsed.issues.some((issue) => issue.code === "EDIT_WHOLE_REPLY_FENCE")).toBe(true);
+  });
+
   test("parses one reply with several clauses", () => {
     const text = [
       "select function clamp in src/math.ts",
@@ -296,8 +305,10 @@ describe("parseSelection failures", () => {
     expectSyntax("select a b c in d.ts end", "select");
   });
 
-  test("names an unknown resolve kind", () => {
-    expectSyntax("select foo in a.ts resolve function end", "resolve");
+  test("names an unknown resolve kind with EDIT_UNKNOWN_SPACE", () => {
+    expect(expectSyntax("select foo in a.ts resolve function end", "resolve").issues[0]?.code).toBe(
+      "EDIT_UNKNOWN_SPACE",
+    );
     expectSyntax("select foo in a.ts resolve value, end", "resolve");
   });
 
@@ -305,7 +316,10 @@ describe("parseSelection failures", () => {
     expectSyntax("select foo in a.ts resolve end", "value");
   });
 
-  test("rejects a pick without a replace", () => {
+  test("rejects a pick without a replace with EDIT_PICK_WITHOUT_REPLACE", () => {
+    expect(expectSyntax("select foo in a.ts\npick 10\nend", "pick").issues[0]?.code).toBe(
+      "EDIT_PICK_WITHOUT_REPLACE",
+    );
     expectSyntax("select foo in a.ts\npick 10\nend", "pick");
     // The diagnostic names both fields the grammar couples.
     expectSyntax("select foo in a.ts\npick 10\nend", "replace");
@@ -347,7 +361,11 @@ describe("parseSelection failures", () => {
     expect(selection.replacement).toBe("y");
   });
 
-  test("rejects a rename combined with pick", () => {
+  test("rejects a rename combined with pick with EDIT_RENAME_MIXED", () => {
+    expect(
+      expectSyntax("select value in a.ts\nrename value to total\npick 1\nend", "rename").issues[0]
+        ?.code,
+    ).toBe("EDIT_RENAME_MIXED");
     expectSyntax("select value in a.ts\nrename value to total\npick 1\nend", "rename");
     expectSyntax("select value in a.ts\nrename value to total\npick 1\nend", "pick");
     expectSyntax(
@@ -376,8 +394,45 @@ describe("parseSelection failures", () => {
     expectSyntax("select value in a.ts\nrename value to", "identifier");
   });
 
-  test("names an unterminated clause", () => {
-    expectSyntax("select foo in a.ts\nmatch `x`", "end");
+  test("names a mid-clause missing end", () => {
+    expectSyntax("select foo in a.ts\nmatch `x`\nnonsense", "end");
+  });
+
+  test("recovers a missing end at EOF and before the next clause with a warning", () => {
+    const atEof = parseSelectionDetailed("select foo in a.ts\nmatch `x`");
+    expect(atEof.ok).toBe(true);
+    expect(atEof.issues.some((issue) => issue.code === "EDIT_MISSING_END")).toBe(true);
+    expect(atEof.value?.[0]?.matcher).toEqual({ kind: "snippet", value: "x" });
+    const beforeNext = parseSelectionDetailed("select foo in a.ts end select bar in b.ts end");
+    expect(beforeNext.ok).toBe(true);
+    expect(beforeNext.value).toHaveLength(2);
+  });
+
+  test("`select` inside a replacement fence is not a clause boundary", () => {
+    const text = [
+      "select foo in a.ts",
+      "replace with",
+      FENCE,
+      "select inside the fence",
+      FENCE,
+      "end",
+      "select bar in b.ts",
+      "end",
+    ].join("\n");
+    const parsed = parseSelectionDetailed(text);
+    expect(parsed.ok).toBe(true);
+    expect(parsed.value).toHaveLength(2);
+    expect(parsed.value?.[0]?.replacement).toBe("select inside the fence");
+  });
+
+  test("all-or-nothing: one bad clause keeps the parsed value for diagnostics only", () => {
+    const parsed = parseSelectionDetailed(
+      "select foo in a.ts\nend\nselect bar in b.ts\npick 1\nend",
+    );
+    expect(parsed.ok).toBe(false);
+    expect(parsed.issues.some((issue) => issue.code === "EDIT_PICK_WITHOUT_REPLACE")).toBe(true);
+    expect(parsed.value?.length).toBe(1);
+    expect(() => parseSelection(serializeSelections(parsed.value ?? []))).not.toThrow();
   });
 
   test("names trailing junk after `end`", () => {
@@ -392,8 +447,10 @@ describe("parseSelection failures", () => {
     expectSyntax("select foo in a.ts\nmatch /abc\nend", "regex");
   });
 
-  test("names an unclosed six-tick fence", () => {
-    expectSyntax(`select foo in a.ts\nreplace with\n${FENCE}\nfoo\nend`, "fence");
+  test("names an unclosed six-tick fence with EDIT_UNCLOSED_FENCE", () => {
+    const error = expectSyntax(`select foo in a.ts\nreplace with\n${FENCE}\nfoo\nend`, "fence");
+    expect(error.issues[0]?.code).toBe("EDIT_UNCLOSED_FENCE");
+    expect(error.truncated).toBe(true);
   });
 
   test("rejects a three-tick fence opening", () => {
@@ -441,8 +498,32 @@ describe("parseSelection failures", () => {
     expectSyntax("select foo in a.ts\nmatch `x`\npick {}\nend", "range");
   });
 
-  test("rejects a missing matcher value", () => {
-    expectSyntax("select foo in a.ts\nmatch\nend", "snippet");
+  test("rejects a missing matcher value with EDIT_MATCHER_MISSING", () => {
+    expect(expectSyntax("select foo in a.ts\nmatch\nend", "snippet").issues[0]?.code).toBe(
+      "EDIT_MATCHER_MISSING",
+    );
+  });
+
+  test("reports every failing clause with an index and bounds the rendered list", () => {
+    const text = Array.from(
+      { length: 10 },
+      (_, index) => `select foo${index} in a.ts\npick 1\nend`,
+    ).join("\n");
+    const parsed = parseSelectionDetailed(text);
+    expect(parsed.ok).toBe(false);
+    const errors = parsed.issues.filter((issue) => issue.severity === "error");
+    expect(errors).toHaveLength(10);
+    expect(errors[0]?.clauseIndex).toBe(1);
+    expect(errors[9]?.clauseIndex).toBe(10);
+    try {
+      parseSelection(text);
+      throw new Error("expected a syntax error");
+    } catch (error) {
+      expect(error).toBeInstanceOf(SelectionSyntaxError);
+      const syntax = error as SelectionSyntaxError;
+      expect(syntax.diagnostics).toContain("… 2 more issue(s)");
+      expect(syntax.diagnostics).toContain("clause: 1");
+    }
   });
 
   test("no partial selection is produced", () => {

@@ -80,6 +80,10 @@ function requestBody(request: CapturedRequest | undefined): Record<string, unkno
   return JSON.parse(String(request.init.body)) as Record<string, unknown>;
 }
 
+// Parallel-safety audit (#36): withEnv overwrites process.env keys that are
+// process-global, so each case restores the captured values in `finally`.
+// This file is safe under file-level `--parallel` isolation but must not use
+// `test.concurrent` while sharing the process env.
 function withEnv(values: Record<string, string | undefined>, run: () => void): void {
   const previous = new Map<string, string | undefined>();
   for (const [key, value] of Object.entries(values)) {

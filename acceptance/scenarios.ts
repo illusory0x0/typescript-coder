@@ -1,6 +1,6 @@
 import { cpSync, symlinkSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
-import type { LoopResult, ProtocolFormat, ProviderLike } from "../src/loop";
+import type { AgentMode, LoopResult, ProtocolFormat, ProviderLike } from "../src/loop";
 import type { ChatMessage, ChatResponse, ToolDefinition } from "../src/openai";
 
 export interface ScriptedToolCall {
@@ -60,8 +60,8 @@ export interface Scenario {
   live?: boolean;
   /** Edit protocol the scenario drives; omitted means the shipped `json` form. */
   protocolFormat?: ProtocolFormat;
-  /** Loop shape; omitted means the single-target edit loop. */
-  agentMode?: "edit" | "plan-exec";
+  /** Loop shape; omitted means the single-target pinned-repair loop. */
+  agentMode?: AgentMode;
   issue: string;
   responses: ScriptedResponse[];
   prepare?: (dir: string, repoRoot: string) => void;
@@ -372,35 +372,29 @@ export const scenarios: Scenario[] = [
     ],
   },
   {
-    id: "plan-exec-fix-answer",
-    title: "plan/execute plans one task and the executor makes the failing test green",
+    id: "plan-exec-review-fix-answer",
+    title:
+      "flat-DSL plan/execute/review plans one task and the executor makes the failing test green",
     fixture: "fix-answer",
-    agentMode: "plan-exec",
+    agentMode: "plan-exec-review",
     issue: TEST_ISSUE,
     responses: [
-      JSON.stringify({
-        stages: [
-          {
-            id: 1,
-            goal: "Fix the answer behavior.",
-            tasks: [
-              {
-                id: 1,
-                verify: "test",
-                instruction: "Change answer so it returns 2 instead of 1.",
-                edits: [
-                  {
-                    id: 2,
-                    loc: { path: "src/helper.ts", symbol: "answer", kind: "value" },
-                    action: "modify",
-                    instruction: "Change answer so it returns 2 instead of 1.",
-                  },
-                ],
-              },
-            ],
-          },
-        ],
-      }),
+      `plan "01-main"
+goal: Make the failing answer test pass.
+
+stage "02-stage-fix" plan "01-main"
+goal: Fix the answer behavior.
+end
+
+task "03-task-answer" stage "02-stage-fix" verify test
+instruction: Change answer so it returns 2 instead of 1.
+end
+
+edit "04-edit-answer" task "03-task-answer" modify value answer in src/helper.ts
+instruction: Change answer so it returns 2 instead of 1.
+end
+
+finish`,
       [
         "select answer in src/helper.ts resolve value",
         "replace with",
@@ -411,12 +405,13 @@ export const scenarios: Scenario[] = [
         "-----",
         "end",
       ].join("\n"),
+      "approve",
     ],
     assertions: [
       hasOk(true),
       fileContains("src/helper.ts", "return 2;"),
       fileEqualsOriginal("src/helper.test.ts"),
-      hasCallCount(2),
+      hasCallCount(3),
       messageContains(1, "Change answer so it returns 2 instead of 1."),
     ],
   },

@@ -514,6 +514,7 @@ describe("resolveEditDslReply (#111)", () => {
     const result = resolveEditDslReply(selections, deps(ONCE));
     expect(result.regions).toEqual([]);
     expect(result.failures[0]?.stage).toBe("address");
+    expect(result.failures[0]?.diagnostics).toContain("code: EDIT_TARGET_MISMATCH");
     expect(result.failures[0]?.diagnostics).toContain('declares no top-level "missing"');
   });
 

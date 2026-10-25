@@ -12,7 +12,13 @@ import {
 import { dirname, isAbsolute, join, relative, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 import { archiveFailureArtifacts, writeFailureArtifact } from "../src/failure-artifact";
-import { buildSystemPrompt, exchangeStats, runLoop } from "../src/loop";
+import {
+  buildSystemPrompt,
+  canonicalAgentMode,
+  DEFAULT_AGENT_MODE,
+  exchangeStats,
+  runLoop,
+} from "../src/loop";
 import { buildTaskExecutionSystemPrompt, buildTaskPlanningSystemPrompt } from "../src/prompts/task";
 import { OpenAIProvider, readConfigFromEnv } from "../src/openai";
 import type { AgentMode, ProviderLike, ProtocolFormat, RejectionCause } from "../src/loop";
@@ -53,7 +59,7 @@ interface CliArgs {
   multiPayload: boolean;
   /** Edit protocols (#119) to measure on the tc side; `edit-dsl` is the default. */
   protocolFormats: ProtocolFormat[];
-  /** tc loop modes to measure; `edit` is the default. */
+  /** tc loop modes to measure; `pinned-repair` is the default. */
   agentModes: AgentMode[];
   help: boolean;
 }
@@ -178,7 +184,7 @@ export interface RunRecord {
   readonly side: Side;
   /** Edit protocol used by a tc run (#119); null for the oc side. */
   readonly protocol: ProtocolFormat | null;
-  /** tc loop mode; null for the oc side and legacy rows (read as `edit`). */
+  /** tc loop mode; null for the oc side and legacy rows (read as `pinned-repair`). */
   readonly agentMode: AgentMode | null;
   readonly rep: number;
   readonly ok: boolean;
@@ -228,7 +234,7 @@ export interface AggregateRow {
   side: Side | null;
   /** Edit protocol of a tc row (#119); null for the oc side and legacy rows. */
   protocol: ProtocolFormat | null;
-  /** tc loop mode of the row; null for the oc side and legacy rows (read as `edit`). */
+  /** tc loop mode of the row; null for the oc side and legacy rows (read as `pinned-repair`). */
   agentMode: AgentMode | null;
   runs: number;
   ok: number;
@@ -293,7 +299,7 @@ export interface Report {
    * write it; absent on legacy single-protocol reports.
    */
   protocolFormats?: ProtocolFormat[];
-  /** Selected tc loop modes; absent on legacy reports (read as `["edit"]`). */
+  /** Selected tc loop modes; absent on legacy reports (read as `["pinned-repair"]`). */
   agentModes?: AgentMode[];
   /** Token budget forwarded to the tc side; null means `DEFAULT_TOKEN_BUDGET`. */
   tokenBudget: number | null;
@@ -315,7 +321,7 @@ export interface Report {
   provenance: RecordedProvenance | null;
   /** Per-protocol provenance for a multi-protocol report (#16). */
   provenanceByProtocol?: Partial<Record<ProtocolFormat, RecordedProvenance>>;
-  /** Per-mode provenance for a multi-mode report; absent on edit-only reports. */
+  /** Per-mode provenance for a multi-mode report; absent on pinned-repair-only reports. */
   provenanceByAgentMode?: Partial<Record<AgentMode, RecordedProvenance>>;
 }
 
@@ -485,9 +491,12 @@ Options:
                                              json is frozen at
                                              benchmark/results/json-format-baseline.json).
                                              compact is a deprecated alias for edit-dsl
-  --agent-mode edit|plan-exec|both           tc loop mode(s); edit is the default. Use
-                                             both to measure the edit loop and the new
-                                             plan/execute loop in one report
+  --agent-mode pinned-repair|plan-exec-review|both
+                                             tc loop mode(s); pinned-repair is the default.
+                                             Use both to measure pinned-repair and
+                                             plan-exec-review in one report. Deprecated
+                                             aliases: edit (pinned-repair), plan-exec
+                                             (plan-exec-review)
   --help, -h                                 print this help and exit
 `);
 }
@@ -563,25 +572,37 @@ export function parseProtocolFormats(value: string): ProtocolFormat[] {
   return PROTOCOL_ORDER.filter((protocol) => selected.has(protocol));
 }
 
-/** Canonical mode order: `edit` before `plan-exec`. */
-const AGENT_MODE_ORDER: readonly AgentMode[] = ["edit", "plan-exec"];
+/** Canonical mode order: `pinned-repair` before `plan-exec-review`. */
+const AGENT_MODE_ORDER: readonly AgentMode[] = ["pinned-repair", "plan-exec-review"];
 
-/** Parse `--agent-mode`: one value, a comma list, or `both`. */
+/**
+ * Parse `--agent-mode`: one value, a comma list, or `both`. Canonical names,
+ * the deprecated `edit`/`plan-exec` aliases, and `both` (both canonical modes)
+ * are accepted; duplicates collapse and the canonical order is returned.
+ */
 export function parseAgentModes(value: string): AgentMode[] {
+  if (value.trim() === "") {
+    throw new Error("missing value for --agent-mode");
+  }
   if (value === "both") {
     return [...AGENT_MODE_ORDER];
   }
   const selected = new Set<AgentMode>();
   for (const raw of value.split(",")) {
     const element = raw.trim();
-    if (element === "edit" || element === "plan-exec") {
-      selected.add(element);
-    } else {
-      throw new Error(`invalid --agent-mode value: ${element === "" ? raw : element}`);
+    if (element === "both") {
+      for (const mode of AGENT_MODE_ORDER) {
+        selected.add(mode);
+      }
+      continue;
     }
-  }
-  if (selected.size === 0) {
-    throw new Error("missing value for --agent-mode");
+    const mode = canonicalAgentMode(element);
+    if (mode === null) {
+      throw new Error(
+        `invalid --agent-mode value: ${element === "" ? raw : element} (expected "pinned-repair", "plan-exec-review", or "both"; aliases: edit, plan-exec)`,
+      );
+    }
+    selected.add(mode);
   }
   return AGENT_MODE_ORDER.filter((mode) => selected.has(mode));
 }
@@ -638,7 +659,7 @@ export function parseArgs(argv: string[]): CliArgs {
     effort: null,
     multiPayload: false,
     protocolFormats: ["edit-dsl"],
-    agentModes: ["edit"],
+    agentModes: [DEFAULT_AGENT_MODE],
     help: false,
   };
   for (let index = 0; index < argv.length; index += 1) {
@@ -1009,8 +1030,8 @@ class RecordingProvider implements ProviderLike {
 }
 
 /**
- * Warm only the cache-stable system prefixes: the edit system prompt, or the
- * planning and execution system prompts for plan-exec. Task-specific user
+ * Warm only the cache-stable system prefixes: the pinned-repair system prompt,
+ * or the planning and execution system prompts for plan-exec-review. Task-specific user
  * prompts are deliberately not warmed. These calls are recorded separately and
  * never enter the measured aggregates.
  */
@@ -1022,7 +1043,7 @@ async function warmStablePrefixes(options: {
 }): Promise<WarmupRecord[]> {
   const entries: { agentMode: AgentMode; kind: WarmupRecord["kind"]; prompt: string }[] = [];
   for (const agentMode of options.agentModes) {
-    if (agentMode === "edit") {
+    if (agentMode === "pinned-repair") {
       for (const protocol of options.protocols) {
         entries.push({
           agentMode,
@@ -1580,10 +1601,10 @@ async function runOnce(job: BenchmarkJob, context: RunContext): Promise<RunRecor
   // Keep today's `task-side-repN` names for single-protocol runs; only a
   // multi-variant matrix needs the protocol in the name to stay unique (#16).
   const protocolSuffix = protocol !== null && context.protocols.length > 1 ? `-${protocol}` : "";
-  // Name the mode only when it is not the historical edit default or when the
+  // Name the mode only when it is not the default pinned-repair mode or when the
   // matrix measures both modes, so existing log paths stay stable.
   const modeSuffix =
-    agentMode !== null && (context.agentModes.length > 1 || agentMode !== "edit")
+    agentMode !== null && (context.agentModes.length > 1 || agentMode !== DEFAULT_AGENT_MODE)
       ? `-${agentMode}`
       : "";
   const runName = `${task}-${side}${protocolSuffix}${modeSuffix}-rep${rep}`;
@@ -1695,11 +1716,10 @@ async function runOnce(job: BenchmarkJob, context: RunContext): Promise<RunRecor
 function printRecord(record: RunRecord, showProtocol: boolean, showMode = false): void {
   const seconds = (record.durationMs / 1000).toFixed(1);
   const label = record.ok ? "PASS" : "FAIL";
+  const mode = canonicalAgentMode(record.agentMode) ?? DEFAULT_AGENT_MODE;
   const variant =
     (showProtocol && record.protocol !== null ? ` ${record.protocol}` : "") +
-    (record.agentMode !== null && (showMode || record.agentMode !== "edit")
-      ? ` ${record.agentMode}`
-      : "");
+    (record.agentMode !== null && (showMode || mode !== DEFAULT_AGENT_MODE) ? ` ${mode}` : "");
   process.stdout.write(
     `${label} ${record.task} ${record.side}${variant} rep${record.rep} (${seconds}s, tokens=${
       record.tokens.total ?? "unavailable"
@@ -1753,6 +1773,11 @@ function numberStats(values: readonly number[]): TokenStats {
   return { mean: total / values.length, total };
 }
 
+/** A tc row/run's mode, mapped through the legacy aliases; missing reads as pinned-repair. */
+function modeOf(value: unknown): AgentMode {
+  return canonicalAgentMode(value) ?? DEFAULT_AGENT_MODE;
+}
+
 export function aggregateRuns(
   runs: readonly RunRecord[],
   task: TaskName | null,
@@ -1770,8 +1795,7 @@ export function aggregateRuns(
         (protocol === null
           ? run.side !== "tc" || run.protocol === null || run.protocol === undefined
           : run.side === "tc" && (run.protocol ?? "edit-dsl") === protocol)) &&
-      (agentMode === undefined ||
-        (run.side === "tc" ? (run.agentMode ?? "edit") : null) === agentMode),
+      (agentMode === undefined || (run.side === "tc" ? modeOf(run.agentMode) : null) === agentMode),
   );
   const usageRuns = selected.filter((run) => run.tokens.total !== null);
   const ok = selected.filter((run) => run.ok).length;
@@ -1848,11 +1872,7 @@ export function aggregateRuns(
     protocol:
       protocol === undefined ? (side === "oc" ? null : (selected[0]?.protocol ?? null)) : protocol,
     agentMode:
-      agentMode === undefined
-        ? side === "oc"
-          ? null
-          : (selected[0]?.agentMode ?? "edit")
-        : agentMode,
+      agentMode === undefined ? (side === "oc" ? null : modeOf(selected[0]?.agentMode)) : agentMode,
     runs: selected.length,
     ok,
     failed: selected.length - ok,
@@ -1892,15 +1912,32 @@ function protocolsFromRuns(runs: readonly RunRecord[]): (ProtocolFormat | null)[
   return protocols.size === 0 ? [null] : [...protocols];
 }
 
-// Modes present among tc runs; a legacy run without the field reads as `edit`.
+// Modes present among tc runs; a legacy run without the field reads as
+// pinned-repair, and legacy `edit`/`plan-exec` values map to canonical modes.
 function agentModesFromRuns(runs: readonly RunRecord[]): AgentMode[] {
   const modes = new Set<AgentMode>();
   for (const run of runs) {
     if (run.side === "tc") {
-      modes.add(run.agentMode ?? "edit");
+      modes.add(modeOf(run.agentMode));
     }
   }
-  return modes.size === 0 ? ["edit"] : AGENT_MODE_ORDER.filter((mode) => modes.has(mode));
+  return modes.size === 0
+    ? [DEFAULT_AGENT_MODE]
+    : AGENT_MODE_ORDER.filter((mode) => modes.has(mode));
+}
+
+/** Canonical mode list for report metadata, reading legacy labels and absent defaults. */
+function canonicalModeList(modes: readonly AgentMode[] | undefined): AgentMode[] {
+  const selected = new Set<AgentMode>();
+  for (const mode of modes ?? [DEFAULT_AGENT_MODE]) {
+    const canonical = canonicalAgentMode(mode);
+    if (canonical !== null) {
+      selected.add(canonical);
+    }
+  }
+  return selected.size === 0
+    ? [DEFAULT_AGENT_MODE]
+    : AGENT_MODE_ORDER.filter((mode) => selected.has(mode));
 }
 
 function aggregatesForSide(
@@ -2003,7 +2040,7 @@ function hasMultipleModes(rows: readonly AggregateRow[]): boolean {
   const modes = new Set<AgentMode>();
   for (const row of rows) {
     if (row.side === "tc") {
-      modes.add(row.agentMode ?? "edit");
+      modes.add(modeOf(row.agentMode));
     }
   }
   return modes.size > 1;
@@ -2014,8 +2051,12 @@ function sideLabel(row: AggregateRow, showProtocol: boolean, showMode: boolean):
   if (showProtocol && row.protocol !== null) {
     parts.push(row.protocol);
   }
-  if (row.side === "tc" && row.agentMode !== null && (showMode || row.agentMode !== "edit")) {
-    parts.push(row.agentMode);
+  if (
+    row.side === "tc" &&
+    row.agentMode !== null &&
+    (showMode || modeOf(row.agentMode) !== DEFAULT_AGENT_MODE)
+  ) {
+    parts.push(modeOf(row.agentMode));
   }
   return parts.join(" ");
 }
@@ -2027,8 +2068,12 @@ function multiplierSideLabel(row: AggregateRow, showProtocol: boolean, showMode:
   if (showProtocol && row.protocol !== null) {
     parts.push(row.protocol);
   }
-  if (row.side === "tc" && row.agentMode !== null && (showMode || row.agentMode !== "edit")) {
-    parts.push(row.agentMode);
+  if (
+    row.side === "tc" &&
+    row.agentMode !== null &&
+    (showMode || modeOf(row.agentMode) !== DEFAULT_AGENT_MODE)
+  ) {
+    parts.push(modeOf(row.agentMode));
   }
   parts.push(row.side ?? "all");
   return parts.join(" ");
@@ -2201,7 +2246,7 @@ export function savingsVsOcBaseline(
     rows.push({
       task: row.task,
       protocol: row.protocol,
-      agentMode: row.agentMode,
+      agentMode: row.agentMode === null ? null : modeOf(row.agentMode),
       baselineMean,
       currentMean,
       factor: baselineMean / currentMean,
@@ -2218,7 +2263,7 @@ export function savingsVsOcBaseline(
     }
   >();
   for (const row of rows) {
-    const key = `${row.protocol ?? ""}\u0000${row.agentMode ?? ""}`;
+    const key = `${row.protocol ?? ""}\u0000${row.agentMode === null ? "" : modeOf(row.agentMode)}`;
     const accrued = byVariant.get(key) ?? {
       protocol: row.protocol,
       agentMode: row.agentMode,
@@ -2247,10 +2292,11 @@ export function ocBaselineSavingsSentence(savings: BaselineSavings): string {
     return "Savings vs oc baseline: not comparable (no shared task reports a token total).";
   }
   const parts = savings.overall.map((entry) => {
+    const mode = entry.agentMode === null ? null : modeOf(entry.agentMode);
     const label =
       entry.protocol === null
         ? ""
-        : `${entry.protocol}${entry.agentMode !== null && entry.agentMode !== "edit" ? `/${entry.agentMode}` : ""} `;
+        : `${entry.protocol}${mode !== null && mode !== DEFAULT_AGENT_MODE ? `/${mode}` : ""} `;
     return `${label}${entry.factor.toFixed(2)}x fewer tokens across ${entry.tasks} task${
       entry.tasks === 1 ? "" : "s"
     }`;
@@ -2312,7 +2358,11 @@ function loadFrozenBaseline(repoRoot: string, relativePath: string): FrozenBasel
     model: typeof label === "string" ? label : null,
     reps: typeof reps === "number" ? reps : null,
     specHash: typeof specHash === "string" ? specHash : null,
-    byTaskSide: rows as AggregateRow[],
+    // Historical baseline rows carry the old mode labels (or none); normalize
+    // at this read boundary so every downstream report names canonical modes.
+    byTaskSide: (rows as AggregateRow[]).map((row) =>
+      row.side === "tc" ? { ...row, agentMode: modeOf(row.agentMode) } : row,
+    ),
   };
 }
 
@@ -2351,8 +2401,8 @@ export interface FourWayRow {
 const FOUR_WAY_LABELS: Record<FourWayVariant, string> = {
   oc: "oc baseline",
   "tc-json": "tc json baseline",
-  "tc-edit": "tc edit",
-  "tc-plan-exec": "tc plan-exec",
+  "tc-edit": "tc pinned-repair",
+  "tc-plan-exec": "tc plan-exec-review",
 };
 
 function meanFor(
@@ -2423,7 +2473,7 @@ export function fourWayComparison(
       (row) =>
         row.side === "tc" &&
         (row.protocol ?? "edit-dsl") === "edit-dsl" &&
-        (row.agentMode ?? "edit") === "edit",
+        modeOf(row.agentMode) === "pinned-repair",
     );
     const plan = meanFor(
       currentByTaskSide,
@@ -2431,7 +2481,7 @@ export function fourWayComparison(
       (row) =>
         row.side === "tc" &&
         (row.protocol ?? "edit-dsl") === "edit-dsl" &&
-        row.agentMode === "plan-exec",
+        modeOf(row.agentMode) === "plan-exec-review",
     );
     const values: [FourWayVariant, number | null, number | null][] = [
       ["oc", oc, cacheHitFor(ocBaselineByTaskSide, task, (row) => row.side === "oc")],
@@ -2453,7 +2503,7 @@ export function fourWayComparison(
           (row) =>
             row.side === "tc" &&
             (row.protocol ?? "edit-dsl") === "edit-dsl" &&
-            (row.agentMode ?? "edit") === "edit",
+            modeOf(row.agentMode) === "pinned-repair",
         ),
       ],
       [
@@ -2465,7 +2515,7 @@ export function fourWayComparison(
           (row) =>
             row.side === "tc" &&
             (row.protocol ?? "edit-dsl") === "edit-dsl" &&
-            row.agentMode === "plan-exec",
+            modeOf(row.agentMode) === "plan-exec-review",
         ),
       ],
     ];
@@ -2567,11 +2617,11 @@ export function fourWaySavingsSentence(rows: readonly FourWayRow[]): string | nu
   }
   const factor = (value: number | null): string =>
     value === null ? "n/a" : `${value.toFixed(2)}x`;
-  return `Four-way savings (cache-excluded total): vs oc — tc edit ${factor(
+  return `Four-way savings (cache-excluded total): vs oc — tc pinned-repair ${factor(
     edit.vsOc,
-  )}, tc plan-exec ${factor(plan.vsOc)}; vs tc json — tc edit ${factor(
+  )}, tc plan-exec-review ${factor(plan.vsOc)}; vs tc json — tc pinned-repair ${factor(
     edit.vsJson,
-  )}, tc plan-exec ${factor(plan.vsJson)}.`;
+  )}, tc plan-exec-review ${factor(plan.vsJson)}.`;
 }
 
 // The references tree names one file per task (json/sexp/lisp today); probe the
@@ -2611,9 +2661,9 @@ export function writeMarkdownReport(mdPath: string, report: Report): void {
     protocolFormats.length > 1
       ? `- protocol-formats: ${protocolFormats.join(", ")} (#119)`
       : `- protocol-format: ${protocolFormats[0] ?? report.protocolFormat ?? "json"} (#119)`;
-  const agentModes = report.agentModes ?? ["edit"];
+  const agentModes = canonicalModeList(report.agentModes);
   const modeLine =
-    agentModes.length > 1 || agentModes[0] !== "edit"
+    agentModes.length > 1 || agentModes[0] !== DEFAULT_AGENT_MODE
       ? `- agent modes: ${agentModes.join(", ")}`
       : null;
   const lines: string[] = [];
@@ -2670,7 +2720,7 @@ export function writeMarkdownReport(mdPath: string, report: Report): void {
       const input = warmup.tokens.input;
       const read = warmup.tokens.cacheRead;
       lines.push(
-        `| ${warmup.agentMode} | ${warmup.kind} | ${warmup.promptChars} | ${formatTokenCount(
+        `| ${canonicalAgentMode(warmup.agentMode) ?? DEFAULT_AGENT_MODE} | ${warmup.kind} | ${warmup.promptChars} | ${formatTokenCount(
           input,
         )} | ${formatTokenCount(read)} | ${formatCacheHit(
           input !== null && input > 0 && read !== null ? Math.min(1, read / input) : null,
@@ -2812,7 +2862,10 @@ export function writeMarkdownReport(mdPath: string, report: Report): void {
         const reps = baseline.reps === null ? "n/a" : `${baseline.reps} reps`;
         return `\`${baseline.path}\` (${model}, ${reps}, ${baseline.date ?? "date n/a"})`;
       };
-      lines.push("## Four-way comparison (oc / tc json / tc edit / tc plan-exec)", "");
+      lines.push(
+        "## Four-way comparison (oc / tc json / tc pinned-repair / tc plan-exec-review)",
+        "",
+      );
       lines.push(
         `Baselines: oc ${note(ocBaseline, "oc")}; tc json ${note(jsonBaseline, "tc json")}.`,
         "Factor = baseline mean / variant mean; above 1 means the variant used that many times fewer cache-excluded tokens.",
@@ -3096,7 +3149,7 @@ export function buildJobs(
   sides: readonly Side[],
   reps: number,
   protocols: readonly ProtocolFormat[],
-  agentModes: readonly AgentMode[] = ["edit"],
+  agentModes: readonly AgentMode[] = [DEFAULT_AGENT_MODE],
 ): BenchmarkJob[] {
   const jobs: BenchmarkJob[] = [];
   for (const task of tasks) {
@@ -3295,7 +3348,9 @@ async function main(): Promise<number> {
   const records = await runPool(jobs, Math.min(args.concurrency, jobs.length), async (job, i) => {
     const variant =
       (showProtocol && job.protocol !== null ? ` ${job.protocol}` : "") +
-      (job.agentMode !== null && (showMode || job.agentMode !== "edit") ? ` ${job.agentMode}` : "");
+      (job.agentMode !== null && (showMode || modeOf(job.agentMode) !== DEFAULT_AGENT_MODE)
+        ? ` ${modeOf(job.agentMode)}`
+        : "");
     process.stdout.write(
       `starting ${job.task} ${job.side}${variant} rep${job.rep} (${i + 1}/${jobs.length})\n`,
     );

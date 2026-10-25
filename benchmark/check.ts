@@ -1,6 +1,7 @@
 import { cpSync, existsSync, mkdirSync, readFileSync, rmSync } from "node:fs";
 import { isAbsolute, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
+import { canonicalAgentMode, DEFAULT_AGENT_MODE } from "../src/loop";
 import { checkLedger, currentInputHashes, normalizeProtocolFormat } from "../src/provenance";
 import { TASK_SPECS } from "./run";
 
@@ -139,13 +140,16 @@ function checkLedgerFile(ledgerPath: string, repoRoot: string): LedgerOutcome {
         return null;
       }
       // A single-mode report names its loop; a multi-mode report's ledger rows
-      // do not yet carry a mode column, so they check against the edit loop.
+      // do not yet carry a mode column, so they check against pinned-repair.
+      // Historical `edit`/`plan-exec` values map through the same aliases.
       const modes = Array.isArray(json["agentModes"])
-        ? (json["agentModes"] as unknown[]).filter(
-            (mode): mode is string => mode === "edit" || mode === "plan-exec",
-          )
+        ? (json["agentModes"] as unknown[]).flatMap((value) => {
+            const mode = canonicalAgentMode(value);
+            return mode === null ? [] : [mode];
+          })
         : [];
-      const agentMode = modes.length === 1 && modes[0] === "plan-exec" ? "plan-exec" : "edit";
+      const agentMode =
+        modes.length === 1 && modes[0] !== undefined ? modes[0] : DEFAULT_AGENT_MODE;
       const tokenBudget = typeof json["tokenBudget"] === "number" ? json["tokenBudget"] : null;
       try {
         return currentInputHashes(repoRoot, {

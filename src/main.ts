@@ -21,7 +21,7 @@ export interface RunMainOptions {
   io?: MainIo;
   /** Opt-in multi-payload exchanges (#69); default off. */
   multiPayload?: boolean;
-  /** Loop shape (`--mode`); default "edit". */
+  /** Loop shape (`--mode`); default "pinned-repair". */
   agentMode?: AgentMode;
   /** Edit protocol format (#119); default "json". */
   protocolFormat?: ProtocolFormat;

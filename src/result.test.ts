@@ -37,6 +37,12 @@ function resultOf(overrides: Partial<LoopResult> = {}): LoopResult {
   };
 }
 
+describe("RESULT_FORMAT", () => {
+  test("is the @2 string-node-id contract", () => {
+    expect(RESULT_FORMAT).toBe("typescript-coder-result@2");
+  });
+});
+
 describe("buildSubagentResult", () => {
   test("maps an ok run to ok/verified with the default empty targets and zero tokens", () => {
     const result = buildSubagentResult({ result: resultOf({ records: [recordOf()] }) });
@@ -117,6 +123,34 @@ describe("buildSubagentResult", () => {
     expect(result.targets).toBe(targets);
     expect(result.tokens).toBe(tokens);
   });
+
+  test("carries plan/execute task summaries with string node ids (#28)", () => {
+    const result = buildSubagentResult({
+      result: resultOf({
+        tasks: [
+          {
+            id: "03-edit-answer",
+            stage: "01-stage-fix",
+            task: "02-task-answer",
+            verify: "test",
+            action: "modify",
+            path: "src/helper.ts",
+            symbol: "answer",
+            kind: "value",
+            status: "done",
+          },
+        ],
+      }),
+    });
+    expect(result.tasks?.[0]).toMatchObject({
+      id: "03-edit-answer",
+      stage: "01-stage-fix",
+      task: "02-task-answer",
+    });
+    expect(typeof result.tasks?.[0]?.id).toBe("string");
+    expect(typeof result.tasks?.[0]?.stage).toBe("string");
+    expect(typeof result.tasks?.[0]?.task).toBe("string");
+  });
 });
 
 describe("serializeSubagentResult", () => {
@@ -134,7 +168,7 @@ describe("serializeSubagentResult", () => {
     const text = serializeSubagentResult(built);
     expect(text).toBe(JSON.stringify(built));
     expect(JSON.parse(text)).toEqual({
-      format: "typescript-coder-result@1",
+      format: "typescript-coder-result@2",
       status: "failed",
       verified: false,
       files: [{ path: "src/helper.ts", symbol: "answer", kind: "function", outcome: "applied" }],

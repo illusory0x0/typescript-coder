@@ -1,30 +1,53 @@
 # The agent loop
 
-`tc` is not an open-ended tool-calling agent. A run is a fixed Edit → Verify loop:
-the model is asked to pick one declaration, then to rewrite part of it, and the
-harness decides whether the result counts. The model never chooses files to
-read or commands to run; it answers structured prompts and the harness owns
-discovery, splicing, formatting, and verification.
+`tc` is not an open-ended tool-calling agent. Its default `pinned-repair` run is
+a fixed Edit → Verify loop: the model is asked to pick one declaration, then to
+rewrite part of it, and the harness decides whether the result counts. The model
+never chooses files to read or commands to run; it answers structured prompts
+and the harness owns discovery, splicing, formatting, and verification.
 
-Implementation: `runLoop` in `src/loop.ts` is a dispatcher. Explicit-targets
-mode and `--protocol-format=json` route to `runJsonLoop`; the default routes to
-`runEditDslLoop`; `--mode plan-exec` lazily routes to `runTaskLoop` in
-`src/task-loop.ts`. The drivers are independent: each owns its run driver
-(budget, rounds, records) and shares only the lower-level primitives (index and
-context, selection resolution, gates). Protocol prompt text lives in
-`src/prompts/{json,edit-dsl,task}.ts` and the commit/gate pipeline in
-`src/commit.ts`.
+Implementation: `runLoop` in `src/loop.ts` is a dispatcher. The default
+`pinned-repair` mode routes to `runEditDslLoop` (explicit targets and
+`--protocol-format=json` route to `runJsonLoop`); `--mode plan-exec-review`
+lazily routes to `runTaskLoop` in `src/task-loop.ts`. `edit` and `plan-exec` are
+deprecated aliases for the canonical modes. The drivers are independent: each
+owns its run driver (budget, rounds, records) and shares only the lower-level
+primitives (index and context, selection resolution, gates). Protocol prompt
+text lives in `src/prompts/{json,edit-dsl,task}.ts` and the commit/gate pipeline
+in `src/commit.ts`.
 
-## Plan → execute mode
+## Plan → execute → review mode
 
-`--mode plan-exec` adds a two-mode loop ([`spec.md`](spec.md)): a planner emits
-a `Plan → Stage → Task → edit` tree as JSON (`src/tasks.ts`), and the executor
-carries out one micro edit at a time with the edit-action clauses above. A stage
-groups a coherent phase; a task is the verification boundary and runs its
-`tsc` or `test` gate after all of its edits settle. The final task must be a
-`test` gate. Existing modes are unchanged.
+`--mode plan-exec-review` adds a second loop ([`spec.md`](spec.md)): a planner
+emits one current Stage/Task in the flat Plan DSL (`src/plan-dsl.ts`), the
+executor carries out one Task's edits, and the planner reviews the applied
+result before the Task settles.
 
-## Shape of a run
+- **Plan.** The Plan root carries a string `id` and `goal`; every
+  Plan/Stage/Task/Edit id is a globally unique `NN-slug` string (`"01-main"`,
+  `"03-task-reader"`). The initial reply contains exactly one current Stage and
+  one current Task. Later planning turns emit one `patch` with at most one new
+  Task; a new Stage includes its first Task. `finish` marks the last `test`
+  Task as `finalTaskId`.
+- **Execute.** A Stage groups a coherent phase; a Task is the verification
+  boundary and runs its `tsc` or `test` gate after all of its edits settle.
+  Work-in-progress may end in a `tsc` Task; only the `finish` Task must test.
+- **Review.** After the gate, the Task enters `review` and one compact review
+  turn receives the gate result and a concise diff of the applied edits. It
+  replies `approve` or one patch that may repair only the current Task; the
+  patched Task re-executes and is not reviewed a second time.
+- **Diagnostics.** Both DSLs share tolerant parsing and
+  `src/dsl-diagnostics.ts`: unambiguous missing `end`/fence/bare-id forms recover
+  with warnings, while a malformed destructive reply is rejected whole.
+- **Accounting.** `LoopResult.usage` splits spend into `planning`, `review`, and
+  `execution` `LoopTokens` buckets; their sum is `LoopResult.tokens` and all
+  count toward the budget. Recovered parser warnings are on
+  `LoopResult.warnings`.
+
+The `pinned-repair` mode is unchanged. The `--format json` result is
+`typescript-coder-result@2`, with string node ids on `tasks`.
+
+## Shape of a pinned-repair run
 
 1. **Context.** The workspace's `.ts` files are discovered and parsed into a
    symbol index. Under the default edit-dsl protocol the index is rendered as

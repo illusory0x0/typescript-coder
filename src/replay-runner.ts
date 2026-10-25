@@ -1,7 +1,7 @@
 import { randomUUID } from "node:crypto";
 import { cpSync, mkdirSync, rmSync } from "node:fs";
 import { dirname, join } from "node:path";
-import { runLoop } from "./loop";
+import { canonicalAgentMode, DEFAULT_AGENT_MODE, runLoop } from "./loop";
 import { REPLAY_BUNDLE_FORMAT } from "./replay-format";
 import type { LoopResult, ProviderLike } from "./loop";
 import type { ReplayBundle, ReplayCall } from "./replay-format";
@@ -79,8 +79,10 @@ export function parseReplayBundle(json: string): ReplayBundle {
     parsed["protocolFormat"] === "edit-dsl" || parsed["protocolFormat"] === "compact"
       ? "edit-dsl"
       : "json";
+  // Loop modes were renamed (#34): legacy `edit`/`plan-exec` bundles map to
+  // the canonical values; a missing or unknown mode reads as pinned-repair.
   const agentMode: ReplayBundle["agentMode"] =
-    parsed["agentMode"] === "plan-exec" ? "plan-exec" : "edit";
+    canonicalAgentMode(parsed["agentMode"]) ?? DEFAULT_AGENT_MODE;
   return {
     format: REPLAY_BUNDLE_FORMAT,
     side: "tc",
@@ -220,7 +222,7 @@ export async function runReplay(options: ReplayRunOptions): Promise<ReplayRun> {
       // Replay under the protocol recorded in the bundle; legacy/unknown
       // bundles normalized to JSON in `parseReplayBundle`.
       protocolFormat: options.bundle.protocolFormat,
-      agentMode: options.bundle.agentMode ?? "edit",
+      agentMode: options.bundle.agentMode ?? DEFAULT_AGENT_MODE,
       checkCommand: ["bun", options.tscBin, "--noEmit"],
       testCommand: ["bun", "test"],
     });

@@ -88,6 +88,12 @@ import type { Selection as EditDslSelection } from "./selection";
 import { buildIndexTolerant } from "./utility";
 import type { SourceFile } from "./utility";
 
+// Parallel-safety audit (#36): this file mutates process.env flags
+// (TC_DIAG_DECL_NAMING, TC_MATCHER_RANGE_HINT, TC_REPAIR_CONTEXT_SHRINK) and
+// restores each in a finally/afterEach. It is one ~12k-line file, so file-level
+// `bun test --parallel` keeps it whole in a worker; do not add `test.concurrent`
+// here because those env flags are process-global and tests within a file share
+// the process.
 const tempDirs: string[] = [];
 
 // Most loop tests exercise the JSON protocol. The production default is now
@@ -10104,7 +10110,7 @@ describe("edit-dsl protocol (#111/#119)", () => {
     const dir = fixtureDir();
     const provider = new ScriptedProvider([
       editDslSelect("answer", "src/helper.ts", "value"),
-      ["select answer in src/helper.ts", "replace with", "-----", "return 2;", "-----"].join("\n"),
+      ["select answer in src/helper.ts", "match `return 1;`", "nonsense"].join("\n"),
       editDslReply(answerEditor("return 2;", { kind: "snippet", value: "return 1;" })),
       "Great! I resolve this problem!",
     ]);
@@ -11151,11 +11157,11 @@ describe("edit-dsl protocol (#111/#119)", () => {
     expect(helperSource(dir)).toContain("return 2;");
   }, 30000);
 
-  test("under edit-dsl a select missing `end` reports the syntax error, not JSON", async () => {
+  test("under edit-dsl a mid-clause missing `end` reports the syntax error, not JSON", async () => {
     const dir = fixtureDir();
     const provider = new ScriptedProvider([
       editDslSelect("answer", "src/helper.ts", "value"),
-      "select answer in src/helper.ts resolve value",
+      "select answer in src/helper.ts resolve value\nnonsense",
       editDslReply(answerEditor("return 2;", { kind: "snippet", value: "return 1;" })),
     ]);
     const result = await runLoop({

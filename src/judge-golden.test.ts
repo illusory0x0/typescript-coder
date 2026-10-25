@@ -12,6 +12,10 @@ const REFERENCE_FILE = join(REPO_ROOT, "benchmark", "references", "json.ts");
 const RUN_FILE = join(REPO_ROOT, "benchmark", "run.ts");
 // Resolved the way benchmark/check.ts does: the repo's own tsc, invoked via bun.
 const TSC_BIN = join(REPO_ROOT, "node_modules", "typescript", "bin", "tsc");
+// Parallel-safety audit (#36): this fixed repo-relative workspace is shared
+// state. It is safe under `bun test --parallel` because file-level workers run
+// this file once and its tests are serial; do not run these cases concurrently
+// within the file, since beforeAll/afterAll and the workspace path are global.
 const WORKSPACE_ROOT = join(REPO_ROOT, "tmp", "judge-golden");
 
 interface JudgeVerdict {

@@ -12,6 +12,7 @@ import {
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { helpText, parseArgs } from "./cli";
+import { AGENT_MODES, canonicalAgentMode } from "./loop";
 import { runMain as runMainBase } from "./main";
 import type { MainIo } from "./main";
 import type { ProviderLike } from "./loop";
@@ -19,6 +20,9 @@ import type { ChatMessage, ChatResponse, ToolDefinition } from "./openai";
 
 const repoRoot = new URL("..", import.meta.url).pathname;
 const nestedSmoke = existsSync(join(repoRoot, ".nested-smoke"));
+// Parallel-safety audit (#36): file-level `bun test --parallel` is safe, but do
+// not add `test.concurrent` here — `tempDirs` is shared by `afterEach` cleanup,
+// and the self-host case below copies the tree and spawns a nested Bun process.
 const tempDirs: string[] = [];
 
 // The runMain tests script JSON responses; the production default is edit-dsl,
@@ -47,7 +51,7 @@ describe("parseArgs", () => {
   const DEFAULTS = {
     help: false,
     model: "deepseek-v4.1-flash",
-    agentMode: "edit" as const,
+    agentMode: "pinned-repair" as const,
     multiPayload: false,
     protocolFormat: "edit-dsl" as const,
     targets: null,
@@ -284,7 +288,7 @@ describe("helpText", () => {
     expect(text).toContain("`compact` is a");
     expect(text).toContain("deprecated alias for edit-dsl");
     expect(text).toContain("--targets <file>");
-    expect(text).toContain("typescript-coder-result@1");
+    expect(text).toContain("typescript-coder-result@2");
   });
 });
 
@@ -546,7 +550,7 @@ describe("runMain", () => {
     expect(captured.out).toHaveLength(1);
     expect(captured.err).toEqual([]);
     const parsed = JSON.parse(captured.out[0] ?? "");
-    expect(parsed.format).toBe("typescript-coder-result@1");
+    expect(parsed.format).toBe("typescript-coder-result@2");
     expect(parsed.status).toBe("ok");
     expect(parsed.verified).toBe(true);
     expect(parsed.files).toEqual([
@@ -585,7 +589,7 @@ describe("runMain", () => {
     // stdout carries only the single result object.
     expect(captured.out).toHaveLength(1);
     const parsed = JSON.parse(captured.out[0] ?? "");
-    expect(parsed.format).toBe("typescript-coder-result@1");
+    expect(parsed.format).toBe("typescript-coder-result@2");
     expect(parsed.status).toBe("failed");
     expect(parsed.verified).toBe(false);
     expect(parsed.terminationReason).toBe("edit-exhausted");
@@ -600,7 +604,7 @@ describe("runMain", () => {
     // The failure-artifact line is prose, so it goes to stderr too.
     expect(errText).toContain("failure artifact: ");
     // No JSON leaks onto stderr.
-    expect(errText).not.toContain("typescript-coder-result@1");
+    expect(errText).not.toContain("typescript-coder-result@2");
   }, 60000);
 
   test("--format json emits a failed result for an empty issue (#80)", async () => {
@@ -615,7 +619,7 @@ describe("runMain", () => {
     expect(code).toBe(1);
     expect(captured.out).toHaveLength(1);
     const parsed = JSON.parse(captured.out[0] ?? "");
-    expect(parsed.format).toBe("typescript-coder-result@1");
+    expect(parsed.format).toBe("typescript-coder-result@2");
     expect(parsed.status).toBe("failed");
     expect(parsed.verified).toBe(false);
     expect(parsed.diagnostics).toContain("no issue");
@@ -683,42 +687,83 @@ describe("cli entry points", () => {
 });
 
 describe("--mode", () => {
-  test("defaults to the edit loop", () => {
-    expect(parseArgs([]).agentMode).toBe("edit");
+  test("canonical module values and aliases", () => {
+    expect(AGENT_MODES).toEqual(["pinned-repair", "plan-exec-review"]);
+    expect(canonicalAgentMode("pinned-repair")).toBe("pinned-repair");
+    expect(canonicalAgentMode("plan-exec-review")).toBe("plan-exec-review");
+    expect(canonicalAgentMode("edit")).toBe("pinned-repair");
+    expect(canonicalAgentMode("plan-exec")).toBe("plan-exec-review");
+    expect(canonicalAgentMode("both")).toBeNull();
+    expect(canonicalAgentMode(undefined)).toBeNull();
   });
 
-  test("selects the plan/execute loop with --mode plan-exec and the long alias", () => {
-    expect(parseArgs(["--mode", "plan-exec"]).agentMode).toBe("plan-exec");
-    expect(parseArgs(["--agent-mode=plan-exec"]).agentMode).toBe("plan-exec");
-    expect(parseArgs(["--mode=edit"]).agentMode).toBe("edit");
+  test("defaults to the pinned-repair loop", () => {
+    expect(parseArgs([]).agentMode).toBe("pinned-repair");
   });
 
-  test("rejects an unknown mode", () => {
-    expect(() => parseArgs(["--mode", "planner"])).toThrow('--mode must be "edit" or "plan-exec"');
+  test("accepts the canonical modes through --mode and --agent-mode", () => {
+    expect(parseArgs(["--mode", "pinned-repair"]).agentMode).toBe("pinned-repair");
+    expect(parseArgs(["--mode", "plan-exec-review"]).agentMode).toBe("plan-exec-review");
+    expect(parseArgs(["--agent-mode=pinned-repair"]).agentMode).toBe("pinned-repair");
+    expect(parseArgs(["--agent-mode", "plan-exec-review"]).agentMode).toBe("plan-exec-review");
+  });
+
+  test("maps the deprecated edit/plan-exec aliases to canonical modes", () => {
+    expect(parseArgs(["--mode=edit"]).agentMode).toBe("pinned-repair");
+    expect(parseArgs(["--mode", "plan-exec"]).agentMode).toBe("plan-exec-review");
+    expect(parseArgs(["--agent-mode=plan-exec"]).agentMode).toBe("plan-exec-review");
+  });
+
+  test("rejects an unknown mode with the canonical choices and aliases", () => {
+    expect(() => parseArgs(["--mode", "planner"])).toThrow(
+      '--mode must be "pinned-repair" or "plan-exec-review" (aliases: edit, plan-exec; got "planner")',
+    );
     expect(() => parseArgs(["--mode"])).toThrow("--mode requires a value");
   });
 
-  test("plan-exec refuses explicit targets and the frozen json edit protocol", () => {
-    const targets = join(tempDir(), "targets.json");
-    writeFileSync(targets, JSON.stringify([{ path: "src/a.ts", symbol: "a", kind: "function" }]));
-    expect(() => parseArgs(["--mode", "plan-exec", "--targets", targets])).toThrow(
-      "cannot be combined with --mode plan-exec",
+  test("rejects both because one CLI process runs one loop", () => {
+    expect(() => parseArgs(["--mode", "both"])).toThrow(
+      "only valid for the benchmark's --agent-mode",
     );
-    expect(() => parseArgs(["--mode", "plan-exec", "--protocol-format", "json"])).toThrow(
-      "cannot be combined with it",
-    );
-    expect(parseArgs(["--mode", "plan-exec", "--protocol-format", "edit-dsl"]).agentMode).toBe(
-      "plan-exec",
-    );
+    expect(() => parseArgs(["--agent-mode=both"])).toThrow("pinned-repair");
   });
 
-  test("help names the mode flag", () => {
-    expect(helpText()).toContain("--mode <edit|plan-exec>");
+  test("plan-exec-review refuses explicit targets and the frozen json edit protocol", () => {
+    const targets = join(tempDir(), "targets.json");
+    writeFileSync(targets, JSON.stringify([{ path: "src/a.ts", symbol: "a", kind: "function" }]));
+    expect(() => parseArgs(["--mode", "plan-exec-review", "--targets", targets])).toThrow(
+      "cannot be combined with --mode plan-exec-review",
+    );
+    expect(() => parseArgs(["--mode", "plan-exec", "--targets", targets])).toThrow(
+      "cannot be combined with --mode plan-exec-review",
+    );
+    expect(() => parseArgs(["--mode", "plan-exec-review", "--protocol-format", "json"])).toThrow(
+      "cannot be combined with it",
+    );
+    expect(
+      parseArgs(["--mode", "plan-exec-review", "--protocol-format", "edit-dsl"]).agentMode,
+    ).toBe("plan-exec-review");
+    expect(parseArgs(["--mode", "plan-exec", "--protocol-format", "edit-dsl"]).agentMode).toBe(
+      "plan-exec-review",
+    );
+    expect(parseArgs(["--mode", "edit", "--targets", targets]).agentMode).toBe("pinned-repair");
+  });
+
+  test("help names the canonical mode flag, default, and aliases", () => {
+    const text = helpText();
+    expect(text).toContain("--mode <pinned-repair|plan-exec-review>");
+    expect(text).toContain("(default: pinned-repair)");
+    expect(text).toContain("deprecated aliases: edit, plan-exec");
   });
 });
 
+// Parallel-safety audit (#36): this self-host smoke test spawns a nested Bun
+// process, so it must run exactly one copied target test (`src/index.test.ts`),
+// never the whole copied suite. Fanning out the suite from a `--parallel`
+// worker would multiply workers and subprocesses per worker. `.nested-smoke`
+// still marks the copy so any future copied test that consults it skips.
 test.skipIf(nestedSmoke)(
-  "self-host smoke: the agent edits its own src and the copied test suite still passes",
+  "self-host smoke: the agent edits its own src and the copied target test still passes",
   async () => {
     const dir = tempDir();
     cpSync(join(repoRoot, "src"), join(dir, "src"), { recursive: true });
@@ -746,7 +791,11 @@ test.skipIf(nestedSmoke)(
     expect(code).toBe(0);
     expect(captured.out.join("\n")).toContain("applied");
     expect(readFileSync(join(dir, "src", "index.ts"), "utf8")).toContain("const greeting");
-    const tests = Bun.spawnSync(["bun", "test"], { cwd: dir, timeout: 240000 });
+    // One target test proves the applied self-host edit; see the audit note above.
+    const tests = Bun.spawnSync(["bun", "test", "src/index.test.ts"], {
+      cwd: dir,
+      timeout: 240000,
+    });
     expect(tests.exitCode).toBe(0);
   },
   300000,

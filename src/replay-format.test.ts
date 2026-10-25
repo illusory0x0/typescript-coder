@@ -50,6 +50,7 @@ describe("ReplayRecorder", () => {
     expect(bundle.format).toBe(REPLAY_BUNDLE_FORMAT);
     expect(bundle.side).toBe("tc");
     expect(bundle.protocolFormat).toBe("json");
+    expect(bundle.agentMode).toBe("pinned-repair");
     expect(bundle.task).toBe("json-parser");
     expect(bundle.rep).toBe(2);
     expect(bundle.calls.length).toBe(1);
@@ -60,7 +61,9 @@ describe("ReplayRecorder", () => {
       issue: "issue text",
       fixture: "benchmark/fixtures/json-parser",
       protocolFormat: "edit-dsl",
+      agentMode: "plan-exec-review",
     });
     expect(editDsl.protocolFormat).toBe("edit-dsl");
+    expect(editDsl.agentMode).toBe("plan-exec-review");
   });
 });

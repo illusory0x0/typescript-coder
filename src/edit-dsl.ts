@@ -243,7 +243,9 @@ function createAddressDiagnostics(selection: Selection, detail: string): string 
       : `; the clause asks for the ${JSON.stringify(selection.space)} space, so the created declaration must occupy that space`;
   return [
     "stage: address",
+    "code: EDIT_TARGET_MISMATCH",
     `cannot create ${label} in ${locator.path}: ${detail}${spaceNote}`,
+    "hint: make the fence declare exactly the clause's target, or send a body that the clause's space can wrap",
     `a create fence must contain either one complete top-level declaration named ${JSON.stringify(locator.name)}, or a body that is not a declaration list (it is then wrapped by the requested space)`,
   ].join("\n");
 }

@@ -1,7 +1,8 @@
 # AGENTS.md
 
-`tc` — a TypeScript coding agent: an Edit → Verify loop driven by an OpenAI-compatible
-gateway, packaged as a sub-agent for opencode. Bun runtime, no build step.
+`tc` — a TypeScript coding agent: a pinned-repair Edit → Verify loop plus a
+plan-exec-review Plan → Execute → Review loop, driven by an OpenAI-compatible
+gateway and packaged as a sub-agent for opencode. Bun runtime, no build step.
 
 ## Boundaries
 
@@ -14,7 +15,8 @@ gateway, packaged as a sub-agent for opencode. Bun runtime, no build step.
 
 ```sh
 just typecheck   # bunx tsc --noEmit
-just test        # bun test  (scoped to src/ via bunfig.toml)
+just test        # bun test  (serial default; scoped to src/ via bunfig.toml)
+just test-parallel [n]  # opt-in bounded file-level workers; default min(nproc, 4)
 just format      # bunx oxfmt  — formatter is oxfmt, NOT prettier/biome; repo-wide, rewrites human/
 just accept      # offline acceptance scenarios; flags pass through (--all, --live, --only <id>)
 ```
@@ -23,6 +25,23 @@ Run before finishing: format only the files you changed (`bunx oxfmt <files>`), 
 `just typecheck && just test`. Do not run `just format` repo-wide — it rewrites
 `human/`; see Boundaries. Tests are colocated `src/*.test.ts`; single test:
 `bun test src/loop.test.ts -t "pattern"`.
+
+### Testing / parallel safety
+
+`just test` stays the serial, deterministic default. `just test-parallel [n]`
+is opt-in: it runs `bun test --parallel` with `min(nproc, 4)` workers by default
+and accepts a lower positive count (`just test-parallel 2`) or the
+`TC_TEST_JOBS` env override. It is file-level parallelism only (Bun implies
+`--isolate`); do not add `--concurrent`.
+
+Do not add `test.concurrent` yet. `src/loop.test.ts` is one large file that
+mutates process-global env flags, and other files spawn `tsc`/`bun` subprocesses
+or use fixed repo workspaces (`src/judge-golden.test.ts`); within-file
+concurrency is out of scope until those are proven isolated. Env-mutating tests
+must restore state in `finally`/`afterEach`. The `src/cli.test.ts` self-host
+smoke writes `.nested-smoke` and runs only the copied target test
+(`src/index.test.ts`), never a full copied suite, so a parallel worker cannot fan
+out the suite recursively.
 
 ## Evaluation
 
@@ -44,18 +63,21 @@ Strictly forbidden, with no exception: **do not run `--side oc` and do not run
 `--protocol-format json`** in the benchmark. Do not ask whether to run them; the
 benchmark now rejects both. tc reports run `--side tc` with the default
 `--protocol-format edit-dsl` and report savings against **both** frozen
-baselines (oc and tc json) in a four-way table; `--agent-mode edit|plan-exec|both`
-selects the tc loop mode(s).
+baselines (oc and tc json) in a four-way table;
+`--agent-mode pinned-repair|plan-exec-review|both` selects the tc loop mode(s),
+where `both` is the benchmark's multi-mode selector; the `edit` and `plan-exec`
+aliases are deprecated.
 
 ## Layout / entrypoints
 
 - `src/main.ts` — CLI entry (`#!/usr/bin/env bun`, piped-stdin contract `tc < task.txt`; a TTY stdin prints help).
-- `src/loop.ts` — `runLoop` + `buildSystemPrompt` (the model-facing prompt is a literal in this file; prompt text is benchmark-sensitive).
-- `src/tasks.ts` / `src/task-loop.ts` — plan/execute Plan → Stage → Task → edit tree contract and driver (`--mode plan-exec`); spec in `docs/spec.md`.
-- `src/prompts/task.ts` — planning/execution prompt text for the plan/execute loop.
+- `src/loop.ts` — `runLoop` dispatcher (default pinned-repair; plan-exec-review route) + `buildSystemPrompt` (the model-facing prompt is a literal in this file; prompt text is benchmark-sensitive).
+- `src/tasks.ts` / `src/task-loop.ts` — Plan → Stage → Task → edit tree contract and the `--mode plan-exec-review` driver: incremental one-Task execution, post-execution review, usage buckets; spec in `docs/spec.md`.
+- `src/plan-dsl.ts` — flat Plan and patch DSL parser/serializer; `src/dsl-diagnostics.ts` — shared tolerant diagnostics renderer.
+- `src/prompts/task.ts` — planning/execution/review prompt text for plan-exec-review.
 - `src/tools.ts` — check/test tools; default verify commands are `bunx tsc --noEmit` and `bun test`.
 - `src/editor.ts` — splice + oxfmt + parse gate. `src/utility.ts` — symbol index (path×symbol×kind).
-- `src/openai.ts` — provider config from env, retries/timeouts. `src/result.ts` — the JSON sub-agent result contract.
+- `src/openai.ts` — provider config from env, retries/timeouts. `src/result.ts` — the `typescript-coder-result@2` sub-agent result contract.
 - `src/index.ts` — leftover scaffold (`greet`) kept as the self-host fixture target; don't "clean it up".
 - `human/` — human-authored specs; read-only (see Boundaries).
 - `acceptance/`, `benchmark/` — harnesses, read their READMEs before changing.

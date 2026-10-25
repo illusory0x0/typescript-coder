@@ -1,11 +1,12 @@
 import { readFileSync } from "node:fs";
+import { canonicalAgentMode, DEFAULT_AGENT_MODE } from "./loop";
 import type { AgentMode, ProtocolFormat } from "./loop";
 import type { Locator } from "./utility";
 
 export interface CliOptions {
   help: boolean;
   model: string;
-  /** Loop shape: the single-target edit loop (default) or plan/execute. */
+  /** Loop shape: pinned-repair (default) or plan-exec-review. */
   agentMode?: AgentMode;
   /** Opt-in multi-payload exchanges (#69); default off. */
   multiPayload: boolean;
@@ -153,7 +154,7 @@ export function readTargetsFile(file: string): Locator[] {
 export function parseArgs(argv: string[]): CliOptions {
   let help = false;
   let model = DEFAULT_MODEL;
-  let agentMode: AgentMode = "edit";
+  let agentMode: AgentMode = DEFAULT_AGENT_MODE;
   let multiPayload = false;
   let protocolFormat: ProtocolFormat = "edit-dsl";
   let targets: Locator[] | null = null;
@@ -197,10 +198,20 @@ export function parseArgs(argv: string[]): CliOptions {
     ) {
       const flag = arg.startsWith("--agent-mode") ? "--agent-mode" : "--mode";
       const { value, next } = flagValue(argv, index, flag);
-      if (value !== "edit" && value !== "plan-exec") {
-        throw new Error(`--mode must be "edit" or "plan-exec" (got ${JSON.stringify(value)})`);
+      if (value === "both") {
+        // `both` is the benchmark's multi-mode selector; one CLI process runs
+        // one loop, so accepting it here would silently drop a mode.
+        throw new Error(
+          `${flag} "both" is only valid for the benchmark's --agent-mode; use "pinned-repair" or "plan-exec-review"`,
+        );
       }
-      agentMode = value;
+      const mode = canonicalAgentMode(value);
+      if (mode === null) {
+        throw new Error(
+          `${flag} must be "pinned-repair" or "plan-exec-review" (aliases: edit, plan-exec; got ${JSON.stringify(value)})`,
+        );
+      }
+      agentMode = mode;
       index = next;
       continue;
     }
@@ -257,15 +268,15 @@ export function parseArgs(argv: string[]): CliOptions {
     }
     throw new Error(`unknown argument: ${arg}`);
   }
-  if (agentMode === "plan-exec") {
+  if (agentMode === "plan-exec-review") {
     if (targets !== null) {
       throw new Error(
-        "--targets edits explicit addresses through the single-target edit loop; it cannot be combined with --mode plan-exec",
+        "--targets edits explicit addresses through the single-target pinned-repair loop; it cannot be combined with --mode plan-exec-review",
       );
     }
     if (protocolFormat === "json") {
       throw new Error(
-        "--mode plan-exec executes tasks with the edit-dsl protocol; --protocol-format json cannot be combined with it",
+        "--mode plan-exec-review executes tasks with the edit-dsl protocol; --protocol-format json cannot be combined with it",
       );
     }
   }
@@ -290,19 +301,20 @@ export function helpText(): string {
     "typescript-coder — read an issue on stdin and apply a verified LLM edit",
     "",
     "Usage:",
-    "  tc [--model <id>] [--mode <edit|plan-exec>] [--format <text|json>] [--protocol-format <json|edit-dsl>] [--token-budget <n>] [--multi-payload] [--targets <file>] < issue.txt",
-    "  bun run src/main.ts [--model <id>] [--mode <edit|plan-exec>] [--format <text|json>] [--protocol-format <json|edit-dsl>] [--token-budget <n>] [--multi-payload] [--targets <file>] < issue.txt",
+    "  tc [--model <id>] [--mode <pinned-repair|plan-exec-review>] [--format <text|json>] [--protocol-format <json|edit-dsl>] [--token-budget <n>] [--multi-payload] [--targets <file>] < issue.txt",
+    "  bun run src/main.ts [--model <id>] [--mode <pinned-repair|plan-exec-review>] [--format <text|json>] [--protocol-format <json|edit-dsl>] [--token-budget <n>] [--multi-payload] [--targets <file>] < issue.txt",
     "",
     "Options:",
     "  --model <id>       model id for the OpenAI-compatible provider (default: deepseek-v4.1-flash)",
-    "  --mode <edit|plan-exec>",
-    "                     loop shape (default: edit); plan-exec plans a",
-    "                     Plan -> Stage -> Task -> edit tree and executes",
-    "                     one micro edit at a time",
-    "                     (alias --agent-mode)",
+    "  --mode <pinned-repair|plan-exec-review>",
+    "                     loop shape (default: pinned-repair); pinned-repair",
+    "                     repairs one pinned selection through Edit -> Verify;",
+    "                     plan-exec-review plans, executes, and reviews a",
+    "                     Plan -> Execute -> Review edit tree",
+    "                     (alias --agent-mode; deprecated aliases: edit, plan-exec)",
     "  --format <text|json>",
     "                     stdout format (default: text); json prints exactly one",
-    "                     typescript-coder-result@1 object on stdout",
+    "                     typescript-coder-result@2 object on stdout",
     "  --token-budget <n> hard per-call token budget as a positive integer",
     "                     (default: 120000)",
     "  --check <cmd>      verify command to run after an edit; the value is split",

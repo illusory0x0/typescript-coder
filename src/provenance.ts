@@ -39,6 +39,7 @@ import {
   MAX_RUN_ITERATIONS,
   MAX_STALLED_ROUNDS,
   buildSystemPrompt,
+  canonicalAgentMode,
 } from "./loop";
 import type { AgentMode, ProtocolFormat } from "./loop";
 import {
@@ -91,7 +92,12 @@ export interface LoopConfig {
   readonly effort: string;
   readonly reps: number;
   readonly multiPayload: boolean;
-  /** Present only for the plan/execute mode; absent keeps edit hashes stable. */
+  /**
+   * Historical hash literal for the plan/execute loop (#34): the mode is now
+   * `plan-exec-review`, but writing the old `plan-exec` string keeps every
+   * recorded plan-exec provenance hash byte-identical. Pinned-repair omits the
+   * field, preserving the historical edit-loop hashes.
+   */
   readonly agentMode?: "plan-exec";
   readonly taskMaxExchanges?: number;
   readonly taskMaxPlanRounds?: number;
@@ -111,7 +117,7 @@ export interface CurrentInputOptions {
   readonly reps: number;
   /** Token budget, or null for `DEFAULT_TOKEN_BUDGET`. */
   readonly tokenBudget?: number | null;
-  /** Loop mode; absent or `edit` keeps the historical edit-loop hashes. */
+  /** Loop mode; absent or `pinned-repair` keeps the historical pinned-repair hashes. */
   readonly agentMode?: AgentMode;
 }
 
@@ -172,9 +178,10 @@ export function loopConfigHashInput(options: {
     reps: options.reps,
     multiPayload: options.multiPayload,
   };
-  // Only the plan/execute mode adds fields, so existing edit-loop input hashes
-  // stay byte-identical.
-  return options.agentMode === "plan-exec"
+  // Canonicalize the option (legacy `plan-exec` callers still map), but write
+  // the historical `plan-exec` literal into the hash so recorded plan-exec
+  // provenance stays byte-identical (#34).
+  return canonicalAgentMode(options.agentMode) === "plan-exec-review"
     ? {
         ...base,
         agentMode: "plan-exec",
@@ -233,7 +240,7 @@ export function currentInputHashes(root: string, options: CurrentInputOptions): 
     issues[task] = normalizeText(options.taskIssues[task] ?? "");
     fixtures[task] = readFixtureContents(join(root, "benchmark", "fixtures", task));
   }
-  const planning = options.agentMode === "plan-exec";
+  const planning = canonicalAgentMode(options.agentMode) === "plan-exec-review";
   return computeInputHashes({
     model: options.model,
     taskIssue: stableStringify(issues),
