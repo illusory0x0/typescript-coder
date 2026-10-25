@@ -22,7 +22,7 @@ import type { EditStatement, Selection as EditDslSelection, WriteFileStatement }
 import { renderReadFailureFeedback, renderReadFeedback, resolveMultiEditor } from "./multi-editor";
 import { stripLeadingExport } from "./loop";
 import type { MultiEditorDeps, MultiEditorResolution } from "./multi-editor";
-import { renderViewerFeedback } from "./edit-dsl";
+import { declarationKindOf, renderViewerFeedback } from "./edit-dsl";
 import type { EditDslRegion } from "./edit-dsl";
 import {
   applyResolvedRegions,
@@ -430,6 +430,121 @@ function createBodyCheck(task: EditNode, body: string): string | null {
   return null;
 }
 
+interface DeclarationShape {
+  name: string;
+  kind: string;
+}
+
+/** Unwrap the export wrapper around a top-level declaration. */
+function unwrapTopLevelDeclaration(statement: Node): Node | null {
+  const kind = (statement as Node & { kind?: string }).kind;
+  if (kind === "ExportNamedDeclaration" || kind === "ExportDefaultDeclaration") {
+    return (statement as Node & { declaration?: Node | null }).declaration ?? null;
+  }
+  return statement;
+}
+
+function declarationNodeName(node: Node): string | null {
+  switch ((node as Node & { kind?: string }).kind) {
+    case "VariableStatement": {
+      const declarations = (node as Node & { declarations?: readonly Node[] }).declarations ?? [];
+      if (declarations.length !== 1) {
+        return null;
+      }
+      const binding = (declarations[0] as Node & { name?: Node }).name;
+      return binding !== undefined && (binding as Node & { kind?: string }).kind === "Identifier"
+        ? ((binding as Node & { name?: string }).name ?? null)
+        : null;
+    }
+    case "FunctionDeclaration":
+    case "ClassDeclaration":
+    case "TypeAliasDeclaration":
+    case "InterfaceDeclaration":
+    case "EnumDeclaration": {
+      const name = (node as Node & { name?: Node }).name;
+      return name !== undefined && (name as Node & { kind?: string }).kind === "Identifier"
+        ? ((name as Node & { name?: string }).name ?? null)
+        : null;
+    }
+    case "NamespaceDeclaration":
+      return (node as Node & { name?: string }).name ?? null;
+    default:
+      return null;
+  }
+}
+
+/** The exact target kind, including const/let/var for variable entries. */
+function targetDeclarationShape(source: string, entry: IndexEntry): DeclarationShape | null {
+  if (entry.locator.kind !== "variable") {
+    return { name: entry.locator.name, kind: entry.locator.kind };
+  }
+  let program: Program;
+  try {
+    program = new Parser(source).parseProgram();
+  } catch {
+    return null;
+  }
+  for (const statement of program.body) {
+    const declaration = unwrapTopLevelDeclaration(statement);
+    if (
+      declaration !== null &&
+      (declaration as Node & { kind?: string }).kind === "VariableStatement" &&
+      entry.node.start >= declaration.start &&
+      entry.node.end <= declaration.end
+    ) {
+      return {
+        name: entry.locator.name,
+        kind: (declaration as Node & { declarationKind?: string }).declarationKind ?? "variable",
+      };
+    }
+  }
+  return null;
+}
+
+/**
+ * A whole-declaration modify replaces the declaration span, not just a body.
+ * It must still produce exactly the same top-level declaration kind and name;
+ * otherwise `NAME_ERROR = ...` can pass the parse gate and fail only at tsc.
+ */
+function declarationShapeProblem(
+  source: string,
+  entry: IndexEntry,
+  replacement: string,
+): string | null {
+  const target = targetDeclarationShape(source, entry);
+  if (target === null) {
+    return null;
+  }
+  let program: Program;
+  try {
+    program = new Parser(replacement).parseProgram();
+  } catch (error) {
+    return `stage: address\ncode: EDIT_DECLARATION_MISMATCH\nthe replacement for ${JSON.stringify(target.kind)} ${JSON.stringify(target.name)} does not parse as a declaration: ${error instanceof Error ? error.message : String(error)}`;
+  }
+  const declarations = program.body
+    .map((statement) => unwrapTopLevelDeclaration(statement))
+    .filter((declaration): declaration is Node => declaration !== null);
+  if (declarations.length !== 1) {
+    return `stage: address\ncode: EDIT_DECLARATION_MISMATCH\na whole-declaration modify must produce exactly one top-level declaration named ${JSON.stringify(target.name)}; got ${declarations.length}`;
+  }
+  const declaration = declarations[0];
+  if (declaration === undefined) {
+    return `stage: address\ncode: EDIT_DECLARATION_MISMATCH\nthe replacement declares no top-level ${JSON.stringify(target.name)}`;
+  }
+  const name = declarationNodeName(declaration);
+  if (name !== target.name) {
+    return `stage: address\ncode: EDIT_DECLARATION_MISMATCH\nthe replacement must declare ${JSON.stringify(target.name)}, not ${JSON.stringify(name ?? "<not a declaration>")}`;
+  }
+  const kind =
+    (declaration as Node & { kind?: string }).kind === "VariableStatement"
+      ? ((declaration as Node & { declarationKind?: string }).declarationKind ?? "variable")
+      : declarationKindOf(declaration);
+  if (kind !== target.kind) {
+    return `stage: address\ncode: EDIT_DECLARATION_MISMATCH\nthe replacement for ${JSON.stringify(target.kind)} ${JSON.stringify(target.name)} must remain a ${target.kind} declaration; got ${kind}`;
+  }
+  return null;
+}
+
 // ---------------------------------------------------------------------------
 // Applying one execution reply
 
@@ -438,6 +553,8 @@ interface ReplyOutcome {
   diagnostics: string | null;
   viewerOnly: boolean;
   appliedLocators: Locator[];
+  /** A whole-file write or a whole-declaration modify; used for advisory tsc. */
+  wholeDeclaration?: boolean;
 }
 
 interface ExecutionContext {
@@ -673,6 +790,7 @@ async function applyWholeFileWrite(
     diagnostics: null,
     viewerOnly: false,
     appliedLocators: [locatorOf(task)],
+    wholeDeclaration: true,
   };
 }
 
@@ -786,6 +904,31 @@ async function applyEditReply(
       index,
       withExportModifier({ ...selection, space: symbolSpaceOf(loc) }, sourceBefore, entry),
     );
+  }
+  if (task.action === "modify") {
+    for (const [index, selection] of normalized) {
+      if (
+        selection.replacement === null ||
+        selection.replacement.trim() === "" ||
+        selection.matcher !== null ||
+        selection.pick !== null
+      ) {
+        continue;
+      }
+      const entry = entryByIndex.get(index);
+      if (entry === undefined || entry === null) {
+        continue;
+      }
+      const problem = declarationShapeProblem(sourceBefore, entry, selection.replacement);
+      if (problem !== null) {
+        return {
+          ok: false,
+          diagnostics: problem,
+          viewerOnly: false,
+          appliedLocators: [],
+        };
+      }
+    }
   }
   const resolution = resolveMultiEditor(
     statements.map((statement, index) => {
@@ -978,6 +1121,8 @@ async function applyEditReply(
     diagnostics: feedback === "" ? null : feedback,
     viewerOnly: false,
     appliedLocators,
+    wholeDeclaration:
+      task.action === "modify" && expandedRegions.some((region) => region.stage === "whole-symbol"),
   };
 }
 
@@ -1017,6 +1162,8 @@ interface EditExecution {
   ok: boolean;
   diagnostics: string | null;
   messages: ChatMessage[];
+  /** Advisory tsc diagnostics after a large edit; never a gate failure. */
+  advisoryDiagnostics?: string | null;
 }
 
 /**
@@ -1076,6 +1223,7 @@ async function executeEdit(
   task: TaskNode,
   edit: EditNode,
   priorGateDiagnostics: string | undefined,
+  postEditDiagnostics: string | undefined,
 ): Promise<EditExecution> {
   let diagnostics: string | undefined;
   let consecutiveLength = 0;
@@ -1090,6 +1238,9 @@ async function executeEdit(
       priorGateDiagnostics === undefined
         ? null
         : `A previous task gate in this stage failed; later edits may need to fix it:\n\n${priorGateDiagnostics}`,
+      postEditDiagnostics === undefined
+        ? null
+        : `A previous large edit has advisory type diagnostics; this is not a task gate failure:\n\n${postEditDiagnostics}`,
     ]
       .filter((block): block is string => block !== null && block.trim() !== "")
       .join("\n\n");
@@ -1230,7 +1381,28 @@ async function executeEdit(
       payloads: 1,
       appliedLocators: outcome.appliedLocators,
     });
-    return { ok: true, diagnostics: null, messages: chat.messages };
+    const editIndex = task.edits.findIndex((candidate) => candidate.id === edit.id);
+    const hasLaterEdit = editIndex >= 0 && editIndex < task.edits.length - 1;
+    let advisoryDiagnostics: string | null = null;
+    if (hasLaterEdit && (edit.action === "write" || outcome.wholeDeclaration === true)) {
+      const check = await checkTool(
+        context.cwd,
+        context.options.checkCommand,
+        context.options.commandTimeoutMs,
+      );
+      if (!check.ok) {
+        const output = check.output.trim();
+        advisoryDiagnostics = `stage: advisory-tsc\nthe previous large edit does not currently type-check; this is advisory, not a gate failure:\n\n${
+          output === "" ? "(tsc produced no output)" : output.slice(0, 6000)
+        }`;
+      }
+    }
+    return {
+      ok: true,
+      diagnostics: null,
+      messages: chat.messages,
+      advisoryDiagnostics,
+    };
   }
   return {
     ok: false,
@@ -1685,6 +1857,8 @@ export async function runTaskLoop(options: LoopOptions): Promise<LoopResult> {
   };
   const editFailures = new Map<NodeId, string>();
   const taskFailures = new Map<NodeId, string>();
+  /** Advisory tsc output from a large edit, consumed by the next edit turn. */
+  const editAdvisories = new Map<NodeId, string>();
   /** Tasks already reopened by a review patch; they get no second review. */
   const reviewPatched = new Set<NodeId>();
   let iteration = 0;
@@ -2287,6 +2461,8 @@ export async function runTaskLoop(options: LoopOptions): Promise<LoopResult> {
       runState: state,
       iteration,
     };
+    const postEditDiagnostics = editAdvisories.get(task.id);
+    editAdvisories.delete(task.id);
     const outcome = await executeEdit(
       context,
       chat,
@@ -2295,6 +2471,7 @@ export async function runTaskLoop(options: LoopOptions): Promise<LoopResult> {
       task,
       edit,
       priorGateDiagnostics(state, stage, task),
+      postEditDiagnostics,
     );
     if (overBudget(usageState, tokenBudget)) {
       return terminated(
@@ -2315,6 +2492,9 @@ export async function runTaskLoop(options: LoopOptions): Promise<LoopResult> {
     }
     state.editStatus.set(edit.id, "done");
     editFailures.delete(edit.id);
+    if (outcome.advisoryDiagnostics !== null && outcome.advisoryDiagnostics !== undefined) {
+      editAdvisories.set(task.id, outcome.advisoryDiagnostics);
+    }
   }
 }
 

@@ -1083,6 +1083,102 @@ end`;
     );
   }, 30000);
 
+  test("a whole-declaration modify must remain the same declaration kind", async () => {
+    const dir = project();
+    writeFileSync(join(dir, "src", "consts.ts"), "export const value = 1;\n");
+    writeFileSync(
+      join(dir, "src", "helper.test.ts"),
+      [
+        'import { expect, test } from "bun:test";',
+        'import { answer } from "./helper";',
+        'test("answer", () => {',
+        "  expect(answer()).toBe(1);",
+        "});",
+        "",
+      ].join("\n"),
+    );
+    const plan = planText(
+      [
+        stageSpec(1, [
+          taskSpec(1, {
+            verify: "test",
+            edits: [
+              editSpec(1001, {
+                loc: { path: "src/consts.ts", symbol: "value", kind: "value" },
+                instruction: "Change value to 2.",
+              }),
+            ],
+          }),
+        ]),
+      ],
+      true,
+    );
+    const bareAssignment = [
+      "select value in src/consts.ts resolve value",
+      "replace with",
+      "<<<TC_EDIT_BEGIN>>>",
+      "value = 2;",
+      "<<<TC_EDIT_END>>>",
+      "end",
+    ].join("\n");
+    const declaration = [
+      "select value in src/consts.ts resolve value",
+      "replace with",
+      "<<<TC_EDIT_BEGIN>>>",
+      "const value = 2;",
+      "<<<TC_EDIT_END>>>",
+      "end",
+    ].join("\n");
+    const provider = new ScriptedProvider([plan, bareAssignment, declaration]);
+    const result = await runTaskLoop(baseOptions(dir, provider));
+    expect(result.ok).toBe(true);
+    expect(result.records[0]?.outcome).toBe("address");
+    expect(result.records[0]?.diagnostics).toContain("EDIT_DECLARATION_MISMATCH");
+    expect(readFileSync(join(dir, "src", "consts.ts"), "utf8")).toContain(
+      "export const value = 2;",
+    );
+  }, 30000);
+
+  test("a large edit's advisory tsc reaches the next edit", async () => {
+    const dir = project();
+    const plan = planText(
+      [
+        stageSpec(1, [
+          taskSpec(1, {
+            verify: "test",
+            edits: [
+              editSpec(1001, {
+                loc: { path: "src/helper.ts", symbol: "", kind: "file" },
+                action: "write",
+                instruction: "Write a temporary implementation.",
+              }),
+              editSpec(1002, {
+                instruction: "Repair the answer after the write.",
+              }),
+            ],
+          }),
+        ]),
+      ],
+      true,
+    );
+    const write = [
+      "write src/helper.ts with",
+      "<<<TC_EDIT_BEGIN>>>",
+      "export function answer(): number {",
+      "  const broken: string = 1;",
+      "  return 2;",
+      "}",
+      "<<<TC_EDIT_END>>>",
+    ].join("\n");
+    const provider = new ScriptedProvider([plan, write, GOOD_EDIT]);
+    const result = await runTaskLoop(baseOptions(dir, provider));
+    expect(result.ok).toBe(true);
+    const prompt = provider.calls[2]?.at(-1)?.content ?? "";
+    expect(prompt).toContain("advisory type diagnostics");
+    expect(prompt).toContain("TS2322");
+    expect(readFileSync(join(dir, "src", "helper.ts"), "utf8")).toContain("return 2;");
+  }, 30000);
+
   test("a failed edit is reported to the planner, which changes its definition", async () => {
     const dir = project();
     const wrongTarget = editDsl("export function missing(): number {\n  return 2;\n}").replace(
@@ -1255,6 +1351,29 @@ end`;
     const result = await runTaskLoop(baseOptions(dir, provider));
     expect(result.ok).toBe(true);
     expect(readFileSync(join(dir, "src", "unused.ts"), "utf8").trim()).toBe("");
+  }, 30000);
+
+  test("a missing matcher gets concrete matcher guidance", async () => {
+    const dir = project();
+    const plan = planText([stageSpec(1, [taskSpec(1)])], true);
+    const badMatcher = [
+      "select answer in src/helper.ts resolve value",
+      "match ( return 1; )",
+      "replace with",
+      "<<<TC_EDIT_BEGIN>>>",
+      "export function answer(): number {",
+      "  return 2;",
+      "}",
+      "<<<TC_EDIT_END>>>",
+      "end",
+    ].join("\n");
+    const provider = new ScriptedProvider([plan, badMatcher, GOOD_EDIT]);
+    const result = await runTaskLoop(baseOptions(dir, provider));
+    expect(result.ok).toBe(true);
+    expect(result.records[0]?.diagnostics).toContain("EDIT_MATCHER_MISSING");
+    const prompt = provider.calls[2]?.at(-1)?.content ?? "";
+    expect(prompt).toContain("# Matcher format");
+    expect(prompt).toContain("Never write `match (`");
   }, 30000);
 
   test("an off-target edit is rejected without touching the file", async () => {

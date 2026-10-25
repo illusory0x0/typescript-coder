@@ -119,7 +119,8 @@ A select clause is never a file command. A select clause with `replace` or
   exactly those lines from the declaration, unfolded. It cannot be combined with
   `match`, `pick`, `replace`, or `rename`; editors use `pick` for a narrowed
   rewrite.
-- **`match`**: exactly one of two locators.
+- **`match`**: exactly one of two locators. A bare `match (` or unquoted code
+  is not a matcher; it reports `EDIT_MATCHER_MISSING`.
   - a `` `snippet` `` in backticks, where only `` \` `` and `\\` are escapes and
     every other backslash is literal;
   - a `/regex/` in slashes, where only `\/` decodes to `/` and every other

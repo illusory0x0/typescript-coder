@@ -17,6 +17,7 @@ import {
   TASK_PATCH_FINAL_EXAMPLE,
   TASK_PLAN_COMPLEX_EXAMPLE,
   TASK_PLAN_EXAMPLE,
+  TASK_MATCHER_FORMAT_HELP,
   TASK_PLANNER_VIEW,
   TASK_SCAFFOLD_PLAN_EXAMPLE,
 } from "./task";
@@ -303,6 +304,24 @@ describe("execution prompts", () => {
     expect(prompt).toContain("Workflow:\n1. Read the target source");
     expect(prompt).toContain("Clause: `select <symbol> in <path>");
     expect(prompt).toContain("whole-file edit");
+  });
+
+  test("an EDIT_MATCHER_MISSING retry carries concrete matcher help", () => {
+    const state = stateOf();
+    const stage = state.stages[0] as Stage;
+    const task = stage.tasks[0] as TaskNode;
+    const prompt = buildTaskTurnPrompt({
+      state,
+      stage,
+      task,
+      edit: task.edits[0] as EditNode,
+      contentView: "export function answer(): number {\n  return 1;\n}",
+      diagnostics: "stage: syntax\ncode: EDIT_MATCHER_MISSING",
+      help: true,
+    });
+    expect(prompt).toContain("# Matcher format");
+    expect(prompt).toContain(TASK_MATCHER_FORMAT_HELP);
+    expect(prompt).toContain("Never write `match (`");
   });
 
   test("the edit instruction requires distinct declarations across clauses", () => {

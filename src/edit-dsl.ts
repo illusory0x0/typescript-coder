@@ -367,7 +367,7 @@ function createBodyText(selection: Selection, body: string): CreateBody {
 // requested kind is only an address hint: `select const X` may carry a
 // `type X = …` fence, and two clauses conflict when they add the same
 // declaration in the same file, whatever their locators asked for.
-function declarationKindOf(declaration: Node): string {
+export function declarationKindOf(declaration: Node): string {
   const kind = (declaration as Node & { kind: string }).kind;
   switch (kind) {
     case "FunctionDeclaration":

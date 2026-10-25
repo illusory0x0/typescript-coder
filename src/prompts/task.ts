@@ -368,7 +368,7 @@ Reply with exactly one corrected patch only. Do not re-emit the Plan.`;
 
 const TASK_ACTION_RULES: Record<string, string> = {
   modify:
-    "The declaration must already exist. Reply with one or more edit clauses that change it; a reply that writes nothing is rejected.",
+    "The declaration must already exist. Reply with one or more edit clauses that change it; a reply that writes nothing is rejected. A whole-declaration replace (no `match`/`pick`) must keep the same top-level declaration name and exact kind, such as `const` to `const` or `function` to `function`; an omitted `export` is tolerated.",
   create:
     "The declaration must be absent. create adds one top-level declaration; a dotted class member is not a target. Reply with a whole-declaration `select … replace with <fence> end` clause carrying no `match` or `pick`. The fence contains the declaration; a body without a declaration is wrapped by the edit's symbol space (value -> `let`, type -> `type`, namespace -> `namespace`). If several declarations are needed, split them into separate create edits; do not use a whole-file write just to avoid multiple creates.",
   delete:
@@ -383,6 +383,19 @@ const TASK_ACTION_RULES: Record<string, string> = {
 export const TASK_SELF_CHECK_OFFER =
   'You may make at most one bounded self-check read per edit: reply with exactly {"request":"read"} to see the current source again; the harness returns it, then asks again.';
 
+/** Extra guidance after an EDIT_MATCHER_MISSING rejection. */
+export const TASK_MATCHER_FORMAT_HELP = `Matcher format:
+- match \`copied snippet\`
+- match /regex/
+- omit \`match\` for a whole-declaration rewrite
+
+The snippet must be a complete TypeScript statement or expression copied from
+the target, or a contiguous run of complete statements. Do not copy a partial
+function body with an unbalanced brace. If the span is hard to copy, omit
+\`match\` and replace the whole declaration.
+
+Never write \`match (\` or unquoted code after \`match\`; that is a syntax error.`;
+
 /**
  * The execution instruction. It teaches the same clause grammar as the edit
  * driver, but the target is already selected, so it omits the select-first
@@ -395,7 +408,7 @@ export function taskEditDslInstruction(): string {
     "Every clause in one reply must resolve to a different declaration `(path, symbol, kind)`; target one declaration at most once per reply, even with different `match` or `pick` spans, and split edits to one declaration across exchanges.",
     "",
     "Clause: `select <symbol> in <path> [ resolve <value|type|namespace> ] [ match (<snippet> | /regex/) ] [ [ pick <range> ] replace with <fence> | rename <old> to <new> ] end`.",
-    "`match` locates a span inside the declaration; `pick` narrows a match and requires `replace`; omit `match` to rewrite the whole declaration; an empty body deletes it. Open the body with `<<<TC_EDIT_BEGIN>>>` on its own line and close it with `<<<TC_EDIT_END>>>` on its own line; the body is raw text (hyphen runs, backticks, `done`, and `end` are ordinary body lines). `pick` coordinates are the 1-based file-absolute lines of the content view.",
+    "`match` accepts only a backtick snippet or `/regex/`; `match (` and unquoted code are rejected. It locates a span inside the declaration; `pick` narrows a match and requires `replace`; omit `match` to rewrite the whole declaration; an empty body deletes it. Open the body with `<<<TC_EDIT_BEGIN>>>` on its own line and close it with `<<<TC_EDIT_END>>>` on its own line; the body is raw text (hyphen runs, backticks, `done`, and `end` are ordinary body lines). `pick` coordinates are the 1-based file-absolute lines of the content view.",
     "For a whole-file edit, `write <path> with <<<TC_EDIT_BEGIN>>> … <<<TC_EDIT_END>>>` replaces the file with the raw body; no terminator follows the sentinel close.",
     "",
     "You do not run the type check; the harness runs the task gate after every edit in the task settles. An edit may also change the same-file declarations listed in its `related` field.",
@@ -548,6 +561,12 @@ export function buildTaskTurnPrompt(input: TaskTurnInput): string {
       "",
       TASK_SELF_CHECK_OFFER,
     );
+    if (
+      input.diagnostics.includes("EDIT_MATCHER_MISSING") ||
+      input.diagnostics.includes("stage: matcher")
+    ) {
+      blocks.push("", "# Matcher format", "", TASK_MATCHER_FORMAT_HELP);
+    }
   }
   if (input.help === true) {
     blocks.push("", "# Format help", "", taskEditDslHelp(edit.action));

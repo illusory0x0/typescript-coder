@@ -840,7 +840,7 @@ reply shape plan-exec accepts.
 
 | Action   | Required reply                                                                                                                                                                                                                                                                           |
 | -------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| `modify` | At least one `replace with <fence>` clause on the target or a related loc (a viewer alone is rejected).                                                                                                                                                                                  |
+| `modify` | At least one `replace with <fence>` clause on the target or a related loc (a viewer alone is rejected). A whole-declaration `modify` (no `match`/`pick`) must leave one top-level declaration with the same name and exact declaration kind; `export` modifier differences are tolerated. A bare `match (` is `EDIT_MATCHER_MISSING`; use a backtick snippet, `/regex/`, or omit `match`. |
 | `create` | A whole-declaration `replace with <fence>` with no `match`/`pick`; the fence must contain exactly one top-level declaration, the target. Any other body is wrapped by the edit's space (`value` → `let`, `type` → `type`, `namespace` → `namespace`); the created name/space must match. |
 | `delete` | A whole-declaration empty fence, no `match`/`pick`.                                                                                                                                                                                                                                      |
 | `rename` | `rename <current> to <renameTo>`, no `replace`; the new name must equal `renameTo`.                                                                                                                                                                                                      |
@@ -878,6 +878,14 @@ are:
 4. An applied edit marks the edit `done` immediately; there is no per-edit type
    check.
 5. After every edit in the task is `done` or `failed`, run the task gate.
+
+When a `write` or whole-declaration `modify` lands and another edit remains in
+the same Task, the harness may run `tsc --noEmit` immediately as an **advisory**
+check. Its diagnostics are shown in the next edit prompt under
+`# Post-edit type diagnostics`, but they do not reopen or fail the edit; the
+final Task gate remains the hard boundary. This catches a corrupted large edit
+earlier without rejecting the intermediate type-broken states that a multi-edit
+Task legitimately needs.
 
 A rejected reply or a read-only viewer costs one exchange. Per edit: at most 3
 exchanges. Two consecutive `EDIT_TARGET_MISMATCH` replies end the edit with
