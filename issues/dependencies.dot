@@ -41,6 +41,12 @@ digraph issues {
   "34" [label="#34 Rename modes to pinned-repair and plan-exec-review with aliases"];
   "35" [label="#35 Migrate docs and acceptance to plan-exec-review V2"];
   "36" [label="#36 Make the unit test suite safely parallel"];
+  "37" [label="#37 Rework edit-action protocol: sentinel fence, end terminators, unique clause addresses"];
+  "38" [label="#38 Replace edit-action fences with the sentinel-only format"];
+  "39" [label="#39 Retire done and use end for unfenced edit-action commands"];
+  "40" [label="#40 Enforce unique resolved path, symbol, and kind across edit-action clauses"];
+  "41" [label="#41 Update edit-action prompts and few-shots for sentinel fences, end, and unique clauses"];
+  "42" [label="#42 Add the edit-action BNF to docs/spec.md and align the protocol docs"];
 
   // parent edges (parent -> child), solid
   "1" -> "2";
@@ -69,6 +75,11 @@ digraph issues {
   "26" -> "33";
   "26" -> "34";
   "26" -> "35";
+  "37" -> "38";
+  "37" -> "39";
+  "37" -> "40";
+  "37" -> "41";
+  "37" -> "42";
 
   // dependency edges (blocker -> blocked), dashed
   "2" -> "3" [style=dashed, label="blocks"];
@@ -103,4 +114,11 @@ digraph issues {
   "32" -> "35" [style=dashed, label="blocks"];
   "33" -> "35" [style=dashed, label="blocks"];
   "34" -> "35" [style=dashed, label="blocks"];
+  "38" -> "39" [style=dashed, label="blocks"];
+  "38" -> "41" [style=dashed, label="blocks"];
+  "38" -> "42" [style=dashed, label="blocks"];
+  "39" -> "41" [style=dashed, label="blocks"];
+  "39" -> "42" [style=dashed, label="blocks"];
+  "40" -> "41" [style=dashed, label="blocks"];
+  "40" -> "42" [style=dashed, label="blocks"];
 }

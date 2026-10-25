@@ -10,3 +10,51 @@
   parent: null
   deps: []
   file: 0025-teach-the-edit-dsl-prompt-to-expand-folded-source-views.md
+- id: 38
+  title: "Replace edit-action fences with the sentinel-only format"
+  status: todo
+  priority: medium
+  milestone: null
+  parent: 37
+  deps: []
+  file: 0038-replace-edit-action-fences-with-the-sentinel-only-format.md
+- id: 39
+  title: "Retire done and use end for unfenced edit-action commands"
+  status: todo
+  priority: medium
+  milestone: null
+  parent: 37
+  deps: [38]
+  file: 0039-retire-done-and-use-end-for-unfenced-edit-action-commands.md
+- id: 40
+  title: "Enforce unique resolved path, symbol, and kind across edit-action clauses"
+  status: todo
+  priority: medium
+  milestone: null
+  parent: 37
+  deps: []
+  file: 0040-enforce-unique-resolved-path-symbol-and-kind-across-edit-action-clauses.md
+- id: 41
+  title: "Update edit-action prompts and few-shots for sentinel fences, end, and unique clauses"
+  status: todo
+  priority: medium
+  milestone: null
+  parent: 37
+  deps: [38, 39, 40]
+  file: 0041-update-edit-action-prompts-and-few-shots-for-sentinel-fences-end-and-unique-clauses.md
+- id: 42
+  title: "Add the edit-action BNF to docs/spec.md and align the protocol docs"
+  status: todo
+  priority: medium
+  milestone: null
+  parent: 37
+  deps: [38, 39, 40]
+  file: 0042-add-the-edit-action-bnf-to-docs-spec-md-and-align-the-protocol-docs.md
+- id: 37
+  title: "Rework edit-action protocol: sentinel fence, end terminators, unique clause addresses"
+  status: todo
+  priority: medium
+  milestone: null
+  parent: null
+  deps: []
+  file: 0037-rework-edit-action-protocol-sentinel-fence-end-terminators-unique-clause-addresses.md
