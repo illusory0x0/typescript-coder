@@ -9,7 +9,7 @@ import {
   serializePlanDsl,
   serializePlanPatch,
 } from "./plan-dsl";
-import { MAX_EDITS_PER_TASK, MAX_RELATED_LOCS, MAX_STAGES, MAX_TASKS_PER_STAGE } from "./tasks";
+import { MAX_NODES, MAX_RELATED_LOCS } from "./tasks";
 import type { EditNode, Plan, Stage, TaskNode, TaskVerify } from "./tasks";
 
 const SPEC_EXAMPLE = `plan "01-main"
@@ -101,6 +101,59 @@ describe("Plan DSL parse", () => {
     expect(plan).toEqual(SPEC_PLAN);
     expect(parsePlan(SPEC_EXAMPLE).ok).toBe(true);
     expect(readPlan(SPEC_EXAMPLE).ok).toBe(true);
+  });
+
+  test("parses and serializes a whole-file write edit", () => {
+    const content = `plan "01-main"
+goal: Implement the parser.
+
+stage "02-current" plan "01-main"
+goal: Implement the parser.
+end
+
+task "03-first" stage "02-current" verify test
+instruction: Implement the module.
+end
+
+edit "04-file" task "03-first" write src/json.ts
+instruction: Write the complete module.
+end`;
+    const plan = accepted(content);
+    const edit = plan.stages[0]?.tasks[0]?.edits[0];
+    expect(edit?.action).toBe("write");
+    expect(edit?.loc).toEqual({ path: "src/json.ts", symbol: "", kind: "file" });
+    expect(accepted(serializePlanDsl(plan))).toEqual(plan);
+
+    const patch = parsePlanPatch(`patch
+edit+ "05-file" task "03-first" write src/other.ts
+instruction: Write the other module.
+end`);
+    expect(patch.ok).toBe(true);
+    if (patch.ok) {
+      expect(serializePlanPatch(patch.patch)).toContain(
+        'edit+ "05-file" task "03-first" write src/other.ts',
+      );
+    }
+
+    const update = parsePlanPatch(`patch
+edit~ "04-file"
+write src/next.ts
+end`);
+    expect(update.ok).toBe(true);
+    if (update.ok) {
+      expect(serializePlanPatch(update.patch)).toContain("write src/next.ts");
+    }
+  });
+
+  test("rejects a write edit that carries a symbol space", () => {
+    expect(
+      rejected(
+        SPEC_EXAMPLE.replace(
+          "modify value answer in src/helper.ts",
+          "write value answer in src/helper.ts",
+        ),
+      ),
+    ).toContain("write <path>");
   });
 
   test("accepts blank lines, surrounding indentation, and CRLF", () => {
@@ -627,32 +680,32 @@ end`;
     expect(rejected('plan "01.main"\ngoal: g')).toContain("must be a string node id");
   });
 
-  test("enforces stage, task, edit, related, and node caps", () => {
+  test("accepts large stage/task/edit counts and enforces related and node caps", () => {
     const manyStages = planOf(
-      Array.from({ length: MAX_STAGES + 1 }, (_, index) =>
+      Array.from({ length: 20 }, (_, index) =>
         stage(`${String(index + 2).padStart(2, "0")}-stage`),
       ),
     );
-    expect(rejected(serializePlanDsl(manyStages))).toContain(`at most ${MAX_STAGES}`);
+    expect(accepted(serializePlanDsl(manyStages)).stages.length).toBe(20);
 
     const manyTasks = planOf([
       stage(
         "02-current",
-        Array.from({ length: MAX_TASKS_PER_STAGE + 1 }, (_, index) => task(`${index + 10}-task`)),
+        Array.from({ length: 20 }, (_, index) => task(`${index + 10}-task`)),
       ),
     ]);
-    expect(rejected(serializePlanDsl(manyTasks))).toContain(`at most ${MAX_TASKS_PER_STAGE}`);
+    expect(accepted(serializePlanDsl(manyTasks)).stages[0]?.tasks.length).toBe(20);
 
     const manyEdits = planOf([
       stage("02-current", [
         task(
           "03-task",
           "test",
-          Array.from({ length: MAX_EDITS_PER_TASK + 1 }, (_, index) => edit(`${index + 10}-edit`)),
+          Array.from({ length: 10 }, (_, index) => edit(`${index + 10}-edit`)),
         ),
       ]),
     ]);
-    expect(rejected(serializePlanDsl(manyEdits))).toContain(`at most ${MAX_EDITS_PER_TASK}`);
+    expect(accepted(serializePlanDsl(manyEdits)).stages[0]?.tasks[0]?.edits.length).toBe(10);
 
     const manyRelated = planOf([
       stage("02-current", [
@@ -670,16 +723,16 @@ end`;
     expect(rejected(serializePlanDsl(manyRelated))).toContain(`at most ${MAX_RELATED_LOCS}`);
 
     const fullTree = planOf(
-      Array.from({ length: MAX_STAGES }, (_, stageIndex) => ({
+      Array.from({ length: 20 }, (_, stageIndex) => ({
         id: `${String(stageIndex + 2).padStart(2, "0")}-stage`,
         goal: `Stage ${stageIndex}.`,
-        tasks: Array.from({ length: MAX_TASKS_PER_STAGE }, (_, taskIndex) => {
+        tasks: Array.from({ length: 5 }, (_, taskIndex) => {
           const label = 100 + stageIndex * 10 + taskIndex;
           return task(`${label}-task`, "test", [edit(`${label}-edit`)]);
         }),
       })),
     );
-    expect(rejected(serializePlanDsl(fullTree))).toContain("task/edit nodes");
+    expect(rejected(serializePlanDsl(fullTree))).toContain(`at most ${MAX_NODES} are allowed`);
   });
 
   test("a plan without finish may end in a tsc task; finish still requires test", () => {

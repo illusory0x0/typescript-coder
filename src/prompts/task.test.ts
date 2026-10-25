@@ -16,8 +16,9 @@ import {
   TASK_PATCH_FINAL_EXAMPLE,
   TASK_PLAN_COMPLEX_EXAMPLE,
   TASK_PLAN_EXAMPLE,
+  TASK_WRITE_PLAN_EXAMPLE,
 } from "./task";
-import { initialState, MAX_EDITS_PER_TASK } from "../tasks";
+import { initialState } from "../tasks";
 import type { EditNode, Stage, TaskNode, TaskRunState } from "../tasks";
 import { parsePlan, parsePlanPatch, serializePlanDsl } from "../plan-dsl";
 
@@ -80,32 +81,34 @@ describe("planning prompts", () => {
     expect(prompt).toContain("flat Plan DSL");
     expect(prompt).toContain("NN-slug");
     expect(prompt).toContain("globally unique across the Plan");
-    expect(prompt).toContain("small named functions");
-    expect(prompt).toContain("thin orchestrator");
+    expect(prompt).toContain("Prefer top-level functions with explicit types");
     expect(prompt).toContain("verification boundary");
     expect(prompt).toContain("finish");
-    expect(prompt).toContain("exactly one current Stage and one current Task");
-    expect(prompt).toContain("The first reply is ONLY the initial Plan DSL");
-    expect(prompt).toContain("Initial Plan contract");
-    expect(prompt).toContain(`1-${MAX_EDITS_PER_TASK} edit records`);
+    expect(prompt).toContain("one current Stage and one current Task");
+    expect(prompt).toContain("Workflow:\n1. Read the requirement and symbol index.");
+    expect(prompt).toContain("Initial reply");
+    expect(prompt).toContain("one or more edit records");
     expect(prompt).toContain("every task record comes before every edit record");
-    expect(prompt).toContain("no second Task and no finish");
+    expect(prompt).toContain("no finish; later turns add work with patches");
     expect(prompt).toContain("Invalid shape (rejected)");
-    expect(prompt).toContain("Every later planning turn replies with exactly one patch");
+    expect(prompt).toContain("later turns amend it with one patch");
     expect(prompt).toContain('task+ "');
     expect(prompt).toContain('edit+ "');
     expect(prompt).toContain('stage+ "');
     expect(prompt).toContain("at most one new Task");
+    expect(prompt).toContain("write <path>");
     expect(prompt).not.toContain('"stages"');
     expect(prompt).not.toContain('"deps"');
     expect(prompt).not.toContain('"todo"');
     expect(prompt).toContain(TASK_PLAN_EXAMPLE);
+    expect(prompt).toContain(TASK_WRITE_PLAN_EXAMPLE);
     expect(prompt).toContain(TASK_PATCH_EXAMPLE);
     expect(prompt).toContain(TASK_PATCH_FINAL_EXAMPLE);
     expect(prompt).not.toContain(TASK_PLAN_COMPLEX_EXAMPLE);
     expect(prompt.indexOf(TASK_PLAN_EXAMPLE)).toBeLessThan(prompt.indexOf("flat Plan DSL"));
     expect(prompt).not.toContain("```json");
     expect(parsePlan(TASK_PLAN_EXAMPLE).ok).toBe(true);
+    expect(parsePlan(TASK_WRITE_PLAN_EXAMPLE).ok).toBe(true);
     expect(parsePlan(TASK_PLAN_COMPLEX_EXAMPLE).ok).toBe(true);
     expect(parsePlanPatch(TASK_PATCH_EXAMPLE).ok).toBe(true);
     expect(parsePlanPatch(TASK_PATCH_FINAL_EXAMPLE).ok).toBe(true);
@@ -115,20 +118,18 @@ describe("planning prompts", () => {
     const prompt = buildTaskPlanningSystemPrompt();
     expect(TASK_FUNCTIONAL_STYLE).toBe(FUNCTIONAL_STYLE);
     expect(prompt).toContain(FUNCTIONAL_STYLE);
-    expect(prompt).toContain("Never plan a new class");
-    expect(prompt).toContain("prefer a top-level helper");
-    expect(prompt).toContain("one whole-class `modify` that adds all needed stubs");
-    expect(prompt).toContain("then `modify` the existing members");
-    expect(prompt).toContain("Never plan a dotted `create`");
-    expect(prompt).toContain("a dotted class member is never a create target");
+    expect(prompt).toContain("Do not plan a new class");
+    expect(prompt).toContain("modify the class instead");
+    expect(prompt).toContain("never plan a dotted `create`");
+    expect(prompt).toContain("A dotted class member is not a create target");
   });
 
   test("the first user prompt asks for one current Stage and one current Task", () => {
     const prompt = buildTaskPlanningUserPrompt("add a helper", "select helper in src/a.ts");
     expect(prompt).toContain("# Requirement\n\nadd a helper");
     expect(prompt).toContain("select helper in src/a.ts");
-    expect(prompt).toContain("exactly one current Stage and exactly one current Task");
-    expect(prompt).toContain(`1-${MAX_EDITS_PER_TASK} edits`);
+    expect(prompt).toContain("one current Stage and one current Task");
+    expect(prompt).toContain("one or more edits");
     expect(prompt).toContain("Put every task record before every edit record");
     expect(prompt).toContain("Do not add a second Task or finish");
   });
@@ -137,9 +138,8 @@ describe("planning prompts", () => {
     const prompt = buildTaskPlanRetryPrompt("stage: task-tree\n- bad");
     expect(prompt).toContain("stage: task-tree");
     expect(prompt).toContain("one current Stage and one current Task");
-    expect(prompt).toContain("Hard repair rules");
-    expect(prompt).toContain("keep only the first Task");
-    expect(prompt).toContain(`keep the first ${MAX_EDITS_PER_TASK} edits`);
+    expect(prompt).toContain("Correct the shape");
+    expect(prompt).toContain("keep only the current Task");
     expect(prompt).toContain("Put every task record before every edit record");
     expect(prompt).toContain("Do not emit finish");
     expect(prompt).toContain(TASK_PLAN_COMPLEX_EXAMPLE);
@@ -180,7 +180,8 @@ describe("planning prompts", () => {
     expect(prompt).toContain("# Current symbol index");
     expect(prompt).toContain(`The edit(s) #${EDIT.id} could not be carried out.`);
     expect(prompt).toContain("A failed task reopens");
-    expect(prompt).toContain("small helper function");
+    expect(prompt).toContain("Keep helpers when they make the code easier to read");
+    expect(prompt).toContain("If an edit keeps failing on its address");
     expect(prompt).toContain("Reply with exactly one `patch`");
     expect(prompt).toContain("Add at most one new Task");
     expect(prompt).not.toContain("Reply with the complete Plan DSL");
@@ -242,6 +243,8 @@ describe("review prompts", () => {
     expect(prompt).toContain(`task~ "${TASK.id}"`);
     expect(prompt).toContain(`edit~ "${EDIT.id}"`);
     expect(prompt).toContain("Do not repeat `task`");
+    expect(prompt).toContain("A done edit is immutable");
+    expect(prompt).toContain("append a new repair edit with `edit+`");
     expect(prompt).not.toContain('task~ "#');
     expect(prompt).toContain("It may carry `finish`");
     expect(prompt).toContain("Do not add a Stage or Task");
@@ -268,10 +271,12 @@ describe("execution prompts", () => {
   test("the system prompt teaches the edit grammar and the task gate", () => {
     const prompt = buildTaskExecutionSystemPrompt();
     expect(prompt).toContain("select … end");
+    expect(prompt).toContain("write <path>");
     expect(prompt).toContain("task gate");
     expect(prompt).not.toContain("TASK_DONE");
-    expect(prompt).toContain("Reply shape: `select <symbol> in <path>");
-    expect(prompt).toContain("small single-purpose functions");
+    expect(prompt).toContain("Workflow:\n1. Read the target source");
+    expect(prompt).toContain("Clause: `select <symbol> in <path>");
+    expect(prompt).toContain("whole-file edit");
   });
 
   test("the system prompt carries the same functional constraints as planning", () => {
@@ -293,10 +298,32 @@ describe("execution prompts", () => {
       edit: createStage.tasks[0]?.edits[0] as EditNode,
       contentView: "",
     });
-    expect(prompt).toContain("top-level declaration only");
-    expect(prompt).toContain("never target a dotted class member");
-    expect(prompt).toContain("one whole-class `modify`");
+    expect(prompt).toContain("create adds one top-level declaration");
+    expect(prompt).toContain("dotted class member is not a target");
+    expect(prompt).toContain("whole-file `write`");
     expect(prompt).toContain("select … replace with <fence> end");
+  });
+
+  test("a write turn uses the whole-file instruction and example", () => {
+    const writeEdit: EditNode = {
+      id: "03-write",
+      loc: { path: "src/helper.ts", symbol: "", kind: "file" },
+      action: "write",
+      instruction: "Write the complete module.",
+    };
+    const state = stateOf([{ ...STAGE, tasks: [{ ...TASK, edits: [writeEdit] }] }]);
+    const prompt = buildTaskTurnPrompt({
+      state,
+      stage: state.stages[0] as Stage,
+      task: state.stages[0]?.tasks[0] as TaskNode,
+      edit: writeEdit,
+      contentView: renderTaskContentView("export function answer(): number {\n  return 1;\n}"),
+      help: true,
+    });
+    expect(prompt).toContain('Target: file "src/helper.ts"');
+    expect(prompt).toContain("write <path> with <fence> done");
+    expect(prompt).toContain("write src/a.ts with");
+    expect(prompt).toContain(taskEditDslHelp("write"));
   });
 
   test("format help is injected only on the help turn", () => {
@@ -338,7 +365,7 @@ describe("execution prompts", () => {
     expect(prompt).toContain('{"request":"read"}');
     expect(
       prompt.endsWith(
-        "Reply with the edit clauses for this micro edit. The task gate runs after every edit in the task settles.",
+        "Reply with the clauses for this micro edit. The task gate runs after every edit in the task settles.",
       ),
     ).toBe(true);
   });

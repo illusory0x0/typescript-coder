@@ -2,7 +2,8 @@
 
 Status: **implemented, as-built.** This document describes the shipped
 `plan-exec` loop; the code and its tests are the source of truth. It
-describes the V2 design and is now kept in step with the implementation.
+describes the V3 soft-guidance design and is kept in step with the
+implementation.
 
 The loop is **additive**. `--mode pinned-repair` (default) keeps the single-target
 Edit → Verify driver byte-identical. `--mode plan-exec` runs the
@@ -12,8 +13,8 @@ Plan → Execute → Review flow over this hierarchy:
 - **Stage** — a coherent phase: `id`, `plan`, `goal`, and ordered tasks;
 - **Task** — the planning and execution unit: `id`, `stage`, `verify`,
   `instruction`, and ordered edits;
-- **Edit** — one declaration-level action: `id`, `task`, loc, action,
-  instruction, optional related targets / rename target.
+- **Edit** — one declaration-level action, or one whole-file write: `id`,
+  `task`, loc, action, instruction, optional related targets / rename target.
 
 The harness owns status, scheduling, gates, and verification. The model never
 chooses files or commands; it answers structured prompts. Array/record order is
@@ -65,13 +66,13 @@ type Task = {
   id: NodeId;
   verify: "tsc" | "test"; // task gate
   instruction: string; // local goal for the whole task
-  edits: Edit[]; // 1-6, execution order
+  edits: Edit[]; // one or more, execution order
 };
 
 type Edit = {
   id: NodeId;
   loc: Loc;
-  action: "modify" | "create" | "delete" | "rename";
+  action: "modify" | "create" | "delete" | "rename" | "write";
   instruction: string; // self-contained; executor sees no requirement text
   related?: Loc[]; // same-file atomic migration targets (modify only)
   renameTo?: string; // required iff action === "rename"
@@ -79,8 +80,8 @@ type Edit = {
 
 type Loc = {
   path: string; // repo-relative, writable
-  symbol: string; // declared name (or the top-level name a create adds)
-  kind: "value" | "type" | "namespace"; // TypeScript symbol space
+  symbol: string; // declared name (or the top-level name a create adds); empty for write
+  kind: "value" | "type" | "namespace" | "file"; // symbol space, or file for write
 };
 
 type NodeId = string; // "01-main", "02-stage-parser", ...
@@ -230,6 +231,8 @@ conversation in its own turn, not a fresh reviewer. A syntactically malformed
 review reply gets one bounded format retry with its diagnostics; a scope or
 merge violation still terminates. A review patch may only repair the current
 Task (`task~`, `edit+`, `edit~`, `edit-`) and may not add a future Stage/Task.
+A done edit is immutable; after a gate failure, append a new repair edit with
+`edit+` rather than changing the landed edit.
 A review patch may carry `finish` for the current final Task, but may not add
 future work. The harness structurally validates the patch; if it returns a
 patch, the current Task reopens and executes again, with no second review for
@@ -262,7 +265,7 @@ references its parent by id. No nesting, no JSON fallback.
                   "end" NL
 
 <edit>        ::= "edit" <id> "task" <id>
-                  <action> <space> <symbol> "in" <path> NL
+                  ( <action> <space> <symbol> "in" <path> | "write" <path> ) NL
                   <related>*
                   [ "renameTo:" <symbol> NL ]
                   "instruction:" <text> NL
@@ -274,6 +277,7 @@ references its parent by id. No nesting, no JSON fallback.
 <verify>      ::= "tsc" | "test"
 <space>       ::= "value" | "type" | "namespace"
 <action>      ::= "modify" | "create" | "delete" | "rename"
+<write>       ::= "write" <path>
 <path>        ::= NONSPACE+
 <symbol>      ::= NONSPACE+
 <line-text>   ::= { any character except newline }+
@@ -291,14 +295,19 @@ Rules:
   Plan root, stages, tasks, and edits share one namespace.
 - The initial Plan reply contains exactly one current Stage and one current
   Task. Later Tasks/Stages are added by patches, one new Task per planning
-  turn. The initial planning prompt also asks for 1-6 edits, all task records
-  before edit records, and no `finish`; later patches add the remaining work.
+  turn. The initial planning prompt asks for one or more edits, all task
+  records before edit records, and no `finish`; later patches add the
+  remaining work. Plan shape is guidance, not a fixed count: a cohesive change
+  may be one Stage, one Task, and one edit.
 - All stage records come before task records; all task records come before edit
   records. A parent must be declared earlier in the reply or already exist.
 - Stage order is stage-record order; task order within a stage is task-record
   order; edit order within a task is edit-record order.
 - `goal:` / `instruction:` may be one-line text or a following fence.
 - `create` is top-level only; dotted create is rejected.
+- `write` targets one whole file: `<path>` only, no space or symbol. Its edit
+  loc is `{path, symbol: "", kind: "file"}`; `related` and `renameTo` are
+  rejected.
 - `related` is allowed only with `modify`; `renameTo` only with `rename`.
 - `finish`, when present, must be the last line and marks the last task final.
 
@@ -322,6 +331,29 @@ end
 ```
 
 This is the only current Stage and current Task. No future task exists yet.
+
+A cohesive module can use one whole-file edit instead of several declaration
+edits:
+
+```text
+plan "01-main"
+goal: Implement the JSON parser module.
+
+stage "02-current" plan "01-main"
+goal: Implement the parser.
+end
+
+task "03-parser" stage "02-current" verify test
+instruction: Implement src/json.ts so the parser tests pass.
+end
+
+edit "04-file" task "03-parser" write src/json.ts
+instruction: Write the complete parser module.
+end
+```
+
+The edit loc is `file "src/json.ts"`; the executor replies with
+`write src/json.ts with <fence> done`.
 
 ### 3.2 Next Task patch
 
@@ -398,14 +430,14 @@ clone of the current tree, then validated by the same merge rules.
 <task-remove> ::= "task-" <id> NL "end" NL
 
 <edit-add>    ::= "edit+" <id> "task" <id>
-                  <action> <space> <symbol> "in" <path> NL
+                  ( <action> <space> <symbol> "in" <path> | "write" <path> ) NL
                   <related>*
                   [ "renameTo:" <symbol> NL ]
                   "instruction:" <text> NL
                   "end" NL
 
 <edit-update> ::= "edit~" <id> NL
-                  [ <action> <space> <symbol> "in" <path> NL ]
+                  [ ( <action> <space> <symbol> "in" <path> | "write" <path> ) NL ]
                   <related>*
                   [ "renameTo:" <symbol> NL ]
                   [ "instruction:" <text> NL ]
@@ -427,8 +459,8 @@ Semantics:
 - `finish` may appear at the end of a patch and updates `finalTaskId` to the
   last task. If a patch adds work after the old final task, it must emit a new
   `finish` for the new last task.
-- The result must still satisfy the append-order, immutability, cap, and final
-  `test` rules.
+- The result must still satisfy the append-order, immutability, node cap, and
+  final `test` rules.
 
 ### 4.1 Repair patch
 
@@ -463,13 +495,15 @@ Both initial Plan replies and patches pass through one validator:
 - ids are `NN-slug` strings and globally unique across Plan/Stage/Task/Edit;
 - parent refs exist and are declared earlier;
 - record order gives sibling order;
-- caps: 12 stages, 8 tasks per stage, 6 edits per task, 96 task/edit nodes;
+- the tree has at most 96 task/edit nodes; stage, task, and edit counts are
+  chosen by the planner (no per-stage/task/edit count cap);
 - non-empty goals (≤1,000 chars) and instructions (≤4,000 chars);
 - safe paths (no absolute path, `..`, hidden/build segment, or `human/`);
 - `related` same-file, `modify` only, no duplicates, at most 16;
 - `renameTo` only on rename, valid, and different;
 - `create` is top-level only; dotted create is rejected;
-- a complete Task has 1–6 edits;
+- `write` uses `kind: "file"`, an empty symbol, a safe path, no `related`, and
+  no `renameTo`; every other action uses a `value|type|namespace` loc;
 - `finish` marks the last task, and that task verifies `test`;
 - done edits and passed tasks are immutable; failed tasks/edits reopen only
   when changed or given new edits; a Task in `review` may be patched by its one
@@ -694,8 +728,8 @@ test passes.
 
 ### 7.1 Planning
 
-1. system: role, flat Plan DSL grammar, functional style, create/class rules,
-   finish semantics;
+1. system: role, flat Plan DSL grammar, functional style, workflow, create/
+   class rules, finish semantics;
 2. user: `# Requirement`, `# Symbol index`, spec files;
 3. incremental turns: current Plan/Stage/Task, latest gate result, failed
    diagnostics, current symbol index;
@@ -750,10 +784,13 @@ the reply is applied:
 - `modify`, `delete`, `rename` need the declaration to resolve in the edit's
   symbol space;
 - `create` needs the symbol absent in that space and must be top-level;
+- a `write` edit needs one safe file path; its previous parse is irrelevant
+  because the reply replaces the whole file;
 - every editor clause that writes must name the edit's target or a related loc;
-  off-target writes reject the whole reply;
-- writing file commands (`create`/`delete`/`write`) are rejected; `read` and
-  viewer clauses are allowed and only produce feedback.
+  off-target writes reject the whole reply. A `write` action accepts exactly one
+  whole-file `write <path> with <fence> done` and no other statement;
+- other writing file commands (`create`/`delete`/`write`) are rejected;
+  `read` and viewer clauses are allowed and only produce feedback.
 
 ### 8.2 Action forms
 
@@ -763,6 +800,7 @@ the reply is applied:
 | `create` | A whole-declaration `replace with <fence>` with no `match`/`pick`; the fence must contain exactly one top-level declaration, the target. Any other body is wrapped by the edit's space (`value` → `let`, `type` → `type`, `namespace` → `namespace`); the created name/space must match. |
 | `delete` | A whole-declaration empty fence, no `match`/`pick`.                                                                                                                                                                                                                                      |
 | `rename` | `rename <current> to <renameTo>`, no `replace`; the new name must equal `renameTo`.                                                                                                                                                                                                      |
+| `write`  | Exactly one `write <path> with <fence> done`, no `within`; the fence carries the complete file.                                                                                                                                                                                         |
 
 A caller update is its own edit. The one exception is a `modify` edit's
 `related` list, which exists for atomic type/representation migrations.
@@ -781,16 +819,22 @@ matching the edit-dsl #48 rule.
 1. Parse with the tolerant edit-action parser. If `ok=false` or any editor
    clause is invalid, reject the whole reply and write nothing; warnings alone
    do not block. Diagnostics list every parsed clause issue.
-2. Resolve with `resolveMultiEditor` against the current sources.
-3. Apply with `applyResolvedRegions`: overlap, parse gate, duplicate guard,
+2. A `write` edit accepts exactly one `write <path> with <fence> done`
+   statement with no `within`; the new source runs through the parse gate and
+   formatter, then replaces the file. The previous parse is irrelevant because
+   the reply replaces the whole file.
+3. Other edits resolve with `resolveMultiEditor` against the current sources.
+4. Apply with `applyResolvedRegions`: overlap, parse gate, duplicate guard,
    formatter, post-format no-op.
-4. Write only after every guard passes; nothing is written on a rejection.
-5. An applied edit marks the edit `done` immediately; there is no per-edit type
+5. Write only after every guard passes; nothing is written on a rejection.
+6. An applied edit marks the edit `done` immediately; there is no per-edit type
    check.
-6. After every edit in the task is `done` or `failed`, run the task gate.
+7. After every edit in the task is `done` or `failed`, run the task gate.
 
 A rejected reply or a read-only viewer costs one exchange. Per edit: at most 3
-exchanges. Exhaustion marks the edit and task `failed` and triggers a patch
+exchanges. Two consecutive `EDIT_TARGET_MISMATCH` replies end the edit with
+`ADDRESS_RETRY_LIMIT` and trigger a repair patch instead of retrying the same
+address. Exhaustion marks the edit and task `failed` and triggers a patch
 re-plan.
 
 The executor may make **one** bounded self-check per edit:
@@ -829,9 +873,6 @@ Caps:
 
 | Cap                              | Value              |
 | -------------------------------- | ------------------ |
-| Stages per Plan                  | 12                 |
-| Tasks per stage                  | 8                  |
-| Edits per task                   | 6                  |
 | Task/edit nodes per Plan         | 96                 |
 | Instruction length               | 4,000 chars        |
 | Stage/Plan goal length           | 1,000 chars        |
@@ -846,7 +887,8 @@ Caps:
 
 The 32-turn cap counts planning replies, including initial planning, next
 Task/Stage planning, and repair planning. Review turns are additional and are
-bounded by one per executed Task.
+bounded by one per executed Task. Stage, task, and edit counts are not capped
+individually; the 96-node limit and token budget bound runaway plans.
 
 Failure paths use the existing termination matrix plus `task-exhausted`; the
 run still makes one summary call. Provider errors keep their own path.
@@ -969,20 +1011,22 @@ Implementation notes:
 
 ## 13. Verification
 
-- `bun test src/tasks.test.ts` — contract, ids, refs, caps, merge rules.
+- `bun test src/tasks.test.ts` — contract, ids, refs, write loc validation,
+  node cap, merge rules.
 - `bun test src/plan-dsl.test.ts` — BNF, fences, plan/patch/review replies,
-  `finish`/`finalTaskId` cases, tolerant recovery, issue codes, all-or-nothing
-  patch/plan behavior.
+  whole-file write records, `finish`/`finalTaskId` cases, tolerant recovery,
+  issue codes, all-or-nothing patch/plan behavior.
 - `bun test src/prompts/task.test.ts` — planning, review, execution prompt shape,
-  functional-style and dotted-create rules.
+  workflow guidance, one-stage/task/write example, functional-style and
+  dotted-create rules.
 - `bun test src/edit-dsl.test.ts` / `src/selection.test.ts` — tolerant clause
   boundaries, unclosed fences, matcher/pick/rename diagnostics, per-clause
   issues, no partial writes.
 - `bun test src/task-loop.test.ts` — incremental Task loop, one-unit planning,
-  post-execution review approve/patch (scope limited to the current Task),
-  review status, gate+concise-diff context, implicit stage closure, final-test
-  in-place vs new-final repair, 32-turn cap, repair patches, dotted-create
-  rejection.
+  whole-file write execution, address-failure escalation, post-execution review
+  approve/patch (scope limited to the current Task), review status,
+  gate+concise-diff context, implicit stage closure, final-test in-place vs
+  new-final repair, 32-turn cap, repair patches, dotted-create rejection.
 - `bun test src/result.test.ts` — `typescript-coder-result@2` string ids.
 - `just typecheck && just test`.
 - `just accept` (offline), including a `plan-exec-fix-answer` scenario

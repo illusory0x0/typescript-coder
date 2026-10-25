@@ -6,12 +6,14 @@
  *
  * A stage is planning context. A task is the verification boundary: its gate
  * runs after every edit in the task is settled. An edit is one declaration
- * action, the unit the executor answers. Record order is execution order; there
- * are no dependency edges and the planner does not own status.
+ * action (or one whole-file write), the unit the executor answers. Record order
+ * is execution order; there are no dependency edges and the planner does not
+ * own status.
  *
  * `Loc.kind` is the TypeScript symbol space (`value` | `type` | `namespace`),
- * matching the edit-dsl `resolve` vocabulary; the declaration kind is looked up
- * from the index by address resolution.
+ * matching the edit-dsl `resolve` vocabulary, or `file` for a whole-file
+ * `write`; the declaration kind is looked up from the index by address
+ * resolution.
  */
 import type { SymbolSpace } from "./utility";
 
@@ -28,7 +30,7 @@ export type StageId = NodeId;
 export const NODE_ID_PATTERN = /^[0-9]{2,}-[a-z0-9]+(?:-[a-z0-9]+)*$/;
 
 /** The one edit action an edit asks for. */
-export const TASK_ACTIONS = ["modify", "create", "delete", "rename"] as const;
+export const TASK_ACTIONS = ["modify", "create", "delete", "rename", "write"] as const;
 export type TaskAction = (typeof TASK_ACTIONS)[number];
 
 /** Run state owned by the harness for one edit. */
@@ -57,15 +59,16 @@ export function isTerminalTaskStatus(status: TaskStatus | undefined): boolean {
 export interface TaskLoc {
   /** Repo-relative path, inside the workspace. */
   path: string;
-  /** Declared identifier (or the name a `create` adds). */
+  /** Declared identifier (or the name a `create` adds); empty for `write`. */
   symbol: string;
-  /** TypeScript symbol space, not the declaration kind. */
-  kind: SymbolSpace;
+  /** TypeScript symbol space, or `file` for a whole-file write. */
+  kind: SymbolSpace | "file";
 }
 
 /**
- * One declaration-level operation inside a task. The executor receives one
- * edit at a time; the task's gate covers the whole sequence.
+ * One declaration-level operation inside a task, or one whole-file write. The
+ * executor receives one edit at a time; the task's gate covers the whole
+ * sequence.
  */
 export interface EditNode {
   id: NodeId;
@@ -83,8 +86,8 @@ export interface EditNode {
 }
 
 /**
- * A verification boundary. The planner should make the whole task small
- * enough that its gate passes; normally 2-4 edits, never more than the cap.
+ * A verification boundary. Plan it so its gate passes; choose the edits and
+ * their granularity from the work, not from a fixed count.
  */
 export interface TaskNode {
   id: NodeId;
@@ -122,9 +125,6 @@ export interface TaskRunState {
 }
 
 /** Caps the contract enforces before a plan can drive a run. */
-export const MAX_STAGES = 12;
-export const MAX_TASKS_PER_STAGE = 8;
-export const MAX_EDITS_PER_TASK = 6;
 export const MAX_NODES = 96;
 export const MAX_STAGE_GOAL_LENGTH = 1_000;
 /** The Plan root goal gets the same bound as a stage goal. */
@@ -350,7 +350,7 @@ export function renderTaskTree(stages: readonly Stage[]): string {
                 .join(", ")}]`;
         const rename = edit.renameTo === undefined ? "" : ` renameTo=${quote(edit.renameTo)}`;
         lines.push(
-          `    - #${edit.id} ${edit.action} ${edit.loc.kind} ${quote(edit.loc.symbol)} in ${quote(edit.loc.path)}${rename}${related}`,
+          `    - #${edit.id} ${edit.action} ${formatTaskLoc(edit.loc)}${rename}${related}`,
         );
         lines.push(`      edit: ${edit.instruction.replace(/\s*\n\s*/g, " ").trim()}`);
       }
@@ -385,9 +385,7 @@ export function renderFailedEdits(
     if (state.editStatus.get(edit.id) !== "failed") {
       continue;
     }
-    lines.push(
-      `#${edit.id} ${edit.action} ${quote(edit.loc.symbol)} in ${quote(edit.loc.path)} failed:`,
-    );
+    lines.push(`#${edit.id} ${edit.action} ${formatTaskLoc(edit.loc)} failed:`);
     const diagnostics = failures.get(edit.id);
     lines.push(diagnostics === undefined ? "  (no diagnostics recorded)" : indent(diagnostics));
   }
@@ -420,12 +418,32 @@ function indent(text: string): string {
 
 /** Describe one loc the way diagnostics expect. */
 export function formatTaskLoc(loc: TaskLoc): string {
-  return `${loc.kind} ${quote(loc.symbol)} in ${quote(loc.path)}`;
+  return loc.kind === "file"
+    ? `file ${quote(loc.path)}`
+    : `${loc.kind} ${quote(loc.symbol)} in ${quote(loc.path)}`;
 }
 
 function locProblems(edit: EditNode): string | null {
   if (!isSafeTaskPath(edit.loc.path)) {
     return `#${edit.id} targets ${quote(edit.loc.path)}, which is not a writable repo-relative path (no absolute path, "..", hidden/build segment, or human/)`;
+  }
+  if (edit.action === "write") {
+    if (edit.loc.kind !== "file") {
+      return `#${edit.id} is a write but its loc kind is ${quote(String(edit.loc.kind))}; a whole-file write uses kind "file"`;
+    }
+    if (edit.loc.symbol !== "") {
+      return `#${edit.id} is a whole-file write but carries a symbol; drop the symbol and target the path`;
+    }
+    if (edit.related !== undefined && edit.related.length > 0) {
+      return `#${edit.id} is a whole-file write and cannot carry related targets`;
+    }
+    if (edit.renameTo !== undefined) {
+      return `#${edit.id} is a whole-file write and cannot carry renameTo`;
+    }
+    return null;
+  }
+  if (edit.loc.kind === "file") {
+    return `#${edit.id} targets kind "file" but its action is ${quote(edit.action)}; only action "write" targets a whole file`;
   }
   if (edit.action === "create" && edit.loc.symbol.includes(".")) {
     return `#${edit.id} PLAN_CREATE_MEMBER: create adds a top-level declaration; ${quote(edit.loc.symbol)} is a class member. Modify the class with all needed stubs, then modify the member, or use a top-level function.`;
@@ -520,10 +538,6 @@ function treeProblems(plan: Plan): string[] {
 
   if (plan.stages.length === 0) {
     problems.push("the plan must contain at least one stage");
-  } else if (plan.stages.length > MAX_STAGES) {
-    problems.push(
-      `the plan carries ${plan.stages.length} stages; at most ${MAX_STAGES} are allowed`,
-    );
   }
 
   let nodeCount = 0;
@@ -532,10 +546,6 @@ function treeProblems(plan: Plan): string[] {
     goalProblems(stage.goal, `stage #${stage.id}.goal`, MAX_STAGE_GOAL_LENGTH, problems);
     if (stage.tasks.length === 0) {
       problems.push(`stage #${stage.id} must contain at least one task`);
-    } else if (stage.tasks.length > MAX_TASKS_PER_STAGE) {
-      problems.push(
-        `stage #${stage.id} carries ${stage.tasks.length} tasks; keep a stage to at most ${MAX_TASKS_PER_STAGE} tasks`,
-      );
     }
     for (const task of stage.tasks) {
       nodeCount += 1;
@@ -548,10 +558,6 @@ function treeProblems(plan: Plan): string[] {
       instructionProblems(task.instruction, `task #${task.id}.instruction`, problems);
       if (task.edits.length === 0) {
         problems.push(`task #${task.id} must contain at least one edit`);
-      } else if (task.edits.length > MAX_EDITS_PER_TASK) {
-        problems.push(
-          `task #${task.id} carries ${task.edits.length} edits; keep a task to at most ${MAX_EDITS_PER_TASK} edits`,
-        );
       }
       for (const edit of task.edits) {
         nodeCount += 1;

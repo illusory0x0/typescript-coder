@@ -9,16 +9,13 @@
  *
  * The planner emits one current Stage and Task as the flat Plan DSL, then one
  * patch per later planning turn. A task is the verification boundary; an edit
- * is one declaration action. Record order is execution order, and the harness
- * owns status.
+ * is one declaration action or one whole-file write. Record order is execution
+ * order, and the harness owns status.
  */
 
 import type { EditNode, NodeId, Stage, TaskNode, TaskRunState, TaskVerify } from "../tasks";
 import {
   formatTaskLoc,
-  MAX_EDITS_PER_TASK,
-  MAX_STAGES,
-  MAX_TASKS_PER_STAGE,
   renderFailedEdits,
   renderFailedTaskGates,
   renderTaskStatus,
@@ -32,10 +29,21 @@ export const MAX_TASK_EXCHANGES = 3;
 export const MAX_TASK_PLAN_ROUNDS = 32;
 
 export const TASK_PLANNING_ROLE =
-  "You are a senior software engineer planning a TypeScript change. You decompose one requirement into a Plan -> Stage -> Task -> edit tree; a separate coding expert then executes the edits one at a time. You do not write code and you do not run commands.";
+  "You plan a TypeScript change. Build a Plan -> Stage -> Task -> edit tree; a separate coding expert executes one edit at a time. You do not write code and you do not run commands.";
 
 export const TASK_EXECUTION_ROLE =
-  "You are a TypeScript coding expert. You receive one micro edit at a time from a Stage -> Task -> edit tree and carry it out with precise edit clauses. The task instruction is the local goal; the planner owns the tree.";
+  "You are a TypeScript coding expert. You receive one edit at a time from a Stage -> Task -> edit tree and carry it out with precise edit clauses. The task instruction is the local goal; the planner owns the tree.";
+
+export const TASK_PLANNING_WORKFLOW = `Workflow:
+1. Read the requirement and symbol index.
+2. Choose the smallest tree that can be verified.
+3. Emit the initial Plan; later turns amend it with one patch.
+Keep one current Task at a time.`;
+
+export const TASK_EXECUTION_WORKFLOW = `Workflow:
+1. Read the target source and the instruction.
+2. Choose a declaration edit, or a whole-file write when the edit spans declarations.
+3. Send the clauses and stop; the harness runs the task gate.`;
 
 /**
  * The functional style shared by the planner and executor prompts
@@ -63,6 +71,25 @@ end
 
 edit "04-change" task "03-first" modify value answer in src/helper.ts
 instruction: Change answer to return 2.
+end`;
+
+/**
+ * A small task can be one Stage, one Task, and one whole-file edit. Use this
+ * when the change is a coherent module rather than a declaration tweak.
+ */
+export const TASK_WRITE_PLAN_EXAMPLE = `plan "01-main"
+goal: Implement the JSON parser module.
+
+stage "02-current" plan "01-main"
+goal: Implement the parser.
+end
+
+task "03-parser" stage "02-current" verify test
+instruction: Implement src/json.ts so the parser tests pass.
+end
+
+edit "04-file" task "03-parser" write src/json.ts
+instruction: Write the complete parser module.
 end`;
 
 /**
@@ -118,40 +145,40 @@ instruction: Wire the final entry point; no new class.
 end
 finish`;
 
-const TASK_INITIAL_PLAN_CONTRACT = `Initial Plan contract:
-- exactly one Stage and exactly one Task;
-- 1-${MAX_EDITS_PER_TASK} edit records;
+const TASK_INITIAL_PLAN_CONTRACT = `Initial reply:
+- one current Stage and one current Task;
+- one or more edit records;
 - every task record comes before every edit record;
-- no second Task and no finish; later turns add those with patches;
-- if the work needs more than ${MAX_EDITS_PER_TASK} edits, keep only the first Task here and defer the rest.
+- no finish; later turns add work with patches.
 
 Invalid shape (rejected):
 task "03-first" ...
 edit "04-change" ...
-task "05-next" ... // second Task after edits
+task "05-next" ... // a second Task belongs in a later patch
 `;
 
 const TASK_PLAN_FIELDS = `- The initial reply is the flat Plan DSL. Start with the singleton header \`plan "<id>"\`, then a \`goal:\` label. The Plan header has no \`end\`.
-- A stage record is \`stage "<id>" plan "<plan-id>"\`, then \`goal:\` and \`end\`. The Plan goal and stage goal are planning context for the executor; the initial Plan has exactly one current Stage.
-- A task record is \`task "<id>" stage "<stage-id>" verify tsc|test\`, then \`instruction:\` and \`end\`. A task is a verification boundary: its gate runs after every edit in it settles, so plan the whole task so that gate passes. The initial Plan has exactly one current Task in that Stage; later Tasks are patches.
-- An edit record is \`edit "<id>" task "<task-id>" <modify|create|delete|rename> <value|type|namespace> <symbol> in <path>\`, optional \`related <space> <symbol> in <path>\` lines (modify only), optional \`renameTo: <symbol>\` (rename only), then \`instruction:\` and \`end\`. A task has 1-${MAX_EDITS_PER_TASK} edits.
+- A stage record is \`stage "<id>" plan "<plan-id>"\`, then \`goal:\` and \`end\`. The initial Plan has one current Stage; later Stages are patches.
+- A task record is \`task "<id>" stage "<stage-id>" verify tsc|test\`, then \`instruction:\` and \`end\`. A task is a verification boundary: its gate runs after every edit in it settles. The initial Plan has one current Task in that Stage; later Tasks are patches.
+- An edit record targets one declaration: \`edit "<id>" task "<task-id>" <modify|create|delete|rename> <value|type|namespace> <symbol> in <path>\`, optional \`related <space> <symbol> in <path>\` lines (modify only), optional \`renameTo: <symbol>\` (rename only), then \`instruction:\` and \`end\`.
+- An edit record can write a whole file: \`edit "<id>" task "<task-id>" write <path>\`, then \`instruction:\` and \`end\`. It has no space or symbol.
 - Every id is a quoted "NN-slug": two or more digits, a hyphen, then lowercase kebab words (for example "01-main"). Ids are globally unique across the Plan, stages, tasks, and edits. Record order is execution order. There are no deps, todo, or status fields; the harness owns status.
 - All stage records come before all task records, and all task records come before all edit records. A parent ref must point at an earlier record: a stage's \`plan\`, a task's \`stage\`, an edit's \`task\`.
 - \`goal:\` and \`instruction:\` carry one-line text after the label, or an empty label followed by a fence: 5+ hyphens (for example \`-----\`) or 6+ backticks on its own line, the raw text lines, then the same fence. A stage, task, or edit record ends with \`end\`.
 - A trailing \`finish\` line marks the last task final. It is valid only as the last line, and only when that task verifies \`test\`. Only the task marked by \`finish\` must verify \`test\`; a work-in-progress tree may end in a \`tsc\` task.`;
 
 const TASK_PLAN_RULES = `Rules:
-1. Write like a normal TypeScript engineer: small named functions with one job, helpers extracted and called by a thin orchestrator. Do not put a large multi-step algorithm into one declaration or one create edit.
-2. Plan each task to pass its own gate. Normally 2-4 edits per task; never more than ${MAX_EDITS_PER_TASK}. If a task needs more, split it into another task in the same stage or another stage.
-3. A stage groups a coherent phase. Keep a stage small (normally 1-3 tasks, at most ${MAX_TASKS_PER_STAGE}); stage, task, and edit record order is execution order.
-4. One edit has one main address. Use \`related\` only for an atomic same-file type/representation migration; cross-file work is separate edits.
-5. A create edit must carry the complete declaration body and declare exactly the target. It adds a top-level declaration only; a dotted class member is never a create target. Put helper declarations in their own create edits, then add the caller.
-6. Use action \`rename\` with \`renameTo\` when the declaration name changes; cross-file callers need their own edits.
-7. Name the smallest declaration that must change; never paste a whole file into an instruction. Instructions are self-contained because the executor does not see the requirement or tests.
+1. Choose the smallest structure that keeps the gate meaningful. One Stage, one Task, and one edit are valid when the change is cohesive.
+2. Split only when a smaller Task improves verification or gives the executor a clearer address. Do not split just to match helper names or a fixed edit count.
+3. Prefer top-level functions with explicit types. Extract a helper when it makes the code easier to read; keep the caller thin.
+4. Use one declaration target per edit. Use \`related\` only for an atomic same-file type/representation migration; cross-file work is separate edits.
+5. Use \`write <path>\` for a greenfield module or a change that spans several declarations in one file. Use create/modify/delete/rename for a single declaration.
+6. A create edit adds exactly one top-level declaration. A dotted class member is not a create target; modify the class instead.
+7. Instructions state the behavior and constraints. The executor can inspect the target; do not paste a whole file into an instruction.
 8. Do not target *.test.ts unless the requirement explicitly changes tests; copy required behavior into the instruction.
-9. Record order expresses dependency: an edit sees the results of earlier edits, tasks see earlier tasks, and stages see earlier stages. Do not rely on later work.
-10. End the run with a \`test\` task and a trailing \`finish\`; the initial Plan must not emit \`finish\`, so add it in a later patch. If that test is already the current last task and has passed, a bare \`patch\` + \`finish\` is enough.
-11. Never plan a new class: prefer a top-level helper. If an existing class must grow, plan one whole-class \`modify\` that adds all needed stubs, then \`modify\` the existing members. Never plan a dotted \`create\`.
+9. Record order is execution order: an edit sees earlier edits, tasks see earlier tasks, and stages see earlier stages. Do not rely on later work.
+10. End the run with a \`test\` Task and a trailing \`finish\`; the initial Plan has no finish. If the current last test Task has passed, a bare \`patch\` + \`finish\` is enough.
+11. Do not plan a new class. If an existing class must change, modify it; never plan a dotted \`create\`.
 12. Emit only the Plan DSL records on the initial turn: no JSON, no markdown fence around the whole reply, and no prose.`;
 
 const TASK_PATCH_FIELDS = `Patch records (every later planning turn replies with exactly one patch, never a complete Plan):
@@ -161,18 +188,19 @@ const TASK_PATCH_FIELDS = `Patch records (every later planning turn replies with
 - \`stage~ "<id>"\`, optional \`goal:\`, then \`end\` updates a Stage; \`stage- "<id>"\` + \`end\` removes a pending/failed Stage.
 - \`task+ "<id>" stage "<stage-id>" verify tsc|test\`, then \`instruction:\` and \`end\`, appends one Task. A patch adds at most one new Task.
 - \`task~ "<id>"\`, optional \`verify\`, optional \`instruction:\`, then \`end\` changes a Task (a changed failed Task reopens); \`task- "<id>"\` + \`end\` removes pending/failed work.
-- \`edit+ "<id>" task "<task-id>" <action> <space> <symbol> in <path>\`, optional \`related\` / \`renameTo:\`, then \`instruction:\` and \`end\` appends an Edit. \`edit~ "<id>"\` updates present fields; \`edit- "<id>"\` + \`end\` removes pending/failed work.
+- \`edit+ "<id>" task "<task-id>" <action> <space> <symbol> in <path>\` or \`edit+ "<id>" task "<task-id>" write <path>\`, optional \`related\` / \`renameTo:\`, then \`instruction:\` and \`end\` appends an Edit. \`edit~ "<id>"\` updates present fields; \`edit- "<id>"\` + \`end\` removes pending/failed work.
 - \`finish\` as the last line marks the current last Task final; it must verify \`test\`. Adding work after the old final Task requires a new \`finish\` on the new last test Task.`;
 
 const TASK_PATCH_RULES = `Rules for a patch turn:
 1. Reply with exactly one \`patch\`. Do not re-emit the Plan or any unchanged records.
-2. Add at most one new Task. Adding a new Stage includes its first Task in the same turn; a Plan has at most ${MAX_STAGES} Stages.
+2. Add at most one new Task. Adding a new Stage includes its first Task in the same turn.
 3. A new Stage is allowed only when the current Stage has no pending Task. A fully passed Stage cannot take a new Task; use a new Stage. A failed Stage may take a repair Task.
-4. Repair a failed Task in place first: change it (\`task~\`) and/or change or append a small repair edit (\`edit~\`, \`edit+\`). A failed edit retries only with a changed definition.
-5. Never change a passed Task or a done Edit, and keep the ids of nodes you keep.
-6. If the last Task is a passing test Task and no work remains, emit \`patch\` + \`finish\`. Otherwise plan the next Task, or one new Stage with its first Task. To finish with new work, plan one final \`test\` Task and emit \`finish\`.
-7. A patch may update/remove existing pending or failed work, but it must not introduce a future Task list.
-8. New ids must be unused. Record order is execution order.`;
+4. Repair a failed Task in place first: change it (\`task~\`) and/or change or append a repair edit (\`edit~\`, \`edit+\`). A failed edit retries only with a changed definition.
+5. If an edit keeps failing on its address, stop retrying it: replace it with a whole-file \`write\` or split it into smaller edits.
+6. Never change a passed Task or a done Edit, and keep the ids of nodes you keep.
+7. If the last Task is a passing test Task and no work remains, emit \`patch\` + \`finish\`. Otherwise plan the next Task, or one new Stage with its first Task. To finish with new work, plan one final \`test\` Task and emit \`finish\`.
+8. A patch may update/remove existing pending or failed work, but it must not introduce a future Task list.
+9. New ids must be unused. Record order is execution order.`;
 
 export function buildTaskPlanningSystemPrompt(): string {
   return [
@@ -180,11 +208,13 @@ export function buildTaskPlanningSystemPrompt(): string {
     "",
     TASK_FUNCTIONAL_STYLE,
     "",
-    "The first reply is ONLY the initial Plan DSL: exactly one current Stage and one current Task. Every later planning turn replies with exactly one patch; never re-emit the Plan.",
+    TASK_PLANNING_WORKFLOW,
     "",
     TASK_INITIAL_PLAN_CONTRACT,
     "",
     TASK_PLAN_EXAMPLE,
+    "",
+    TASK_WRITE_PLAN_EXAMPLE,
     "",
     TASK_PATCH_EXAMPLE,
     "",
@@ -198,7 +228,7 @@ export function buildTaskPlanningSystemPrompt(): string {
     "",
     TASK_PATCH_RULES,
     "",
-    "Address one symbol-index entry per edit; a symbol that the index does not list is not a target unless the edit creates it.",
+    "Address a symbol-index entry or a safe whole-file path. A symbol that the index does not list is not a target unless the edit creates it.",
     "",
   ].join("\n");
 }
@@ -209,7 +239,7 @@ export function buildTaskPlanningUserPrompt(
   indexText: string,
   specFiles: readonly SourceFile[] = [],
 ): string {
-  const prompt = `# Requirement\n\n${requirement}\n\n# Symbol index\n\n\`\`\`text\n${indexText}\n\`\`\`\n\nReply with the initial Plan DSL: exactly one current Stage and exactly one current Task, with 1-${MAX_EDITS_PER_TASK} edits. Put every task record before every edit record. Do not add a second Task or finish; later turns add those with patches.\n`;
+  const prompt = `# Requirement\n\n${requirement}\n\n# Symbol index\n\n\`\`\`text\n${indexText}\n\`\`\`\n\nReply with the initial Plan DSL: one current Stage and one current Task, with one or more edits. Put every task record before every edit record. Do not add a second Task or finish; later turns add those with patches.\n`;
   return appendSpecSection(prompt, specFiles);
 }
 
@@ -286,14 +316,13 @@ Diagnostics:
 ${diagnostics}
 \`\`\`
 
-Hard repair rules:
-- Keep exactly one Stage and exactly one Task.
-- If the rejected plan had multiple Tasks, keep only the first Task and its edits; drop every later Task and its edits.
-- If the first Task has more than ${MAX_EDITS_PER_TASK} edits, keep the first ${MAX_EDITS_PER_TASK} edits; plan the rest later.
+Correct the shape:
+- Keep one current Stage and one current Task.
+- If the reply had multiple Tasks, keep only the current Task and its edits; add the rest with later patches.
 - Put every task record before every edit record.
 - Do not emit finish.${example}
 
-Reply with the complete, corrected initial Plan DSL only: exactly one current Stage and exactly one current Task.`;
+Reply with the complete, corrected initial Plan DSL only: one current Stage and one current Task.`;
 }
 
 /**
@@ -318,11 +347,13 @@ const TASK_ACTION_RULES: Record<string, string> = {
   modify:
     "The declaration must already exist. Reply with one or more edit clauses that change it; a reply that writes nothing is rejected.",
   create:
-    "The declaration must be absent. create adds a top-level declaration only: never target a dotted class member (for example Parser.parseValue); prefer a top-level function, or add stubs with one whole-class `modify` and then modify the existing member. Reply with a whole-declaration `select … replace with <fence> end` clause carrying no `match` or `pick`; the fence must contain exactly one top-level declaration, the target. Any other body is wrapped by the edit's symbol space (value -> `let`, type -> `type`, namespace -> `namespace`).",
+    "The declaration must be absent. create adds one top-level declaration; a dotted class member is not a target. Reply with a whole-declaration `select … replace with <fence> end` clause carrying no `match` or `pick`. The fence contains the declaration; a body without a declaration is wrapped by the edit's symbol space (value -> `let`, type -> `type`, namespace -> `namespace`). If the change spans several declarations in this file, the planner should use a whole-file `write` instead.",
   delete:
-    "Reply with a whole-declaration clause with an empty fence (no `match`, no `pick`) to remove the declaration. Deleting a whole file is not an edit action.",
+    "Reply with a whole-declaration clause with an empty fence (no `match`, no `pick`) to remove the declaration.",
   rename:
     "Reply with `select … rename <current> to <newName> end`; the harness rewrites the declaration name and its same-file references and refuses a colliding name.",
+  write:
+    "The task replaces the whole file. Reply with exactly `write <path> with <fence> done`; the fence carries the complete file. Do not send `select`, `match`, `pick`, or `within`.",
 };
 
 /** The bounded self-check offer on an edit turn's repair prompt. */
@@ -336,10 +367,11 @@ export const TASK_SELF_CHECK_OFFER =
  */
 export function taskEditDslInstruction(): string {
   return [
-    "A reply is one or more `select … end` clauses; no prose, no JSON edit payload. The edit's target is already selected: edit it directly (a bare viewer only locates a match).",
+    "A declaration edit is one or more `select … end` clauses; a whole-file edit is one `write <path> with <fence> done` statement. No prose, no JSON edit payload.",
     "",
     "Clause: `select <symbol> in <path> [ resolve <value|type|namespace> ] [ match (<snippet> | /regex/) ] [ [ pick <range> ] replace with <fence> | rename <old> to <new> ] end`.",
     "`match` locates a span inside the declaration; `pick` narrows a match and requires `replace`; omit `match` to rewrite the whole declaration; an empty fence deletes it. The fence opens with 5+ hyphens (for example `-----`) or 6+ backticks and closes with the same run. `pick` coordinates are the 1-based file-absolute lines of the content view.",
+    "For a whole-file edit, `write <path> with <fence> done` replaces the file with the fence body.",
     "",
     "You do not run the type check; the harness runs the task gate after every edit in the task settles. An edit may also change the same-file declarations listed in its `related` field.",
   ].join("\n");
@@ -378,6 +410,15 @@ export function taskEditDslHelp(action: EditNode["action"]): string {
     rename: ["select answer in src/a.ts resolve value", "rename answer to result", "end"].join(
       "\n",
     ),
+    write: [
+      `write src/a.ts with`,
+      "-----",
+      "export function answer(): number {",
+      "  return 2;",
+      "}",
+      "-----",
+      "done",
+    ].join("\n"),
   };
   return `Example for this action:\n\n${examples[action]}`;
 }
@@ -389,11 +430,11 @@ export function buildTaskExecutionSystemPrompt(): string {
     "",
     TASK_FUNCTIONAL_STYLE,
     "",
-    'The current source of the edit target is included below. Reply with ONLY the edit clauses that carry the edit out — no prose, no JSON edit payload. After a rejected edit the one JSON exception is the bounded self-check read {"request":"read"}; the harness returns the source, then asks again. The task gate runs after every edit in the task settles; land this edit and stop.',
+    TASK_EXECUTION_WORKFLOW,
     "",
-    "The stage goal and task instruction define the local design. Prefer small single-purpose functions and a thin caller; do not inline unrelated work into this edit.",
+    'The current source is included with each edit. Reply with only the clauses that carry the edit out; no prose and no JSON. After a rejected edit, the one JSON exception is the bounded self-check read {"request":"read"}; the harness returns the source, then asks again. Land this edit and stop; the task gate runs after every edit in the task settles.',
     "",
-    "Reply shape: `select <symbol> in <path> [ resolve <value|type|namespace> ] [ match (<snippet> | /regex/) ] [ [ pick <range> ] replace with <fence> | rename <old> to <new> ] end`. A bare clause with no `replace` or `rename` is a read-only viewer.",
+    "Use the stage goal and task instruction as the local design. Keep unrelated work out of this edit.",
     "",
     taskEditDslInstruction(),
     "",
@@ -499,7 +540,7 @@ export function buildTaskTurnPrompt(input: TaskTurnInput): string {
     input.contentView.trim() === "" ? "(empty)" : input.contentView,
     "```",
     "",
-    "Reply with the edit clauses for this micro edit. The task gate runs after every edit in the task settles.",
+    "Reply with the clauses for this micro edit. The task gate runs after every edit in the task settles.",
   );
   return blocks.join("\n");
 }
@@ -558,6 +599,7 @@ export function buildTaskReviewPrompt(input: TaskReviewInput): string {
     "- `approve` when this Task needs no repair: the gate passed and the applied diff matches the instruction; if the gate failed, prefer a repair patch unless the failure lies outside this Task.",
     `- A patch may only repair this Task #${task.id}. Use \`task~ "${task.id}"\` for the Task, or \`edit+ "<new-id>" task "${task.id}" ...\`, \`edit~ "<edit-id>"\`, and \`edit- "<edit-id>"\` for its edits. It may carry \`finish\` when this is the last \`test\` Task.`,
     `- \`edit+\` keeps \`task "${task.id}"\`; \`edit~\` and \`edit-\` take only the edit id. Do not repeat \`task\`; the parent is the current Task #${task.id}.`,
+    "- A done edit is immutable. If the gate failed after an edit landed, append a new repair edit with `edit+` (a whole-file `write` or a small `modify`); do not use `edit~` on a done edit.",
     "- Example (replace the id with the edit you are repairing):",
     "",
     "```",
@@ -598,7 +640,8 @@ export function replanDelta(input: {
     "New tasks append to their stage; new stages append after existing stages; new edits append to their task. New ids must be unused.",
     "Record order is execution order. There are no deps, todo, or status fields; do not add them.",
     "Every task must be able to pass its own gate. To end the run, plan a final `test` task and emit `finish`; if the last task is already a passing test task, `patch` + `finish` is enough.",
-    "Prefer a small helper function and a thin caller over a large rewrite; keep tasks small enough to verify.",
+    "If an edit keeps failing on its address, stop retrying it: replace it with a whole-file `write` or split it into smaller edits.",
+    "Keep helpers when they make the code easier to read; do not add edits just to mirror helper names.",
   ];
   const lead =
     input.failedEditIds.length > 0

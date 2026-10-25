@@ -648,45 +648,25 @@ function parseEdit(
   header: Line,
   state: RecordState,
 ): { edit: EditNode; taskId: NodeId } {
-  const [
-    keyword,
-    idToken,
-    taskKeyword,
-    taskToken,
-    actionToken,
-    spaceToken,
-    symbolToken,
-    inToken,
-    pathToken,
-    ...extra
-  ] = tokensOf(header);
+  const [keyword, idToken, taskKeyword, taskToken, actionToken, ...locTokens] = tokensOf(header);
   if (
     keyword !== "edit" ||
     taskKeyword !== "task" ||
-    inToken !== "in" ||
-    extra.length > 0 ||
     idToken === undefined ||
     taskToken === undefined ||
-    actionToken === undefined ||
-    spaceToken === undefined ||
-    symbolToken === undefined ||
-    pathToken === undefined
+    actionToken === undefined
   ) {
-    const missing =
-      idToken === undefined ||
-      taskToken === undefined ||
-      actionToken === undefined ||
-      spaceToken === undefined ||
-      symbolToken === undefined ||
-      pathToken === undefined;
     fail(
       cursor,
-      missing ? "PLAN_MISSING_FIELD" : "PLAN_UNKNOWN_FIELD",
-      `edit record on line ${header.number} must be "edit \\"NN-slug\\" task \\"NN-slug\\" <action> <space> <symbol> in <path>"; got ${quote(header.text.trim())}`,
+      "PLAN_MISSING_FIELD",
+      `edit record on line ${header.number} must be "edit \\"NN-slug\\" task \\"NN-slug\\" <action> <space> <symbol> in <path>" or "edit \\"NN-slug\\" task \\"NN-slug\\" write <path>"; got ${quote(header.text.trim())}`,
       {
         line: header.number,
-        expected: ['edit "NN-slug" task "NN-slug" <action> <space> <symbol> in <path>'],
-        found: extra[0] ?? header.text.trim(),
+        expected: [
+          'edit "NN-slug" task "NN-slug" <action> <space> <symbol> in <path>',
+          'edit "NN-slug" task "NN-slug" write <path>',
+        ],
+        found: header.text.trim(),
         hint: 'write edit "04-change" task "03-first" modify value answer in src/helper.ts',
       },
     );
@@ -724,19 +704,60 @@ function parseEdit(
       },
     );
   }
-  if (!SPACE_SET.has(spaceToken)) {
-    fail(
-      cursor,
-      "PLAN_UNKNOWN_FIELD",
-      `edit ${id} space must be one of value, type, namespace (got ${quote(spaceToken)})`,
-      {
-        line: header.number,
-        column: tokenColumn(header, spaceToken),
-        expected: [...TASK_SPACES],
-        found: spaceToken,
-        recordId: id,
-      },
-    );
+  let loc: TaskLoc;
+  if (actionToken === "write") {
+    if (locTokens.length !== 1 || locTokens[0] === undefined) {
+      fail(
+        cursor,
+        "PLAN_MISSING_FIELD",
+        `write edit ${id} must be "write <path>" with no symbol or space; got ${quote(header.text.trim())}`,
+        {
+          line: header.number,
+          expected: ["write <path>"],
+          found: locTokens.join(" "),
+          recordId: id,
+          hint: `write edit "${id}" task "${taskId}" write src/module.ts`,
+        },
+      );
+    }
+    loc = { path: locTokens[0], symbol: "", kind: "file" };
+  } else {
+    const [spaceToken, symbolToken, inToken, pathToken, ...extra] = locTokens;
+    if (
+      spaceToken === undefined ||
+      symbolToken === undefined ||
+      inToken !== "in" ||
+      pathToken === undefined ||
+      extra.length > 0
+    ) {
+      fail(
+        cursor,
+        "PLAN_MISSING_FIELD",
+        `edit ${id} must be "<action> <space> <symbol> in <path>"; got ${quote(header.text.trim())}`,
+        {
+          line: header.number,
+          expected: ['edit "NN-slug" task "NN-slug" <action> <space> <symbol> in <path>'],
+          found: header.text.trim(),
+          recordId: id,
+          hint: `write edit "${id}" task "${taskId}" modify value answer in src/helper.ts`,
+        },
+      );
+    }
+    if (!SPACE_SET.has(spaceToken)) {
+      fail(
+        cursor,
+        "PLAN_UNKNOWN_FIELD",
+        `edit ${id} space must be one of value, type, namespace (got ${quote(spaceToken)})`,
+        {
+          line: header.number,
+          column: tokenColumn(header, spaceToken),
+          expected: [...TASK_SPACES],
+          found: spaceToken,
+          recordId: id,
+        },
+      );
+    }
+    loc = { path: pathToken, symbol: symbolToken, kind: spaceToken as SymbolSpace };
   }
 
   const related: TaskLoc[] = [];
@@ -833,7 +854,7 @@ function parseEdit(
   return {
     edit: {
       id,
-      loc: { path: pathToken, symbol: symbolToken, kind: spaceToken as SymbolSpace },
+      loc,
       ...(related.length === 0 ? {} : { related }),
       action: actionToken as TaskAction,
       instruction,
@@ -1344,22 +1365,15 @@ function parseActionLoc(
   header: Line,
   recordId?: string,
 ): { action: TaskAction; loc: TaskLoc } {
-  const [actionToken, spaceToken, symbolToken, inToken, pathToken, ...extra] = tokens;
-  if (
-    actionToken === undefined ||
-    spaceToken === undefined ||
-    symbolToken === undefined ||
-    inToken !== "in" ||
-    pathToken === undefined ||
-    extra.length > 0
-  ) {
+  const [actionToken, ...rest] = tokens;
+  if (actionToken === undefined) {
     fail(
       cursor,
       "PLAN_MISSING_FIELD",
-      `${where} must be "<action> <space> <symbol> in <path>"; got ${quote(tokens.join(" "))}`,
+      `${where} must be "<action> <space> <symbol> in <path>" or "write <path>"; got ${quote(tokens.join(" "))}`,
       {
         line: header.number,
-        expected: ["<action> <space> <symbol> in <path>"],
+        expected: ["<action> <space> <symbol> in <path>", "write <path>"],
         found: tokens.join(" "),
         recordId,
       },
@@ -1375,6 +1389,45 @@ function parseActionLoc(
         column: tokenColumn(header, actionToken),
         expected: [...TASK_ACTIONS],
         found: actionToken,
+        recordId,
+      },
+    );
+  }
+  if (actionToken === "write") {
+    if (rest.length !== 1 || rest[0] === undefined) {
+      fail(
+        cursor,
+        "PLAN_MISSING_FIELD",
+        `${where} write must be "write <path>"; got ${quote(tokens.join(" "))}`,
+        {
+          line: header.number,
+          expected: ["write <path>"],
+          found: tokens.join(" "),
+          recordId,
+        },
+      );
+    }
+    return {
+      action: "write",
+      loc: { path: rest[0], symbol: "", kind: "file" },
+    };
+  }
+  const [spaceToken, symbolToken, inToken, pathToken, ...extra] = rest;
+  if (
+    spaceToken === undefined ||
+    symbolToken === undefined ||
+    inToken !== "in" ||
+    pathToken === undefined ||
+    extra.length > 0
+  ) {
+    fail(
+      cursor,
+      "PLAN_MISSING_FIELD",
+      `${where} must be "<action> <space> <symbol> in <path>"; got ${quote(tokens.join(" "))}`,
+      {
+        line: header.number,
+        expected: ["<action> <space> <symbol> in <path>"],
+        found: tokens.join(" "),
         recordId,
       },
     );
@@ -2251,7 +2304,7 @@ export function serializePlanDsl(plan: Plan): string {
       for (const edit of task.edits) {
         lines.push(
           "",
-          `edit ${quote(edit.id)} task ${quote(task.id)} ${edit.action} ${edit.loc.kind} ${edit.loc.symbol} in ${edit.loc.path}`,
+          `edit ${quote(edit.id)} task ${quote(task.id)} ${editLocWire(edit.action, edit.loc)}`,
         );
         for (const loc of edit.related ?? []) {
           lines.push(`related ${loc.kind} ${loc.symbol} in ${loc.path}`);
@@ -2267,8 +2320,14 @@ export function serializePlanDsl(plan: Plan): string {
   return lines.join("\n");
 }
 
+function editLocWire(action: TaskAction, loc: TaskLoc): string {
+  return action === "write"
+    ? `write ${loc.path}`
+    : `${action} ${loc.kind} ${loc.symbol} in ${loc.path}`;
+}
+
 function pushEditLoc(lines: string[], action: TaskAction, loc: TaskLoc): void {
-  lines.push(`${action} ${loc.kind} ${loc.symbol} in ${loc.path}`);
+  lines.push(editLocWire(action, loc));
 }
 
 function pushRelated(lines: string[], related: readonly TaskLoc[] | undefined): void {
@@ -2317,7 +2376,7 @@ export function serializePlanPatch(patch: PlanPatch): string {
         break;
       case "edit-add":
         lines.push(
-          `edit+ ${quote(op.id)} task ${quote(op.task)} ${op.action} ${op.loc.kind} ${op.loc.symbol} in ${op.loc.path}`,
+          `edit+ ${quote(op.id)} task ${quote(op.task)} ${editLocWire(op.action, op.loc)}`,
         );
         pushRelated(lines, op.related);
         if (op.renameTo !== undefined) {

@@ -251,7 +251,7 @@ describe("runTaskLoop", () => {
     expect(result.records[0]?.diagnostics).toBeNull();
     // The execution conversation starts with the flat Plan DSL and carries the
     // current stage/task/edit turn.
-    expect(provider.calls[1]?.[0]?.content).toContain("one micro edit");
+    expect(provider.calls[1]?.[0]?.content).toContain("one edit at a time");
     expect(provider.calls[1]?.[1]?.content).toContain('plan "01-main"');
     expect(provider.calls[1]?.[1]?.content).toContain(
       'task "01-task" stage "01-stage" verify test',
@@ -896,9 +896,48 @@ end`;
     expect(result.ok).toBe(true);
     const retry = provider.calls[1]?.at(-1)?.content ?? "";
     expect(retry).toContain("task records must come before edit records");
-    expect(retry).toContain("keep only the first Task");
+    expect(retry).toContain("keep only the current Task");
     expect(retry).toContain("Put every task record before every edit record");
     expect(retry).toContain("Do not emit finish");
+  }, 30000);
+
+  test("a whole-file write edit replaces the file and verifies", async () => {
+    const dir = project();
+    const plan = planText(
+      [
+        stageSpec(1, [
+          taskSpec(1, {
+            verify: "test",
+            edits: [
+              editSpec(1001, {
+                loc: { path: "src/helper.ts", symbol: "", kind: "file" },
+                action: "write",
+                instruction: "Write the complete module.",
+              }),
+            ],
+          }),
+        ]),
+      ],
+      true,
+    );
+    const provider = new ScriptedProvider([
+      plan,
+      [
+        "write src/helper.ts with",
+        "-----",
+        "export function answer(): number {",
+        "  return 2;",
+        "}",
+        "-----",
+        "done",
+      ].join("\n"),
+    ]);
+    const result = await runTaskLoop(baseOptions(dir, provider));
+    expect(result.ok).toBe(true);
+    expect(readFileSync(join(dir, "src", "helper.ts"), "utf8")).toContain(
+      "export function answer(): number",
+    );
+    expect(result.tasks?.map((entry) => entry.action)).toEqual(["write"]);
   }, 30000);
 
   test("a failed edit is reported to the planner, which changes its definition", async () => {
@@ -917,15 +956,14 @@ end`;
       firstPlan,
       wrongTarget,
       wrongTarget,
-      wrongTarget,
       retryPatch,
       GOOD_EDIT,
     ]);
     const result = await runTaskLoop(baseOptions(dir, provider));
     expect(result.ok).toBe(true);
-    expect(result.records.filter((record) => record.outcome === "address").length).toBe(3);
-    expect(provider.calls[4]?.at(-1)?.content).toContain("# Failed edits and diagnostics");
-    expect(provider.calls[4]?.at(-1)?.content).toContain("did not land an edit");
+    expect(result.records.filter((record) => record.outcome === "address").length).toBe(2);
+    expect(provider.calls[3]?.at(-1)?.content).toContain("# Failed edits and diagnostics");
+    expect(provider.calls[3]?.at(-1)?.content).toContain("ADDRESS_RETRY_LIMIT");
   }, 30000);
 
   test("a create fence carrying extra declarations is rejected", async () => {

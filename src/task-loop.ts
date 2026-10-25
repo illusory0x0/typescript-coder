@@ -2,7 +2,8 @@
  * The plan/execute driver (`docs/spec.md`): a planner starts with one current
  * Stage and Task, then patches one new Task (or one new Stage with its first
  * Task) per planning turn. An executor carries out one Task's edits at a time
- * with edit-dsl clauses. The harness owns status, scheduling, and verification.
+ * with edit-dsl clauses (or one whole-file write). The harness owns status,
+ * scheduling, and verification.
  *
  * This module orchestrates. It reuses the edit-dsl machinery rather than
  * re-implementing it: `parseMultiEditor`/`resolveMultiEditor` for the reply,
@@ -12,19 +13,26 @@
  */
 import { join } from "node:path";
 import { buildIndexTolerant, Binder, declarationSpaces } from "./utility";
-import type { IndexEntry, Locator, SourceFile, SymbolIndex } from "./utility";
+import type { IndexEntry, Locator, SourceFile, SymbolIndex, SymbolSpace } from "./utility";
 import { Parser } from "./parser";
 import type { Node, Program } from "./parser";
 import { stripCodeFences } from "./matcher";
 import { parseMultiEditorDetailed } from "./selection";
-import type { EditStatement, Selection as EditDslSelection } from "./selection";
+import type { EditStatement, Selection as EditDslSelection, WriteFileStatement } from "./selection";
 import { renderReadFailureFeedback, renderReadFeedback, resolveMultiEditor } from "./multi-editor";
 import { stripLeadingExport } from "./loop";
 import type { MultiEditorDeps, MultiEditorResolution } from "./multi-editor";
 import { renderViewerFeedback } from "./edit-dsl";
 import type { EditDslRegion } from "./edit-dsl";
-import { applyResolvedRegions, parseCheck, prevBrokenDiagnostics } from "./commit";
+import {
+  applyResolvedRegions,
+  gateDiagnostics,
+  NOOP_DIAGNOSTICS,
+  parseCheck,
+  prevBrokenDiagnostics,
+} from "./commit";
 import { checkTool, testTool } from "./tools";
+import { formatSource } from "./editor";
 import { buildContextYaml } from "./loop";
 import {
   DEFAULT_TOKEN_BUDGET,
@@ -205,6 +213,13 @@ function locatorOf(task: EditNode): Locator {
   return { path: task.loc.path, name: task.loc.symbol, kind: "" };
 }
 
+function symbolSpaceOf(loc: EditNode["loc"]): SymbolSpace {
+  if (loc.kind === "file") {
+    throw new Error(`the whole-file target ${loc.path} has no symbol space`);
+  }
+  return loc.kind;
+}
+
 function readTarget(cwd: string, path: string): string {
   return readFileIfExists(join(cwd, path)) ?? "";
 }
@@ -280,6 +295,9 @@ function guardTarget(workspace: Workspace, task: EditNode): TargetGuard {
     }
   }
   const source = readTarget(cwd, task.loc.path);
+  if (task.action === "write") {
+    return { ok: true, entry: null, related: [] };
+  }
   if (readFileIfExists(join(cwd, task.loc.path)) !== null) {
     const parsed = parseCheck(source);
     if (!parsed.ok) {
@@ -287,7 +305,7 @@ function guardTarget(workspace: Workspace, task: EditNode): TargetGuard {
     }
   }
   const visible = workspaceIndex(workspace);
-  const entry = visible.lookup(locatorOf(task), task.loc.kind);
+  const entry = visible.lookup(locatorOf(task), symbolSpaceOf(task.loc));
   if (task.action === "create") {
     if (entry.length > 0) {
       return {
@@ -299,13 +317,18 @@ function guardTarget(workspace: Workspace, task: EditNode): TargetGuard {
     // one; only an entry in the requested space blocks the task.
     return { ok: true, entry: null, related: [] };
   }
-  const existing = resolveCurrentEntry(source, task.loc.path, locatorOf(task), task.loc.kind);
+  const existing = resolveCurrentEntry(
+    source,
+    task.loc.path,
+    locatorOf(task),
+    symbolSpaceOf(task.loc),
+  );
   if (!existing.ok) {
     return { ok: false, diagnostics: `${existing.diagnostics}\n${editLabel(task)}` };
   }
   const related: IndexEntry[] = [];
   for (const loc of task.related ?? []) {
-    const resolved = resolveCurrentEntry(source, loc.path, locatorOfLoc(loc), loc.kind);
+    const resolved = resolveCurrentEntry(source, loc.path, locatorOfLoc(loc), symbolSpaceOf(loc));
     if (!resolved.ok) {
       return {
         ok: false,
@@ -369,7 +392,7 @@ function createBodyCheck(task: EditNode, body: string): string | null {
     return null;
   }
   const spaces = declarationSpaces({ locator: locatorOf(task), node, symbol });
-  if (!spaces.includes(task.loc.kind)) {
+  if (!spaces.includes(symbolSpaceOf(task.loc))) {
     return `stage: address\ncode: EDIT_TARGET_MISMATCH\nthe created ${JSON.stringify(task.loc.symbol)} occupies the ${spaces.join(", ")} space, but the task asks for ${task.loc.kind}`;
   }
   return null;
@@ -524,11 +547,108 @@ function rejectionText(resolution: MultiEditorResolution, totalClauses: number):
     .join("\n\n");
 }
 
+function writeTargetFromReply(
+  task: EditNode,
+  statements: readonly EditStatement[],
+):
+  | {
+      ok: true;
+      write: WriteFileStatement;
+    }
+  | { ok: false; diagnostics: string } {
+  if (statements.length !== 1) {
+    return {
+      ok: false,
+      diagnostics: `stage: protocol\n${editLabel(task)}: a whole-file write reply carries exactly one write statement`,
+    };
+  }
+  const statement = statements[0];
+  if (statement?.type !== "fs" || statement.statement.op !== "write") {
+    return {
+      ok: false,
+      diagnostics: `stage: protocol\n${editLabel(task)}: reply with \`write ${task.loc.path} with <fence> done\``,
+    };
+  }
+  const write = statement.statement;
+  if (write.path !== task.loc.path) {
+    return {
+      ok: false,
+      diagnostics: `stage: address\n${editLabel(task)}: the reply writes ${JSON.stringify(write.path)}, not the declared path`,
+    };
+  }
+  if (write.ranges !== null) {
+    return {
+      ok: false,
+      diagnostics: `stage: address\n${editLabel(task)}: a whole-file write omits \`within\`; send the complete file`,
+    };
+  }
+  return { ok: true, write };
+}
+
+/**
+ * Apply one whole-file write. The previous parse is irrelevant because the
+ * reply replaces the file; the new source still passes the parse gate and
+ * formatter before it lands.
+ */
+async function applyWholeFileWrite(
+  context: ExecutionContext,
+  task: EditNode,
+  write: WriteFileStatement,
+): Promise<ReplyOutcome> {
+  if (safeMutablePath(context.cwd, task.loc.path) === null) {
+    return {
+      ok: false,
+      diagnostics: `stage: address\n${editLabel(task)}: the path is outside the editable workspace`,
+      viewerOnly: false,
+      appliedLocators: [],
+    };
+  }
+  const parsed = parseCheck(write.replacement);
+  if (!parsed.ok) {
+    return {
+      ok: false,
+      diagnostics: gateDiagnostics(0, write.replacement, parsed.failure),
+      viewerOnly: false,
+      appliedLocators: [],
+    };
+  }
+  let formatted: string;
+  try {
+    formatted = await formatSource(task.loc.path, write.replacement);
+  } catch (error) {
+    return {
+      ok: false,
+      diagnostics: `stage: format\nthe whole-file write could not be formatted: ${error instanceof Error ? error.message : String(error)}`,
+      viewerOnly: false,
+      appliedLocators: [],
+    };
+  }
+  const formattedCheck = parseCheck(formatted);
+  if (!formattedCheck.ok) {
+    return {
+      ok: false,
+      diagnostics: gateDiagnostics(0, formatted, formattedCheck.failure),
+      viewerOnly: false,
+      appliedLocators: [],
+    };
+  }
+  if (formatted === readTarget(context.cwd, task.loc.path)) {
+    return { ok: false, diagnostics: NOOP_DIAGNOSTICS, viewerOnly: false, appliedLocators: [] };
+  }
+  writeTarget(context.cwd, task.loc.path, formatted);
+  return {
+    ok: true,
+    diagnostics: null,
+    viewerOnly: false,
+    appliedLocators: [locatorOf(task)],
+  };
+}
+
 /**
  * Parse one execution reply and, if it carries editors, apply them atomically.
  * A read-only reply (viewers, `read`) writes nothing and its feedback becomes
- * the next turn's diagnostics. File commands that write are rejected: the plan
- * names declarations, not whole files.
+ * the next turn's diagnostics. A `write` task accepts exactly one whole-file
+ * `write` command; other tasks reject file commands that write.
  */
 async function applyEditReply(
   context: ExecutionContext,
@@ -556,6 +676,18 @@ async function applyEditReply(
       viewerOnly: false,
       appliedLocators: [],
     };
+  }
+  if (task.action === "write") {
+    const replied = writeTargetFromReply(task, statements);
+    if (!replied.ok) {
+      return {
+        ok: false,
+        diagnostics: replied.diagnostics,
+        viewerOnly: false,
+        appliedLocators: [],
+      };
+    }
+    return applyWholeFileWrite(context, task, replied.write);
   }
   for (const statement of statements) {
     if (statement.type === "editor") {
@@ -620,7 +752,7 @@ async function applyEditReply(
     entryByIndex.set(index, entry);
     normalized.set(
       index,
-      withExportModifier({ ...selection, space: loc.kind }, sourceBefore, entry),
+      withExportModifier({ ...selection, space: symbolSpaceOf(loc) }, sourceBefore, entry),
     );
   }
   const resolution = resolveMultiEditor(
@@ -820,16 +952,21 @@ async function applyEditReply(
 /** The declaration (or whole file for create) and its 1-based start line. */
 function declarationView(cwd: string, task: EditNode): { view: string; startLine: number } {
   const source = readTarget(cwd, task.loc.path);
-  if (task.related !== undefined && task.related.length > 0) {
-    // A migration task needs the whole file because related declarations can be
-    // far apart; the numbered view keeps their file-absolute line numbers.
+  if (task.loc.kind === "file" || (task.related !== undefined && task.related.length > 0)) {
+    // A whole-file write or a migration task needs the whole file because the
+    // edit can span declarations; the numbered view keeps file-absolute lines.
     const lines = source.split("\n");
     if (lines.length > 0 && lines[lines.length - 1] === "") {
       lines.pop();
     }
     return { view: lines.join("\n"), startLine: 1 };
   }
-  const entry = resolveCurrentEntry(source, task.loc.path, locatorOf(task), task.loc.kind);
+  const entry = resolveCurrentEntry(
+    source,
+    task.loc.path,
+    locatorOf(task),
+    symbolSpaceOf(task.loc),
+  );
   const startOffset = entry.ok ? entry.entry.node.start : 0;
   const endOffset = entry.ok ? entry.entry.node.end : source.length;
   const body = source.slice(startOffset, endOffset);
@@ -912,6 +1049,7 @@ async function executeEdit(
   let consecutiveLength = 0;
   let selfCheckUsed = false;
   let formatHelp = false;
+  let addressMismatches = 0;
 
   for (let exchange = 1; exchange <= MAX_TASK_EXCHANGES; exchange += 1) {
     const view = declarationView(context.cwd, edit);
@@ -1018,6 +1156,9 @@ async function executeEdit(
     const outcome = await applyEditReply(context, edit, content);
     if (!outcome.ok) {
       diagnostics = outcome.diagnostics ?? "stage: protocol\nthe edit was rejected";
+      const addressMismatch =
+        stageOf(diagnostics) === "address" && /EDIT_TARGET_MISMATCH/.test(diagnostics);
+      addressMismatches = addressMismatch ? addressMismatches + 1 : 0;
       formatHelp =
         outcome.viewerOnly ||
         /^stage: (protocol|syntax|address|matcher|range|no-op)/.test(diagnostics);
@@ -1031,6 +1172,13 @@ async function executeEdit(
         diagnostics,
         finishReason: response.finishReason,
       });
+      if (addressMismatches >= 2) {
+        return {
+          ok: false,
+          diagnostics: `${diagnostics}\n\nstage: address\ncode: ADDRESS_RETRY_LIMIT\n${editLabel(edit)}: the same target mismatch repeated ${addressMismatches} times; stop retrying this address. Replace this edit with a whole-file \`write\` or split it into smaller edits.`,
+          messages: chat.messages,
+        };
+      }
       continue;
     }
     formatHelp = false;

@@ -10,11 +10,8 @@ import {
   hasLaterPendingTaskInStage,
   initialState,
   isSafeTaskPath,
-  MAX_EDITS_PER_TASK,
   MAX_NODES,
   MAX_PLAN_GOAL_LENGTH,
-  MAX_STAGES,
-  MAX_TASKS_PER_STAGE,
   mergeReplan,
   nextEdit,
   renderTaskStatus,
@@ -23,6 +20,7 @@ import {
   summaryOf,
   taskEditsSettled,
   taskHasDoneEdit,
+  validatePlanTree,
 } from "./tasks";
 import { applyPlanPatch, parsePlan, parsePlanPatch, readPlan, serializePlanDsl } from "./plan-dsl";
 import type { PlanPatchOp } from "./plan-dsl";
@@ -239,25 +237,22 @@ describe("parsePlan", () => {
     expect(rejectPlan(`${tscOnly}\nfinish`).diagnostics).toContain('must verify "test"');
   });
 
-  test("caps stages, tasks per stage, edits per task, and total nodes", () => {
-    const manyStages = Array.from({ length: MAX_STAGES + 1 }, (_, index) =>
+  test("accepts large stage/task/edit counts and caps total nodes", () => {
+    const manyStages = Array.from({ length: 20 }, (_, index) =>
       stage(index + 1, [task({ id: index + 100 })]),
     );
-    expect(rejectPlan(planDsl(manyStages)).diagnostics).toContain("at most");
-    const manyTasks = Array.from({ length: MAX_TASKS_PER_STAGE + 1 }, (_, index) =>
-      task({ id: index + 100 }),
-    );
-    expect(rejectPlan(planDsl([stage(1, manyTasks)])).diagnostics).toContain("at most");
-    const manyEdits = Array.from({ length: MAX_EDITS_PER_TASK + 1 }, (_, index) =>
-      edit({ id: index + 100 }),
-    );
+    expect(okPlan(planDsl(manyStages)).stages.length).toBe(20);
+    const manyTasks = Array.from({ length: 20 }, (_, index) => task({ id: index + 100 }));
+    expect(okPlan(planDsl([stage(1, manyTasks)])).stages[0]?.tasks.length).toBe(20);
+    const manyEdits = Array.from({ length: 10 }, (_, index) => edit({ id: index + 100 }));
     expect(
-      rejectPlan(planDsl([stage(1, [task({ id: 2, edits: manyEdits })])])).diagnostics,
-    ).toContain("at most");
-    const fullTree = Array.from({ length: MAX_STAGES }, (_, stageIndex) =>
+      okPlan(planDsl([stage(1, [task({ id: 2, edits: manyEdits })])])).stages[0]?.tasks[0]?.edits
+        .length,
+    ).toBe(10);
+    const fullTree = Array.from({ length: 20 }, (_, stageIndex) =>
       stage(
         stageIndex + 1,
-        Array.from({ length: MAX_TASKS_PER_STAGE }, (_, taskIndex) =>
+        Array.from({ length: 5 }, (_, taskIndex) =>
           task({ id: 100 + stageIndex * 10 + taskIndex }),
         ),
       ),
@@ -280,6 +275,71 @@ describe("parsePlan", () => {
     expect(rejectPlan(planDsl([stage(1, [bad])])).diagnostics).toContain(
       "must be one of value, type, namespace",
     );
+  });
+
+  test("write edits use a whole-file loc", () => {
+    const write = okPlan(
+      planDsl([
+        stage(1, [
+          task({
+            id: 2,
+            edits: [
+              edit({
+                id: 3,
+                loc: { path: "src/json.ts", symbol: "", kind: "file" },
+                action: "write",
+                instruction: "Write the module.",
+              }),
+            ],
+          }),
+        ]),
+      ]),
+    );
+    expect(write.stages[0]?.tasks[0]?.edits[0]?.loc).toEqual({
+      path: "src/json.ts",
+      symbol: "",
+      kind: "file",
+    });
+
+    const symbolSpace: Plan = {
+      id: "01-main",
+      goal: "Test.",
+      stages: [
+        stage(1, [
+          task({
+            id: 2,
+            edits: [
+              edit({
+                id: 3,
+                loc: { path: "src/json.ts", symbol: "parse", kind: "value" },
+                action: "write",
+              }),
+            ],
+          }),
+        ]),
+      ],
+    };
+    expect(validatePlanTree(symbolSpace)).toContain('kind "file"');
+
+    const symbol: Plan = {
+      id: "01-main",
+      goal: "Test.",
+      stages: [
+        stage(1, [
+          task({
+            id: 2,
+            edits: [
+              edit({
+                id: 3,
+                loc: { path: "src/json.ts", symbol: "parse", kind: "file" },
+                action: "write",
+              }),
+            ],
+          }),
+        ]),
+      ],
+    };
+    expect(validatePlanTree(symbol)).toContain("carries a symbol");
   });
 
   test("accepts related migration targets and rejects cross-file related locs", () => {
@@ -1520,10 +1580,10 @@ finish`,
     expect(merged.editStatus.get("09-final")).toBe("todo");
   });
 
-  test("merge caps still apply to appended work", () => {
+  test("merge accepts appended work without per-stage count caps", () => {
     const state = patchTree();
     const ops: PlanPatchOp[] = [];
-    for (let index = 0; index < MAX_TASKS_PER_STAGE - 2; index += 1) {
+    for (let index = 0; index < 10; index += 1) {
       const label = 20 + index;
       const taskNodeId = `${label}-task`;
       const editNodeId = `${label}-edit`;
@@ -1544,36 +1604,10 @@ finish`,
       });
     }
 
-    const atCap = applyPlanPatch(state, { ops, finish: false });
-    if (!atCap.ok) {
-      throw new Error(atCap.diagnostics);
+    const merged = applyPlanPatch(state, { ops, finish: false });
+    if (!merged.ok) {
+      throw new Error(merged.diagnostics);
     }
-    expect(atCap.state.stages[0]?.tasks.length).toBe(MAX_TASKS_PER_STAGE);
-
-    const overCap = applyPlanPatch(state, {
-      ops: [
-        ...ops,
-        {
-          kind: "task-add",
-          id: "29-task",
-          stage: stageId(1),
-          verify: "test",
-          instruction: "One task too many.",
-        },
-        {
-          kind: "edit-add",
-          id: "29-edit",
-          task: "29-task",
-          loc: { path: "src/a.ts", symbol: "extra29", kind: "value" },
-          action: "modify",
-          instruction: "One edit too many.",
-        },
-      ],
-      finish: false,
-    });
-    expect(overCap.ok).toBe(false);
-    if (!overCap.ok) {
-      expect(overCap.diagnostics).toContain(`at most ${MAX_TASKS_PER_STAGE} tasks`);
-    }
+    expect(merged.state.stages[0]?.tasks.length).toBe(12);
   });
 });

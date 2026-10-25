@@ -25,12 +25,16 @@ result before the Task settles.
 
 - **Plan.** The Plan root carries a string `id` and `goal`; every
   Plan/Stage/Task/Edit id is a globally unique `NN-slug` string (`"01-main"`,
-  `"03-task-reader"`). The initial reply contains exactly one current Stage and
-  one current Task. Later planning turns emit one `patch` with at most one new
-  Task; a new Stage includes its first Task. `finish` marks the last `test`
-  Task as `finalTaskId`.
+  `"03-task-reader"`). The initial reply contains one current Stage and one
+  current Task. Later planning turns emit one `patch` with at most one new
+  Task; a new Stage includes its first Task. Plan shape is guidance, not a
+  fixed count: a cohesive change can be one Stage, Task, and edit. An edit
+  targets one declaration, or uses `write <path>` to replace a whole file.
+  `finish` marks the last `test` Task as `finalTaskId`.
 - **Execute.** A Stage groups a coherent phase; a Task is the verification
   boundary and runs its `tsc` or `test` gate after all of its edits settle.
+  An edit either targets one declaration or writes a whole file with
+  `write <path>`; a repeated address mismatch escalates to a repair patch.
   Work-in-progress may end in a `tsc` Task; only the `finish` Task must test.
 - **Review.** After the gate, the Task enters `review` and one compact review
   turn receives the gate result and a concise diff of the applied edits. It
