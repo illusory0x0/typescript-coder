@@ -1,0 +1,1470 @@
+{
+  "generatedAt": "2026-10-25T12:41:50.754Z",
+  "date": "2026-10-25",
+  "mode": "pilot",
+  "tasks": [
+    "mini-spreadsheet"
+  ],
+  "sides": [
+    "tc"
+  ],
+  "reps": 1,
+  "concurrency": 1,
+  "model": "deepseek-flash",
+  "ocModel": null,
+  "effort": null,
+  "multiPayload": false,
+  "protocolFormat": "edit-dsl",
+  "protocolFormats": [
+    "edit-dsl"
+  ],
+  "agentModes": [
+    "pinned-repair",
+    "plan-exec"
+  ],
+  "tokenBudget": 75000,
+  "bunVersion": "1.3.13",
+  "opencodeVersion": null,
+  "pilotReference": null,
+  "infraErrors": [],
+  "runs": [
+    {
+      "task": "mini-spreadsheet",
+      "side": "tc",
+      "protocol": "edit-dsl",
+      "agentMode": "pinned-repair",
+      "rep": 1,
+      "ok": false,
+      "sideOk": false,
+      "tokens": {
+        "input": 297619,
+        "output": 7088,
+        "cacheRead": 222464,
+        "cacheWrite": null,
+        "reasoning": 209,
+        "total": 304707,
+        "billable": {
+          "in": 75155,
+          "out": 7297,
+          "total": 82452
+        }
+      },
+      "usageAvailable": true,
+      "usageSource": "chat-completions",
+      "rawUsage": [
+        {
+          "prompt_tokens": 6653,
+          "completion_tokens": 6,
+          "total_tokens": 6659,
+          "prompt_tokens_details": {
+            "cached_tokens": 6400
+          },
+          "prompt_cache_hit_tokens": 6400,
+          "prompt_cache_miss_tokens": 253
+        },
+        {
+          "prompt_tokens": 10668,
+          "completion_tokens": 6,
+          "total_tokens": 10674,
+          "prompt_tokens_details": {
+            "cached_tokens": 9088
+          },
+          "prompt_cache_hit_tokens": 9088,
+          "prompt_cache_miss_tokens": 1580
+        },
+        {
+          "prompt_tokens": 10691,
+          "completion_tokens": 6235,
+          "total_tokens": 16926,
+          "prompt_tokens_details": {
+            "cached_tokens": 9216
+          },
+          "prompt_cache_hit_tokens": 9216,
+          "prompt_cache_miss_tokens": 1475
+        },
+        {
+          "prompt_tokens": 11348,
+          "completion_tokens": 11,
+          "total_tokens": 11359,
+          "prompt_tokens_details": {
+            "cached_tokens": 9088
+          },
+          "prompt_cache_hit_tokens": 9088,
+          "prompt_cache_miss_tokens": 2260
+        },
+        {
+          "prompt_tokens": 14000,
+          "completion_tokens": 24,
+          "total_tokens": 14024,
+          "prompt_tokens_details": {
+            "cached_tokens": 9856
+          },
+          "prompt_cache_hit_tokens": 9856,
+          "prompt_cache_miss_tokens": 4144
+        },
+        {
+          "prompt_tokens": 14065,
+          "completion_tokens": 12,
+          "total_tokens": 14077,
+          "prompt_tokens_details": {
+            "cached_tokens": 9856
+          },
+          "prompt_cache_hit_tokens": 9856,
+          "prompt_cache_miss_tokens": 4209
+        },
+        {
+          "prompt_tokens": 14066,
+          "completion_tokens": 23,
+          "total_tokens": 14089,
+          "prompt_tokens_details": {
+            "cached_tokens": 9088
+          },
+          "prompt_cache_hit_tokens": 9088,
+          "prompt_cache_miss_tokens": 4978
+        },
+        {
+          "prompt_tokens": 14035,
+          "completion_tokens": 23,
+          "total_tokens": 14058,
+          "prompt_tokens_details": {
+            "cached_tokens": 9856
+          },
+          "prompt_cache_hit_tokens": 9856,
+          "prompt_cache_miss_tokens": 4179
+        },
+        {
+          "prompt_tokens": 14065,
+          "completion_tokens": 11,
+          "total_tokens": 14076,
+          "prompt_tokens_details": {
+            "cached_tokens": 13824
+          },
+          "prompt_cache_hit_tokens": 13824,
+          "prompt_cache_miss_tokens": 241
+        },
+        {
+          "prompt_tokens": 14080,
+          "completion_tokens": 73,
+          "total_tokens": 14153,
+          "prompt_tokens_details": {
+            "cached_tokens": 9088
+          },
+          "prompt_cache_hit_tokens": 9088,
+          "prompt_cache_miss_tokens": 4992
+        },
+        {
+          "prompt_tokens": 11635,
+          "completion_tokens": 11,
+          "total_tokens": 11646,
+          "prompt_tokens_details": {
+            "cached_tokens": 9856
+          },
+          "prompt_cache_hit_tokens": 9856,
+          "prompt_cache_miss_tokens": 1779
+        },
+        {
+          "prompt_tokens": 14176,
+          "completion_tokens": 11,
+          "total_tokens": 14187,
+          "prompt_tokens_details": {
+            "cached_tokens": 12544
+          },
+          "prompt_cache_hit_tokens": 12544,
+          "prompt_cache_miss_tokens": 1632
+        },
+        {
+          "prompt_tokens": 11500,
+          "completion_tokens": 11,
+          "total_tokens": 11511,
+          "prompt_tokens_details": {
+            "cached_tokens": 9088
+          },
+          "prompt_cache_hit_tokens": 9088,
+          "prompt_cache_miss_tokens": 2412
+        },
+        {
+          "prompt_tokens": 14268,
+          "completion_tokens": 11,
+          "total_tokens": 14279,
+          "prompt_tokens_details": {
+            "cached_tokens": 9856
+          },
+          "prompt_cache_hit_tokens": 9856,
+          "prompt_cache_miss_tokens": 4412
+        },
+        {
+          "prompt_tokens": 14190,
+          "completion_tokens": 11,
+          "total_tokens": 14201,
+          "prompt_tokens_details": {
+            "cached_tokens": 9856
+          },
+          "prompt_cache_hit_tokens": 9856,
+          "prompt_cache_miss_tokens": 4334
+        },
+        {
+          "prompt_tokens": 12778,
+          "completion_tokens": 23,
+          "total_tokens": 12801,
+          "prompt_tokens_details": {
+            "cached_tokens": 9088
+          },
+          "prompt_cache_hit_tokens": 9088,
+          "prompt_cache_miss_tokens": 3690
+        },
+        {
+          "prompt_tokens": 14477,
+          "completion_tokens": 12,
+          "total_tokens": 14489,
+          "prompt_tokens_details": {
+            "cached_tokens": 9856
+          },
+          "prompt_cache_hit_tokens": 9856,
+          "prompt_cache_miss_tokens": 4621
+        },
+        {
+          "prompt_tokens": 14012,
+          "completion_tokens": 11,
+          "total_tokens": 14023,
+          "prompt_tokens_details": {
+            "cached_tokens": 9856
+          },
+          "prompt_cache_hit_tokens": 9856,
+          "prompt_cache_miss_tokens": 4156
+        },
+        {
+          "prompt_tokens": 14353,
+          "completion_tokens": 11,
+          "total_tokens": 14364,
+          "prompt_tokens_details": {
+            "cached_tokens": 9088
+          },
+          "prompt_cache_hit_tokens": 9088,
+          "prompt_cache_miss_tokens": 5265
+        },
+        {
+          "prompt_tokens": 14570,
+          "completion_tokens": 11,
+          "total_tokens": 14581,
+          "prompt_tokens_details": {
+            "cached_tokens": 9856
+          },
+          "prompt_cache_hit_tokens": 9856,
+          "prompt_cache_miss_tokens": 4714
+        },
+        {
+          "prompt_tokens": 12313,
+          "completion_tokens": 11,
+          "total_tokens": 12324,
+          "prompt_tokens_details": {
+            "cached_tokens": 9856
+          },
+          "prompt_cache_hit_tokens": 9856,
+          "prompt_cache_miss_tokens": 2457
+        },
+        {
+          "prompt_tokens": 12774,
+          "completion_tokens": 11,
+          "total_tokens": 12785,
+          "prompt_tokens_details": {
+            "cached_tokens": 9088
+          },
+          "prompt_cache_hit_tokens": 9088,
+          "prompt_cache_miss_tokens": 3686
+        },
+        {
+          "prompt_tokens": 12902,
+          "completion_tokens": 519,
+          "total_tokens": 13421,
+          "prompt_tokens_details": {
+            "cached_tokens": 9216
+          },
+          "completion_tokens_details": {
+            "reasoning_tokens": 209
+          },
+          "prompt_cache_hit_tokens": 9216,
+          "prompt_cache_miss_tokens": 3686
+        }
+      ],
+      "durationMs": 43400,
+      "startedAt": "2026-10-25T12:41:52.976Z",
+      "finishedAt": "2026-10-25T12:42:36.376Z",
+      "cost": 0.016318842,
+      "rateClass": "off-peak",
+      "steps": 24,
+      "records": [
+        {
+          "row": 1,
+          "iteration": 1,
+          "kind": "exchange",
+          "exchange": 1,
+          "outcome": "selected",
+          "diagnosticsHead": null,
+          "replacementChars": null,
+          "finishReason": "stop",
+          "cause": null,
+          "payloads": 0,
+          "toolCalls": 0,
+          "selectors": null,
+          "stages": null,
+          "matcherKinds": null
+        },
+        {
+          "row": 2,
+          "iteration": 1,
+          "kind": "exchange",
+          "exchange": 2,
+          "outcome": "applied",
+          "diagnosticsHead": null,
+          "replacementChars": null,
+          "finishReason": "stop",
+          "cause": null,
+          "payloads": 0,
+          "toolCalls": 0,
+          "selectors": [],
+          "stages": [],
+          "matcherKinds": []
+        },
+        {
+          "row": 3,
+          "iteration": 1,
+          "kind": "verification",
+          "exchange": null,
+          "outcome": "tests",
+          "diagnosticsHead": "stage: tests tests failed: test output: bun test v1.3.13 (bf2e2cec) src/workbook.test.ts: # Unhandled error between tests ------------------------------- 1 | }) 2 | { ^ SyntaxError: Export named 'Work",
+          "replacementChars": null,
+          "finishReason": "stop",
+          "cause": null,
+          "payloads": 0,
+          "toolCalls": 0,
+          "selectors": null,
+          "stages": null,
+          "matcherKinds": null
+        },
+        {
+          "row": 4,
+          "iteration": 2,
+          "kind": "exchange",
+          "exchange": 1,
+          "outcome": "viewer",
+          "diagnosticsHead": "Read results (read commands write nothing): src/workbook.ts (whole file): ```text (empty file) ```",
+          "replacementChars": null,
+          "finishReason": "stop",
+          "cause": null,
+          "payloads": 1,
+          "toolCalls": 0,
+          "selectors": null,
+          "stages": null,
+          "matcherKinds": null
+        },
+        {
+          "row": 5,
+          "iteration": 2,
+          "kind": "exchange",
+          "exchange": 2,
+          "outcome": "applied",
+          "diagnosticsHead": null,
+          "replacementChars": null,
+          "finishReason": "stop",
+          "cause": null,
+          "payloads": 0,
+          "toolCalls": 0,
+          "selectors": [
+            "whole-symbol"
+          ],
+          "stages": [
+            "whole-symbol"
+          ],
+          "matcherKinds": [
+            null
+          ]
+        },
+        {
+          "row": 6,
+          "iteration": 2,
+          "kind": "verification",
+          "exchange": null,
+          "outcome": "tests",
+          "diagnosticsHead": "stage: tests tests failed: failing tests: - mini-spreadsheet arithmetic operators > division by zero and non-finite results - mini-spreadsheet ABS and ROUND > ROUND rounds half away from zero - mini-s",
+          "replacementChars": null,
+          "finishReason": "stop",
+          "cause": null,
+          "payloads": 0,
+          "toolCalls": 0,
+          "selectors": null,
+          "stages": null,
+          "matcherKinds": null
+        },
+        {
+          "row": 7,
+          "iteration": 3,
+          "kind": "exchange",
+          "exchange": 1,
+          "outcome": "viewer",
+          "diagnosticsHead": "Read results (read commands write nothing): src/workbook.ts (selected lines, 271 lines): ```text 4 | 5 | const ERR_DIV0: CellError = \"#DIV/0!\"; 6 | const ERR_VALUE: CellError = \"#VALUE!\"; 7 | const ER",
+          "replacementChars": null,
+          "finishReason": "stop",
+          "cause": null,
+          "payloads": 1,
+          "toolCalls": 0,
+          "selectors": null,
+          "stages": null,
+          "matcherKinds": null
+        },
+        {
+          "row": 8,
+          "iteration": 3,
+          "kind": "exchange",
+          "exchange": 2,
+          "outcome": "viewer",
+          "diagnosticsHead": "Read results (read commands write nothing): src/workbook.ts (selected lines, 7 lines): ```text 271 | class Parser { 272 | private tokens: Token[]; 273 | private pos = 0; 274 | 275 | constructor(tokens",
+          "replacementChars": null,
+          "finishReason": "stop",
+          "cause": null,
+          "payloads": 2,
+          "toolCalls": 0,
+          "selectors": null,
+          "stages": null,
+          "matcherKinds": null
+        },
+        {
+          "row": 9,
+          "iteration": 3,
+          "kind": "exchange",
+          "exchange": 3,
+          "outcome": "viewer",
+          "diagnosticsHead": "Read results (read commands write nothing): src/workbook.ts (selected lines, 271 lines): ```text 4 | 5 | const ERR_DIV0: CellError = \"#DIV/0!\"; 6 | const ERR_VALUE: CellError = \"#VALUE!\"; 7 | const ER",
+          "replacementChars": null,
+          "finishReason": "stop",
+          "cause": null,
+          "payloads": 1,
+          "toolCalls": 0,
+          "selectors": null,
+          "stages": null,
+          "matcherKinds": null
+        },
+        {
+          "row": 10,
+          "iteration": 4,
+          "kind": "exchange",
+          "exchange": 1,
+          "outcome": "viewer",
+          "diagnosticsHead": "Read results (read commands write nothing): src/workbook.ts (selected lines): ```text 275 | constructor(tokens: Token[]) { 276 | this.tokens = tokens; 277 | } ``` src/workbook.ts (selected lines, 271 ",
+          "replacementChars": null,
+          "finishReason": "stop",
+          "cause": null,
+          "payloads": 2,
+          "toolCalls": 0,
+          "selectors": null,
+          "stages": null,
+          "matcherKinds": null
+        },
+        {
+          "row": 11,
+          "iteration": 4,
+          "kind": "exchange",
+          "exchange": 2,
+          "outcome": "viewer",
+          "diagnosticsHead": "Read results (read commands write nothing): src/workbook.ts (selected lines, 7 lines): ```text 271 | class Parser { 272 | private tokens: Token[]; 273 | private pos = 0; 274 | 275 | constructor(tokens",
+          "replacementChars": null,
+          "finishReason": "stop",
+          "cause": null,
+          "payloads": 2,
+          "toolCalls": 0,
+          "selectors": null,
+          "stages": null,
+          "matcherKinds": null
+        },
+        {
+          "row": 12,
+          "iteration": 4,
+          "kind": "exchange",
+          "exchange": 3,
+          "outcome": "viewer",
+          "diagnosticsHead": "Read results (read commands write nothing): src/workbook.ts (selected lines, 283 lines): ```text 278 | 279 | private peek(): Token { 280 | return this.tokens[this.pos]!; 281 | } 282 | 283 | private ne",
+          "replacementChars": null,
+          "finishReason": "stop",
+          "cause": null,
+          "payloads": 1,
+          "toolCalls": 0,
+          "selectors": null,
+          "stages": null,
+          "matcherKinds": null
+        },
+        {
+          "row": 13,
+          "iteration": 5,
+          "kind": "exchange",
+          "exchange": 1,
+          "outcome": "protocol",
+          "diagnosticsHead": "stage: syntax code: EDIT_MISSING_FIELD message: expected `select`, `create`, `delete`, `read`, or `write` to begin a statement at line 1:1 1 | <｜｜DSML｜｜ calls> | ^ 2 | <｜｜DSML｜｜ invoke name=\"read\"> ex",
+          "replacementChars": null,
+          "finishReason": "stop",
+          "cause": "protocol",
+          "payloads": 0,
+          "toolCalls": 0,
+          "selectors": [],
+          "stages": [],
+          "matcherKinds": []
+        },
+        {
+          "row": 14,
+          "iteration": 5,
+          "kind": "exchange",
+          "exchange": 2,
+          "outcome": "viewer",
+          "diagnosticsHead": "Read results (read commands write nothing): src/workbook.ts (selected lines, 271 lines): ```text 4 | 5 | const ERR_DIV0: CellError = \"#DIV/0!\"; 6 | const ERR_VALUE: CellError = \"#VALUE!\"; 7 | const ER",
+          "replacementChars": null,
+          "finishReason": "stop",
+          "cause": null,
+          "payloads": 1,
+          "toolCalls": 0,
+          "selectors": null,
+          "stages": null,
+          "matcherKinds": null
+        },
+        {
+          "row": 15,
+          "iteration": 5,
+          "kind": "exchange",
+          "exchange": 3,
+          "outcome": "viewer",
+          "diagnosticsHead": "Read results (read commands write nothing): src/workbook.ts (selected lines, 7 lines): ```text 271 | class Parser { 272 | private tokens: Token[]; 273 | private pos = 0; 274 | 275 | constructor(tokens",
+          "replacementChars": null,
+          "finishReason": "stop",
+          "cause": null,
+          "payloads": 1,
+          "toolCalls": 0,
+          "selectors": null,
+          "stages": null,
+          "matcherKinds": null
+        },
+        {
+          "row": 16,
+          "iteration": 6,
+          "kind": "exchange",
+          "exchange": 1,
+          "outcome": "viewer",
+          "diagnosticsHead": "Read results (read commands write nothing): src/workbook.ts (selected lines, 277 lines): ```text 1 | export type CellValue = number | string | boolean | null; 2 | export type CellError = \"#DIV/0!\" | \"",
+          "replacementChars": null,
+          "finishReason": "stop",
+          "cause": null,
+          "payloads": 1,
+          "toolCalls": 0,
+          "selectors": null,
+          "stages": null,
+          "matcherKinds": null
+        },
+        {
+          "row": 17,
+          "iteration": 6,
+          "kind": "exchange",
+          "exchange": 2,
+          "outcome": "viewer",
+          "diagnosticsHead": "Read results (read commands write nothing): src/workbook.ts (selected lines, 283 lines): ```text 278 | 279 | private peek(): Token { 280 | return this.tokens[this.pos]!; 281 | } 282 | 283 | private ne",
+          "replacementChars": null,
+          "finishReason": "stop",
+          "cause": null,
+          "payloads": 1,
+          "toolCalls": 0,
+          "selectors": null,
+          "stages": null,
+          "matcherKinds": null
+        },
+        {
+          "row": 18,
+          "iteration": 6,
+          "kind": "exchange",
+          "exchange": 3,
+          "outcome": "viewer",
+          "diagnosticsHead": "Read results (read commands write nothing): src/workbook.ts (selected lines, 141 lines): ```text 560 | private cache = new Map<string, CellResult>(); 561 | private evaluating = new Set<string>(); 562 ",
+          "replacementChars": null,
+          "finishReason": "stop",
+          "cause": null,
+          "payloads": 1,
+          "toolCalls": 0,
+          "selectors": null,
+          "stages": null,
+          "matcherKinds": null
+        },
+        {
+          "row": 19,
+          "iteration": 7,
+          "kind": "exchange",
+          "exchange": 1,
+          "outcome": "viewer",
+          "diagnosticsHead": "Read results (read commands write nothing): src/workbook.ts (selected lines, 120 lines): ```text 1 | export type CellValue = number | string | boolean | null; 2 | export type CellError = \"#DIV/0!\" | \"",
+          "replacementChars": null,
+          "finishReason": "stop",
+          "cause": null,
+          "payloads": 2,
+          "toolCalls": 0,
+          "selectors": null,
+          "stages": null,
+          "matcherKinds": null
+        },
+        {
+          "row": 20,
+          "iteration": 7,
+          "kind": "exchange",
+          "exchange": 2,
+          "outcome": "viewer",
+          "diagnosticsHead": "Read results (read commands write nothing): src/workbook.ts (selected lines, 261 lines): ```text 300 | 301 | private parseExpression(): Node { 302 | return this.parseComparison(); 303 | } 304 | 305 | ",
+          "replacementChars": null,
+          "finishReason": "stop",
+          "cause": null,
+          "payloads": 1,
+          "toolCalls": 0,
+          "selectors": null,
+          "stages": null,
+          "matcherKinds": null
+        },
+        {
+          "row": 21,
+          "iteration": 7,
+          "kind": "exchange",
+          "exchange": 3,
+          "outcome": "viewer",
+          "diagnosticsHead": "Read results (read commands write nothing): src/workbook.ts (selected lines, 300 lines): ```text 1 | export type CellValue = number | string | boolean | null; 2 | export type CellError = \"#DIV/0!\" | \"",
+          "replacementChars": null,
+          "finishReason": "stop",
+          "cause": null,
+          "payloads": 1,
+          "toolCalls": 0,
+          "selectors": null,
+          "stages": null,
+          "matcherKinds": null
+        },
+        {
+          "row": 22,
+          "iteration": 8,
+          "kind": "exchange",
+          "exchange": 1,
+          "outcome": "viewer",
+          "diagnosticsHead": "Read results (read commands write nothing): src/workbook.ts (selected lines, 321 lines): ```text 300 | 301 | private parseExpression(): Node { 302 | return this.parseComparison(); 303 | } 304 | 305 | ",
+          "replacementChars": null,
+          "finishReason": "stop",
+          "cause": null,
+          "payloads": 1,
+          "toolCalls": 0,
+          "selectors": null,
+          "stages": null,
+          "matcherKinds": null
+        },
+        {
+          "row": 23,
+          "iteration": 8,
+          "kind": "exchange",
+          "exchange": 2,
+          "outcome": "viewer",
+          "diagnosticsHead": "Read results (read commands write nothing): src/workbook.ts (selected lines, 81 lines): ```text 620 | if (isRange(value)) { 621 | result = ERR_VALUE; 622 | } else { 623 | result = value; 624 | } 625 |",
+          "replacementChars": null,
+          "finishReason": "stop",
+          "cause": null,
+          "payloads": 1,
+          "toolCalls": 0,
+          "selectors": null,
+          "stages": null,
+          "matcherKinds": null
+        },
+        {
+          "row": 24,
+          "iteration": 8,
+          "kind": "exchange",
+          "exchange": 3,
+          "outcome": "viewer",
+          "diagnosticsHead": "Read results (read commands write nothing): src/workbook.ts (selected lines, 120 lines): ```text 1 | export type CellValue = number | string | boolean | null; 2 | export type CellError = \"#DIV/0!\" | \"",
+          "replacementChars": null,
+          "finishReason": "stop",
+          "cause": null,
+          "payloads": 1,
+          "toolCalls": 0,
+          "selectors": null,
+          "stages": null,
+          "matcherKinds": null
+        }
+      ],
+      "exchangeStats": {
+        "turns": 22,
+        "payloads": 22,
+        "toolCalls": 0,
+        "applied": 2,
+        "rejected": 1,
+        "selected": 1,
+        "stopped": 0,
+        "selfChecks": 0,
+        "range": 0,
+        "matcher": 0,
+        "wholeSymbol": 1,
+        "stageWholeSymbol": 1,
+        "stageMatch": 0,
+        "stagePick": 0,
+        "snippet": 0,
+        "regex": 0,
+        "creates": 1
+      },
+      "loopDiagnostics": "token-budget: accumulated 78038 cache-excluded tokens exceeded the 75000 token budget",
+      "terminationReason": "token-budget",
+      "model": "deepseek-flash",
+      "workspace": "tmp/benchmark/2026-10-25T12-41-52-964Z-020b8ae8/mini-spreadsheet-tc-pinned-repair-rep1",
+      "logs": {
+        "side": "tmp/benchmark/2026-10-25T12-41-52-964Z-020b8ae8/logs/mini-spreadsheet-tc-pinned-repair-rep1/side.log",
+        "judge": "tmp/benchmark/2026-10-25T12-41-52-964Z-020b8ae8/logs/mini-spreadsheet-tc-pinned-repair-rep1/judge.log",
+        "session": null,
+        "stats": null
+      },
+      "versions": {
+        "bun": "1.3.13",
+        "opencode": null
+      },
+      "judge": {
+        "testsOk": false,
+        "tscOk": true,
+        "fixtureOk": true,
+        "detail": "bun test failed: bun test v1.3.13 (bf2e2cec)\n\nsrc/workbook.test.ts:\n15 | function formulaValue(formula: string): CellResult {\n16 |   return withCells({ A1: formula }).getValue(\"A1\");\n17 | }\n18 | \n19 | function expectFormula(formula: string, expected: CellResult): void {\n20 |   expect(formulaValue(formula)).toBe(expected);\n                                     ^\nerror: expect(received).toBe(expected)\n\nExpected: \"#VA..."
+      },
+      "error": null,
+      "infraError": null
+    },
+    {
+      "task": "mini-spreadsheet",
+      "side": "tc",
+      "protocol": "edit-dsl",
+      "agentMode": "plan-exec",
+      "rep": 1,
+      "ok": false,
+      "sideOk": false,
+      "tokens": {
+        "input": 138336,
+        "output": 39183,
+        "cacheRead": 84864,
+        "cacheWrite": null,
+        "reasoning": 12,
+        "total": 177519,
+        "billable": {
+          "in": 53472,
+          "out": 39195,
+          "total": 92667
+        }
+      },
+      "usageAvailable": true,
+      "usageSource": "chat-completions",
+      "rawUsage": [
+        {
+          "prompt_tokens": 7458,
+          "completion_tokens": 358,
+          "total_tokens": 7816,
+          "prompt_tokens_details": {
+            "cached_tokens": 7296
+          },
+          "prompt_cache_hit_tokens": 7296,
+          "prompt_cache_miss_tokens": 162
+        },
+        {
+          "prompt_tokens": 8184,
+          "completion_tokens": 356,
+          "total_tokens": 8540,
+          "prompt_tokens_details": {
+            "cached_tokens": 7808
+          },
+          "prompt_cache_hit_tokens": 7808,
+          "prompt_cache_miss_tokens": 376
+        },
+        {
+          "prompt_tokens": 1512,
+          "completion_tokens": 6198,
+          "total_tokens": 7710,
+          "prompt_tokens_details": {
+            "cached_tokens": 640
+          },
+          "prompt_cache_hit_tokens": 640,
+          "prompt_cache_miss_tokens": 872
+        },
+        {
+          "prompt_tokens": 8390,
+          "completion_tokens": 6187,
+          "total_tokens": 14577,
+          "prompt_tokens_details": {
+            "cached_tokens": 7680
+          },
+          "prompt_cache_hit_tokens": 7680,
+          "prompt_cache_miss_tokens": 710
+        },
+        {
+          "prompt_tokens": 10560,
+          "completion_tokens": 326,
+          "total_tokens": 10886,
+          "prompt_tokens_details": {
+            "cached_tokens": 8448
+          },
+          "prompt_cache_hit_tokens": 8448,
+          "prompt_cache_miss_tokens": 2112
+        },
+        {
+          "prompt_tokens": 9807,
+          "completion_tokens": 6202,
+          "total_tokens": 16009,
+          "prompt_tokens_details": {
+            "cached_tokens": 896
+          },
+          "prompt_cache_hit_tokens": 896,
+          "prompt_cache_miss_tokens": 8911
+        },
+        {
+          "prompt_tokens": 24663,
+          "completion_tokens": 6203,
+          "total_tokens": 30866,
+          "prompt_tokens_details": {
+            "cached_tokens": 16000
+          },
+          "prompt_cache_hit_tokens": 16000,
+          "prompt_cache_miss_tokens": 8663
+        },
+        {
+          "prompt_tokens": 15738,
+          "completion_tokens": 388,
+          "total_tokens": 16126,
+          "prompt_tokens_details": {
+            "cached_tokens": 10880
+          },
+          "prompt_cache_hit_tokens": 10880,
+          "prompt_cache_miss_tokens": 4858
+        },
+        {
+          "prompt_tokens": 10321,
+          "completion_tokens": 6339,
+          "total_tokens": 16660,
+          "prompt_tokens_details": {
+            "cached_tokens": 1152
+          },
+          "prompt_cache_hit_tokens": 1152,
+          "prompt_cache_miss_tokens": 9169
+        },
+        {
+          "prompt_tokens": 25445,
+          "completion_tokens": 6340,
+          "total_tokens": 31785,
+          "prompt_tokens_details": {
+            "cached_tokens": 16640
+          },
+          "prompt_cache_hit_tokens": 16640,
+          "prompt_cache_miss_tokens": 8805
+        },
+        {
+          "prompt_tokens": 16258,
+          "completion_tokens": 286,
+          "total_tokens": 16544,
+          "prompt_tokens_details": {
+            "cached_tokens": 7424
+          },
+          "completion_tokens_details": {
+            "reasoning_tokens": 12
+          },
+          "prompt_cache_hit_tokens": 7424,
+          "prompt_cache_miss_tokens": 8834
+        }
+      ],
+      "durationMs": 122858,
+      "startedAt": "2026-10-25T12:42:36.535Z",
+      "finishedAt": "2026-10-25T12:44:39.393Z",
+      "cost": 0.031792392,
+      "rateClass": "off-peak",
+      "steps": 7,
+      "records": [
+        {
+          "row": 1,
+          "iteration": 1,
+          "kind": "exchange",
+          "exchange": 1,
+          "outcome": "protocol",
+          "diagnosticsHead": "stage: syntax code: EDIT_MALFORMED_FENCE message: the fence opener <<<TC_EDIT_BEGIN>>> must be on its own line at line 1:28 1 | write src/workbook.ts with <<<TC_EDIT_BEGIN>>> | ^ 2 | export type CellV",
+          "replacementChars": 22764,
+          "finishReason": "stop",
+          "cause": null,
+          "payloads": 0,
+          "toolCalls": 0,
+          "selectors": null,
+          "stages": null,
+          "matcherKinds": null
+        },
+        {
+          "row": 2,
+          "iteration": 1,
+          "kind": "exchange",
+          "exchange": 2,
+          "outcome": "applied",
+          "diagnosticsHead": null,
+          "replacementChars": 22712,
+          "finishReason": "stop",
+          "cause": null,
+          "payloads": 1,
+          "toolCalls": 0,
+          "selectors": null,
+          "stages": null,
+          "matcherKinds": null
+        },
+        {
+          "row": 3,
+          "iteration": 2,
+          "kind": "verification",
+          "exchange": null,
+          "outcome": "tests",
+          "diagnosticsHead": "stage: tests tests failed: failing tests: - mini-spreadsheet literal cells and display > stores numbers, strings, and booleans - mini-spreadsheet literal cells and display > null clears a cell - mini-",
+          "replacementChars": null,
+          "finishReason": null,
+          "cause": null,
+          "payloads": 0,
+          "toolCalls": 0,
+          "selectors": null,
+          "stages": null,
+          "matcherKinds": null
+        },
+        {
+          "row": 4,
+          "iteration": 3,
+          "kind": "exchange",
+          "exchange": 1,
+          "outcome": "protocol",
+          "diagnosticsHead": "stage: syntax code: EDIT_MALFORMED_FENCE message: the fence opener <<<TC_EDIT_BEGIN>>> must be on its own line at line 1:28 1 | write src/workbook.ts with <<<TC_EDIT_BEGIN>>> | ^ 2 | export type CellV",
+          "replacementChars": 22923,
+          "finishReason": "stop",
+          "cause": null,
+          "payloads": 0,
+          "toolCalls": 0,
+          "selectors": null,
+          "stages": null,
+          "matcherKinds": null
+        },
+        {
+          "row": 5,
+          "iteration": 3,
+          "kind": "exchange",
+          "exchange": 2,
+          "outcome": "applied",
+          "diagnosticsHead": null,
+          "replacementChars": 22923,
+          "finishReason": "stop",
+          "cause": null,
+          "payloads": 1,
+          "toolCalls": 0,
+          "selectors": null,
+          "stages": null,
+          "matcherKinds": null
+        },
+        {
+          "row": 6,
+          "iteration": 4,
+          "kind": "verification",
+          "exchange": null,
+          "outcome": "tests",
+          "diagnosticsHead": "stage: tests tests failed: failing tests: - mini-spreadsheet literal cells and display > stores numbers, strings, and booleans - mini-spreadsheet literal cells and display > empty string is a literal,",
+          "replacementChars": null,
+          "finishReason": null,
+          "cause": null,
+          "payloads": 0,
+          "toolCalls": 0,
+          "selectors": null,
+          "stages": null,
+          "matcherKinds": null
+        },
+        {
+          "row": 7,
+          "iteration": 5,
+          "kind": "exchange",
+          "exchange": 1,
+          "outcome": "protocol",
+          "diagnosticsHead": "stage: syntax code: EDIT_MALFORMED_FENCE message: the fence opener <<<TC_EDIT_BEGIN>>> must be on its own line at line 1:28 1 | write src/workbook.ts with <<<TC_EDIT_BEGIN>>> | ^ 2 | export type CellV",
+          "replacementChars": 23510,
+          "finishReason": "stop",
+          "cause": null,
+          "payloads": 0,
+          "toolCalls": 0,
+          "selectors": null,
+          "stages": null,
+          "matcherKinds": null
+        }
+      ],
+      "exchangeStats": {
+        "turns": 5,
+        "payloads": 2,
+        "toolCalls": 0,
+        "applied": 2,
+        "rejected": 3,
+        "selected": 0,
+        "stopped": 0,
+        "selfChecks": 0,
+        "range": 0,
+        "matcher": 0,
+        "wholeSymbol": 0,
+        "stageWholeSymbol": 0,
+        "stageMatch": 0,
+        "stagePick": 0,
+        "snippet": 0,
+        "regex": 0,
+        "creates": 0
+      },
+      "loopDiagnostics": "token-budget: accumulated 83535 cache-excluded tokens exceeded the 75000 token budget",
+      "terminationReason": "token-budget",
+      "model": "deepseek-flash",
+      "workspace": "tmp/benchmark/2026-10-25T12-41-52-964Z-020b8ae8/mini-spreadsheet-tc-plan-exec-rep1",
+      "logs": {
+        "side": "tmp/benchmark/2026-10-25T12-41-52-964Z-020b8ae8/logs/mini-spreadsheet-tc-plan-exec-rep1/side.log",
+        "judge": "tmp/benchmark/2026-10-25T12-41-52-964Z-020b8ae8/logs/mini-spreadsheet-tc-plan-exec-rep1/judge.log",
+        "session": null,
+        "stats": null
+      },
+      "versions": {
+        "bun": "1.3.13",
+        "opencode": null
+      },
+      "judge": {
+        "testsOk": false,
+        "tscOk": true,
+        "fixtureOk": true,
+        "detail": "bun test failed: bun test v1.3.13 (bf2e2cec)\n\nsrc/workbook.test.ts:\n37 |       C2: false,\n38 |     });\n39 |     expect(workbook.getValue(\"A1\")).toBe(42);\n40 |     expect(workbook.getValue(\"A2\")).toBe(-3.5);\n41 |     expect(workbook.getValue(\"B1\")).toBe(\"hello\");\n42 |     expect(workbook.getValue(\"B2\")).toBe(\"\");\n                                         ^\nerror: expect(received).toBe(expected)\n\nExpected: \"\"\nReceive..."
+      },
+      "error": null,
+      "infraError": null
+    }
+  ],
+  "aggregates": {
+    "byTaskSide": [
+      {
+        "task": "mini-spreadsheet",
+        "side": "tc",
+        "protocol": "edit-dsl",
+        "agentMode": "pinned-repair",
+        "runs": 1,
+        "ok": 0,
+        "failed": 1,
+        "successRate": 0,
+        "usageRuns": 1,
+        "tokens": {
+          "in": {
+            "mean": 75155,
+            "total": 75155
+          },
+          "out": {
+            "mean": 7297,
+            "total": 7297
+          },
+          "total": {
+            "mean": 82452,
+            "total": 82452
+          }
+        },
+        "cost": {
+          "mean": 0.016318842,
+          "total": 0.016318842
+        },
+        "cache": {
+          "read": {
+            "mean": 222464,
+            "total": 222464
+          },
+          "hitRate": 0.7474791595966656
+        },
+        "durationMsMean": 43400,
+        "stepsMean": 24,
+        "tokensPerSuccess": {
+          "in": null,
+          "out": null,
+          "total": null
+        },
+        "costPerSuccess": null,
+        "selectors": {
+          "range": 0,
+          "matcher": 0,
+          "wholeSymbol": 1
+        },
+        "stages": {
+          "wholeSymbol": 1,
+          "match": 0,
+          "pick": 0
+        },
+        "matcherKinds": {
+          "snippet": 0,
+          "regex": 0
+        },
+        "creates": 1
+      },
+      {
+        "task": "mini-spreadsheet",
+        "side": "tc",
+        "protocol": "edit-dsl",
+        "agentMode": "plan-exec",
+        "runs": 1,
+        "ok": 0,
+        "failed": 1,
+        "successRate": 0,
+        "usageRuns": 1,
+        "tokens": {
+          "in": {
+            "mean": 53472,
+            "total": 53472
+          },
+          "out": {
+            "mean": 39195,
+            "total": 39195
+          },
+          "total": {
+            "mean": 92667,
+            "total": 92667
+          }
+        },
+        "cost": {
+          "mean": 0.031792392,
+          "total": 0.031792392
+        },
+        "cache": {
+          "read": {
+            "mean": 84864,
+            "total": 84864
+          },
+          "hitRate": 0.6134628730048577
+        },
+        "durationMsMean": 122858,
+        "stepsMean": 7,
+        "tokensPerSuccess": {
+          "in": null,
+          "out": null,
+          "total": null
+        },
+        "costPerSuccess": null,
+        "selectors": {
+          "range": 0,
+          "matcher": 0,
+          "wholeSymbol": 0
+        },
+        "stages": {
+          "wholeSymbol": 0,
+          "match": 0,
+          "pick": 0
+        },
+        "matcherKinds": {
+          "snippet": 0,
+          "regex": 0
+        },
+        "creates": 0
+      }
+    ],
+    "bySide": [
+      {
+        "task": null,
+        "side": "tc",
+        "protocol": "edit-dsl",
+        "agentMode": "pinned-repair",
+        "runs": 1,
+        "ok": 0,
+        "failed": 1,
+        "successRate": 0,
+        "usageRuns": 1,
+        "tokens": {
+          "in": {
+            "mean": 75155,
+            "total": 75155
+          },
+          "out": {
+            "mean": 7297,
+            "total": 7297
+          },
+          "total": {
+            "mean": 82452,
+            "total": 82452
+          }
+        },
+        "cost": {
+          "mean": 0.016318842,
+          "total": 0.016318842
+        },
+        "cache": {
+          "read": {
+            "mean": 222464,
+            "total": 222464
+          },
+          "hitRate": 0.7474791595966656
+        },
+        "durationMsMean": 43400,
+        "stepsMean": 24,
+        "tokensPerSuccess": {
+          "in": null,
+          "out": null,
+          "total": null
+        },
+        "costPerSuccess": null,
+        "selectors": {
+          "range": 0,
+          "matcher": 0,
+          "wholeSymbol": 1
+        },
+        "stages": {
+          "wholeSymbol": 1,
+          "match": 0,
+          "pick": 0
+        },
+        "matcherKinds": {
+          "snippet": 0,
+          "regex": 0
+        },
+        "creates": 1
+      },
+      {
+        "task": null,
+        "side": "tc",
+        "protocol": "edit-dsl",
+        "agentMode": "plan-exec",
+        "runs": 1,
+        "ok": 0,
+        "failed": 1,
+        "successRate": 0,
+        "usageRuns": 1,
+        "tokens": {
+          "in": {
+            "mean": 53472,
+            "total": 53472
+          },
+          "out": {
+            "mean": 39195,
+            "total": 39195
+          },
+          "total": {
+            "mean": 92667,
+            "total": 92667
+          }
+        },
+        "cost": {
+          "mean": 0.031792392,
+          "total": 0.031792392
+        },
+        "cache": {
+          "read": {
+            "mean": 84864,
+            "total": 84864
+          },
+          "hitRate": 0.6134628730048577
+        },
+        "durationMsMean": 122858,
+        "stepsMean": 7,
+        "tokensPerSuccess": {
+          "in": null,
+          "out": null,
+          "total": null
+        },
+        "costPerSuccess": null,
+        "selectors": {
+          "range": 0,
+          "matcher": 0,
+          "wholeSymbol": 0
+        },
+        "stages": {
+          "wholeSymbol": 0,
+          "match": 0,
+          "pick": 0
+        },
+        "matcherKinds": {
+          "snippet": 0,
+          "regex": 0
+        },
+        "creates": 0
+      }
+    ],
+    "overall": [
+      {
+        "task": null,
+        "side": "tc",
+        "protocol": "edit-dsl",
+        "agentMode": "pinned-repair",
+        "runs": 1,
+        "ok": 0,
+        "failed": 1,
+        "successRate": 0,
+        "usageRuns": 1,
+        "tokens": {
+          "in": {
+            "mean": 75155,
+            "total": 75155
+          },
+          "out": {
+            "mean": 7297,
+            "total": 7297
+          },
+          "total": {
+            "mean": 82452,
+            "total": 82452
+          }
+        },
+        "cost": {
+          "mean": 0.016318842,
+          "total": 0.016318842
+        },
+        "cache": {
+          "read": {
+            "mean": 222464,
+            "total": 222464
+          },
+          "hitRate": 0.7474791595966656
+        },
+        "durationMsMean": 43400,
+        "stepsMean": 24,
+        "tokensPerSuccess": {
+          "in": null,
+          "out": null,
+          "total": null
+        },
+        "costPerSuccess": null,
+        "selectors": {
+          "range": 0,
+          "matcher": 0,
+          "wholeSymbol": 1
+        },
+        "stages": {
+          "wholeSymbol": 1,
+          "match": 0,
+          "pick": 0
+        },
+        "matcherKinds": {
+          "snippet": 0,
+          "regex": 0
+        },
+        "creates": 1
+      },
+      {
+        "task": null,
+        "side": "tc",
+        "protocol": "edit-dsl",
+        "agentMode": "plan-exec",
+        "runs": 1,
+        "ok": 0,
+        "failed": 1,
+        "successRate": 0,
+        "usageRuns": 1,
+        "tokens": {
+          "in": {
+            "mean": 53472,
+            "total": 53472
+          },
+          "out": {
+            "mean": 39195,
+            "total": 39195
+          },
+          "total": {
+            "mean": 92667,
+            "total": 92667
+          }
+        },
+        "cost": {
+          "mean": 0.031792392,
+          "total": 0.031792392
+        },
+        "cache": {
+          "read": {
+            "mean": 84864,
+            "total": 84864
+          },
+          "hitRate": 0.6134628730048577
+        },
+        "durationMsMean": 122858,
+        "stepsMean": 7,
+        "tokensPerSuccess": {
+          "in": null,
+          "out": null,
+          "total": null
+        },
+        "costPerSuccess": null,
+        "selectors": {
+          "range": 0,
+          "matcher": 0,
+          "wholeSymbol": 0
+        },
+        "stages": {
+          "wholeSymbol": 0,
+          "match": 0,
+          "pick": 0
+        },
+        "matcherKinds": {
+          "snippet": 0,
+          "regex": 0
+        },
+        "creates": 0
+      }
+    ]
+  },
+  "provenance": null,
+  "provenanceByAgentMode": {
+    "pinned-repair": {
+      "inputs": {
+        "model": "7d963f65d1ede1bd9416a5f55575efe0d202e0a00519ef04e47dae20c3180445",
+        "taskIssue": "3cdad7a3f3e1e716e36f6f5f87a27808f6676ed5743b1a9147c181c616a87dfb",
+        "fixture": "2544858a4476b890d7c13a7455f844f3719d3a2f48a06b783d193f5e1289b3ba",
+        "systemPrompt": "7220c8fa4442c378dfc6bbdda5f85f85eed6ca596922b46dcf719d79aab95268",
+        "loopConfig": "d4d7054cfafb5c38a425e0247d3a2818b38d5e8282385cb81d176bfd1e55bbfb",
+        "pricing": "aab6f45ac055bdc46329be2c46279a8ce322bfa62c0c61f0ef177d8b67766560"
+      },
+      "inputHash": "19a7268e9ece6608fcdb41294161070dcaf93c482848ec110115e16efea8cdf9",
+      "computedAt": "2026-10-25T12:41:50.754Z"
+    },
+    "plan-exec": {
+      "inputs": {
+        "model": "7d963f65d1ede1bd9416a5f55575efe0d202e0a00519ef04e47dae20c3180445",
+        "taskIssue": "3cdad7a3f3e1e716e36f6f5f87a27808f6676ed5743b1a9147c181c616a87dfb",
+        "fixture": "2544858a4476b890d7c13a7455f844f3719d3a2f48a06b783d193f5e1289b3ba",
+        "systemPrompt": "9ac9db049f518e12c243398eec085db43d55ff74c3f710d2e28d353e783a1d4a",
+        "loopConfig": "c8ff33c7b80c6d2bd6a8419d911681ae40d83c02210246cac18b0fe8877b48ff",
+        "pricing": "aab6f45ac055bdc46329be2c46279a8ce322bfa62c0c61f0ef177d8b67766560"
+      },
+      "inputHash": "2f1518ef2a604deb2f997b7e80d98b8739be46b11f6f654760e245b0094f3936",
+      "computedAt": "2026-10-25T12:41:50.754Z"
+    }
+  },
+  "warmups": [
+    {
+      "agentMode": "pinned-repair",
+      "kind": "edit",
+      "promptChars": 6667,
+      "tokens": {
+        "input": null,
+        "output": null,
+        "cacheRead": null,
+        "cacheWrite": null,
+        "reasoning": null,
+        "total": null
+      },
+      "usageAvailable": false,
+      "durationMs": 979,
+      "error": null
+    },
+    {
+      "agentMode": "plan-exec",
+      "kind": "planning",
+      "promptChars": 8903,
+      "tokens": {
+        "input": null,
+        "output": null,
+        "cacheRead": null,
+        "cacheWrite": null,
+        "reasoning": null,
+        "total": null
+      },
+      "usageAvailable": false,
+      "durationMs": 614,
+      "error": null
+    },
+    {
+      "agentMode": "plan-exec",
+      "kind": "execution",
+      "promptChars": 2816,
+      "tokens": {
+        "input": null,
+        "output": null,
+        "cacheRead": null,
+        "cacheWrite": null,
+        "reasoning": null,
+        "total": null
+      },
+      "usageAvailable": false,
+      "durationMs": 609,
+      "error": null
+    }
+  ],
+  "cacheWarning": null
+}

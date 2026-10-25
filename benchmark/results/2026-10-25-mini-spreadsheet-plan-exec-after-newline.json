@@ -1,0 +1,1627 @@
+{
+  "generatedAt": "2026-10-25T14:08:23.735Z",
+  "date": "2026-10-25",
+  "mode": "pilot",
+  "tasks": [
+    "mini-spreadsheet"
+  ],
+  "sides": [
+    "tc"
+  ],
+  "reps": 1,
+  "concurrency": 1,
+  "model": "deepseek-flash",
+  "ocModel": null,
+  "effort": null,
+  "multiPayload": false,
+  "protocolFormat": "edit-dsl",
+  "protocolFormats": [
+    "edit-dsl"
+  ],
+  "agentModes": [
+    "plan-exec"
+  ],
+  "tokenBudget": 120000,
+  "bunVersion": "1.3.13",
+  "opencodeVersion": null,
+  "pilotReference": null,
+  "infraErrors": [],
+  "runs": [
+    {
+      "task": "mini-spreadsheet",
+      "side": "tc",
+      "protocol": "edit-dsl",
+      "agentMode": "plan-exec",
+      "rep": 1,
+      "ok": false,
+      "sideOk": false,
+      "tokens": {
+        "input": 560659,
+        "output": 14576,
+        "cacheRead": 408448,
+        "cacheWrite": null,
+        "reasoning": 190,
+        "total": 575235,
+        "billable": {
+          "in": 152211,
+          "out": 14766,
+          "total": 166977
+        }
+      },
+      "usageAvailable": true,
+      "usageSource": "chat-completions",
+      "rawUsage": [
+        {
+          "prompt_tokens": 7802,
+          "completion_tokens": 182,
+          "total_tokens": 7984,
+          "prompt_tokens_details": {
+            "cached_tokens": 7552
+          },
+          "prompt_cache_hit_tokens": 7552,
+          "prompt_cache_miss_tokens": 250
+        },
+        {
+          "prompt_tokens": 8347,
+          "completion_tokens": 180,
+          "total_tokens": 8527,
+          "prompt_tokens_details": {
+            "cached_tokens": 7936
+          },
+          "prompt_cache_hit_tokens": 7936,
+          "prompt_cache_miss_tokens": 411
+        },
+        {
+          "prompt_tokens": 1202,
+          "completion_tokens": 456,
+          "total_tokens": 1658,
+          "prompt_tokens_details": {
+            "cached_tokens": 512
+          },
+          "prompt_cache_hit_tokens": 512,
+          "prompt_cache_miss_tokens": 690
+        },
+        {
+          "prompt_tokens": 9490,
+          "completion_tokens": 2,
+          "total_tokens": 9492,
+          "prompt_tokens_details": {
+            "cached_tokens": 8448
+          },
+          "prompt_cache_hit_tokens": 8448,
+          "prompt_cache_miss_tokens": 1042
+        },
+        {
+          "prompt_tokens": 10827,
+          "completion_tokens": 166,
+          "total_tokens": 10993,
+          "prompt_tokens_details": {
+            "cached_tokens": 9472
+          },
+          "prompt_cache_hit_tokens": 9472,
+          "prompt_cache_miss_tokens": 1355
+        },
+        {
+          "prompt_tokens": 11135,
+          "completion_tokens": 162,
+          "total_tokens": 11297,
+          "prompt_tokens_details": {
+            "cached_tokens": 10880
+          },
+          "prompt_cache_hit_tokens": 10880,
+          "prompt_cache_miss_tokens": 255
+        },
+        {
+          "prompt_tokens": 1938,
+          "completion_tokens": 5402,
+          "total_tokens": 7340,
+          "prompt_tokens_details": {
+            "cached_tokens": 512
+          },
+          "prompt_cache_hit_tokens": 512,
+          "prompt_cache_miss_tokens": 1426
+        },
+        {
+          "prompt_tokens": 12468,
+          "completion_tokens": 202,
+          "total_tokens": 12670,
+          "prompt_tokens_details": {
+            "cached_tokens": 11264
+          },
+          "prompt_cache_hit_tokens": 11264,
+          "prompt_cache_miss_tokens": 1204
+        },
+        {
+          "prompt_tokens": 2212,
+          "completion_tokens": 315,
+          "total_tokens": 2527,
+          "prompt_tokens_details": {
+            "cached_tokens": 768
+          },
+          "prompt_cache_hit_tokens": 768,
+          "prompt_cache_miss_tokens": 1444
+        },
+        {
+          "prompt_tokens": 3721,
+          "completion_tokens": 315,
+          "total_tokens": 4036,
+          "prompt_tokens_details": {
+            "cached_tokens": 2432
+          },
+          "prompt_cache_hit_tokens": 2432,
+          "prompt_cache_miss_tokens": 1289
+        },
+        {
+          "prompt_tokens": 15462,
+          "completion_tokens": 182,
+          "total_tokens": 15644,
+          "prompt_tokens_details": {
+            "cached_tokens": 12544
+          },
+          "prompt_cache_hit_tokens": 12544,
+          "prompt_cache_miss_tokens": 2918
+        },
+        {
+          "prompt_tokens": 1871,
+          "completion_tokens": 179,
+          "total_tokens": 2050,
+          "prompt_tokens_details": {
+            "cached_tokens": 1024
+          },
+          "prompt_cache_hit_tokens": 1024,
+          "prompt_cache_miss_tokens": 847
+        },
+        {
+          "prompt_tokens": 18808,
+          "completion_tokens": 155,
+          "total_tokens": 18963,
+          "prompt_tokens_details": {
+            "cached_tokens": 15616
+          },
+          "prompt_cache_hit_tokens": 15616,
+          "prompt_cache_miss_tokens": 3192
+        },
+        {
+          "prompt_tokens": 2504,
+          "completion_tokens": 88,
+          "total_tokens": 2592,
+          "prompt_tokens_details": {
+            "cached_tokens": 1152
+          },
+          "prompt_cache_hit_tokens": 1152,
+          "prompt_cache_miss_tokens": 1352
+        },
+        {
+          "prompt_tokens": 3749,
+          "completion_tokens": 89,
+          "total_tokens": 3838,
+          "prompt_tokens_details": {
+            "cached_tokens": 2560
+          },
+          "prompt_cache_hit_tokens": 2560,
+          "prompt_cache_miss_tokens": 1189
+        },
+        {
+          "prompt_tokens": 5225,
+          "completion_tokens": 91,
+          "total_tokens": 5316,
+          "prompt_tokens_details": {
+            "cached_tokens": 3712
+          },
+          "prompt_cache_hit_tokens": 3712,
+          "prompt_cache_miss_tokens": 1513
+        },
+        {
+          "prompt_tokens": 23551,
+          "completion_tokens": 443,
+          "total_tokens": 23994,
+          "prompt_tokens_details": {
+            "cached_tokens": 18944
+          },
+          "prompt_cache_hit_tokens": 18944,
+          "prompt_cache_miss_tokens": 4607
+        },
+        {
+          "prompt_tokens": 9419,
+          "completion_tokens": 108,
+          "total_tokens": 9527,
+          "prompt_tokens_details": {
+            "cached_tokens": 1408
+          },
+          "prompt_cache_hit_tokens": 1408,
+          "prompt_cache_miss_tokens": 8011
+        },
+        {
+          "prompt_tokens": 17036,
+          "completion_tokens": 333,
+          "total_tokens": 17369,
+          "prompt_tokens_details": {
+            "cached_tokens": 9472
+          },
+          "prompt_cache_hit_tokens": 9472,
+          "prompt_cache_miss_tokens": 7564
+        },
+        {
+          "prompt_tokens": 25329,
+          "completion_tokens": 336,
+          "total_tokens": 25665,
+          "prompt_tokens_details": {
+            "cached_tokens": 17280
+          },
+          "prompt_cache_hit_tokens": 17280,
+          "prompt_cache_miss_tokens": 8049
+        },
+        {
+          "prompt_tokens": 28331,
+          "completion_tokens": 384,
+          "total_tokens": 28715,
+          "prompt_tokens_details": {
+            "cached_tokens": 23936
+          },
+          "prompt_cache_hit_tokens": 23936,
+          "prompt_cache_miss_tokens": 4395
+        },
+        {
+          "prompt_tokens": 9410,
+          "completion_tokens": 73,
+          "total_tokens": 9483,
+          "prompt_tokens_details": {
+            "cached_tokens": 1408
+          },
+          "prompt_cache_hit_tokens": 1408,
+          "prompt_cache_miss_tokens": 8002
+        },
+        {
+          "prompt_tokens": 2688,
+          "completion_tokens": 271,
+          "total_tokens": 2959,
+          "prompt_tokens_details": {
+            "cached_tokens": 2048
+          },
+          "prompt_cache_hit_tokens": 2048,
+          "prompt_cache_miss_tokens": 640
+        },
+        {
+          "prompt_tokens": 2516,
+          "completion_tokens": 83,
+          "total_tokens": 2599,
+          "prompt_tokens_details": {
+            "cached_tokens": 2048
+          },
+          "prompt_cache_hit_tokens": 2048,
+          "prompt_cache_miss_tokens": 468
+        },
+        {
+          "prompt_tokens": 3039,
+          "completion_tokens": 90,
+          "total_tokens": 3129,
+          "prompt_tokens_details": {
+            "cached_tokens": 2048
+          },
+          "prompt_cache_hit_tokens": 2048,
+          "prompt_cache_miss_tokens": 991
+        },
+        {
+          "prompt_tokens": 4124,
+          "completion_tokens": 161,
+          "total_tokens": 4285,
+          "prompt_tokens_details": {
+            "cached_tokens": 3072
+          },
+          "prompt_cache_hit_tokens": 3072,
+          "prompt_cache_miss_tokens": 1052
+        },
+        {
+          "prompt_tokens": 5280,
+          "completion_tokens": 101,
+          "total_tokens": 5381,
+          "prompt_tokens_details": {
+            "cached_tokens": 4224
+          },
+          "prompt_cache_hit_tokens": 4224,
+          "prompt_cache_miss_tokens": 1056
+        },
+        {
+          "prompt_tokens": 33191,
+          "completion_tokens": 261,
+          "total_tokens": 33452,
+          "prompt_tokens_details": {
+            "cached_tokens": 28672
+          },
+          "prompt_cache_hit_tokens": 28672,
+          "prompt_cache_miss_tokens": 4519
+        },
+        {
+          "prompt_tokens": 3236,
+          "completion_tokens": 576,
+          "total_tokens": 3812,
+          "prompt_tokens_details": {
+            "cached_tokens": 1792
+          },
+          "prompt_cache_hit_tokens": 1792,
+          "prompt_cache_miss_tokens": 1444
+        },
+        {
+          "prompt_tokens": 2597,
+          "completion_tokens": 51,
+          "total_tokens": 2648,
+          "prompt_tokens_details": {
+            "cached_tokens": 2176
+          },
+          "prompt_cache_hit_tokens": 2176,
+          "prompt_cache_miss_tokens": 421
+        },
+        {
+          "prompt_tokens": 3173,
+          "completion_tokens": 42,
+          "total_tokens": 3215,
+          "prompt_tokens_details": {
+            "cached_tokens": 2560
+          },
+          "prompt_cache_hit_tokens": 2560,
+          "prompt_cache_miss_tokens": 613
+        },
+        {
+          "prompt_tokens": 38691,
+          "completion_tokens": 820,
+          "total_tokens": 39511,
+          "prompt_tokens_details": {
+            "cached_tokens": 33408
+          },
+          "prompt_cache_hit_tokens": 33408,
+          "prompt_cache_miss_tokens": 5283
+        },
+        {
+          "prompt_tokens": 3449,
+          "completion_tokens": 135,
+          "total_tokens": 3584,
+          "prompt_tokens_details": {
+            "cached_tokens": 2048
+          },
+          "prompt_cache_hit_tokens": 2048,
+          "prompt_cache_miss_tokens": 1401
+        },
+        {
+          "prompt_tokens": 3382,
+          "completion_tokens": 64,
+          "total_tokens": 3446,
+          "prompt_tokens_details": {
+            "cached_tokens": 2944
+          },
+          "prompt_cache_hit_tokens": 2944,
+          "prompt_cache_miss_tokens": 438
+        },
+        {
+          "prompt_tokens": 3963,
+          "completion_tokens": 48,
+          "total_tokens": 4011,
+          "prompt_tokens_details": {
+            "cached_tokens": 3328
+          },
+          "prompt_cache_hit_tokens": 3328,
+          "prompt_cache_miss_tokens": 635
+        },
+        {
+          "prompt_tokens": 3381,
+          "completion_tokens": 57,
+          "total_tokens": 3438,
+          "prompt_tokens_details": {
+            "cached_tokens": 2944
+          },
+          "prompt_cache_hit_tokens": 2944,
+          "prompt_cache_miss_tokens": 437
+        },
+        {
+          "prompt_tokens": 3378,
+          "completion_tokens": 70,
+          "total_tokens": 3448,
+          "prompt_tokens_details": {
+            "cached_tokens": 2944
+          },
+          "prompt_cache_hit_tokens": 2944,
+          "prompt_cache_miss_tokens": 434
+        },
+        {
+          "prompt_tokens": 3965,
+          "completion_tokens": 44,
+          "total_tokens": 4009,
+          "prompt_tokens_details": {
+            "cached_tokens": 3328
+          },
+          "prompt_cache_hit_tokens": 3328,
+          "prompt_cache_miss_tokens": 637
+        },
+        {
+          "prompt_tokens": 3381,
+          "completion_tokens": 71,
+          "total_tokens": 3452,
+          "prompt_tokens_details": {
+            "cached_tokens": 2944
+          },
+          "prompt_cache_hit_tokens": 2944,
+          "prompt_cache_miss_tokens": 437
+        },
+        {
+          "prompt_tokens": 3962,
+          "completion_tokens": 50,
+          "total_tokens": 4012,
+          "prompt_tokens_details": {
+            "cached_tokens": 3328
+          },
+          "prompt_cache_hit_tokens": 3328,
+          "prompt_cache_miss_tokens": 634
+        },
+        {
+          "prompt_tokens": 4501,
+          "completion_tokens": 46,
+          "total_tokens": 4547,
+          "prompt_tokens_details": {
+            "cached_tokens": 3968
+          },
+          "prompt_cache_hit_tokens": 3968,
+          "prompt_cache_miss_tokens": 533
+        },
+        {
+          "prompt_tokens": 3377,
+          "completion_tokens": 71,
+          "total_tokens": 3448,
+          "prompt_tokens_details": {
+            "cached_tokens": 2944
+          },
+          "prompt_cache_hit_tokens": 2944,
+          "prompt_cache_miss_tokens": 433
+        },
+        {
+          "prompt_tokens": 3966,
+          "completion_tokens": 72,
+          "total_tokens": 4038,
+          "prompt_tokens_details": {
+            "cached_tokens": 3328
+          },
+          "prompt_cache_hit_tokens": 3328,
+          "prompt_cache_miss_tokens": 638
+        },
+        {
+          "prompt_tokens": 4420,
+          "completion_tokens": 47,
+          "total_tokens": 4467,
+          "prompt_tokens_details": {
+            "cached_tokens": 3968
+          },
+          "prompt_cache_hit_tokens": 3968,
+          "prompt_cache_miss_tokens": 452
+        },
+        {
+          "prompt_tokens": 3389,
+          "completion_tokens": 68,
+          "total_tokens": 3457,
+          "prompt_tokens_details": {
+            "cached_tokens": 2944
+          },
+          "prompt_cache_hit_tokens": 2944,
+          "prompt_cache_miss_tokens": 445
+        },
+        {
+          "prompt_tokens": 3994,
+          "completion_tokens": 49,
+          "total_tokens": 4043,
+          "prompt_tokens_details": {
+            "cached_tokens": 2944
+          },
+          "prompt_cache_hit_tokens": 2944,
+          "prompt_cache_miss_tokens": 1050
+        },
+        {
+          "prompt_tokens": 5028,
+          "completion_tokens": 49,
+          "total_tokens": 5077,
+          "prompt_tokens_details": {
+            "cached_tokens": 3968
+          },
+          "prompt_cache_hit_tokens": 3968,
+          "prompt_cache_miss_tokens": 1060
+        },
+        {
+          "prompt_tokens": 6062,
+          "completion_tokens": 49,
+          "total_tokens": 6111,
+          "prompt_tokens_details": {
+            "cached_tokens": 4992
+          },
+          "prompt_cache_hit_tokens": 4992,
+          "prompt_cache_miss_tokens": 1070
+        },
+        {
+          "prompt_tokens": 44873,
+          "completion_tokens": 151,
+          "total_tokens": 45024,
+          "prompt_tokens_details": {
+            "cached_tokens": 39424
+          },
+          "prompt_cache_hit_tokens": 39424,
+          "prompt_cache_miss_tokens": 5449
+        },
+        {
+          "prompt_tokens": 3475,
+          "completion_tokens": 56,
+          "total_tokens": 3531,
+          "prompt_tokens_details": {
+            "cached_tokens": 2688
+          },
+          "prompt_cache_hit_tokens": 2688,
+          "prompt_cache_miss_tokens": 787
+        },
+        {
+          "prompt_tokens": 4062,
+          "completion_tokens": 42,
+          "total_tokens": 4104,
+          "prompt_tokens_details": {
+            "cached_tokens": 2944
+          },
+          "prompt_cache_hit_tokens": 2944,
+          "prompt_cache_miss_tokens": 1118
+        },
+        {
+          "prompt_tokens": 5254,
+          "completion_tokens": 42,
+          "total_tokens": 5296,
+          "prompt_tokens_details": {
+            "cached_tokens": 4096
+          },
+          "prompt_cache_hit_tokens": 4096,
+          "prompt_cache_miss_tokens": 1158
+        },
+        {
+          "prompt_tokens": 49889,
+          "completion_tokens": 316,
+          "total_tokens": 50205,
+          "prompt_tokens_details": {
+            "cached_tokens": 44928
+          },
+          "prompt_cache_hit_tokens": 44928,
+          "prompt_cache_miss_tokens": 4961
+        },
+        {
+          "prompt_tokens": 10799,
+          "completion_tokens": 45,
+          "total_tokens": 10844,
+          "prompt_tokens_details": {
+            "cached_tokens": 2944
+          },
+          "prompt_cache_hit_tokens": 2944,
+          "prompt_cache_miss_tokens": 7855
+        },
+        {
+          "prompt_tokens": 50337,
+          "completion_tokens": 635,
+          "total_tokens": 50972,
+          "prompt_tokens_details": {
+            "cached_tokens": 7680
+          },
+          "completion_tokens_details": {
+            "reasoning_tokens": 190
+          },
+          "prompt_cache_hit_tokens": 7680,
+          "prompt_cache_miss_tokens": 42657
+        }
+      ],
+      "durationMs": 101567,
+      "startedAt": "2026-10-25T14:08:26.533Z",
+      "finishedAt": "2026-10-25T14:10:08.100Z",
+      "cost": 0.032916594,
+      "rateClass": "off-peak",
+      "steps": 46,
+      "records": [
+        {
+          "row": 1,
+          "iteration": 1,
+          "kind": "exchange",
+          "exchange": 1,
+          "outcome": "applied",
+          "diagnosticsHead": null,
+          "replacementChars": 1875,
+          "finishReason": "stop",
+          "cause": null,
+          "payloads": 1,
+          "toolCalls": 0,
+          "selectors": null,
+          "stages": null,
+          "matcherKinds": null
+        },
+        {
+          "row": 2,
+          "iteration": 2,
+          "kind": "verification",
+          "exchange": null,
+          "outcome": "ok",
+          "diagnosticsHead": null,
+          "replacementChars": null,
+          "finishReason": null,
+          "cause": null,
+          "payloads": 0,
+          "toolCalls": 0,
+          "selectors": null,
+          "stages": null,
+          "matcherKinds": null
+        },
+        {
+          "row": 3,
+          "iteration": 3,
+          "kind": "exchange",
+          "exchange": 1,
+          "outcome": "applied",
+          "diagnosticsHead": null,
+          "replacementChars": 20860,
+          "finishReason": "stop",
+          "cause": null,
+          "payloads": 1,
+          "toolCalls": 0,
+          "selectors": null,
+          "stages": null,
+          "matcherKinds": null
+        },
+        {
+          "row": 4,
+          "iteration": 4,
+          "kind": "verification",
+          "exchange": null,
+          "outcome": "tsc",
+          "diagnosticsHead": "stage: tsc replacement line 489: TS2345: Argument of type 'number[] | CellError' is not assignable to parameter of type 'CellResult'. Type 'number[]' is not assignable to type 'CellResult'. — in decla",
+          "replacementChars": null,
+          "finishReason": null,
+          "cause": null,
+          "payloads": 0,
+          "toolCalls": 0,
+          "selectors": null,
+          "stages": null,
+          "matcherKinds": null
+        },
+        {
+          "row": 5,
+          "iteration": 5,
+          "kind": "exchange",
+          "exchange": 1,
+          "outcome": "protocol",
+          "diagnosticsHead": "stage: syntax code: EDIT_MATCHER_MISSING message: expected a `snippet` or `/regex/` after `match` at line 2:6 1 | select evaluateCall in src/workbook.ts 2 | match ( const numbers = collectNumbers(valu",
+          "replacementChars": 1130,
+          "finishReason": "stop",
+          "cause": null,
+          "payloads": 0,
+          "toolCalls": 0,
+          "selectors": null,
+          "stages": null,
+          "matcherKinds": null
+        },
+        {
+          "row": 6,
+          "iteration": 5,
+          "kind": "exchange",
+          "exchange": 2,
+          "outcome": "applied",
+          "diagnosticsHead": null,
+          "replacementChars": 1130,
+          "finishReason": "stop",
+          "cause": null,
+          "payloads": 1,
+          "toolCalls": 0,
+          "selectors": null,
+          "stages": null,
+          "matcherKinds": null
+        },
+        {
+          "row": 7,
+          "iteration": 6,
+          "kind": "verification",
+          "exchange": null,
+          "outcome": "tsc",
+          "diagnosticsHead": "stage: tsc replacement line 2: TS2345: Argument of type 'number[] | CellError' is not assignable to parameter of type 'CellResult'. Type 'number[]' is not assignable to type 'CellResult'. — in declara",
+          "replacementChars": null,
+          "finishReason": null,
+          "cause": null,
+          "payloads": 0,
+          "toolCalls": 0,
+          "selectors": null,
+          "stages": null,
+          "matcherKinds": null
+        },
+        {
+          "row": 8,
+          "iteration": 7,
+          "kind": "exchange",
+          "exchange": 1,
+          "outcome": "applied",
+          "diagnosticsHead": null,
+          "replacementChars": 606,
+          "finishReason": "stop",
+          "cause": null,
+          "payloads": 1,
+          "toolCalls": 0,
+          "selectors": null,
+          "stages": null,
+          "matcherKinds": null
+        },
+        {
+          "row": 9,
+          "iteration": 8,
+          "kind": "verification",
+          "exchange": null,
+          "outcome": "tsc",
+          "diagnosticsHead": "stage: tsc elsewhere in file: src/workbook.ts(541,19): error TS2345: Argument of type '{ ok: true; numbers: number[]; } | { ok: false; error: CellError; }' is not assignable to parameter of type 'Cell",
+          "replacementChars": null,
+          "finishReason": null,
+          "cause": null,
+          "payloads": 0,
+          "toolCalls": 0,
+          "selectors": null,
+          "stages": null,
+          "matcherKinds": null
+        },
+        {
+          "row": 10,
+          "iteration": 9,
+          "kind": "exchange",
+          "exchange": 1,
+          "outcome": "protocol",
+          "diagnosticsHead": "stage: syntax code: EDIT_MATCHER_MISSING message: expected a `snippet` or `/regex/` after `match` at line 1:45 1 | select evaluateCall in src/workbook.ts match ( const collected = collectNumbers(value",
+          "replacementChars": 388,
+          "finishReason": "stop",
+          "cause": null,
+          "payloads": 0,
+          "toolCalls": 0,
+          "selectors": null,
+          "stages": null,
+          "matcherKinds": null
+        },
+        {
+          "row": 11,
+          "iteration": 9,
+          "kind": "exchange",
+          "exchange": 2,
+          "outcome": "protocol",
+          "diagnosticsHead": "stage: syntax code: EDIT_INLINE_FENCE_OPEN severity: warning message: the fence opener <<<TC_EDIT_BEGIN>>> shares a line with `with`; normalized it to start the raw body on the next line at line 3:58 ",
+          "replacementChars": 388,
+          "finishReason": "stop",
+          "cause": null,
+          "payloads": 0,
+          "toolCalls": 0,
+          "selectors": null,
+          "stages": null,
+          "matcherKinds": null
+        },
+        {
+          "row": 12,
+          "iteration": 9,
+          "kind": "exchange",
+          "exchange": 3,
+          "outcome": "applied",
+          "diagnosticsHead": null,
+          "replacementChars": 388,
+          "finishReason": "stop",
+          "cause": null,
+          "payloads": 1,
+          "toolCalls": 0,
+          "selectors": null,
+          "stages": null,
+          "matcherKinds": null
+        },
+        {
+          "row": 13,
+          "iteration": 10,
+          "kind": "verification",
+          "exchange": null,
+          "outcome": "tests",
+          "diagnosticsHead": "stage: tests tests failed: failing tests: - mini-spreadsheet literal cells and display > stores numbers, strings, and booleans - mini-spreadsheet literal cells and display > null clears a cell - mini-",
+          "replacementChars": null,
+          "finishReason": null,
+          "cause": null,
+          "payloads": 0,
+          "toolCalls": 0,
+          "selectors": null,
+          "stages": null,
+          "matcherKinds": null
+        },
+        {
+          "row": 14,
+          "iteration": 11,
+          "kind": "exchange",
+          "exchange": 1,
+          "outcome": "no-op",
+          "diagnosticsHead": "clause 2 of 2 (src/workbook.ts): stage: no-op the edit does not change the file: the replacement is identical to the text it replaces; change the code so the diagnostics are actually addressed",
+          "replacementChars": 323,
+          "finishReason": "stop",
+          "cause": null,
+          "payloads": 0,
+          "toolCalls": 0,
+          "selectors": null,
+          "stages": null,
+          "matcherKinds": null
+        },
+        {
+          "row": 15,
+          "iteration": 11,
+          "kind": "exchange",
+          "exchange": 2,
+          "outcome": "protocol",
+          "diagnosticsHead": "stage: syntax code: EDIT_INLINE_FENCE_OPEN severity: warning message: the fence opener <<<TC_EDIT_BEGIN>>> shares a line with `with`; normalized it to start the raw body on the next line at line 2:14 ",
+          "replacementChars": 1047,
+          "finishReason": "stop",
+          "cause": null,
+          "payloads": 0,
+          "toolCalls": 0,
+          "selectors": null,
+          "stages": null,
+          "matcherKinds": null
+        },
+        {
+          "row": 16,
+          "iteration": 11,
+          "kind": "exchange",
+          "exchange": 3,
+          "outcome": "address",
+          "diagnosticsHead": "stage: address code: EDIT_TARGET_MISMATCH task #11-fix (modify) targets type \"CellError\" in \"src/workbook.ts\": the reply must edit only that declared target or one of its related targets (type \"CellRe",
+          "replacementChars": 1047,
+          "finishReason": "stop",
+          "cause": null,
+          "payloads": 0,
+          "toolCalls": 0,
+          "selectors": null,
+          "stages": null,
+          "matcherKinds": null
+        },
+        {
+          "row": 17,
+          "iteration": 12,
+          "kind": "exchange",
+          "exchange": 1,
+          "outcome": "applied",
+          "diagnosticsHead": null,
+          "replacementChars": 196,
+          "finishReason": "stop",
+          "cause": null,
+          "payloads": 1,
+          "toolCalls": 0,
+          "selectors": null,
+          "stages": null,
+          "matcherKinds": null
+        },
+        {
+          "row": 18,
+          "iteration": 13,
+          "kind": "exchange",
+          "exchange": 1,
+          "outcome": "applied",
+          "diagnosticsHead": null,
+          "replacementChars": 1025,
+          "finishReason": "stop",
+          "cause": null,
+          "payloads": 1,
+          "toolCalls": 0,
+          "selectors": null,
+          "stages": null,
+          "matcherKinds": null
+        },
+        {
+          "row": 19,
+          "iteration": 14,
+          "kind": "exchange",
+          "exchange": 1,
+          "outcome": "applied",
+          "diagnosticsHead": null,
+          "replacementChars": 257,
+          "finishReason": "stop",
+          "cause": null,
+          "payloads": 1,
+          "toolCalls": 0,
+          "selectors": null,
+          "stages": null,
+          "matcherKinds": null
+        },
+        {
+          "row": 20,
+          "iteration": 15,
+          "kind": "exchange",
+          "exchange": 1,
+          "outcome": "no-op",
+          "diagnosticsHead": "clause 1 of 1 (src/workbook.ts): stage: no-op the edit does not change the file: the replacement is identical to the text it replaces; change the code so the diagnostics are actually addressed",
+          "replacementChars": 296,
+          "finishReason": "stop",
+          "cause": null,
+          "payloads": 0,
+          "toolCalls": 0,
+          "selectors": null,
+          "stages": null,
+          "matcherKinds": null
+        },
+        {
+          "row": 21,
+          "iteration": 15,
+          "kind": "exchange",
+          "exchange": 2,
+          "outcome": "no-op",
+          "diagnosticsHead": "clause 1 of 1 (src/workbook.ts): stage: no-op the edit does not change the file: the replacement is identical to the text it replaces; change the code so the diagnostics are actually addressed",
+          "replacementChars": 534,
+          "finishReason": "stop",
+          "cause": null,
+          "payloads": 0,
+          "toolCalls": 0,
+          "selectors": null,
+          "stages": null,
+          "matcherKinds": null
+        },
+        {
+          "row": 22,
+          "iteration": 15,
+          "kind": "exchange",
+          "exchange": 3,
+          "outcome": "no-op",
+          "diagnosticsHead": "clause 1 of 1 (src/workbook.ts): stage: no-op the edit does not change the file: the replacement is identical to the text it replaces; change the code so the diagnostics are actually addressed",
+          "replacementChars": 408,
+          "finishReason": "stop",
+          "cause": null,
+          "payloads": 0,
+          "toolCalls": 0,
+          "selectors": null,
+          "stages": null,
+          "matcherKinds": null
+        },
+        {
+          "row": 23,
+          "iteration": 16,
+          "kind": "exchange",
+          "exchange": 1,
+          "outcome": "applied",
+          "diagnosticsHead": null,
+          "replacementChars": 2064,
+          "finishReason": "stop",
+          "cause": null,
+          "payloads": 1,
+          "toolCalls": 0,
+          "selectors": null,
+          "stages": null,
+          "matcherKinds": null
+        },
+        {
+          "row": 24,
+          "iteration": 17,
+          "kind": "exchange",
+          "exchange": 1,
+          "outcome": "protocol",
+          "diagnosticsHead": "stage: syntax code: EDIT_MATCHER_MISSING message: expected a `snippet` or `/regex/` after `match` at line 2:6 1 | select CellInput in src/workbook.ts 2 | match (type CellInput = string;) | ^ 3 | repla",
+          "replacementChars": 174,
+          "finishReason": "stop",
+          "cause": null,
+          "payloads": 0,
+          "toolCalls": 0,
+          "selectors": null,
+          "stages": null,
+          "matcherKinds": null
+        },
+        {
+          "row": 25,
+          "iteration": 17,
+          "kind": "exchange",
+          "exchange": 2,
+          "outcome": "applied",
+          "diagnosticsHead": null,
+          "replacementChars": 141,
+          "finishReason": "stop",
+          "cause": null,
+          "payloads": 1,
+          "toolCalls": 0,
+          "selectors": null,
+          "stages": null,
+          "matcherKinds": null
+        },
+        {
+          "row": 26,
+          "iteration": 18,
+          "kind": "verification",
+          "exchange": null,
+          "outcome": "tsc",
+          "diagnosticsHead": "stage: tsc replacement line 18: TS2339: Property 'kind' does not exist on type 'CellError'. Property 'kind' does not exist on type '\"#CYCLE!\"'. — in declaration `isError` (const) 53 | const isError = ",
+          "replacementChars": null,
+          "finishReason": null,
+          "cause": null,
+          "payloads": 0,
+          "toolCalls": 0,
+          "selectors": null,
+          "stages": null,
+          "matcherKinds": null
+        },
+        {
+          "row": 27,
+          "iteration": 19,
+          "kind": "exchange",
+          "exchange": 1,
+          "outcome": "applied",
+          "diagnosticsHead": null,
+          "replacementChars": 436,
+          "finishReason": "stop",
+          "cause": null,
+          "payloads": 1,
+          "toolCalls": 0,
+          "selectors": null,
+          "stages": null,
+          "matcherKinds": null
+        },
+        {
+          "row": 28,
+          "iteration": 20,
+          "kind": "exchange",
+          "exchange": 1,
+          "outcome": "protocol",
+          "diagnosticsHead": "stage: syntax code: EDIT_MATCHER_MISSING message: expected a `snippet` or `/regex/` after `match` at line 2:6 1 | select VALUE_ERROR in src/workbook.ts 2 | match (VALUE_ERROR = (): CellError => makeEr",
+          "replacementChars": 210,
+          "finishReason": "stop",
+          "cause": null,
+          "payloads": 0,
+          "toolCalls": 0,
+          "selectors": null,
+          "stages": null,
+          "matcherKinds": null
+        },
+        {
+          "row": 29,
+          "iteration": 20,
+          "kind": "exchange",
+          "exchange": 2,
+          "outcome": "applied",
+          "diagnosticsHead": null,
+          "replacementChars": 148,
+          "finishReason": "stop",
+          "cause": null,
+          "payloads": 1,
+          "toolCalls": 0,
+          "selectors": null,
+          "stages": null,
+          "matcherKinds": null
+        },
+        {
+          "row": 30,
+          "iteration": 21,
+          "kind": "exchange",
+          "exchange": 1,
+          "outcome": "applied",
+          "diagnosticsHead": null,
+          "replacementChars": 157,
+          "finishReason": "stop",
+          "cause": null,
+          "payloads": 1,
+          "toolCalls": 0,
+          "selectors": null,
+          "stages": null,
+          "matcherKinds": null
+        },
+        {
+          "row": 31,
+          "iteration": 22,
+          "kind": "exchange",
+          "exchange": 1,
+          "outcome": "protocol",
+          "diagnosticsHead": "stage: syntax code: EDIT_MATCHER_MISSING message: expected a `snippet` or `/regex/` after `match` at line 2:6 1 | select NAME_ERROR in src/workbook.ts 2 | match (NAME_ERROR = (name: string): CellError",
+          "replacementChars": 238,
+          "finishReason": "stop",
+          "cause": null,
+          "payloads": 0,
+          "toolCalls": 0,
+          "selectors": null,
+          "stages": null,
+          "matcherKinds": null
+        },
+        {
+          "row": 32,
+          "iteration": 22,
+          "kind": "exchange",
+          "exchange": 2,
+          "outcome": "applied",
+          "diagnosticsHead": null,
+          "replacementChars": 143,
+          "finishReason": "stop",
+          "cause": null,
+          "payloads": 1,
+          "toolCalls": 0,
+          "selectors": null,
+          "stages": null,
+          "matcherKinds": null
+        },
+        {
+          "row": 33,
+          "iteration": 23,
+          "kind": "exchange",
+          "exchange": 1,
+          "outcome": "protocol",
+          "diagnosticsHead": "stage: syntax code: EDIT_MATCHER_MISSING message: expected a `snippet` or `/regex/` after `match` at line 2:6 1 | select REF_ERROR in src/workbook.ts 2 | match (REF_ERROR = (address: string): CellErro",
+          "replacementChars": 249,
+          "finishReason": "stop",
+          "cause": null,
+          "payloads": 0,
+          "toolCalls": 0,
+          "selectors": null,
+          "stages": null,
+          "matcherKinds": null
+        },
+        {
+          "row": 34,
+          "iteration": 23,
+          "kind": "exchange",
+          "exchange": 2,
+          "outcome": "protocol",
+          "diagnosticsHead": "stage: syntax code: EDIT_MISSING_END message: expected `end` to terminate the clause at line 2:28 1 | select REF_ERROR in src/workbook.ts 2 | match `makeError(\"#REF!\", `Invalid reference: ${address}`)",
+          "replacementChars": 158,
+          "finishReason": "stop",
+          "cause": null,
+          "payloads": 0,
+          "toolCalls": 0,
+          "selectors": null,
+          "stages": null,
+          "matcherKinds": null
+        },
+        {
+          "row": 35,
+          "iteration": 23,
+          "kind": "exchange",
+          "exchange": 3,
+          "outcome": "applied",
+          "diagnosticsHead": null,
+          "replacementChars": 129,
+          "finishReason": "stop",
+          "cause": null,
+          "payloads": 1,
+          "toolCalls": 0,
+          "selectors": null,
+          "stages": null,
+          "matcherKinds": null
+        },
+        {
+          "row": 36,
+          "iteration": 24,
+          "kind": "exchange",
+          "exchange": 1,
+          "outcome": "protocol",
+          "diagnosticsHead": "stage: syntax code: EDIT_MATCHER_MISSING message: expected a `snippet` or `/regex/` after `match` at line 2:6 1 | select CYCLE_ERROR in src/workbook.ts 2 | match (CYCLE_ERROR = (): CellError => makeEr",
+          "replacementChars": 215,
+          "finishReason": "stop",
+          "cause": null,
+          "payloads": 0,
+          "toolCalls": 0,
+          "selectors": null,
+          "stages": null,
+          "matcherKinds": null
+        },
+        {
+          "row": 37,
+          "iteration": 24,
+          "kind": "exchange",
+          "exchange": 2,
+          "outcome": "matcher",
+          "diagnosticsHead": "clause 1 of 1 (src/workbook.ts): stage: matcher the matcher was not found inside variable \"CYCLE_ERROR\" in src/workbook.ts; copy a complete snippet from the current source, or omit `match` for a whole",
+          "replacementChars": 215,
+          "finishReason": "stop",
+          "cause": null,
+          "payloads": 0,
+          "toolCalls": 0,
+          "selectors": null,
+          "stages": null,
+          "matcherKinds": null
+        },
+        {
+          "row": 38,
+          "iteration": 24,
+          "kind": "exchange",
+          "exchange": 3,
+          "outcome": "applied",
+          "diagnosticsHead": null,
+          "replacementChars": 133,
+          "finishReason": "stop",
+          "cause": null,
+          "payloads": 1,
+          "toolCalls": 0,
+          "selectors": null,
+          "stages": null,
+          "matcherKinds": null
+        },
+        {
+          "row": 39,
+          "iteration": 25,
+          "kind": "exchange",
+          "exchange": 1,
+          "outcome": "applied",
+          "diagnosticsHead": null,
+          "replacementChars": 221,
+          "finishReason": "stop",
+          "cause": null,
+          "payloads": 1,
+          "toolCalls": 0,
+          "selectors": null,
+          "stages": null,
+          "matcherKinds": null
+        },
+        {
+          "row": 40,
+          "iteration": 26,
+          "kind": "exchange",
+          "exchange": 1,
+          "outcome": "no-op",
+          "diagnosticsHead": "clause 1 of 1 (src/workbook.ts): stage: no-op the edit does not change the file: the replacement is identical to the text it replaces; change the code so the diagnostics are actually addressed",
+          "replacementChars": 176,
+          "finishReason": "stop",
+          "cause": null,
+          "payloads": 0,
+          "toolCalls": 0,
+          "selectors": null,
+          "stages": null,
+          "matcherKinds": null
+        },
+        {
+          "row": 41,
+          "iteration": 26,
+          "kind": "exchange",
+          "exchange": 2,
+          "outcome": "no-op",
+          "diagnosticsHead": "clause 1 of 1 (src/workbook.ts): stage: no-op the edit does not change the file: the replacement is identical to the text it replaces; change the code so the diagnostics are actually addressed",
+          "replacementChars": 176,
+          "finishReason": "stop",
+          "cause": null,
+          "payloads": 0,
+          "toolCalls": 0,
+          "selectors": null,
+          "stages": null,
+          "matcherKinds": null
+        },
+        {
+          "row": 42,
+          "iteration": 26,
+          "kind": "exchange",
+          "exchange": 3,
+          "outcome": "no-op",
+          "diagnosticsHead": "clause 1 of 1 (src/workbook.ts): stage: no-op the edit does not change the file: the replacement is identical to the text it replaces; change the code so the diagnostics are actually addressed",
+          "replacementChars": 176,
+          "finishReason": "stop",
+          "cause": null,
+          "payloads": 0,
+          "toolCalls": 0,
+          "selectors": null,
+          "stages": null,
+          "matcherKinds": null
+        },
+        {
+          "row": 43,
+          "iteration": 27,
+          "kind": "exchange",
+          "exchange": 1,
+          "outcome": "applied",
+          "diagnosticsHead": null,
+          "replacementChars": 182,
+          "finishReason": "stop",
+          "cause": null,
+          "payloads": 1,
+          "toolCalls": 0,
+          "selectors": null,
+          "stages": null,
+          "matcherKinds": null
+        },
+        {
+          "row": 44,
+          "iteration": 28,
+          "kind": "exchange",
+          "exchange": 1,
+          "outcome": "protocol",
+          "diagnosticsHead": "stage: syntax code: EDIT_MATCHER_MISSING message: expected a `snippet` or `/regex/` after `match` at line 1:45 1 | select evaluateCall in src/workbook.ts match (return NAME_ERROR();) replace with <<<T",
+          "replacementChars": 153,
+          "finishReason": "stop",
+          "cause": null,
+          "payloads": 0,
+          "toolCalls": 0,
+          "selectors": null,
+          "stages": null,
+          "matcherKinds": null
+        },
+        {
+          "row": 45,
+          "iteration": 28,
+          "kind": "exchange",
+          "exchange": 2,
+          "outcome": "applied",
+          "diagnosticsHead": null,
+          "replacementChars": 153,
+          "finishReason": "stop",
+          "cause": null,
+          "payloads": 1,
+          "toolCalls": 0,
+          "selectors": null,
+          "stages": null,
+          "matcherKinds": null
+        },
+        {
+          "row": 46,
+          "iteration": 29,
+          "kind": "verification",
+          "exchange": null,
+          "outcome": "tsc",
+          "diagnosticsHead": "stage: tsc replacement line 1: TS2304: Cannot find name 'NAME_ERROR'. — in declaration `evaluateCall` (const) 574 | default: 575 | return NAME_ERROR(name); 576 | } elsewhere in file: src/workbook.ts(6",
+          "replacementChars": null,
+          "finishReason": null,
+          "cause": null,
+          "payloads": 0,
+          "toolCalls": 0,
+          "selectors": null,
+          "stages": null,
+          "matcherKinds": null
+        }
+      ],
+      "exchangeStats": {
+        "turns": 39,
+        "payloads": 19,
+        "toolCalls": 0,
+        "applied": 19,
+        "rejected": 20,
+        "selected": 0,
+        "stopped": 0,
+        "selfChecks": 0,
+        "range": 0,
+        "matcher": 0,
+        "wholeSymbol": 0,
+        "stageWholeSymbol": 0,
+        "stageMatch": 0,
+        "stagePick": 0,
+        "snippet": 0,
+        "regex": 0,
+        "creates": 0
+      },
+      "loopDiagnostics": "token-budget: accumulated 123495 cache-excluded tokens exceeded the 120000 token budget",
+      "terminationReason": "token-budget",
+      "model": "deepseek-flash",
+      "workspace": "tmp/benchmark/2026-10-25T14-08-26-516Z-fafba6ef/mini-spreadsheet-tc-plan-exec-rep1",
+      "logs": {
+        "side": "tmp/benchmark/2026-10-25T14-08-26-516Z-fafba6ef/logs/mini-spreadsheet-tc-plan-exec-rep1/side.log",
+        "judge": "tmp/benchmark/2026-10-25T14-08-26-516Z-fafba6ef/logs/mini-spreadsheet-tc-plan-exec-rep1/judge.log",
+        "session": null,
+        "stats": null
+      },
+      "versions": {
+        "bun": "1.3.13",
+        "opencode": null
+      },
+      "judge": {
+        "testsOk": false,
+        "tscOk": false,
+        "fixtureOk": true,
+        "detail": "tsc failed: src/workbook.ts(63,1): error TS2304: Cannot find name 'NAME_ERROR'.\nsrc/workbook.ts(65,1): error TS2304: Cannot find name 'CYCLE_ERROR'.\nsrc/workbook.ts(575,14): error TS2304: Cannot find name 'NAME_ERROR'.\nsrc/workbook.ts(629,31): error TS2554: Expected 0 arguments, but got 1.\nsrc/workbook.ts(666,39): error TS2304: Cannot find name 'CYCLE_ERROR'.; bun test failed: bun test v1.3.13 (bf2e2cec)\n\nsrc/workbook.test.ts:\n\n# Unhandled error between tests\n-------------------------------\n58 |   value === \"#NAME?\" ||\n59 |   value === \"#PARSE!\";\n60 | \n61 | const VALUE_ERROR = (): CellError => \"#VALUE!\";\n62 | const DIV_ZERO_ERROR = (): CellError => \"#DIV/0!\";\n63 | NAME_ERROR = (_name: string): CellError => \"#NAME?\";\n     ^\nReferenceError: NAME_ERROR is not defined\n     ..."
+      },
+      "error": null,
+      "infraError": null
+    }
+  ],
+  "aggregates": {
+    "byTaskSide": [
+      {
+        "task": "mini-spreadsheet",
+        "side": "tc",
+        "protocol": "edit-dsl",
+        "agentMode": "plan-exec",
+        "runs": 1,
+        "ok": 0,
+        "failed": 1,
+        "successRate": 0,
+        "usageRuns": 1,
+        "tokens": {
+          "in": {
+            "mean": 152211,
+            "total": 152211
+          },
+          "out": {
+            "mean": 14766,
+            "total": 14766
+          },
+          "total": {
+            "mean": 166977,
+            "total": 166977
+          }
+        },
+        "cost": {
+          "mean": 0.032916594,
+          "total": 0.032916594
+        },
+        "cache": {
+          "read": {
+            "mean": 408448,
+            "total": 408448
+          },
+          "hitRate": 0.7285141235581699
+        },
+        "durationMsMean": 101567,
+        "stepsMean": 46,
+        "tokensPerSuccess": {
+          "in": null,
+          "out": null,
+          "total": null
+        },
+        "costPerSuccess": null,
+        "selectors": {
+          "range": 0,
+          "matcher": 0,
+          "wholeSymbol": 0
+        },
+        "stages": {
+          "wholeSymbol": 0,
+          "match": 0,
+          "pick": 0
+        },
+        "matcherKinds": {
+          "snippet": 0,
+          "regex": 0
+        },
+        "creates": 0
+      }
+    ],
+    "bySide": [
+      {
+        "task": null,
+        "side": "tc",
+        "protocol": "edit-dsl",
+        "agentMode": "plan-exec",
+        "runs": 1,
+        "ok": 0,
+        "failed": 1,
+        "successRate": 0,
+        "usageRuns": 1,
+        "tokens": {
+          "in": {
+            "mean": 152211,
+            "total": 152211
+          },
+          "out": {
+            "mean": 14766,
+            "total": 14766
+          },
+          "total": {
+            "mean": 166977,
+            "total": 166977
+          }
+        },
+        "cost": {
+          "mean": 0.032916594,
+          "total": 0.032916594
+        },
+        "cache": {
+          "read": {
+            "mean": 408448,
+            "total": 408448
+          },
+          "hitRate": 0.7285141235581699
+        },
+        "durationMsMean": 101567,
+        "stepsMean": 46,
+        "tokensPerSuccess": {
+          "in": null,
+          "out": null,
+          "total": null
+        },
+        "costPerSuccess": null,
+        "selectors": {
+          "range": 0,
+          "matcher": 0,
+          "wholeSymbol": 0
+        },
+        "stages": {
+          "wholeSymbol": 0,
+          "match": 0,
+          "pick": 0
+        },
+        "matcherKinds": {
+          "snippet": 0,
+          "regex": 0
+        },
+        "creates": 0
+      }
+    ],
+    "overall": [
+      {
+        "task": null,
+        "side": "tc",
+        "protocol": "edit-dsl",
+        "agentMode": "plan-exec",
+        "runs": 1,
+        "ok": 0,
+        "failed": 1,
+        "successRate": 0,
+        "usageRuns": 1,
+        "tokens": {
+          "in": {
+            "mean": 152211,
+            "total": 152211
+          },
+          "out": {
+            "mean": 14766,
+            "total": 14766
+          },
+          "total": {
+            "mean": 166977,
+            "total": 166977
+          }
+        },
+        "cost": {
+          "mean": 0.032916594,
+          "total": 0.032916594
+        },
+        "cache": {
+          "read": {
+            "mean": 408448,
+            "total": 408448
+          },
+          "hitRate": 0.7285141235581699
+        },
+        "durationMsMean": 101567,
+        "stepsMean": 46,
+        "tokensPerSuccess": {
+          "in": null,
+          "out": null,
+          "total": null
+        },
+        "costPerSuccess": null,
+        "selectors": {
+          "range": 0,
+          "matcher": 0,
+          "wholeSymbol": 0
+        },
+        "stages": {
+          "wholeSymbol": 0,
+          "match": 0,
+          "pick": 0
+        },
+        "matcherKinds": {
+          "snippet": 0,
+          "regex": 0
+        },
+        "creates": 0
+      }
+    ]
+  },
+  "provenance": {
+    "inputs": {
+      "model": "7d963f65d1ede1bd9416a5f55575efe0d202e0a00519ef04e47dae20c3180445",
+      "taskIssue": "3cdad7a3f3e1e716e36f6f5f87a27808f6676ed5743b1a9147c181c616a87dfb",
+      "fixture": "2544858a4476b890d7c13a7455f844f3719d3a2f48a06b783d193f5e1289b3ba",
+      "systemPrompt": "73020caf387a6f330f65e1f9e96442051e81e4581b9ed5fd3096e63c451eff40",
+      "loopConfig": "b67b7834f9db63644fbf4271976a3a0db3bfd0fef169044807eb74e91cc48f4a",
+      "pricing": "aab6f45ac055bdc46329be2c46279a8ce322bfa62c0c61f0ef177d8b67766560"
+    },
+    "inputHash": "6bca330d3d0acb14cded47aff9f2684b60b7117dc7186c2dd485181058b47681",
+    "computedAt": "2026-10-25T14:08:23.735Z"
+  },
+  "warmups": [
+    {
+      "agentMode": "plan-exec",
+      "kind": "planning",
+      "promptChars": 10387,
+      "tokens": {
+        "input": null,
+        "output": null,
+        "cacheRead": null,
+        "cacheWrite": null,
+        "reasoning": null,
+        "total": null
+      },
+      "usageAvailable": false,
+      "durationMs": 1857,
+      "error": null
+    },
+    {
+      "agentMode": "plan-exec",
+      "kind": "execution",
+      "promptChars": 2900,
+      "tokens": {
+        "input": null,
+        "output": null,
+        "cacheRead": null,
+        "cacheWrite": null,
+        "reasoning": null,
+        "total": null
+      },
+      "usageAvailable": false,
+      "durationMs": 919,
+      "error": null
+    }
+  ],
+  "cacheWarning": null
+}

@@ -1,0 +1,950 @@
+{
+  "generatedAt": "2026-10-25T12:11:55.901Z",
+  "date": "2026-10-25",
+  "mode": "pilot",
+  "tasks": [
+    "mini-spreadsheet"
+  ],
+  "sides": [
+    "tc"
+  ],
+  "reps": 1,
+  "concurrency": 1,
+  "model": "deepseek-flash",
+  "ocModel": null,
+  "effort": null,
+  "multiPayload": false,
+  "protocolFormat": "edit-dsl",
+  "protocolFormats": [
+    "edit-dsl"
+  ],
+  "agentModes": [
+    "pinned-repair",
+    "plan-exec"
+  ],
+  "tokenBudget": 70000,
+  "bunVersion": "1.3.13",
+  "opencodeVersion": null,
+  "pilotReference": null,
+  "infraErrors": [],
+  "runs": [
+    {
+      "task": "mini-spreadsheet",
+      "side": "tc",
+      "protocol": "edit-dsl",
+      "agentMode": "pinned-repair",
+      "rep": 1,
+      "ok": false,
+      "sideOk": false,
+      "tokens": {
+        "input": 82568,
+        "output": 6477,
+        "cacheRead": 62592,
+        "cacheWrite": null,
+        "reasoning": 0,
+        "total": 89045,
+        "billable": {
+          "in": 19976,
+          "out": 6477,
+          "total": 26453
+        }
+      },
+      "usageAvailable": true,
+      "usageSource": "chat-completions",
+      "rawUsage": [
+        {
+          "prompt_tokens": 6653,
+          "completion_tokens": 6,
+          "total_tokens": 6659,
+          "prompt_tokens_details": {
+            "cached_tokens": 6400
+          },
+          "prompt_cache_hit_tokens": 6400,
+          "prompt_cache_miss_tokens": 253
+        },
+        {
+          "prompt_tokens": 10669,
+          "completion_tokens": 6,
+          "total_tokens": 10675,
+          "prompt_tokens_details": {
+            "cached_tokens": 9088
+          },
+          "prompt_cache_hit_tokens": 9088,
+          "prompt_cache_miss_tokens": 1581
+        },
+        {
+          "prompt_tokens": 10692,
+          "completion_tokens": 6000,
+          "total_tokens": 16692,
+          "prompt_tokens_details": {
+            "cached_tokens": 9216
+          },
+          "prompt_cache_hit_tokens": 9216,
+          "prompt_cache_miss_tokens": 1476
+        },
+        {
+          "prompt_tokens": 11381,
+          "completion_tokens": 11,
+          "total_tokens": 11392,
+          "prompt_tokens_details": {
+            "cached_tokens": 9088
+          },
+          "prompt_cache_hit_tokens": 9088,
+          "prompt_cache_miss_tokens": 2293
+        },
+        {
+          "prompt_tokens": 14190,
+          "completion_tokens": 24,
+          "total_tokens": 14214,
+          "prompt_tokens_details": {
+            "cached_tokens": 9856
+          },
+          "prompt_cache_hit_tokens": 9856,
+          "prompt_cache_miss_tokens": 4334
+        },
+        {
+          "prompt_tokens": 14429,
+          "completion_tokens": 83,
+          "total_tokens": 14512,
+          "prompt_tokens_details": {
+            "cached_tokens": 9856
+          },
+          "prompt_cache_hit_tokens": 9856,
+          "prompt_cache_miss_tokens": 4573
+        },
+        {
+          "prompt_tokens": 14554,
+          "completion_tokens": 347,
+          "total_tokens": 14901,
+          "prompt_tokens_details": {
+            "cached_tokens": 9088
+          },
+          "completion_tokens_details": {
+            "reasoning_tokens": 0
+          },
+          "prompt_cache_hit_tokens": 9088,
+          "prompt_cache_miss_tokens": 5466
+        }
+      ],
+      "durationMs": 24558,
+      "startedAt": "2026-10-25T12:11:57.652Z",
+      "finishedAt": "2026-10-25T12:12:22.210Z",
+      "cost": 0.007070376000000001,
+      "rateClass": "off-peak",
+      "steps": 8,
+      "records": [
+        {
+          "row": 1,
+          "iteration": 1,
+          "kind": "exchange",
+          "exchange": 1,
+          "outcome": "selected",
+          "diagnosticsHead": null,
+          "replacementChars": null,
+          "finishReason": "stop",
+          "cause": null,
+          "payloads": 0,
+          "toolCalls": 0,
+          "selectors": null,
+          "stages": null,
+          "matcherKinds": null
+        },
+        {
+          "row": 2,
+          "iteration": 1,
+          "kind": "exchange",
+          "exchange": 2,
+          "outcome": "applied",
+          "diagnosticsHead": null,
+          "replacementChars": null,
+          "finishReason": "stop",
+          "cause": null,
+          "payloads": 0,
+          "toolCalls": 0,
+          "selectors": [],
+          "stages": [],
+          "matcherKinds": []
+        },
+        {
+          "row": 3,
+          "iteration": 1,
+          "kind": "verification",
+          "exchange": null,
+          "outcome": "tests",
+          "diagnosticsHead": "stage: tests tests failed: test output: bun test v1.3.13 (bf2e2cec) src/workbook.test.ts: # Unhandled error between tests ------------------------------- 1 | }) 2 | { ^ SyntaxError: Export named 'Work",
+          "replacementChars": null,
+          "finishReason": "stop",
+          "cause": null,
+          "payloads": 0,
+          "toolCalls": 0,
+          "selectors": null,
+          "stages": null,
+          "matcherKinds": null
+        },
+        {
+          "row": 4,
+          "iteration": 2,
+          "kind": "exchange",
+          "exchange": 1,
+          "outcome": "viewer",
+          "diagnosticsHead": "Read results (read commands write nothing): src/workbook.ts (whole file): ```text (empty file) ```",
+          "replacementChars": null,
+          "finishReason": "stop",
+          "cause": null,
+          "payloads": 1,
+          "toolCalls": 0,
+          "selectors": null,
+          "stages": null,
+          "matcherKinds": null
+        },
+        {
+          "row": 5,
+          "iteration": 2,
+          "kind": "exchange",
+          "exchange": 2,
+          "outcome": "applied",
+          "diagnosticsHead": null,
+          "replacementChars": null,
+          "finishReason": "stop",
+          "cause": null,
+          "payloads": 0,
+          "toolCalls": 0,
+          "selectors": [
+            "whole-symbol"
+          ],
+          "stages": [
+            "whole-symbol"
+          ],
+          "matcherKinds": [
+            null
+          ]
+        },
+        {
+          "row": 6,
+          "iteration": 2,
+          "kind": "verification",
+          "exchange": null,
+          "outcome": "tests",
+          "diagnosticsHead": "stage: tests tests failed: failing tests: - mini-spreadsheet arithmetic operators > division by zero and non-finite results - mini-spreadsheet references and forward references > invalid formula refer",
+          "replacementChars": null,
+          "finishReason": "stop",
+          "cause": null,
+          "payloads": 0,
+          "toolCalls": 0,
+          "selectors": null,
+          "stages": null,
+          "matcherKinds": null
+        },
+        {
+          "row": 7,
+          "iteration": 3,
+          "kind": "exchange",
+          "exchange": 1,
+          "outcome": "viewer",
+          "diagnosticsHead": "Read results (read commands write nothing): src/workbook.ts (selected lines, 290 lines): ```text 4 | 5 | const ERR_DIV0: CellError = \"#DIV/0!\"; 6 | const ERR_VALUE: CellError = \"#VALUE!\"; 7 | const ER",
+          "replacementChars": null,
+          "finishReason": "stop",
+          "cause": null,
+          "payloads": 1,
+          "toolCalls": 0,
+          "selectors": null,
+          "stages": null,
+          "matcherKinds": null
+        },
+        {
+          "row": 8,
+          "iteration": 3,
+          "kind": "exchange",
+          "exchange": 2,
+          "outcome": "viewer",
+          "diagnosticsHead": "Read results (read commands write nothing): src/workbook.ts (selected lines): ```text 293 | if (!sawDigit) throw new ParseError(\"bad number\"); 294 | const ch = this.peek(); 295 | if (ch === \"e\" || ch ",
+          "replacementChars": null,
+          "finishReason": "stop",
+          "cause": null,
+          "payloads": 2,
+          "toolCalls": 0,
+          "selectors": null,
+          "stages": null,
+          "matcherKinds": null
+        }
+      ],
+      "exchangeStats": {
+        "turns": 6,
+        "payloads": 4,
+        "toolCalls": 0,
+        "applied": 2,
+        "rejected": 0,
+        "selected": 1,
+        "stopped": 0,
+        "selfChecks": 0,
+        "range": 0,
+        "matcher": 0,
+        "wholeSymbol": 1,
+        "stageWholeSymbol": 1,
+        "stageMatch": 0,
+        "stagePick": 0,
+        "snippet": 0,
+        "regex": 0,
+        "creates": 1
+      },
+      "loopDiagnostics": "token-budget: accumulated 74144 tokens exceeded the 70000 token budget",
+      "terminationReason": "token-budget",
+      "model": "deepseek-flash",
+      "workspace": "tmp/benchmark/2026-10-25T12-11-57-635Z-4dde8ff5/mini-spreadsheet-tc-pinned-repair-rep1",
+      "logs": {
+        "side": "tmp/benchmark/2026-10-25T12-11-57-635Z-4dde8ff5/logs/mini-spreadsheet-tc-pinned-repair-rep1/side.log",
+        "judge": "tmp/benchmark/2026-10-25T12-11-57-635Z-4dde8ff5/logs/mini-spreadsheet-tc-pinned-repair-rep1/judge.log",
+        "session": null,
+        "stats": null
+      },
+      "versions": {
+        "bun": "1.3.13",
+        "opencode": null
+      },
+      "judge": {
+        "testsOk": false,
+        "tscOk": true,
+        "fixtureOk": true,
+        "detail": "bun test failed: bun test v1.3.13 (bf2e2cec)\n\nsrc/workbook.test.ts:\n15 | function formulaValue(formula: string): CellResult {\n16 |   return withCells({ A1: formula }).getValue(\"A1\");\n17 | }\n18 | \n19 | function expectFormula(formula: string, expected: CellResult): void {\n20 |   expect(formulaValue(formula)).toBe(expected);\n                                     ^\nerror: expect(received).toBe(expected)\n\nExpected: \"#VA..."
+      },
+      "error": null,
+      "infraError": null
+    },
+    {
+      "task": "mini-spreadsheet",
+      "side": "tc",
+      "protocol": "edit-dsl",
+      "agentMode": "plan-exec",
+      "rep": 1,
+      "ok": false,
+      "sideOk": false,
+      "tokens": {
+        "input": 64405,
+        "output": 22810,
+        "cacheRead": 43520,
+        "cacheWrite": null,
+        "reasoning": 12,
+        "total": 87215,
+        "billable": {
+          "in": 20885,
+          "out": 22822,
+          "total": 43707
+        }
+      },
+      "usageAvailable": true,
+      "usageSource": "chat-completions",
+      "rawUsage": [
+        {
+          "prompt_tokens": 7458,
+          "completion_tokens": 846,
+          "total_tokens": 8304,
+          "prompt_tokens_details": {
+            "cached_tokens": 7296
+          },
+          "prompt_cache_hit_tokens": 7296,
+          "prompt_cache_miss_tokens": 162
+        },
+        {
+          "prompt_tokens": 8672,
+          "completion_tokens": 844,
+          "total_tokens": 9516,
+          "prompt_tokens_details": {
+            "cached_tokens": 8192
+          },
+          "prompt_cache_hit_tokens": 8192,
+          "prompt_cache_miss_tokens": 480
+        },
+        {
+          "prompt_tokens": 2488,
+          "completion_tokens": 6833,
+          "total_tokens": 9321,
+          "prompt_tokens_details": {
+            "cached_tokens": 640
+          },
+          "prompt_cache_hit_tokens": 640,
+          "prompt_cache_miss_tokens": 1848
+        },
+        {
+          "prompt_tokens": 10489,
+          "completion_tokens": 6827,
+          "total_tokens": 17316,
+          "prompt_tokens_details": {
+            "cached_tokens": 9216
+          },
+          "prompt_cache_hit_tokens": 9216,
+          "prompt_cache_miss_tokens": 1273
+        },
+        {
+          "prompt_tokens": 11947,
+          "completion_tokens": 307,
+          "total_tokens": 12254,
+          "prompt_tokens_details": {
+            "cached_tokens": 9472
+          },
+          "prompt_cache_hit_tokens": 9472,
+          "prompt_cache_miss_tokens": 2475
+        },
+        {
+          "prompt_tokens": 10968,
+          "completion_tokens": 6876,
+          "total_tokens": 17844,
+          "prompt_tokens_details": {
+            "cached_tokens": 1280
+          },
+          "prompt_cache_hit_tokens": 1280,
+          "prompt_cache_miss_tokens": 9688
+        },
+        {
+          "prompt_tokens": 12383,
+          "completion_tokens": 277,
+          "total_tokens": 12660,
+          "prompt_tokens_details": {
+            "cached_tokens": 7424
+          },
+          "completion_tokens_details": {
+            "reasoning_tokens": 12
+          },
+          "prompt_cache_hit_tokens": 7424,
+          "prompt_cache_miss_tokens": 4959
+        }
+      ],
+      "durationMs": 72951,
+      "startedAt": "2026-10-25T12:12:22.375Z",
+      "finishedAt": "2026-10-25T12:13:35.326Z",
+      "cost": 0.016956509999999998,
+      "rateClass": "off-peak",
+      "steps": 3,
+      "records": [
+        {
+          "row": 1,
+          "iteration": 1,
+          "kind": "exchange",
+          "exchange": 1,
+          "outcome": "protocol",
+          "diagnosticsHead": "stage: syntax code: EDIT_MALFORMED_FENCE message: the fence opener <<<TC_EDIT_BEGIN>>> must be on its own line at line 1:28 1 | write src/workbook.ts with <<<TC_EDIT_BEGIN>>> | ^ 2 | export type CellV",
+          "replacementChars": 22635,
+          "finishReason": "stop",
+          "cause": null,
+          "payloads": 0,
+          "toolCalls": 0,
+          "selectors": null,
+          "stages": null,
+          "matcherKinds": null
+        },
+        {
+          "row": 2,
+          "iteration": 1,
+          "kind": "exchange",
+          "exchange": 2,
+          "outcome": "applied",
+          "diagnosticsHead": null,
+          "replacementChars": 22591,
+          "finishReason": "stop",
+          "cause": null,
+          "payloads": 1,
+          "toolCalls": 0,
+          "selectors": null,
+          "stages": null,
+          "matcherKinds": null
+        },
+        {
+          "row": 3,
+          "iteration": 2,
+          "kind": "verification",
+          "exchange": null,
+          "outcome": "tests",
+          "diagnosticsHead": "stage: tests tests failed: failing tests: - mini-spreadsheet arithmetic operators > division by zero and non-finite results - mini-spreadsheet ABS and ROUND > ROUND rounds half away from zero - mini-s",
+          "replacementChars": null,
+          "finishReason": null,
+          "cause": null,
+          "payloads": 0,
+          "toolCalls": 0,
+          "selectors": null,
+          "stages": null,
+          "matcherKinds": null
+        }
+      ],
+      "exchangeStats": {
+        "turns": 2,
+        "payloads": 1,
+        "toolCalls": 0,
+        "applied": 1,
+        "rejected": 1,
+        "selected": 0,
+        "stopped": 0,
+        "selfChecks": 0,
+        "range": 0,
+        "matcher": 0,
+        "wholeSymbol": 0,
+        "stageWholeSymbol": 0,
+        "stageMatch": 0,
+        "stagePick": 0,
+        "snippet": 0,
+        "regex": 0,
+        "creates": 0
+      },
+      "loopDiagnostics": "token-budget: accumulated 74555 tokens exceeded the 70000 token budget",
+      "terminationReason": "token-budget",
+      "model": "deepseek-flash",
+      "workspace": "tmp/benchmark/2026-10-25T12-11-57-635Z-4dde8ff5/mini-spreadsheet-tc-plan-exec-rep1",
+      "logs": {
+        "side": "tmp/benchmark/2026-10-25T12-11-57-635Z-4dde8ff5/logs/mini-spreadsheet-tc-plan-exec-rep1/side.log",
+        "judge": "tmp/benchmark/2026-10-25T12-11-57-635Z-4dde8ff5/logs/mini-spreadsheet-tc-plan-exec-rep1/judge.log",
+        "session": null,
+        "stats": null
+      },
+      "versions": {
+        "bun": "1.3.13",
+        "opencode": null
+      },
+      "judge": {
+        "testsOk": false,
+        "tscOk": true,
+        "fixtureOk": true,
+        "detail": "bun test failed: bun test v1.3.13 (bf2e2cec)\n\nsrc/workbook.test.ts:\n15 | function formulaValue(formula: string): CellResult {\n16 |   return withCells({ A1: formula }).getValue(\"A1\");\n17 | }\n18 | \n19 | function expectFormula(formula: string, expected: CellResult): void {\n20 |   expect(formulaValue(formula)).toBe(expected);\n                                     ^\nerror: expect(received).toBe(expected)\n\nExpected: \"#VA..."
+      },
+      "error": null,
+      "infraError": null
+    }
+  ],
+  "aggregates": {
+    "byTaskSide": [
+      {
+        "task": "mini-spreadsheet",
+        "side": "tc",
+        "protocol": "edit-dsl",
+        "agentMode": "pinned-repair",
+        "runs": 1,
+        "ok": 0,
+        "failed": 1,
+        "successRate": 0,
+        "usageRuns": 1,
+        "tokens": {
+          "in": {
+            "mean": 19976,
+            "total": 19976
+          },
+          "out": {
+            "mean": 6477,
+            "total": 6477
+          },
+          "total": {
+            "mean": 26453,
+            "total": 26453
+          }
+        },
+        "cost": {
+          "mean": 0.007070376000000001,
+          "total": 0.007070376000000001
+        },
+        "cache": {
+          "read": {
+            "mean": 62592,
+            "total": 62592
+          },
+          "hitRate": 0.7580660788683267
+        },
+        "durationMsMean": 24558,
+        "stepsMean": 8,
+        "tokensPerSuccess": {
+          "in": null,
+          "out": null,
+          "total": null
+        },
+        "costPerSuccess": null,
+        "selectors": {
+          "range": 0,
+          "matcher": 0,
+          "wholeSymbol": 1
+        },
+        "stages": {
+          "wholeSymbol": 1,
+          "match": 0,
+          "pick": 0
+        },
+        "matcherKinds": {
+          "snippet": 0,
+          "regex": 0
+        },
+        "creates": 1
+      },
+      {
+        "task": "mini-spreadsheet",
+        "side": "tc",
+        "protocol": "edit-dsl",
+        "agentMode": "plan-exec",
+        "runs": 1,
+        "ok": 0,
+        "failed": 1,
+        "successRate": 0,
+        "usageRuns": 1,
+        "tokens": {
+          "in": {
+            "mean": 20885,
+            "total": 20885
+          },
+          "out": {
+            "mean": 22822,
+            "total": 22822
+          },
+          "total": {
+            "mean": 43707,
+            "total": 43707
+          }
+        },
+        "cost": {
+          "mean": 0.016956509999999998,
+          "total": 0.016956509999999998
+        },
+        "cache": {
+          "read": {
+            "mean": 43520,
+            "total": 43520
+          },
+          "hitRate": 0.6757239344771369
+        },
+        "durationMsMean": 72951,
+        "stepsMean": 3,
+        "tokensPerSuccess": {
+          "in": null,
+          "out": null,
+          "total": null
+        },
+        "costPerSuccess": null,
+        "selectors": {
+          "range": 0,
+          "matcher": 0,
+          "wholeSymbol": 0
+        },
+        "stages": {
+          "wholeSymbol": 0,
+          "match": 0,
+          "pick": 0
+        },
+        "matcherKinds": {
+          "snippet": 0,
+          "regex": 0
+        },
+        "creates": 0
+      }
+    ],
+    "bySide": [
+      {
+        "task": null,
+        "side": "tc",
+        "protocol": "edit-dsl",
+        "agentMode": "pinned-repair",
+        "runs": 1,
+        "ok": 0,
+        "failed": 1,
+        "successRate": 0,
+        "usageRuns": 1,
+        "tokens": {
+          "in": {
+            "mean": 19976,
+            "total": 19976
+          },
+          "out": {
+            "mean": 6477,
+            "total": 6477
+          },
+          "total": {
+            "mean": 26453,
+            "total": 26453
+          }
+        },
+        "cost": {
+          "mean": 0.007070376000000001,
+          "total": 0.007070376000000001
+        },
+        "cache": {
+          "read": {
+            "mean": 62592,
+            "total": 62592
+          },
+          "hitRate": 0.7580660788683267
+        },
+        "durationMsMean": 24558,
+        "stepsMean": 8,
+        "tokensPerSuccess": {
+          "in": null,
+          "out": null,
+          "total": null
+        },
+        "costPerSuccess": null,
+        "selectors": {
+          "range": 0,
+          "matcher": 0,
+          "wholeSymbol": 1
+        },
+        "stages": {
+          "wholeSymbol": 1,
+          "match": 0,
+          "pick": 0
+        },
+        "matcherKinds": {
+          "snippet": 0,
+          "regex": 0
+        },
+        "creates": 1
+      },
+      {
+        "task": null,
+        "side": "tc",
+        "protocol": "edit-dsl",
+        "agentMode": "plan-exec",
+        "runs": 1,
+        "ok": 0,
+        "failed": 1,
+        "successRate": 0,
+        "usageRuns": 1,
+        "tokens": {
+          "in": {
+            "mean": 20885,
+            "total": 20885
+          },
+          "out": {
+            "mean": 22822,
+            "total": 22822
+          },
+          "total": {
+            "mean": 43707,
+            "total": 43707
+          }
+        },
+        "cost": {
+          "mean": 0.016956509999999998,
+          "total": 0.016956509999999998
+        },
+        "cache": {
+          "read": {
+            "mean": 43520,
+            "total": 43520
+          },
+          "hitRate": 0.6757239344771369
+        },
+        "durationMsMean": 72951,
+        "stepsMean": 3,
+        "tokensPerSuccess": {
+          "in": null,
+          "out": null,
+          "total": null
+        },
+        "costPerSuccess": null,
+        "selectors": {
+          "range": 0,
+          "matcher": 0,
+          "wholeSymbol": 0
+        },
+        "stages": {
+          "wholeSymbol": 0,
+          "match": 0,
+          "pick": 0
+        },
+        "matcherKinds": {
+          "snippet": 0,
+          "regex": 0
+        },
+        "creates": 0
+      }
+    ],
+    "overall": [
+      {
+        "task": null,
+        "side": "tc",
+        "protocol": "edit-dsl",
+        "agentMode": "pinned-repair",
+        "runs": 1,
+        "ok": 0,
+        "failed": 1,
+        "successRate": 0,
+        "usageRuns": 1,
+        "tokens": {
+          "in": {
+            "mean": 19976,
+            "total": 19976
+          },
+          "out": {
+            "mean": 6477,
+            "total": 6477
+          },
+          "total": {
+            "mean": 26453,
+            "total": 26453
+          }
+        },
+        "cost": {
+          "mean": 0.007070376000000001,
+          "total": 0.007070376000000001
+        },
+        "cache": {
+          "read": {
+            "mean": 62592,
+            "total": 62592
+          },
+          "hitRate": 0.7580660788683267
+        },
+        "durationMsMean": 24558,
+        "stepsMean": 8,
+        "tokensPerSuccess": {
+          "in": null,
+          "out": null,
+          "total": null
+        },
+        "costPerSuccess": null,
+        "selectors": {
+          "range": 0,
+          "matcher": 0,
+          "wholeSymbol": 1
+        },
+        "stages": {
+          "wholeSymbol": 1,
+          "match": 0,
+          "pick": 0
+        },
+        "matcherKinds": {
+          "snippet": 0,
+          "regex": 0
+        },
+        "creates": 1
+      },
+      {
+        "task": null,
+        "side": "tc",
+        "protocol": "edit-dsl",
+        "agentMode": "plan-exec",
+        "runs": 1,
+        "ok": 0,
+        "failed": 1,
+        "successRate": 0,
+        "usageRuns": 1,
+        "tokens": {
+          "in": {
+            "mean": 20885,
+            "total": 20885
+          },
+          "out": {
+            "mean": 22822,
+            "total": 22822
+          },
+          "total": {
+            "mean": 43707,
+            "total": 43707
+          }
+        },
+        "cost": {
+          "mean": 0.016956509999999998,
+          "total": 0.016956509999999998
+        },
+        "cache": {
+          "read": {
+            "mean": 43520,
+            "total": 43520
+          },
+          "hitRate": 0.6757239344771369
+        },
+        "durationMsMean": 72951,
+        "stepsMean": 3,
+        "tokensPerSuccess": {
+          "in": null,
+          "out": null,
+          "total": null
+        },
+        "costPerSuccess": null,
+        "selectors": {
+          "range": 0,
+          "matcher": 0,
+          "wholeSymbol": 0
+        },
+        "stages": {
+          "wholeSymbol": 0,
+          "match": 0,
+          "pick": 0
+        },
+        "matcherKinds": {
+          "snippet": 0,
+          "regex": 0
+        },
+        "creates": 0
+      }
+    ]
+  },
+  "provenance": null,
+  "provenanceByAgentMode": {
+    "pinned-repair": {
+      "inputs": {
+        "model": "7d963f65d1ede1bd9416a5f55575efe0d202e0a00519ef04e47dae20c3180445",
+        "taskIssue": "3cdad7a3f3e1e716e36f6f5f87a27808f6676ed5743b1a9147c181c616a87dfb",
+        "fixture": "2544858a4476b890d7c13a7455f844f3719d3a2f48a06b783d193f5e1289b3ba",
+        "systemPrompt": "7220c8fa4442c378dfc6bbdda5f85f85eed6ca596922b46dcf719d79aab95268",
+        "loopConfig": "336c31804cccbc065acd94caefdaffc257b89e93667f9e6df76471ec0cbc830d",
+        "pricing": "aab6f45ac055bdc46329be2c46279a8ce322bfa62c0c61f0ef177d8b67766560"
+      },
+      "inputHash": "6096b7aba81689eb4d3509e8bb7d5c31fff03b86d500d0589af640aa826735bc",
+      "computedAt": "2026-10-25T12:11:55.901Z"
+    },
+    "plan-exec": {
+      "inputs": {
+        "model": "7d963f65d1ede1bd9416a5f55575efe0d202e0a00519ef04e47dae20c3180445",
+        "taskIssue": "3cdad7a3f3e1e716e36f6f5f87a27808f6676ed5743b1a9147c181c616a87dfb",
+        "fixture": "2544858a4476b890d7c13a7455f844f3719d3a2f48a06b783d193f5e1289b3ba",
+        "systemPrompt": "9ac9db049f518e12c243398eec085db43d55ff74c3f710d2e28d353e783a1d4a",
+        "loopConfig": "42315f338dcd6161b0299ba975a35498bb602701937f2221256ff7b1f10ad1ab",
+        "pricing": "aab6f45ac055bdc46329be2c46279a8ce322bfa62c0c61f0ef177d8b67766560"
+      },
+      "inputHash": "f4688fde128bf1bc814c7cf0e5ee57a9c2bfccd15b3d910577e99422951e636b",
+      "computedAt": "2026-10-25T12:11:55.901Z"
+    }
+  },
+  "warmups": [
+    {
+      "agentMode": "pinned-repair",
+      "kind": "edit",
+      "promptChars": 6667,
+      "tokens": {
+        "input": null,
+        "output": null,
+        "cacheRead": null,
+        "cacheWrite": null,
+        "reasoning": null,
+        "total": null
+      },
+      "usageAvailable": false,
+      "durationMs": 480,
+      "error": null
+    },
+    {
+      "agentMode": "plan-exec",
+      "kind": "planning",
+      "promptChars": 8903,
+      "tokens": {
+        "input": null,
+        "output": null,
+        "cacheRead": null,
+        "cacheWrite": null,
+        "reasoning": null,
+        "total": null
+      },
+      "usageAvailable": false,
+      "durationMs": 533,
+      "error": null
+    },
+    {
+      "agentMode": "plan-exec",
+      "kind": "execution",
+      "promptChars": 2816,
+      "tokens": {
+        "input": null,
+        "output": null,
+        "cacheRead": null,
+        "cacheWrite": null,
+        "reasoning": null,
+        "total": null
+      },
+      "usageAvailable": false,
+      "durationMs": 715,
+      "error": null
+    }
+  ],
+  "cacheWarning": null
+}
