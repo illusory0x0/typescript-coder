@@ -19,6 +19,7 @@ import type { Selection } from "./selection";
 import { Binder } from "./utility";
 import type { IndexEntry, Locator, SymbolSpace } from "./utility";
 import { duplicateDeclarations } from "./utility";
+import type { EditRange } from "./loop";
 
 /** #110 `MatcherKind`, mirrored to avoid a value-level import cycle with loop. */
 export type EditDslMatcherKind = "snippet" | "regex";
@@ -88,6 +89,8 @@ export interface EditDslViewer {
   locator: Locator;
   /** The clause's `resolve <value|type|namespace>` disambiguator, or `null`. */
   space: SymbolSpace | null;
+  /** A viewer-only file-absolute slice, or `null` for the whole declaration. */
+  within: EditRange[] | null;
   stage: SelectionStage;
   /** The whole resolved declaration's source lines, for the numbered block. */
   declaration: OccurrenceLine[];
@@ -636,13 +639,35 @@ export function resolveEditDslReply(
         });
         continue;
       }
+      const declaration = occurrenceLines(source, address.entry.node.start, address.entry.node.end);
+      const within = selection.within ?? null;
+      if (within !== null) {
+        const first = declaration[0]?.line ?? 0;
+        const last = declaration[declaration.length - 1]?.line ?? 0;
+        const invalid = within.find(
+          (range) => range.line < first || range.endLine > last || range.line > range.endLine,
+        );
+        if (invalid !== undefined) {
+          failures.push({
+            index,
+            path,
+            locator: selection.locator,
+            stage: "range",
+            cause: "range-invalid",
+            diagnostics: `stage: range\nthe viewer slice ${invalid.line}-${invalid.endLine} is outside the declaration at ${path}:${first}-${last}; use a range inside the declaration`,
+            undeclaredName: null,
+          });
+          continue;
+        }
+      }
       viewers.push({
         index,
         path,
         locator: selection.locator,
         space: selection.space,
+        within,
         stage: viewed.stage,
-        declaration: occurrenceLines(source, address.entry.node.start, address.entry.node.end),
+        declaration,
         duplicates: duplicateDeclarations(address.entry.symbol).map((node) =>
           occurrenceLines(source, node.start, node.end),
         ),
@@ -777,15 +802,30 @@ export function markerGutter(marked: boolean): string {
   return marked ? "⁉️  " : "    ";
 }
 
-/** Head/tail source lines kept when a prompt block folds. */
+/** Head/tail source lines kept when a flat prompt block folds. */
 export const FOLD_HEAD_LINES = 3;
 export const FOLD_TAIL_LINES = 3;
+/** Minimum hidden body size for an indentation fold to be worth a marker. */
+export const FOLD_MIN_HIDDEN_LINES = 4;
+
+/** One numbered source line shared by viewers and file reads. */
+export interface SourceLine {
+  line: number;
+  text: string;
+}
+
+/** A rendered source line; `marker` lines carry a fold marker instead of code. */
+export interface FoldedSourceLine extends SourceLine {
+  marker: boolean;
+}
+
+export type FoldMode = "declaration" | "file";
 
 /**
  * The single line that replaces a folded source range. It names the hidden
- * file-absolute range, how many of the block's lines that hides, and the exact
- * command that expands exactly that range, so a repeated whole-file `read`
- * cannot look like the only way to see more.
+ * file-absolute range, how many lines that hides, and the exact command that
+ * expands exactly that range, so a repeated whole-file `read` cannot look like
+ * the only way to see more.
  */
 export function foldMarker(
   startLine: number,
@@ -793,14 +833,195 @@ export function foldMarker(
   totalLines?: number,
   path?: string,
 ): string {
-  // The hidden count is the block's line count minus the six kept lines, so a
-  // `read within` with gaps between selecters still reports the true number.
-  const hidden =
-    totalLines === undefined
-      ? endLine - startLine + 1
-      : Math.max(0, totalLines - FOLD_HEAD_LINES - FOLD_TAIL_LINES);
+  const hidden = endLine - startLine + 1;
   const counts = totalLines === undefined ? "" : ` (${hidden} of ${totalLines} lines hidden)`;
-  return `... // content folded, source range: ${startLine}-${endLine}${counts}; expand with read ${path ?? "<path>"} within ${startLine}-${endLine} end`;
+  const target = path ?? "<path>";
+  return `... // content folded, ${target}: ${startLine}-${endLine}L${counts}; expand with read ${target} within ${startLine}-${endLine} end`;
+}
+
+function indentationOf(text: string): number {
+  let width = 0;
+  for (const char of text) {
+    if (char === " ") {
+      width += 1;
+    } else if (char === "\t") {
+      width += 4 - (width % 4);
+    } else {
+      break;
+    }
+  }
+  return width;
+}
+
+function nextNonBlank(lines: readonly SourceLine[], start: number): number | null {
+  for (let index = start; index < lines.length; index += 1) {
+    if ((lines[index]?.text ?? "").trim() !== "") {
+      return index;
+    }
+  }
+  return null;
+}
+
+interface FoldCandidate {
+  /** Index of the first hidden line. */
+  start: number;
+  /** Index of the last hidden line. */
+  end: number;
+}
+
+/**
+ * Fold source by indentation. A declaration view keeps the declaration body and
+ * folds large nested blocks; a file view folds large top-level blocks into
+ * outline entries. Flat blocks with no usable nested structure fall back to the
+ * three-head/three-tail view so a long function still gets a compact preview.
+ *
+ * The fold is deliberately read-only and line-number preserving: the marker
+ * names the file-absolute hidden range, and `read <path> within <range> end`
+ * returns exactly those lines unfolded.
+ */
+export function foldSourceLines(
+  lines: readonly SourceLine[],
+  options: {
+    mode: FoldMode;
+    path: string;
+    marked?: ReadonlySet<number>;
+  },
+): FoldedSourceLine[] {
+  const plain = lines.map((line) => ({ ...line, marker: false }));
+  if (lines.length <= FOLD_HEAD_LINES + FOLD_TAIL_LINES) {
+    return plain;
+  }
+  const marked = options.marked ?? new Set<number>();
+  const baseIndent = (() => {
+    const first = nextNonBlank(lines, 0);
+    return first === null ? 0 : indentationOf(lines[first]?.text ?? "");
+  })();
+
+  const candidates: FoldCandidate[] = [];
+  for (let index = 0; index < lines.length; index += 1) {
+    const current = lines[index];
+    if (current === undefined || current.text.trim() === "") {
+      continue;
+    }
+    const text = current.text.trimEnd();
+    if (/^[}\])]/.test(text) || !/\{\s*$/.test(text)) {
+      continue;
+    }
+    const indent = indentationOf(current.text);
+    if (options.mode === "declaration" ? indent <= baseIndent : indent !== baseIndent) {
+      continue;
+    }
+    const next = nextNonBlank(lines, index + 1);
+    if (next === null || indentationOf(lines[next]?.text ?? "") <= indent) {
+      continue;
+    }
+    let end = next;
+    for (let cursor = next; cursor < lines.length; cursor += 1) {
+      const line = lines[cursor];
+      if (line === undefined || line.text.trim() === "") {
+        continue;
+      }
+      if (indentationOf(line.text) <= indent) {
+        break;
+      }
+      end = cursor;
+    }
+    if (end - next + 1 < FOLD_MIN_HIDDEN_LINES) {
+      continue;
+    }
+    let containsMarked = false;
+    for (let cursor = next; cursor <= end; cursor += 1) {
+      const line = lines[cursor];
+      if (line !== undefined && marked.has(line.line)) {
+        containsMarked = true;
+        break;
+      }
+    }
+    if (containsMarked) {
+      continue;
+    }
+    candidates.push({ start: next, end });
+  }
+
+  // Prefer outer folds when two candidates overlap; an outer marker already
+  // expands to the hidden inner lines via `read within`.
+  candidates.sort((left, right) => left.start - right.start || right.end - left.end);
+  const selected: FoldCandidate[] = [];
+  for (const candidate of candidates) {
+    const previous = selected[selected.length - 1];
+    if (previous === undefined || candidate.start > previous.end) {
+      selected.push(candidate);
+    }
+  }
+
+  if (selected.length === 0) {
+    const hiddenStart = FOLD_HEAD_LINES;
+    const hiddenEnd = lines.length - FOLD_TAIL_LINES - 1;
+    if (hiddenEnd < hiddenStart) {
+      return plain;
+    }
+    let hidesMarked = false;
+    for (let index = hiddenStart; index <= hiddenEnd; index += 1) {
+      const line = lines[index];
+      if (line !== undefined && marked.has(line.line)) {
+        hidesMarked = true;
+        break;
+      }
+    }
+    if (hidesMarked) {
+      return plain;
+    }
+    const startLine = lines[hiddenStart]?.line ?? 0;
+    const endLine = lines[hiddenEnd]?.line ?? startLine;
+    return [
+      ...plain.slice(0, FOLD_HEAD_LINES),
+      {
+        line: startLine,
+        text: foldMarker(startLine, endLine, lines.length, options.path),
+        marker: true,
+      },
+      ...plain.slice(-FOLD_TAIL_LINES),
+    ];
+  }
+
+  const rendered: FoldedSourceLine[] = [];
+  let cursor = 0;
+  for (const candidate of selected) {
+    for (let index = cursor; index < candidate.start; index += 1) {
+      const line = plain[index];
+      if (line !== undefined) {
+        rendered.push(line);
+      }
+    }
+    const startLine = lines[candidate.start]?.line ?? 0;
+    const endLine = lines[candidate.end]?.line ?? startLine;
+    rendered.push({
+      line: startLine,
+      text: foldMarker(startLine, endLine, lines.length, options.path),
+      marker: true,
+    });
+    cursor = candidate.end + 1;
+  }
+  for (let index = cursor; index < plain.length; index += 1) {
+    const line = plain[index];
+    if (line !== undefined) {
+      rendered.push(line);
+    }
+  }
+  return rendered;
+}
+
+function sliceSourceLines(
+  lines: readonly SourceLine[],
+  ranges: readonly EditRange[],
+): SourceLine[] {
+  const wanted = new Set<number>();
+  for (const range of ranges) {
+    for (let line = range.line; line <= range.endLine; line += 1) {
+      wanted.add(line);
+    }
+  }
+  return lines.filter((line) => wanted.has(line.line));
 }
 
 /**
@@ -828,7 +1049,10 @@ export function markedViewerLines(viewer: EditDslViewer): Set<number> {
  * turn that resolved at least one viewer but wrote nothing carries this text so
  * the model can add `pick` or a `replace`.
  */
-export function renderViewerFeedback(viewers: readonly EditDslViewer[]): string {
+export function renderViewerFeedback(
+  viewers: readonly EditDslViewer[],
+  options: { footer?: string | null } = {},
+): string {
   const lines = ["Located occurrences (viewer clauses write nothing):"];
   for (const viewer of viewers) {
     const { kind, name } = viewer.locator;
@@ -836,6 +1060,9 @@ export function renderViewerFeedback(viewers: readonly EditDslViewer[]): string 
       kind === "" ? `select ${name} in ${viewer.path}` : `select ${kind} ${name} in ${viewer.path}`;
     if (viewer.space !== null) {
       head += ` resolve ${viewer.space}`;
+    }
+    if (viewer.within !== null) {
+      head += ` within ${viewer.within.map((range) => `${range.line}-${range.endLine}`).join(",")}`;
     }
     lines.push("", head);
     if (viewer.occurrences.length === 0) {
@@ -851,7 +1078,10 @@ export function renderViewerFeedback(viewers: readonly EditDslViewer[]): string 
     const marked = markedViewerLines(viewer);
     const blocks = viewer.duplicates.length > 0 ? viewer.duplicates : [viewer.declaration];
     const width = String(Math.max(...blocks.map((block) => block.at(-1)?.line ?? 0))).length;
-    const renderBlockLine = (line: OccurrenceLine): string => {
+    const renderBlockLine = (line: FoldedSourceLine): string => {
+      if (line.marker) {
+        return `${markerGutter(false)}${" ".repeat(width)} | ${line.text}`;
+      }
       const gutter = markerGutter(marked.has(line.line));
       return `${gutter}${String(line.line).padStart(width)} | ${line.text}`;
     };
@@ -863,20 +1093,18 @@ export function renderViewerFeedback(viewers: readonly EditDslViewer[]): string 
       if (blockIndex > 0) {
         lines.push(`  duplicate declaration at ${viewer.path}:${block[0]?.line ?? 0}`);
       }
-      if (block.length > FOLD_HEAD_LINES + FOLD_TAIL_LINES) {
-        for (const line of block.slice(0, FOLD_HEAD_LINES)) {
-          lines.push(renderBlockLine(line));
-        }
-        const hiddenStart = block[FOLD_HEAD_LINES]?.line ?? 0;
-        const hiddenEnd = block[block.length - FOLD_TAIL_LINES - 1]?.line ?? hiddenStart;
-        lines.push(
-          `${markerGutter(false)}${" ".repeat(width)} | ${foldMarker(hiddenStart, hiddenEnd, block.length, viewer.path)}`,
-        );
-        for (const line of block.slice(-FOLD_TAIL_LINES)) {
-          lines.push(renderBlockLine(line));
-        }
+      const rendered =
+        viewer.within === null
+          ? foldSourceLines(block, {
+              mode: "declaration",
+              path: viewer.path,
+              marked,
+            })
+          : sliceSourceLines(block, viewer.within).map((line) => ({ ...line, marker: false }));
+      if (rendered.length === 0) {
+        lines.push("  (no lines in this slice)");
       } else {
-        for (const line of block) {
+        for (const line of rendered) {
           lines.push(renderBlockLine(line));
         }
       }
@@ -885,6 +1113,12 @@ export function renderViewerFeedback(viewers: readonly EditDslViewer[]): string 
       lines.push("", viewer.duplicateNote);
     }
   }
-  lines.push("", "Reply with an edit clause: add `replace` (use `pick` only with `replace`).");
+  if (options.footer !== null) {
+    lines.push(
+      "",
+      options.footer ??
+        "Reply with an edit clause: add `replace` (use `pick` only with `replace`).",
+    );
+  }
   return lines.join("\n");
 }

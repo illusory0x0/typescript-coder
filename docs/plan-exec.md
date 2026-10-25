@@ -205,6 +205,13 @@ Planning, review, and execution are separate turns:
 Only one new Task is planned per planning turn. The planner may plan a repair
 Task or the first Task of a new Stage, but not a whole future Task list.
 
+Before a Plan/patch, the planner may make one read-only edit-protocol viewer
+request: `select ... end` (optionally with `within <selecters>`), or
+`read ... end` (optionally with `within`). A viewer writes nothing; the harness
+returns the indentation-folded source or exact slice in a `# Source view`
+message, then asks for the Plan/patch again. Planner viewer requests are not
+Plan records and do not create, edit, or delete files.
+
 A Stage is **closed** when all of its Tasks are terminal (`passed` or `failed`).
 The planner may append the next Stage only when the current Stage is closed. A
 new Task may still be added to a non-fully-passed Stage as a repair.
@@ -353,29 +360,31 @@ end
 
 This is the only current Stage and current Task. No future task exists yet.
 
-A cohesive module can use one whole-file edit instead of several declaration
-edits:
+A greenfield module starts with a compiling skeleton, not one complete-file
+write:
 
 ```text
 plan "01-main"
 goal: Implement the JSON parser module.
 
 stage "02-current" plan "01-main"
-goal: Implement the parser.
+goal: Build the parser in verifiable layers.
 end
 
-task "03-parser" stage "02-current" verify test
-instruction: Implement src/json.ts so the parser tests pass.
+task "03-scaffold" stage "02-current" verify tsc
+instruction: Create a compiling skeleton for src/json.ts.
 end
 
-edit "04-file" task "03-parser" write src/json.ts
-instruction: Write the complete parser module.
+edit "04-scaffold" task "03-scaffold" write src/json.ts
+instruction: Write only the exported types, signatures, and stub bodies; do not implement the behavior yet.
 end
 ```
 
 The edit loc is `file "src/json.ts"`; the executor replies with
 `write src/json.ts with <fence>`; the sentinel close terminates the statement
-and no `end` follows.
+and no `end` follows. Later patches fill the declarations and end with a
+`verify test` Task. A whole-file write remains valid for an atomic file-level
+rewrite, but it is not the default repair path.
 
 ### 3.2 Next Task patch
 
@@ -980,9 +989,10 @@ task/edit ids.
 - **Rename is same-file.** It inherits the existing renamer's scope (declaration
   plus same-file references). Cross-file renames need caller edits first, or
   escalation.
-- **No planning tools.** The planner sees the signature index and spec files,
-  not declaration bodies. A requirement that needs inspection must be expressed
-  as an edit the executor can inspect (a viewer/read is available there).
+- **One bounded planner viewer.** The planner sees the signature index and spec
+  files, and may make one read-only `select`/`read` viewer request per planning
+  or review turn. It does not have write tools or arbitrary command execution.
+  A viewer slice returns code; it never changes the Plan or the workspace.
 - **Passed tasks are immutable.** A failed task reopens for repair; a passed
   task cannot be extended, so later work goes in a new Stage (a fully passed
   Stage cannot accept a new Task).

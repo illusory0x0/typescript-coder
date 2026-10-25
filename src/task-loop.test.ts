@@ -265,6 +265,77 @@ describe("runTaskLoop", () => {
     );
   });
 
+  test("a planner can inspect a declaration slice before planning", async () => {
+    const dir = project();
+    const plan = planText(
+      [
+        stageSpec(1, [
+          taskSpec(1, {
+            verify: "test",
+            edits: [
+              editSpec(1001, {
+                instruction: "Change answer so it returns 2.",
+              }),
+            ],
+          }),
+        ]),
+      ],
+      true,
+    );
+    const provider = new ScriptedProvider([
+      "select answer in src/helper.ts resolve value\nwithin 2-2\nend",
+      plan,
+      GOOD_EDIT,
+    ]);
+    const result = await runTaskLoop(baseOptions(dir, provider));
+    expect(result.ok).toBe(true);
+    const viewPrompt = provider.calls[1]?.at(-1)?.content ?? "";
+    expect(viewPrompt).toContain("# Source view");
+    expect(viewPrompt).toContain("2 |   return 1;");
+    expect(viewPrompt).not.toContain("1 | export function answer");
+    expect(viewPrompt).toContain("# Next");
+    expect(viewPrompt).toContain("initial Plan");
+    expect(provider.calls[2]?.at(-1)?.content).toContain("# Content view");
+  }, 30000);
+
+  test("a planner gets at most one viewer per turn", async () => {
+    const dir = project();
+    const plan = planText([stageSpec(1, [taskSpec(1)])], true);
+    const viewer = "select answer in src/helper.ts resolve value\nend";
+    const provider = new ScriptedProvider([viewer, viewer, plan, GOOD_EDIT]);
+    const result = await runTaskLoop(baseOptions(dir, provider));
+    expect(result.ok).toBe(true);
+    expect(provider.calls[2]?.at(-1)?.content).toContain(
+      "Only one viewer request is allowed per planning turn",
+    );
+  }, 30000);
+
+  test("a planner viewer is read-only and a write request is rejected", async () => {
+    const dir = project();
+    const plan = planText([stageSpec(1, [taskSpec(1)])], true);
+    const provider = new ScriptedProvider([
+      [
+        "select answer in src/helper.ts resolve value",
+        "replace with",
+        "<<<TC_EDIT_BEGIN>>>",
+        "export function answer(): number {",
+        "  return 2;",
+        "}",
+        "<<<TC_EDIT_END>>>",
+        "end",
+      ].join("\n"),
+      plan,
+      GOOD_EDIT,
+    ]);
+    const result = await runTaskLoop(baseOptions(dir, provider));
+    expect(result.ok).toBe(true);
+    const viewPrompt = provider.calls[1]?.at(-1)?.content ?? "";
+    expect(viewPrompt).toContain("# Source view");
+    expect(viewPrompt).toContain("read-only");
+    expect(viewPrompt).toContain("replace");
+    expect(provider.calls[2]?.at(-1)?.content).toContain("# Content view");
+  }, 30000);
+
   test("a task gate waits for every edit in the task", async () => {
     const dir = project();
     // The first edit makes the file temporarily type-broken; the task gate

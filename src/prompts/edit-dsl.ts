@@ -42,7 +42,7 @@ export const EDIT_DSL_MOTIVATION =
 // The one detailed fold explanation (system prompt). The read/command prompts
 // carry only the short hint below; the edit instruction teaches the workflow.
 export const EDIT_DSL_FOLD_DETAIL =
-  "A source block longer than 6 lines keeps only its first 3 and last 3 lines. The folded line is `... // content folded, source range: N-M (H of T lines hidden); expand with read <path> within N-M end`: it names the hidden file-absolute lines, how many of the block's lines are hidden, and the command that expands exactly that range. A whole-file `read` is folded the same way, so repeating it returns the same six lines; a `read within` is the expansion and returns the selected lines unfolded (`within {a-b, c-d}` expands several ranges). When a repair spans several declarations, or repeated localized edits keep introducing new tsc/test errors, use a whole-file `write <path> with <fence>` instead of more local edits.";
+  "A source block longer than 6 lines folds by indentation when it has nested blocks, otherwise it keeps only its first 3 and last 3 lines. The folded line is `... // content folded, <path>: N-ML (H of T lines hidden); expand with read <path> within N-M end`: it names the hidden file-absolute lines, how many of the block's lines are hidden, and the command that expands exactly that range. A whole-file `read` is folded the same way, so repeating it returns the same outline; a `read within` is the expansion and returns the selected lines unfolded (`within {a-b, c-d}` expands several ranges). When a repair spans several declarations, or repeated localized edits keep introducing new tsc/test errors, use a whole-file `write <path> with <fence>` instead of more local edits.";
 
 export const EDIT_DSL_WORKFLOW_SUMMARY =
   "Workflow: pin one target with `select` (or a raw command), inspect it, then edit the smallest span with `match`/`pick`; on a verification failure repair the same declaration; escalate to a whole-file `write` when the repair outgrows one declaration or localized edits keep adding errors; if no operation fits, explore with `read`/`select` viewers first.";
@@ -197,7 +197,8 @@ export function buildEditDslCommandPrompt(
   source: string,
   specFiles: readonly SourceFile[] = [],
 ): string {
-  const body = source === "" ? "(empty file)" : numberLinesFrom(source, 1, null, true, path);
+  const body =
+    source === "" ? "(empty file)" : numberLinesFrom(source, 1, null, true, path, "file");
   const prompt = `${editDslGoal(issue, indexText)}\n# Target file\n\n\`\`\`\n${path}\n\`\`\`\n\n\`\`\`text\n${body}\n\`\`\`\n\n${EDIT_DSL_FOLD_HINT}\n\nReply with the next \`select … end\` clause or file command.\n`;
   return appendEditDslSpecFiles(prompt, specFiles);
 }
@@ -343,9 +344,9 @@ export const EDIT_DSL_EXAMPLE_FORMS: EditDslExampleForm[] = [
   },
   {
     label:
-      "7. Folded view: a large file shows only six lines; the marker names the exact range, and `read … within …` returns those lines unfolded.",
+      "7. Folded view: a large block becomes an indentation outline or a six-line fallback; the marker names the exact range, and `read … within …` returns those lines unfolded.",
     raw: [
-      "... // content folded, source range: 4-335 (332 of 338 lines hidden); expand with read <path> within 4-335 end",
+      "... // content folded, src/lisp.ts: 4-335L (332 of 338 lines hidden); expand with read src/lisp.ts within 4-335 end",
       "",
       "read src/lisp.ts within 4-335 end",
     ].join("\n"),

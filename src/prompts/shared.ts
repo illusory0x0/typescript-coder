@@ -1,4 +1,5 @@
-import { FOLD_HEAD_LINES, FOLD_TAIL_LINES, foldMarker, markerGutter } from "../edit-dsl";
+import { foldSourceLines, markerGutter } from "../edit-dsl";
+import type { FoldMode } from "../edit-dsl";
 import type { SourceFile } from "../utility";
 
 export const SPEC_FILE_LIMIT = 8000;
@@ -123,40 +124,33 @@ export function numberLinesFrom(
   marked: ReadonlySet<number> | null = null,
   fold = false,
   foldPath?: string,
+  foldMode: FoldMode = "declaration",
 ): string {
   const lines = splitSourceLines(source);
   if (lines.length === 0) {
     return "";
   }
   const width = String(startLine + lines.length - 1).length;
-  const renderLine = (line: string, index: number): string => {
-    const lineNumber = startLine + index;
-    const gutter = marked === null ? "" : markerGutter(marked.has(lineNumber));
-    return `${gutter}${String(lineNumber).padStart(width, " ")} | ${line}`;
+  const sourceLines = lines.map((text, index) => ({ line: startLine + index, text }));
+  const renderLine = (line: { line: number; text: string }): string => {
+    const gutter = marked === null ? "" : markerGutter(marked.has(line.line));
+    return `${gutter}${String(line.line).padStart(width, " ")} | ${line.text}`;
   };
-  if (!fold || lines.length <= FOLD_HEAD_LINES + FOLD_TAIL_LINES) {
-    return lines.map(renderLine).join("\n");
+  if (!fold) {
+    return sourceLines.map(renderLine).join("\n");
   }
-  const rendered: string[] = [];
-  for (let index = 0; index < FOLD_HEAD_LINES; index += 1) {
-    const line = lines[index];
-    if (line !== undefined) {
-      rendered.push(renderLine(line, index));
-    }
-  }
-  const hiddenStart = startLine + FOLD_HEAD_LINES;
-  const hiddenEnd = startLine + lines.length - FOLD_TAIL_LINES - 1;
-  const gutter = marked === null ? "" : markerGutter(false);
-  rendered.push(
-    `${gutter}${" ".repeat(width)} | ${foldMarker(hiddenStart, hiddenEnd, lines.length, foldPath)}`,
-  );
-  for (let index = lines.length - FOLD_TAIL_LINES; index < lines.length; index += 1) {
-    const line = lines[index];
-    if (line !== undefined) {
-      rendered.push(renderLine(line, index));
-    }
-  }
-  return rendered.join("\n");
+  const rendered = foldSourceLines(sourceLines, {
+    mode: foldMode,
+    path: foldPath ?? "<path>",
+    marked: marked ?? new Set<number>(),
+  });
+  return rendered
+    .map((line) =>
+      line.marker
+        ? `${marked === null ? "" : markerGutter(false)}${" ".repeat(width)} | ${line.text}`
+        : renderLine(line),
+    )
+    .join("\n");
 }
 
 // Render the declaration range with its FILE-absolute 1-based line numbers.

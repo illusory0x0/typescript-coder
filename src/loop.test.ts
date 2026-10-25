@@ -9118,7 +9118,7 @@ describe("edit-dsl protocol (#111/#119)", () => {
     for (const prompt of [details, modified, command]) {
       expect(prompt).toContain("1 | line 1");
       expect(prompt).toContain("3 | line 3");
-      expect(prompt).toContain("... // content folded, source range: 4-7");
+      expect(prompt).toMatch(/content folded, (src\/a\.ts|<path>): 4-7L/);
       expect(prompt).toContain("8 | line 8");
       expect(prompt).toContain("10 | line 10");
       expect(prompt).not.toContain("4 | line 4");
@@ -9145,7 +9145,7 @@ describe("edit-dsl protocol (#111/#119)", () => {
     });
     expect(prompt).toContain("1 | line 1");
     expect(prompt).toContain("3 | line 3");
-    expect(prompt).toContain("... // content folded, source range: 4-7");
+    expect(prompt).toContain("... // content folded, <path>: 4-7L");
     expect(prompt).toContain("8 | line 8");
     expect(prompt).toContain("10 | line 10");
     expect(prompt).not.toContain("4 | line 4");
@@ -9154,7 +9154,7 @@ describe("edit-dsl protocol (#111/#119)", () => {
   test("edit-dsl prompts teach the fold marker, its expansion, and the write fallback (#25)", () => {
     const source = Array.from({ length: 10 }, (_, index) => `line ${index + 1}`).join("\n");
     const indexText = "select huge in src/a.ts";
-    const marker = "... // content folded, source range: 4-7";
+    const marker = "... // content folded, src/a.ts: 4-7L";
     const retryInput: RetryPromptInput = {
       exchangeNumber: 2,
       maxExchanges: 3,
@@ -9185,7 +9185,7 @@ describe("edit-dsl protocol (#111/#119)", () => {
 
     // The one detailed fold explanation lives in the system prompt.
     expect(system).toContain(
-      "... // content folded, source range: N-M (H of T lines hidden); expand with read <path> within N-M end",
+      "... // content folded, <path>: N-ML (H of T lines hidden); expand with read <path> within N-M end",
     );
     expect(system).toContain("whole-file `read` is folded the same way");
     expect(system).toContain("returns the selected lines unfolded");

@@ -97,7 +97,7 @@ the failing line, column, and a short excerpt so the retry can see exactly
 where the reply stopped. A partial selection is never returned.
 
 ```text
-select [kind] <symbol> in <path> [ resolve (value|type|namespace) ] [ match (<snippet> | /regex/) ] [ [ pick <selecters> ] replace with <fence> | rename <old> to <new> ] end
+select [kind] <symbol> in <path> [ resolve (value|type|namespace) ] [ within <selecters> ] [ match (<snippet> | /regex/) ] [ [ pick <selecters> ] replace with <fence> | rename <old> to <new> ] end
 ```
 
 A select clause is never a file command. A select clause with `replace` or
@@ -114,6 +114,11 @@ A select clause is never a file command. A select clause with `replace` or
   `resolve namespace` filters the address to that TypeScript symbol space; it is
   the disambiguator when the same name is declared more than once. Omitted, any
   space is accepted; the JSON payload path has no space form.
+- **`within`**: optional viewer-only slice, after `resolve`. It uses the same
+  1-based inclusive file-absolute ranges as `read ... within`. The viewer returns
+  exactly those lines from the declaration, unfolded. It cannot be combined with
+  `match`, `pick`, `replace`, or `rename`; editors use `pick` for a narrowed
+  rewrite.
 - **`match`**: exactly one of two locators.
   - a `` `snippet` `` in backticks, where only `` \` `` and `\\` are escapes and
     every other backslash is literal;
@@ -204,6 +209,7 @@ file-command = 'create', path, 'end'
 
 select-clause = 'select', [ kind ], symbol, 'in', path,
                 [ 'resolve', space ],
+                [ 'within', selecters ],
                 [ 'match', ( snippet | regex ) ],
                 [ replacer | renamer ],
                 'end' ;
@@ -374,6 +380,14 @@ return input.trim();
 end
 ```
 
+A viewer slice returns only the selected declaration lines:
+
+```text
+select function toNumber in src/workbook.ts
+within 34-60
+end
+```
+
 A rename uses the same clause shape:
 
 ```text
@@ -495,24 +509,31 @@ These guards run before any gate:
 
 A select clause with no `replace` writes nothing and reports the declaration as
 the next prompt's `# details` block: the source is numbered with its
-file-absolute lines. Source blocks longer than six lines keep the first three and
-last three lines; the middle is replaced with
-`... // content folded, source range: <first>-<last> (<hidden> of <total> lines hidden); expand with read <path> within <first>-<last> end`,
-naming the hidden file-absolute lines, how many of the block's lines they hide,
+file-absolute lines. A declaration or file block is folded by indentation when
+it has nested blocks: headers, closing lines, and the first level of body lines
+stay visible, while long nested bodies become a marker. A flat block with no
+usable indentation structure keeps the three-head/three-tail fallback. The marker
+is:
+
+```text
+... // content folded, <path>: <first>-<last>L (<hidden> of <total> lines hidden); expand with read <path> within <first>-<last> end
+```
+
+It names the hidden file-absolute range, how many of the block's lines it hides,
 and the command that expands exactly that range. The same fold applies to viewer
 feedback, command-pinned files, and the `# modified text` confirmation; a
 whole-file `read` is folded the same way. A `read within` is the expansion and
 returns its selected lines unfolded, so the marker's command shows exactly the
-hidden range. A `match` viewer
-reports its candidate positions; the
-declaration block itself may be unmarked in this select-first pass. A bare
-viewer (no `match`) renders the whole declaration once — the same
-`str_search`-like top-level default as the editor path. Where an editor treats
-ambiguity as failure, a viewer treats it as **information**: a `match` viewer
-returns all occurrences so the model can see the candidates, then add `replace`
-(optionally with a `pick` to narrow it) or lengthen the snippet. A `pick`
-requires `replace` and is not a viewer form. A malformed matcher still fails
-with its typed cause.
+hidden range. A `select ... within <first>-<last> end` is the declaration-level
+equivalent: it returns exactly the selected lines and does not fold them. A
+`match` viewer reports its candidate positions; the declaration block itself may
+be unmarked in this select-first pass. A bare viewer (no `match`) renders the
+whole declaration once — the same `str_search`-like top-level default as the
+editor path. Where an editor treats ambiguity as failure, a viewer treats it as
+**information**: a `match` viewer returns all occurrences so the model can see
+the candidates, then add `replace` (optionally with a `pick` to narrow it) or
+lengthen the snippet. A `pick` requires `replace` and is not a viewer form. A
+malformed matcher still fails with its typed cause.
 
 A locate turn is recorded as a `viewer` row, not an edit failure. A mixed reply
 applies its editor select clauses and carries the viewer results alongside the

@@ -1,10 +1,4 @@
-import {
-  FOLD_HEAD_LINES,
-  FOLD_TAIL_LINES,
-  claimEditDslTarget,
-  foldMarker,
-  resolveEditDslReply,
-} from "./edit-dsl";
+import { claimEditDslTarget, foldSourceLines, resolveEditDslReply } from "./edit-dsl";
 import type {
   EditDslDeps,
   EditDslFailure,
@@ -57,35 +51,26 @@ export function renderReadFeedback(reads: readonly MultiEditorRead[]): string {
     // A whole-file read is the token storm the fold exists for. An explicit
     // `within` range is the expansion command: return it unfolded, otherwise
     // following the fold marker would fold the same lines again.
-    const folded = read.ranges === null && read.lines.length > FOLD_HEAD_LINES + FOLD_TAIL_LINES;
-    const header = folded
-      ? `${read.path} (${label}, ${read.lines.length} lines; showing ${FOLD_HEAD_LINES + FOLD_TAIL_LINES}):`
-      : read.lines.length > FOLD_HEAD_LINES + FOLD_TAIL_LINES
-        ? `${read.path} (${label}, ${read.lines.length} lines):`
+    const rendered =
+      read.ranges === null
+        ? foldSourceLines(read.lines, { mode: "file", path: read.path })
+        : read.lines.map((line) => ({ ...line, marker: false }));
+    const folded = rendered.some((line) => line.marker);
+    const header =
+      read.lines.length > 0
+        ? `${read.path} (${label}, ${read.lines.length} lines${folded ? "; folded" : ""}):`
         : `${read.path} (${label}):`;
     lines.push("", header, "```text");
     if (read.lines.length === 0) {
       lines.push("(empty file)");
     } else {
-      const width = String(read.lines.at(-1)?.line ?? 0).length;
-      const renderLine = (line: MultiEditorLine): string =>
-        `${String(line.line).padStart(width)} | ${line.text}`;
-      if (folded) {
-        for (const line of read.lines.slice(0, FOLD_HEAD_LINES)) {
-          lines.push(renderLine(line));
-        }
-        const hiddenStart = read.lines[FOLD_HEAD_LINES]?.line ?? 0;
-        const hiddenEnd = read.lines[read.lines.length - FOLD_TAIL_LINES - 1]?.line ?? hiddenStart;
+      const width = String(rendered.at(-1)?.line ?? 0).length;
+      for (const line of rendered) {
         lines.push(
-          `${" ".repeat(width)} | ${foldMarker(hiddenStart, hiddenEnd, read.lines.length, read.path)}`,
+          line.marker
+            ? `${" ".repeat(width)} | ${line.text}`
+            : `${String(line.line).padStart(width)} | ${line.text}`,
         );
-        for (const line of read.lines.slice(-FOLD_TAIL_LINES)) {
-          lines.push(renderLine(line));
-        }
-      } else {
-        for (const line of read.lines) {
-          lines.push(renderLine(line));
-        }
       }
     }
     lines.push("```");

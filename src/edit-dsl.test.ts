@@ -835,10 +835,10 @@ describe("resolveEditDslReply (#111)", () => {
 
   test("the fold marker stays self-describing with or without a total", () => {
     expect(foldMarker(4, 7)).toBe(
-      "... // content folded, source range: 4-7; expand with read <path> within 4-7 end",
+      "... // content folded, <path>: 4-7L; expand with read <path> within 4-7 end",
     );
     expect(foldMarker(4, 7, 10, "src/a.ts")).toBe(
-      "... // content folded, source range: 4-7 (4 of 10 lines hidden); expand with read src/a.ts within 4-7 end",
+      "... // content folded, src/a.ts: 4-7L (4 of 10 lines hidden); expand with read src/a.ts within 4-7 end",
     );
   });
 
@@ -861,12 +861,64 @@ describe("resolveEditDslReply (#111)", () => {
     const feedback = renderViewerFeedback(result.viewers);
     expect(feedback).toContain("1 | export function huge(): number {");
     expect(feedback).toContain("3 |   const b = 2;");
-    expect(feedback).toContain("... // content folded, source range: 4-8");
+    expect(feedback).toContain("... // content folded, a.ts: 4-8L");
     expect(feedback).toContain("(5 of 11 lines hidden)");
     expect(feedback).toContain("expand with read a.ts within 4-8 end");
     expect(feedback).toContain("9 |   const h = 8;");
     expect(feedback).toContain("11 | }");
     expect(feedback).not.toContain("4 |   const c = 3;");
+  });
+
+  test("an indented viewer outline folds a nested block", () => {
+    const source = [
+      "export function outer(): number {",
+      "  const a = 1;",
+      "  if (a > 0) {",
+      "    const b = 2;",
+      "    const c = 3;",
+      "    const d = 4;",
+      "    return b + c + d;",
+      "  }",
+      "  return a;",
+      "}",
+    ].join("\n");
+    const selections = parseSelection("select function outer in a.ts end");
+    const result = resolveEditDslReply(selections, deps(source));
+    const feedback = renderViewerFeedback(result.viewers);
+    expect(feedback).toContain("3 |   if (a > 0) {");
+    expect(feedback).toContain("... // content folded, a.ts: 4-7L");
+    expect(feedback).toContain("8 |   }");
+    expect(feedback).toContain("9 |   return a;");
+    expect(feedback).not.toContain("4 |     const b = 2;");
+  });
+
+  test("a viewer within slice returns exact lines unfolded", () => {
+    const source = [
+      "export function outer(): number {",
+      "  const a = 1;",
+      "  if (a > 0) {",
+      "    const b = 2;",
+      "    const c = 3;",
+      "    return b + c;",
+      "  }",
+      "  return a;",
+      "}",
+    ].join("\n");
+    const selections = parseSelection("select function outer in a.ts within 4-5 end");
+    const result = resolveEditDslReply(selections, deps(source));
+    const feedback = renderViewerFeedback(result.viewers);
+    expect(feedback).toContain("4 |     const b = 2;");
+    expect(feedback).toContain("5 |     const c = 3;");
+    expect(feedback).not.toContain("content folded");
+    expect(feedback).not.toContain("6 |     return b + c;");
+  });
+
+  test("a viewer slice outside the declaration follows the range stage", () => {
+    const selections = parseSelection("select function answer in a.ts within 1-99 end");
+    const result = resolveEditDslReply(selections, deps(ONCE.replace(/once/g, "answer")));
+    expect(result.viewers).toEqual([]);
+    expect(result.failures[0]?.stage).toBe("range");
+    expect(result.failures[0]?.diagnostics).toContain("outside the declaration");
   });
 
   test("a viewer with no occurrences keeps the empty marker and skips the block", () => {

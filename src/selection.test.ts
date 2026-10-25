@@ -107,6 +107,26 @@ describe("parseSelection", () => {
     expect(first("select answer in main.ts end").space).toBeNull();
   });
 
+  test("parses a viewer slice with within", () => {
+    const selection = first("select function answer in main.ts within 4-12 end");
+    expect(selection.locator).toEqual({
+      path: "main.ts",
+      name: "answer",
+      kind: "function",
+    });
+    expect(selection.within).toEqual([
+      { line: 4, column: 1, endLine: 12, endColumn: END_OF_LINE_COLUMN },
+    ]);
+    expect(selection.replacement).toBeNull();
+  });
+
+  test("within is viewer-only", () => {
+    expectSyntax(
+      `select answer in main.ts within 4-12 replace with\n${BEGIN}\ny\n${END}\nend`,
+      "viewer-only slice",
+    );
+  });
+
   test("parses a rename clause", () => {
     const selection = first("select value in src/a.ts rename value to total end");
     expect(selection.rename).toEqual({ from: "value", to: "total" });
@@ -557,6 +577,14 @@ describe("serializeSelection", () => {
         space: null,
         matcher: null,
         pick: null,
+        replacement: null,
+      },
+      {
+        locator: { path: "src/math.ts", name: "clamp", kind: "" },
+        space: "value",
+        matcher: null,
+        pick: null,
+        within: [{ line: 4, column: 1, endLine: 8, endColumn: END_OF_LINE_COLUMN }],
         replacement: null,
       },
       {

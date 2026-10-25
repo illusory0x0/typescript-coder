@@ -78,15 +78,40 @@ describe("resolveMultiEditor file commands", () => {
     const source = Array.from({ length: 10 }, (_, index) => `line ${index + 1}`).join("\n");
     const read = resolve("read src/a.ts end", { "src/a.ts": source });
     const feedback = renderReadFeedback(read.reads);
-    expect(feedback).toContain("src/a.ts (whole file, 10 lines; showing 6):");
+    expect(feedback).toContain("src/a.ts (whole file, 10 lines; folded):");
     expect(feedback).toContain("1 | line 1");
     expect(feedback).toContain("3 | line 3");
-    expect(feedback).toContain("... // content folded, source range: 4-7");
+    expect(feedback).toContain("... // content folded, src/a.ts: 4-7L");
     expect(feedback).toContain("(4 of 10 lines hidden)");
     expect(feedback).toContain("expand with read src/a.ts within 4-7 end");
     expect(feedback).toContain("8 | line 8");
     expect(feedback).toContain("10 | line 10");
     expect(feedback).not.toContain("4 | line 4");
+  });
+
+  test("a whole-file read folds top-level function bodies into an outline", () => {
+    const source = [
+      "export function first(): number {",
+      "  const a = 1;",
+      "  if (a > 0) {",
+      "    const b = 2;",
+      "    const c = 3;",
+      "    return b + c;",
+      "  }",
+      "  return a;",
+      "}",
+      "export function second(): number {",
+      "  return 2;",
+      "}",
+    ].join("\n");
+    const read = resolve("read src/a.ts end", { "src/a.ts": source });
+    const feedback = renderReadFeedback(read.reads);
+    expect(feedback).toContain("src/a.ts (whole file, 12 lines; folded):");
+    expect(feedback).toContain("1 | export function first(): number {");
+    expect(feedback).toContain("... // content folded, src/a.ts: 2-8L");
+    expect(feedback).toContain("9 | }");
+    expect(feedback).toContain("10 | export function second(): number {");
+    expect(feedback).not.toContain("4 |     const b = 2;");
   });
 
   test("a selected-lines read is the expansion and comes back unfolded", () => {
@@ -103,8 +128,8 @@ describe("resolveMultiEditor file commands", () => {
   test("a short read keeps the quiet header shape", () => {
     const read = resolve("read src/a.ts end", { "src/a.ts": "one\ntwo\nthree\n" });
     const feedback = renderReadFeedback(read.reads);
-    expect(feedback).toContain("src/a.ts (whole file):");
-    expect(feedback).not.toContain("showing 6");
+    expect(feedback).toContain("src/a.ts (whole file, 3 lines):");
+    expect(feedback).not.toContain("folded");
   });
 
   test("write with no within replaces the whole file", () => {

@@ -224,6 +224,37 @@ function readTarget(cwd: string, path: string): string {
   return readFileIfExists(join(cwd, path)) ?? "";
 }
 
+/** True when a planner turn is asking for a read-only edit-protocol viewer. */
+function isPlannerViewerReply(content: string): boolean {
+  const trimmed = stripCodeFences(content).trim();
+  return /^select\b/.test(trimmed) || /^read\b/.test(trimmed);
+}
+
+/**
+ * A planner viewer is exactly one existing edit-protocol viewer statement.
+ * Editors, writes, creates, deletes, and multi-statement replies are rejected:
+ * the planner may inspect code, never change it.
+ */
+function plannerViewerProblem(statements: readonly EditStatement[]): string | null {
+  if (statements.length !== 1) {
+    return "a planner view must be exactly one read-only `select … end` or `read … end` statement";
+  }
+  const statement = statements[0];
+  if (statement === undefined) {
+    return "a planner view must be exactly one read-only `select … end` or `read … end` statement";
+  }
+  if (statement.type === "fs") {
+    return statement.statement.op === "read"
+      ? null
+      : `a planner view is read-only; \`${statement.statement.op}\` is not allowed`;
+  }
+  const selection = statement.selection;
+  if (selection.replacement !== null || selection.rename !== undefined) {
+    return "a planner view is read-only; use a viewer (`select … end`) without `replace` or `rename`";
+  }
+  return null;
+}
+
 function writeRecord(
   records: LoopRecord[],
   input: {
@@ -1723,6 +1754,66 @@ export async function runTaskLoop(options: LoopOptions): Promise<LoopResult> {
     return response;
   };
 
+  const plannerViewerDeps: MultiEditorDeps = {
+    sourceFor: (path) => readTarget(cwd, path),
+    fileExists: (path) => readFileIfExists(join(cwd, path)) !== null,
+    isSafePath: (path) => safeMutablePath(cwd, path) !== null,
+    resolveEntry: (source, path, locator, space) =>
+      resolveCurrentEntry(source, path, locator, space),
+  };
+
+  /**
+   * Resolve one planner viewer statement with the edit-protocol resolver and
+   * return a source block, not a Plan/patch. The planner uses the same
+   * `select`/`read` language as the executor; it just cannot write.
+   */
+  const plannerViewFeedback = (content: string, next: string): string => {
+    const parsed = parseMultiEditorDetailed(content);
+    if (!parsed.ok || parsed.value === undefined) {
+      return [
+        "# Source view",
+        "",
+        "The viewer request was rejected.",
+        "",
+        renderDslIssues(parsed.issues),
+        "",
+        "# Next",
+        "",
+        next,
+      ].join("\n");
+    }
+    const problem = plannerViewerProblem(parsed.value);
+    if (problem !== null) {
+      return ["# Source view", "", problem, "", "# Next", "", next].join("\n");
+    }
+    const resolved = resolveMultiEditor(parsed.value, plannerViewerDeps);
+    const blocks: string[] = [];
+    if (resolved.viewers.length > 0) {
+      blocks.push(renderViewerFeedback(resolved.viewers, { footer: null }));
+    }
+    if (resolved.reads.length > 0) {
+      blocks.push(renderReadFeedback(resolved.reads));
+    }
+    if (resolved.readFailures.length > 0) {
+      blocks.push(renderReadFailureFeedback(resolved.readFailures));
+    }
+    if (resolved.failures.length > 0) {
+      blocks.push(
+        [
+          "View request failed:",
+          ...resolved.failures.map(
+            (failure) =>
+              `- clause ${failure.index + 1}: ${failure.diagnostics.split("\n").join("\n  ")}`,
+          ),
+        ].join("\n"),
+      );
+    }
+    if (blocks.length === 0) {
+      blocks.push("The viewer resolved no source; inspect the symbol index and try again.");
+    }
+    return ["# Source view", "", ...blocks, "", "# Next", "", next].join("\n");
+  };
+
   /**
    * One planning turn: ask, parse, retry a rejection with its diagnostics. An
    * initial plan becomes the run state; a patch turn applies exactly one patch,
@@ -1732,6 +1823,7 @@ export async function runTaskLoop(options: LoopOptions): Promise<LoopResult> {
     request: { mode: "initial" } | { mode: "patch"; state: TaskRunState },
   ): Promise<PlanningOutcome> => {
     let lastDiagnostics: string | null = null;
+    let viewerUsed = false;
     for (let attempt = 1; attempt <= MAX_PLAN_ATTEMPTS; attempt += 1) {
       const response = await providerCall();
       if ("ok" in response) {
@@ -1739,6 +1831,26 @@ export async function runTaskLoop(options: LoopOptions): Promise<LoopResult> {
       }
       const content = response.content ?? "";
       planningMessages.push({ role: "assistant", content });
+      if (isPlannerViewerReply(content)) {
+        if (viewerUsed) {
+          planningMessages.push({
+            role: "user",
+            content:
+              "# Source view\n\nOnly one viewer request is allowed per planning turn. Reply with the Plan/patch now.",
+          });
+          continue;
+        }
+        viewerUsed = true;
+        planningMessages.push({
+          role: "user",
+          content: plannerViewFeedback(
+            content,
+            "Reply with the initial Plan or the next patch. The viewer request writes nothing.",
+          ),
+        });
+        attempt -= 1;
+        continue;
+      }
       if (request.mode === "initial") {
         const parsed = parsePlanDslDetailed(content);
         noteWarnings(parsed);
@@ -1889,6 +2001,7 @@ export async function runTaskLoop(options: LoopOptions): Promise<LoopResult> {
         diff: appliedDiff(cwd, bases),
       }),
     });
+    let viewerUsed = false;
     for (let attempt = 1; attempt <= MAX_REVIEW_ATTEMPTS; attempt += 1) {
       let response: ChatResponse;
       try {
@@ -1916,6 +2029,26 @@ export async function runTaskLoop(options: LoopOptions): Promise<LoopResult> {
       }
       const content = response.content ?? "";
       planningMessages.push({ role: "assistant", content });
+      if (isPlannerViewerReply(content)) {
+        if (viewerUsed) {
+          planningMessages.push({
+            role: "user",
+            content:
+              "# Source view\n\nOnly one viewer request is allowed per review turn. Reply with `approve` or one repair patch.",
+          });
+          continue;
+        }
+        viewerUsed = true;
+        planningMessages.push({
+          role: "user",
+          content: plannerViewFeedback(
+            content,
+            "Reply with `approve` or one repair patch. The viewer request writes nothing.",
+          ),
+        });
+        attempt -= 1;
+        continue;
+      }
       if (content.trim().toLowerCase() === "approve") {
         return { kind: "approve" };
       }

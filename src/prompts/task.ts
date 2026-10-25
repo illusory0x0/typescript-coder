@@ -30,20 +30,20 @@ export const MAX_TASK_EXCHANGES = 3;
 export const MAX_TASK_PLAN_ROUNDS = 32;
 
 export const TASK_PLANNING_ROLE =
-  "You plan a TypeScript change. Build a Plan -> Stage -> Task -> edit tree; a separate coding expert executes one edit at a time. You do not write code and you do not run commands.";
+  "You plan a TypeScript change. Build a Plan -> Stage -> Task -> edit tree; a separate coding expert executes one edit at a time. You do not write files or run commands. You may make one read-only viewer request before replying, using the edit-protocol viewer syntax.";
 
 export const TASK_EXECUTION_ROLE =
   "You are a TypeScript coding expert. You receive one edit at a time from a Stage -> Task -> edit tree and carry it out with precise edit clauses. The task instruction is the local goal; the planner owns the tree.";
 
 export const TASK_PLANNING_WORKFLOW = `Workflow:
-1. Read the requirement and symbol index.
-2. Choose the smallest tree that can be verified.
+1. Read the requirement and symbol index; request one viewer if you need source.
+2. Choose the smallest tree that keeps each verification meaningful. For a large greenfield module, the first Task is a compiling skeleton, not the complete implementation.
 3. Emit the initial Plan; later turns amend it with one patch.
 Keep one current Task at a time.`;
 
 export const TASK_EXECUTION_WORKFLOW = `Workflow:
 1. Read the target source and the instruction.
-2. Choose a declaration edit, or a whole-file write when the edit spans declarations.
+2. Choose the smallest declaration edit. Use a whole-file write only when the declared target is a file and the instruction explicitly requires a file-level replacement.
 3. Send the clauses and stop; the harness runs the task gate.`;
 
 /**
@@ -75,23 +75,43 @@ instruction: Change answer to return 2.
 end`;
 
 /**
- * A small task can be one Stage, one Task, and one whole-file edit. Use this
- * when the change is a coherent module rather than a declaration tweak.
+ * A greenfield module starts with a compiling skeleton. The first whole-file
+ * write is deliberately small: types, signatures, and stubs only. Details are
+ * filled by later declaration edits, and the skeleton gate is `tsc` so the
+ * test suite is not asked to pass an empty implementation.
  */
-export const TASK_WRITE_PLAN_EXAMPLE = `plan "01-main"
+export const TASK_SCAFFOLD_PLAN_EXAMPLE = `plan "01-main"
 goal: Implement the JSON parser module.
 
 stage "02-current" plan "01-main"
-goal: Implement the parser.
+goal: Build the parser in verifiable layers.
 end
 
-task "03-parser" stage "02-current" verify test
-instruction: Implement src/json.ts so the parser tests pass.
+task "03-scaffold" stage "02-current" verify tsc
+instruction: Create a compiling skeleton for src/json.ts.
 end
 
-edit "04-file" task "03-parser" write src/json.ts
-instruction: Write the complete parser module.
+edit "04-scaffold" task "03-scaffold" write src/json.ts
+instruction: Write only the exported types, signatures, and stub bodies; do not implement the behavior yet.
 end`;
+
+/**
+ * Planner-only inspection. It uses the existing edit-protocol viewer grammar,
+ * so the planner and executor share one address language and one fold/slice
+ * renderer; no tool call or JSON request is involved.
+ */
+export const TASK_PLANNER_VIEW = `Read-only inspection:
+Before a Plan or patch, you may reply with exactly one viewer statement:
+
+select [kind] <symbol> in <path> [resolve value|type|namespace] [within <selecters>] end
+read <path> [within <selecters>] end
+
+A viewer writes nothing. A declaration viewer shows an indentation-folded
+outline; add \`within <start>-<end>\` for an exact slice. \`read\` returns a file
+outline, or an exact slice with \`within\`. Ranges are 1-based, inclusive, and
+file-absolute. The folded marker names the hidden range and the exact \`read\`
+command that expands it. After the source view, reply with the Plan/patch.
+Do not use \`replace\`, \`rename\`, \`write\`, \`create\`, or \`delete\` in a planner viewer.`;
 
 /**
  * A richer initial Plan example: one current Stage/Task with a same-file
@@ -169,18 +189,18 @@ const TASK_PLAN_FIELDS = `- The initial reply is the flat Plan DSL. Start with t
 - A trailing \`finish\` line marks the last task final. It is valid only as the last line, and only when that task verifies \`test\`. Only the task marked by \`finish\` must verify \`test\`; a work-in-progress tree may end in a \`tsc\` task.`;
 
 const TASK_PLAN_RULES = `Rules:
-1. Choose the smallest structure that keeps the gate meaningful. One Stage, one Task, and one edit are valid when the change is cohesive.
+1. Choose the smallest structure that keeps each gate meaningful. One Stage, one Task, and one edit are valid when the change is cohesive, but a large greenfield module needs a compiling skeleton Task before behavior is filled in.
 2. Split only when a smaller Task improves verification or gives the executor a clearer address. Do not split just to match helper names or a fixed edit count.
 3. Prefer top-level functions with explicit types. Extract a helper when it makes the code easier to read; keep the caller thin.
 4. Use one declaration target per edit. Use \`related\` only for an atomic same-file type/representation migration; cross-file work is separate edits.
-5. Use \`write <path>\` for a greenfield module or a change that spans several declarations in one file. Use create/modify/delete/rename for a single declaration.
+5. A whole-file \`write <path>\` is allowed for a new file's compiling skeleton or an atomic file-wide representation change. For a greenfield module, write only the public types, signatures, and stub bodies first; fill behavior with later \`create\`/\`modify\` edits. Do not deliver the complete module in the first write, and do not use \`write\` as a generic repair.
 6. A create edit adds exactly one top-level declaration. A dotted class member is not a create target; modify the class instead.
 7. Instructions state the behavior and constraints. The executor can inspect the target; do not paste a whole file into an instruction.
 8. Do not target *.test.ts unless the requirement explicitly changes tests; copy required behavior into the instruction.
 9. Record order is execution order: an edit sees earlier edits, tasks see earlier tasks, and stages see earlier stages. Do not rely on later work.
 10. End the run with a \`test\` Task and a trailing \`finish\`; the initial Plan has no finish. If the current last test Task has passed, a bare \`patch\` + \`finish\` is enough.
 11. Do not plan a new class. If an existing class must change, modify it; never plan a dotted \`create\`.
-12. Emit only the Plan DSL records on the initial turn: no JSON, no markdown fence around the whole reply, and no prose.`;
+12. Emit only the Plan DSL records on the initial turn: no JSON, no markdown fence around the whole reply, and no prose. A single read-only viewer statement is the only non-Plan reply accepted before a Plan/patch.`;
 
 const TASK_PATCH_FIELDS = `Patch records (every later planning turn replies with exactly one patch, never a complete Plan):
 - Start with the singleton header \`patch\`. Every operation ends with \`end\`; a trailing \`finish\` may follow the last operation. The patch header has no \`end\`.
@@ -197,7 +217,7 @@ const TASK_PATCH_RULES = `Rules for a patch turn:
 2. Add at most one new Task. Adding a new Stage includes its first Task in the same turn.
 3. A new Stage is allowed only when the current Stage has no pending Task. A fully passed Stage cannot take a new Task; use a new Stage. A failed Stage may take a repair Task.
 4. Repair a failed Task in place first: change it (\`task~\`) and/or change or append a repair edit (\`edit~\`, \`edit+\`). A failed edit retries only with a changed definition.
-5. If an edit keeps failing on its address, stop retrying it: replace it with a whole-file \`write\` or split it into smaller edits.
+5. If an edit keeps failing on its address, narrow the symbol or split it into smaller edits. Use a whole-file \`write\` only when the task is explicitly a file-level rewrite, not as a generic repair fallback.
 6. Never change a passed Task or a done Edit, and keep the ids of nodes you keep.
 7. If the last Task is a passing test Task and no work remains, emit \`patch\` + \`finish\`. Otherwise plan the next Task, or one new Stage with its first Task. To finish with new work, plan one final \`test\` Task and emit \`finish\`.
 8. A patch may update/remove existing pending or failed work, but it must not introduce a future Task list.
@@ -211,11 +231,13 @@ export function buildTaskPlanningSystemPrompt(): string {
     "",
     TASK_PLANNING_WORKFLOW,
     "",
+    TASK_PLANNER_VIEW,
+    "",
     TASK_INITIAL_PLAN_CONTRACT,
     "",
     TASK_PLAN_EXAMPLE,
     "",
-    TASK_WRITE_PLAN_EXAMPLE,
+    TASK_SCAFFOLD_PLAN_EXAMPLE,
     "",
     TASK_PATCH_EXAMPLE,
     "",
@@ -348,13 +370,13 @@ const TASK_ACTION_RULES: Record<string, string> = {
   modify:
     "The declaration must already exist. Reply with one or more edit clauses that change it; a reply that writes nothing is rejected.",
   create:
-    "The declaration must be absent. create adds one top-level declaration; a dotted class member is not a target. Reply with a whole-declaration `select … replace with <fence> end` clause carrying no `match` or `pick`. The fence contains the declaration; a body without a declaration is wrapped by the edit's symbol space (value -> `let`, type -> `type`, namespace -> `namespace`). If the change spans several declarations in this file, the planner should use a whole-file `write` instead.",
+    "The declaration must be absent. create adds one top-level declaration; a dotted class member is not a target. Reply with a whole-declaration `select … replace with <fence> end` clause carrying no `match` or `pick`. The fence contains the declaration; a body without a declaration is wrapped by the edit's symbol space (value -> `let`, type -> `type`, namespace -> `namespace`). If several declarations are needed, split them into separate create edits; do not use a whole-file write just to avoid multiple creates.",
   delete:
     "Reply with a whole-declaration clause with an empty fence (no `match`, no `pick`) to remove the declaration.",
   rename:
     "Reply with `select … rename <current> to <newName> end`; the harness rewrites the declaration name and its same-file references and refuses a colliding name.",
   write:
-    "The task replaces the whole file. Reply with exactly `write <path> with <fence>`; the sentinel close terminates the statement and the fence carries the complete file. Do not send `select`, `match`, `pick`, or `within`.",
+    "The task replaces the whole file. Reply with exactly `write <path> with <fence>`; the sentinel close terminates the statement and the fence carries the complete file. Use this only for a declared file-level replacement or a skeleton; do not use it as a generic repair. Do not send `select`, `match`, `pick`, or `within`.",
 };
 
 /** The bounded self-check offer on an edit turn's repair prompt. */
@@ -601,7 +623,7 @@ export function buildTaskReviewPrompt(input: TaskReviewInput): string {
     "- `approve` when this Task needs no repair: the gate passed and the applied diff matches the instruction; if the gate failed, prefer a repair patch unless the failure lies outside this Task.",
     `- A patch may only repair this Task #${task.id}. Use \`task~ "${task.id}"\` for the Task, or \`edit+ "<new-id>" task "${task.id}" ...\`, \`edit~ "<edit-id>"\`, and \`edit- "<edit-id>"\` for its edits. It may carry \`finish\` when this is the last \`test\` Task.`,
     `- \`edit+\` keeps \`task "${task.id}"\`; \`edit~\` and \`edit-\` take only the edit id. Do not repeat \`task\`; the parent is the current Task #${task.id}.`,
-    "- A done edit is immutable. If the gate failed after an edit landed, append a new repair edit with `edit+` (a whole-file `write` or a small `modify`); do not use `edit~` on a done edit.",
+    "- A done edit is immutable. If the gate failed after an edit landed, append a new repair edit with `edit+`; prefer a targeted `modify`. Use a whole-file `write` only when this Task is explicitly a file-level rewrite. Do not use `edit~` on a done edit.",
     "- Example (replace the id with the edit you are repairing):",
     "",
     "```",
@@ -642,7 +664,7 @@ export function replanDelta(input: {
     "New tasks append to their stage; new stages append after existing stages; new edits append to their task. New ids must be unused.",
     "Record order is execution order. There are no deps, todo, or status fields; do not add them.",
     "Every task must be able to pass its own gate. To end the run, plan a final `test` task and emit `finish`; if the last task is already a passing test task, `patch` + `finish` is enough.",
-    "If an edit keeps failing on its address, stop retrying it: replace it with a whole-file `write` or split it into smaller edits.",
+    "If an edit keeps failing on its address, stop retrying it: narrow the symbol or split it into smaller edits. Use a whole-file `write` only for a file-level rewrite, not as a generic repair.",
     "Keep helpers when they make the code easier to read; do not add edits just to mirror helper names.",
   ];
   const lead =

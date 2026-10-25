@@ -16,7 +16,8 @@ import {
   TASK_PATCH_FINAL_EXAMPLE,
   TASK_PLAN_COMPLEX_EXAMPLE,
   TASK_PLAN_EXAMPLE,
-  TASK_WRITE_PLAN_EXAMPLE,
+  TASK_PLANNER_VIEW,
+  TASK_SCAFFOLD_PLAN_EXAMPLE,
 } from "./task";
 import { initialState } from "../tasks";
 import type { EditNode, Stage, TaskNode, TaskRunState } from "../tasks";
@@ -85,7 +86,7 @@ describe("planning prompts", () => {
     expect(prompt).toContain("verification boundary");
     expect(prompt).toContain("finish");
     expect(prompt).toContain("one current Stage and one current Task");
-    expect(prompt).toContain("Workflow:\n1. Read the requirement and symbol index.");
+    expect(prompt).toContain("Workflow:\n1. Read the requirement and symbol index;");
     expect(prompt).toContain("Initial reply");
     expect(prompt).toContain("one or more edit records");
     expect(prompt).toContain("every task record comes before every edit record");
@@ -101,15 +102,18 @@ describe("planning prompts", () => {
     expect(prompt).not.toContain('"deps"');
     expect(prompt).not.toContain('"todo"');
     expect(prompt).toContain(TASK_PLAN_EXAMPLE);
-    expect(prompt).toContain(TASK_WRITE_PLAN_EXAMPLE);
+    expect(prompt).toContain(TASK_SCAFFOLD_PLAN_EXAMPLE);
+    expect(prompt).toContain(TASK_PLANNER_VIEW);
     expect(prompt).toContain(TASK_PATCH_EXAMPLE);
     expect(prompt).toContain(TASK_PATCH_FINAL_EXAMPLE);
     expect(prompt).not.toContain(TASK_PLAN_COMPLEX_EXAMPLE);
     expect(prompt.indexOf(TASK_PLAN_EXAMPLE)).toBeLessThan(prompt.indexOf("flat Plan DSL"));
     expect(prompt).not.toContain("```json");
     expect(parsePlan(TASK_PLAN_EXAMPLE).ok).toBe(true);
-    expect(parsePlan(TASK_WRITE_PLAN_EXAMPLE).ok).toBe(true);
+    expect(parsePlan(TASK_SCAFFOLD_PLAN_EXAMPLE).ok).toBe(true);
     expect(parsePlan(TASK_PLAN_COMPLEX_EXAMPLE).ok).toBe(true);
+    expect(TASK_SCAFFOLD_PLAN_EXAMPLE).toContain("verify tsc");
+    expect(TASK_SCAFFOLD_PLAN_EXAMPLE).not.toContain("Write the complete");
     expect(parsePlanPatch(TASK_PATCH_EXAMPLE).ok).toBe(true);
     expect(parsePlanPatch(TASK_PATCH_FINAL_EXAMPLE).ok).toBe(true);
   });
@@ -122,6 +126,16 @@ describe("planning prompts", () => {
     expect(prompt).toContain("modify the class instead");
     expect(prompt).toContain("never plan a dotted `create`");
     expect(prompt).toContain("A dotted class member is not a create target");
+  });
+
+  test("the planning prompt teaches the bounded read-only viewer", () => {
+    const prompt = buildTaskPlanningSystemPrompt();
+    expect(prompt).toContain("Read-only inspection");
+    expect(prompt).toContain("select [kind] <symbol> in <path>");
+    expect(prompt).toContain("within <selecters>");
+    expect(prompt).toContain("read <path> [within <selecters>] end");
+    expect(prompt).toContain("writes nothing");
+    expect(prompt).toContain("Do not use `replace`");
   });
 
   test("the first user prompt asks for one current Stage and one current Task", () => {
@@ -310,7 +324,7 @@ describe("execution prompts", () => {
     });
     expect(prompt).toContain("create adds one top-level declaration");
     expect(prompt).toContain("dotted class member is not a target");
-    expect(prompt).toContain("whole-file `write`");
+    expect(prompt).toContain("split them into separate create edits");
     expect(prompt).toContain("select … replace with <fence> end");
   });
 

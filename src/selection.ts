@@ -38,6 +38,13 @@ export interface Selection {
   space: SymbolSpace | null;
   matcher: SelectionMatcher | null;
   pick: EditRange[] | null;
+  /**
+   * A viewer-only slice. When present, the clause has no matcher, pick,
+   * replacement, or rename, and the viewer returns exactly these file-absolute
+   * line ranges. This is the declaration-level counterpart of
+   * `read <path> within <selecters> end`.
+   */
+  within?: EditRange[] | null;
   replacement: string | null;
   rename?: RenameSpec | null;
 }
@@ -607,6 +614,11 @@ class SelectionReader {
       space = this.parseSpace();
     }
 
+    let within: EditRange[] | null = null;
+    if (this.matchKeyword("within")) {
+      within = this.parseMultiRange("within");
+    }
+
     let kind = "";
     let name: string;
     if (header.length === 0) {
@@ -714,6 +726,21 @@ class SelectionReader {
       );
     }
 
+    if (
+      within !== null &&
+      (matcher !== null || pick !== null || replacement !== null || rename !== null)
+    ) {
+      this.syntax(
+        "EDIT_WITHIN_EDITOR",
+        "`within` is a viewer-only slice; it cannot be combined with `match`, `pick`, `replace`, or `rename`",
+        {
+          expected: ["a viewer slice", "an editor without within"],
+          found: "within with an editor field",
+          hint: "keep `within` only on a bare `select … end` viewer, or use `pick` on an editor",
+        },
+      );
+    }
+
     const selection: Selection = {
       locator: { path, name, kind },
       space,
@@ -721,6 +748,9 @@ class SelectionReader {
       pick,
       replacement,
     };
+    if (within !== null) {
+      selection.within = within;
+    }
     if (rename !== null) {
       selection.rename = rename;
     }
@@ -1260,6 +1290,9 @@ export function serializeSelection(selection: Selection): string {
       : `select ${locator.kind} ${locator.name} in ${locator.path}`;
   if (selection.space !== null) {
     head += ` resolve ${selection.space}`;
+  }
+  if (selection.within !== undefined && selection.within !== null) {
+    head += ` within ${renderMultiRange(selection.within)}`;
   }
   const parts = [head];
   if (selection.matcher !== null) {
