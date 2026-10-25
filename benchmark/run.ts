@@ -2652,7 +2652,14 @@ function codeFenceFor(text: string): string {
   return "`".repeat(Math.max(3, longestRun + 1));
 }
 
-export function writeMarkdownReport(mdPath: string, report: Report): void {
+export function writeMarkdownReport(
+  mdPath: string,
+  report: Report,
+  baselineRoot = fileURLToPath(new URL("..", import.meta.url)),
+): void {
+  // Specs and references always come from the checkout; the baseline root is a
+  // test seam so the stale-hash branch can be exercised without moving the
+  // real frozen files.
   const repoRoot = fileURLToPath(new URL("..", import.meta.url));
   const { aggregates } = report;
   const protocolFormats =
@@ -2836,8 +2843,8 @@ export function writeMarkdownReport(mdPath: string, report: Report): void {
   // The oc and tc-json sides are measured once; tc-only reports compare against
   // those fixed baselines instead of re-running either.
   const ranOpencode = aggregates.bySide.some((row) => row.side === "oc");
-  const ocBaseline = ranOpencode ? null : loadOcBaseline(repoRoot);
-  const jsonBaseline = ranOpencode ? null : loadJsonBaseline(repoRoot);
+  const ocBaseline = ranOpencode ? null : loadOcBaseline(baselineRoot);
+  const jsonBaseline = ranOpencode ? null : loadJsonBaseline(baselineRoot);
   const staleSpecs =
     ocBaseline !== null && jsonBaseline !== null
       ? staleBaselineSpec(ocBaseline, jsonBaseline)

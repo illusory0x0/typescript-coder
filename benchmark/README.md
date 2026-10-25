@@ -44,23 +44,26 @@ The tc side runs every Edit-loop call at `reasoning_effort: none` by default
 
 ## Frozen baselines
 
-The oc side and the legacy `json` edit protocol are measured **once** against
-the official DeepSeek endpoint (4 tasks × 3 reps, 2026-10-24) and frozen:
+The oc side and the legacy `json` edit protocol are frozen reference points.
+They were re-frozen on 2026-10-25 against `benchmark/specs/` (4 tasks × 3 reps):
 
 - `benchmark/results/oc-baseline.json` — `--side oc`, `deepseek/deepseek-flash`.
 - `benchmark/results/json-format-baseline.json` — tc with `--protocol-format
   json`.
 
 They are reference points, not a development loop: the benchmark **rejects**
-`--side oc` and `--protocol-format json` outright, so a change can never move
-them. Do not ask for an exception. tc reports run `--side tc` with the default
-`edit-dsl` protocol.
+`--side oc` and `--protocol-format json` outright under normal operation, so a
+change can never move them. A baseline update requires explicit human approval
+and a deliberate, temporary bypass of the guard; restore the guard after the
+approved matrix. tc reports run `--side tc` with the default `edit-dsl` protocol.
 
-The baselines were measured against the old one-line task issue. Because the
-benchmark input is now a standalone spec, a report whose `taskIssue` hash does
-not match the baseline's withholds the four-way table instead of comparing
-different inputs. Re-freeze both baselines against `benchmark/specs/` before
-using the four-way factors again.
+The oc baseline measures the ambient OpenCode configuration, including its
+registered skills; keep `.opencode/skills` and other OpenCode-level inputs
+stable across oc re-freezes. The 2026-10-25 freeze had 25 registered skills.
+
+A report whose `taskIssue` or `fixture` hash does not match the baseline's
+withholds the four-way table instead of comparing different inputs. Re-freeze
+both baselines with approval when the spec or fixture inputs change.
 
 A tc-only report loads **both** frozen baselines and renders a
 `## Four-way comparison (oc / tc json / tc pinned-repair / tc plan-exec)` section when

@@ -1,4 +1,4 @@
-# Benchmark report — 2026-10-24
+# Benchmark report — 2026-10-25
 
 - mode: full
 - model: deepseek-flash
@@ -12,75 +12,276 @@
 - reps: 3
 - bun: 1.3.13
 - opencode: opencode v2.1.2
-- generated: 2026-10-24T09:57:09.151Z
+- generated: 2026-10-25T07:15:53.720Z
 - pilot reference: none
 
 ## Frozen task specs
 
 ### json-parser
 
-Issue (verbatim, identical for both sides):
+Spec (verbatim, identical for both sides):
 
+````
+# Task: JSON parser
+
+Create `src/json.ts` with a small, dependency-free JSON parser.
+
+## Public API
+
+```ts
+export type JsonValue =
+  | null
+  | boolean
+  | number
+  | string
+  | JsonValue[]
+  | { [key: string]: JsonValue };
+
+export function parseJson(text: string): JsonValue;
 ```
-Implement src/json.ts exporting JsonValue and parseJson(text: string): JsonValue
-so that src/json.test.ts passes and `bunx tsc --noEmit` stays clean.
-Create or modify only src/json.ts - no other files, no scratch files;
-src/json.test.ts and tsconfig.json are read-only.
-The fixture contains only those files - nothing else to explore.
-The test file is the specification; implement what it requires, nothing more.
-Verify with `bun test` and `bunx tsc --noEmit` only.
-```
+
+`parseJson` parses exactly one JSON value from the whole input. Leading and
+trailing whitespace (`space`, tab, LF, CR) is allowed. If the input is empty,
+contains anything other than one complete value, or has trailing non-whitespace,
+throw a `SyntaxError`.
+
+## Values and grammar
+
+- Literals: `null`, `true`, `false`.
+- Numbers: an optional leading `-`, then either `0` or a non-zero digit followed
+  by digits; an optional fractional part `.` followed by at least one digit; an
+  optional exponent `e`/`E`, an optional sign, and at least one digit. Do not
+  accept leading zeroes such as `01`. Examples that must parse:
+  `42`, `-3.5`, `1e3`, `2.5E-2`.
+- Strings: double-quoted. Support the escapes `\"`, `\\`, `\/`, `\b`, `\f`,
+  `\n`, `\r`, `\t`, and `\uXXXX` with exactly four hex digits. Reject an
+  unterminated string or invalid escape.
+- Arrays: `[value, value, ...]`. Empty arrays and nested arrays are valid.
+  Trailing commas are invalid.
+- Objects: `{ "key": value, ... }`. Keys are strings. Empty objects, nested
+  objects, and arbitrary whitespace between tokens are valid. A missing value
+  or trailing comma is invalid.
+- Whitespace may appear between any tokens, but not inside a number, literal,
+  or string.
+
+Malformed input must throw `SyntaxError`. This includes, at minimum, empty
+input, truncated literals, leading zeroes, trailing commas, missing object
+values, unterminated strings, and trailing input.
+
+## Constraints
+
+- Edit only `src/json.ts`; do not change `src/json.test.ts` or `tsconfig.json`.
+- The fixture contains only those files. Do not create scratch files.
+- The visible tests are the acceptance check: `bun test` and
+  `bunx tsc --noEmit` must pass.
+````
 
 - fixture: benchmark/fixtures/json-parser/
 - reference: benchmark/references/json.ts
 
 ### sexp-parser
 
-Issue (verbatim, identical for both sides):
+Spec (verbatim, identical for both sides):
 
+````
+# Task: S-expression parser
+
+Create `src/sexp.ts` with a small, dependency-free S-expression parser.
+
+## Public API
+
+```ts
+export type Sexp = string | number | Sexp[];
+
+export function parseSexp(text: string): Sexp;
 ```
-Implement src/sexp.ts exporting Sexp and parseSexp(text: string): Sexp
-so that src/sexp.test.ts passes and `bunx tsc --noEmit` stays clean.
-Create or modify only src/sexp.ts - no other files, no scratch files;
-src/sexp.test.ts and tsconfig.json are read-only.
-The fixture contains only those files - nothing else to explore.
-The test file is the specification; implement what it requires, nothing more.
-Verify with `bun test` and `bunx tsc --noEmit` only.
-```
+
+`parseSexp` parses exactly one expression from the whole input. Leading and
+trailing whitespace (`space`, tab, LF, CR) is allowed. If the input is empty or
+whitespace-only, contains an unmatched parenthesis, or contains more than one
+expression, throw a `SyntaxError`.
+
+## Atoms
+
+- Numeric atoms match an optional leading `-`, one or more digits, and an
+  optional `.` followed by one or more digits. Convert them with `Number`.
+  Examples: `42` -> `42`, `-7` -> `-7`, `3.5` -> `3.5`.
+- Every other atom is a symbol and remains a string. Symbols may contain any
+  characters other than whitespace, `(`, and `)`. Examples: `foo` -> `"foo"`,
+  `+` -> `"+"`, `foo-bar?` -> `"foo-bar?"`.
+- There are no string literals; quotes are ordinary symbol characters.
+
+## Lists
+
+- `()` is an empty list.
+- A list is zero or more expressions between parentheses; whitespace separates
+  items and may appear anywhere between tokens.
+- Lists nest arbitrarily. `(a (b 1) ())` parses as
+  `["a", ["b", 1], []]`.
+- After the one top-level expression, only whitespace may remain. A stray or
+  trailing `)` is an error, as is a second expression such as `a b` or
+  `(a b) c`.
+
+## Constraints
+
+- Edit only `src/sexp.ts`; do not change `src/sexp.test.ts` or `tsconfig.json`.
+- The fixture contains only those files. Do not create scratch files.
+- The visible tests are the acceptance check: `bun test` and
+  `bunx tsc --noEmit` must pass.
+````
 
 - fixture: benchmark/fixtures/sexp-parser/
 - reference: benchmark/references/sexp.ts
 
 ### minilisp
 
-Issue (verbatim, identical for both sides):
+Spec (verbatim, identical for both sides):
 
+````
+# Task: Mini Lisp interpreter
+
+Create `src/lisp.ts` implementing a small Lisp parser and evaluator.
+
+## Public API
+
+```ts
+export type LispValue = number | boolean | LispValue[];
+
+export function run(program: string): LispValue;
 ```
-Implement src/lisp.ts exporting LispValue and run(program: string): LispValue
-so that src/lisp.test.ts passes and `bunx tsc --noEmit` stays clean.
-Create or modify only src/lisp.ts - no other files, no scratch files;
-src/lisp.test.ts and tsconfig.json are read-only.
-The fixture contains only those files - nothing else to explore.
-The test file is the specification; implement what it requires, nothing more.
-Verify with `bun test` and `bunx tsc --noEmit` only.
+
+`run` parses all top-level forms, evaluates them in order in one fresh global
+environment, and returns the value of the last form. Function values are
+internal and must not escape as the final result. An empty program throws.
+
+## Reading
+
+- Whitespace (`space`, tab, LF, CR) separates forms and may appear anywhere
+  between tokens.
+- Numbers match an optional leading `-`, digits, and an optional `.` followed by
+  digits. Convert them with `Number`.
+- The atoms `true` and `false` are booleans. Every other non-numeric atom is a
+  symbol string.
+- Lists are parenthesized forms and may nest. A stray `)` or an unterminated
+  list is a syntax error.
+
+## Evaluation
+
+- A number or boolean evaluates to itself.
+- A symbol evaluates to its binding; an unknown symbol throws.
+- A non-empty list is a call: evaluate the head and each argument, then apply
+  the callable.
+- An empty list at evaluation time throws.
+- The environment is lexically scoped. A closure captures the environment in
+  which it was created.
+
+## Special forms
+
+- `(if test then else)` evaluates `test`; only `false` is falsy (in particular,
+  `0` is truthy). It evaluates and returns exactly one branch and requires
+  exactly three operands.
+- `(define name value)` evaluates `value`, binds it in the current environment,
+  and returns the value. A later reference resolves it.
+- `(define (name params...) body...)` is function-definition shorthand: it
+  creates a closure with the given parameters and body and binds it to `name`.
+- `(lambda (params...) body...)` creates a closure. Applying it binds arguments
+  in a fresh child environment and evaluates the body forms in order, returning
+  the last value.
+
+## Builtins
+
+The global environment contains these builtins:
+
+- `+`, `-`, `*`, `/`: exactly two numeric arguments; arithmetic result.
+- `=`: exactly two arguments; true when they are equal, otherwise false.
+- `cons`: exactly two arguments; returns a pair as a two-element array
+  `[head, tail]`.
+- `car`: exactly one argument; returns element 0 of a non-empty pair.
+- `cdr`: exactly one argument; returns element 1 of a pair that has a second
+  element.
+
+Pairs are represented as nested two-element arrays. For example:
+
+```text
+(cons 1 (cons 2 3)) -> [1, [2, 3]]
+(car (cons 1 (cons 2 3))) -> 1
+(cdr (cons 1 2)) -> 2
+(cdr (cons 1 (cons 2 3))) -> [2, 3]
 ```
+
+The evaluator must support recursive functions and closures, including a
+closure that returns another closure. Calling a non-function, using a non-number
+with arithmetic, wrong builtin arity, and malformed syntax all throw.
+
+## Constraints
+
+- Edit only `src/lisp.ts`; do not change `src/lisp.test.ts` or `tsconfig.json`.
+- The fixture contains only those files. Do not create scratch files.
+- The visible tests are the acceptance check: `bun test` and
+  `bunx tsc --noEmit` must pass.
+````
 
 - fixture: benchmark/fixtures/minilisp/
 - reference: benchmark/references/lisp.ts
 
 ### csv-parser
 
-Issue (verbatim, identical for both sides):
+Spec (verbatim, identical for both sides):
 
+````
+# Task: CSV parser
+
+Create `src/csv.ts` with a small, dependency-free CSV parser.
+
+## Public API
+
+```ts
+export function parseCsv(text: string): string[][];
 ```
-Implement src/csv.ts exporting parseCsv(text: string): string[][]
-so that src/csv.test.ts passes and `bunx tsc --noEmit` stays clean.
-Create or modify only src/csv.ts - no other files, no scratch files;
-src/csv.test.ts and tsconfig.json are read-only.
-The fixture contains only those files - nothing else to explore.
-The test file is the specification; implement what it requires, nothing more.
-Verify with `bun test` and `bunx tsc --noEmit` only.
+
+The result is an array of rows; each row is an array of string fields.
+
+## Rows and fields
+
+- Empty input returns `[]`.
+- Rows are separated by LF (`\n`) or CRLF (`\r\n`). A lone `\r` is ordinary
+  field data.
+- A trailing row terminator does not add an empty final row. For example,
+  `a,b\n` returns `[["a", "b"]]`.
+- A blank line is a row containing one empty field: `a\n\nb` returns
+  `[["a"], [""], ["b"]]`.
+- Commas separate fields; empty fields are preserved. `a,,c` returns
+  `[["a", "", "c"]]`.
+- A line with no terminator still forms a row.
+
+## Quoting
+
+- A quote begins a quoted field only at the start of a field. A quoted field
+  may contain commas, LF, and CRLF.
+- Inside a quoted field, a doubled quote (`""`) represents one literal quote.
+- An empty quoted field (`""`) is the empty string.
+- After the closing quote, only a comma, a row terminator, or end of input may
+  follow. Any other character is an error and must throw.
+- A quote appearing inside an unquoted field is ordinary data, not an opening
+  quote.
+
+Examples:
+
+```text
+"a,b",c        -> [["a,b", "c"]]
+"a""b",c       -> [["a\"b", "c"]]
+"a\nb",c       -> [["a\nb", "c"]]
+"",x           -> [["", "x"]]
+"a"b           -> throws
 ```
+
+## Constraints
+
+- Edit only `src/csv.ts`; do not change `src/csv.test.ts` or `tsconfig.json`.
+- The fixture contains only those files. Do not create scratch files.
+- The visible tests are the acceptance check: `bun test` and
+  `bunx tsc --noEmit` must pass.
+````
 
 - fixture: benchmark/fixtures/csv-parser/
 - reference: benchmark/references/csv.ts
@@ -114,24 +315,32 @@ the cache-excluded token total above.
 
 ## Per-task results
 
-| Task | Side | Protocol | Success | Mean in (no cache) | Mean out | Mean total | Mean $ | $/success | Mean dur (s) | Mean steps |
-| --- | --- | --- | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: |
-| json-parser | oc | n/a | 3/3 | 5,550 | 2,579 | 8,129 | $0.00249 | $0.00249 | 12.3 | 4.3 |
-| sexp-parser | oc | n/a | 3/3 | 6,170 | 1,461 | 7,631 | $0.00191 | $0.00191 | 9.9 | 4.7 |
-| minilisp | oc | n/a | 3/3 | 6,913 | 5,894 | 12,807 | $0.00487 | $0.00487 | 33.2 | 8.3 |
-| csv-parser | oc | n/a | 3/3 | 5,230 | 1,871 | 7,101 | $0.00200 | $0.00200 | 12.3 | 4.0 |
+| Task | Side | Protocol | Agent mode | Success | Mean in (no cache) | Cache hit | Mean out | Mean total | Mean $ | $/success | Mean dur (s) | Mean steps |
+| --- | --- | --- | --- | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: |
+| json-parser | oc | n/a | n/a | 3/3 | 5,860 | 87.3% | 2,474 | 8,334 | $0.00249 | $0.00249 | 13.3 | 4.3 |
+| sexp-parser | oc | n/a | n/a | 3/3 | 5,669 | 85.5% | 1,015 | 6,684 | $0.00156 | $0.00156 | 8.7 | 4.0 |
+| minilisp | oc | n/a | n/a | 3/3 | 7,754 | 94.1% | 4,937 | 12,691 | $0.00450 | $0.00450 | 32.4 | 10.0 |
+| csv-parser | oc | n/a | n/a | 3/3 | 5,781 | 87.8% | 2,125 | 7,906 | $0.00227 | $0.00227 | 15.3 | 4.7 |
 
 ## Overall comparison
 
-| Side | Protocol | Success | Mean in (no cache) | Mean out | Mean total | Total tokens | Mean $ | Total $ | $/success | Mean dur (s) | Mean steps |
-| --- | --- | --- | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: |
-| oc | n/a | 12/12 | 5,966 | 2,951 | 8,917 | 107,003 | $0.00282 | $0.03382 | $0.00282 | 16.9 | 5.3 |
+| Side | Protocol | Agent mode | Success | Mean in (no cache) | Cache hit | Mean out | Mean total | Total tokens | Mean $ | Total $ | $/success | Mean dur (s) | Mean steps |
+| --- | --- | --- | --- | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: |
+| oc | n/a | n/a | 12/12 | 6,266 | 88.7% | 2,638 | 8,904 | 106,844 | $0.00270 | $0.03244 | $0.00270 | 17.4 | 5.8 |
 
 Per success (usage-run sums divided by successful runs):
 
-| Side | Protocol | In (no cache) | Out | Total | Cost |
-| --- | --- | ---: | ---: | ---: | ---: |
-| oc | n/a | 5,966 | 2,951 | 8,917 | $0.00282 |
+| Side | Protocol | Agent mode | In (no cache) | Out | Total | Cost |
+| --- | --- | --- | ---: | ---: | ---: | ---: |
+| oc | n/a | n/a | 6,266 | 2,638 | 8,904 | $0.00270 |
+
+## Cache hit balance
+
+Cache hit = cacheRead / raw prompt tokens (tc input includes hits; oc input excludes them).
+
+| Side | Protocol | Agent mode | Cache hit | Cache-read tokens |
+| --- | --- | --- | ---: | ---: |
+| oc | n/a | n/a | 88.7% | 60,352 |
 
 Only one side ran: oc 12/12 (100.0%).
 
@@ -148,44 +357,44 @@ a boundary splits its cost by elapsed-time share.
 
 Per task and side (payloads that used each selector):
 
-| Task | Side | Protocol | range | matcher | whole-symbol |
-| --- | --- | --- | ---: | ---: | ---: |
-| json-parser | oc | n/a | 0 | 0 | 0 |
-| sexp-parser | oc | n/a | 0 | 0 | 0 |
-| minilisp | oc | n/a | 0 | 0 | 0 |
-| csv-parser | oc | n/a | 0 | 0 | 0 |
+| Task | Side | Protocol | Agent mode | range | matcher | whole-symbol |
+| --- | --- | --- | --- | ---: | ---: | ---: |
+| json-parser | oc | n/a | n/a | 0 | 0 | 0 |
+| sexp-parser | oc | n/a | n/a | 0 | 0 | 0 |
+| minilisp | oc | n/a | n/a | 0 | 0 | 0 |
+| csv-parser | oc | n/a | n/a | 0 | 0 | 0 |
 
-| Side | Protocol | range | matcher | whole-symbol |
-| --- | --- | ---: | ---: | ---: |
-| oc | n/a | 0 | 0 | 0 |
+| Side | Protocol | Agent mode | range | matcher | whole-symbol |
+| --- | --- | --- | ---: | ---: | ---: |
+| oc | n/a | n/a | 0 | 0 | 0 |
 
 Resolved cascade stages and matcher kinds (#110):
 
 Per task and side (payloads that resolved at each stage / used each matcher):
 
-| Task | Side | Protocol | whole-symbol | match | pick | snippet | regex |
-| --- | --- | --- | ---: | ---: | ---: | ---: | ---: |
-| json-parser | oc | n/a | 0 | 0 | 0 | 0 | 0 |
-| sexp-parser | oc | n/a | 0 | 0 | 0 | 0 | 0 |
-| minilisp | oc | n/a | 0 | 0 | 0 | 0 | 0 |
-| csv-parser | oc | n/a | 0 | 0 | 0 | 0 | 0 |
+| Task | Side | Protocol | Agent mode | whole-symbol | match | pick | snippet | regex |
+| --- | --- | --- | --- | ---: | ---: | ---: | ---: | ---: |
+| json-parser | oc | n/a | n/a | 0 | 0 | 0 | 0 | 0 |
+| sexp-parser | oc | n/a | n/a | 0 | 0 | 0 | 0 | 0 |
+| minilisp | oc | n/a | n/a | 0 | 0 | 0 | 0 | 0 |
+| csv-parser | oc | n/a | n/a | 0 | 0 | 0 | 0 | 0 |
 
-| Side | Protocol | whole-symbol | match | pick | snippet | regex |
-| --- | --- | ---: | ---: | ---: | ---: | ---: |
-| oc | n/a | 0 | 0 | 0 | 0 | 0 |
+| Side | Protocol | Agent mode | whole-symbol | match | pick | snippet | regex |
+| --- | --- | --- | ---: | ---: | ---: | ---: | ---: |
+| oc | n/a | n/a | 0 | 0 | 0 | 0 | 0 |
 
 Implicit creates (#111):
 
-| Task | Side | Protocol | creates |
-| --- | --- | --- | ---: |
-| json-parser | oc | n/a | 0 |
-| sexp-parser | oc | n/a | 0 |
-| minilisp | oc | n/a | 0 |
-| csv-parser | oc | n/a | 0 |
+| Task | Side | Protocol | Agent mode | creates |
+| --- | --- | --- | --- | ---: |
+| json-parser | oc | n/a | n/a | 0 |
+| sexp-parser | oc | n/a | n/a | 0 |
+| minilisp | oc | n/a | n/a | 0 |
+| csv-parser | oc | n/a | n/a | 0 |
 
-| Side | Protocol | creates |
-| --- | --- | ---: |
-| oc | n/a | 0 |
+| Side | Protocol | Agent mode | creates |
+| --- | --- | --- | ---: |
+| oc | n/a | n/a | 0 |
 
 ## Anomalies
 
@@ -215,18 +424,18 @@ Provider-reported buckets, verbatim: tc `Raw in`/`Raw total` include cache hits;
 oc `Raw in` excludes them. The cache-excluded comparison total is in the tables
 above (and each row's `tokens.billable`), not here.
 
-| Task | Side | Protocol | Rep | OK | Raw in | Raw out | Raw total | Cost | Rate | Steps | Dur (s) |
-| --- | --- | --- | ---: | --- | ---: | ---: | ---: | ---: | --- | ---: | ---: |
-| json-parser | oc | n/a | 1 | yes | 5,682 | 2,191 | 8,570 | $0.00271 | off-peak | 5 | 13.5 |
-| json-parser | oc | n/a | 2 | yes | 5,533 | 2,066 | 7,900 | $0.00235 | off-peak | 4 | 11.5 |
-| json-parser | oc | n/a | 3 | yes | 5,434 | 2,144 | 7,916 | $0.00240 | off-peak | 4 | 12.0 |
-| sexp-parser | oc | n/a | 1 | yes | 8,269 | 1,363 | 10,095 | $0.00250 | off-peak | 6 | 13.7 |
-| sexp-parser | oc | n/a | 2 | yes | 5,097 | 1,038 | 6,411 | $0.00164 | off-peak | 4 | 7.9 |
-| sexp-parser | oc | n/a | 3 | yes | 5,144 | 1,033 | 6,386 | $0.00161 | off-peak | 4 | 8.2 |
-| minilisp | oc | n/a | 1 | yes | 5,974 | 4,004 | 11,590 | $0.00445 | off-peak | 6 | 29.2 |
-| minilisp | oc | n/a | 2 | yes | 6,298 | 2,363 | 10,436 | $0.00360 | off-peak | 6 | 24.9 |
-| minilisp | oc | n/a | 3 | yes | 8,467 | 4,328 | 16,396 | $0.00656 | off-peak | 13 | 45.5 |
-| csv-parser | oc | n/a | 1 | yes | 5,191 | 1,040 | 6,891 | $0.00189 | off-peak | 4 | 11.5 |
-| csv-parser | oc | n/a | 2 | yes | 5,280 | 1,189 | 8,024 | $0.00254 | off-peak | 4 | 16.0 |
-| csv-parser | oc | n/a | 3 | yes | 5,220 | 944 | 6,388 | $0.00157 | off-peak | 4 | 9.3 |
+| Task | Side | Protocol | Agent mode | Rep | OK | Raw in | Raw out | Raw total | Cost | Rate | Steps | Dur (s) |
+| --- | --- | --- | --- | ---: | --- | ---: | ---: | ---: | ---: | --- | ---: | ---: |
+| json-parser | oc | n/a | n/a | 1 | yes | 6,055 | 2,305 | 8,582 | $0.00257 | off-peak | 5 | 14.9 |
+| json-parser | oc | n/a | n/a | 2 | yes | 5,709 | 1,911 | 7,943 | $0.00231 | off-peak | 4 | 11.5 |
+| json-parser | oc | n/a | n/a | 3 | yes | 5,815 | 2,293 | 8,477 | $0.00258 | off-peak | 4 | 13.4 |
+| sexp-parser | oc | n/a | n/a | 1 | yes | 5,903 | 800 | 6,747 | $0.00149 | off-peak | 4 | 9.3 |
+| sexp-parser | oc | n/a | n/a | 2 | yes | 5,501 | 944 | 6,571 | $0.00157 | off-peak | 4 | 8.8 |
+| sexp-parser | oc | n/a | n/a | 3 | yes | 5,602 | 870 | 6,734 | $0.00162 | off-peak | 4 | 8.1 |
+| minilisp | oc | n/a | n/a | 1 | yes | 8,433 | 3,962 | 13,965 | $0.00501 | off-peak | 11 | 38.2 |
+| minilisp | oc | n/a | n/a | 2 | yes | 7,295 | 3,356 | 11,881 | $0.00417 | off-peak | 9 | 28.7 |
+| minilisp | oc | n/a | n/a | 3 | yes | 7,534 | 3,772 | 12,226 | $0.00431 | off-peak | 10 | 30.3 |
+| csv-parser | oc | n/a | n/a | 1 | yes | 6,211 | 1,057 | 8,233 | $0.00228 | off-peak | 5 | 14.5 |
+| csv-parser | oc | n/a | n/a | 2 | yes | 5,483 | 918 | 7,233 | $0.00198 | off-peak | 4 | 13.0 |
+| csv-parser | oc | n/a | n/a | 3 | yes | 5,648 | 870 | 8,252 | $0.00255 | off-peak | 5 | 18.3 |
 

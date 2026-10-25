@@ -1,5 +1,5 @@
 import { describe, expect, test } from "bun:test";
-import { existsSync, mkdtempSync, readFileSync, rmSync } from "node:fs";
+import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { fileURLToPath } from "node:url";
@@ -133,7 +133,7 @@ interface RunModule {
     side: "tc" | "oc" | "both",
     protocolFormats: readonly ("json" | "edit-dsl")[],
   ): string | null;
-  writeMarkdownReport(path: string, report: unknown): void;
+  writeMarkdownReport(path: string, report: unknown, baselineRoot?: string): void;
   parseArgs(argv: string[]): {
     model: string;
     ocModel: string | null;
@@ -1039,8 +1039,27 @@ describe("concurrent protocol variants (#16)", () => {
       };
       const dir = mkdtempSync(join(tmpdir(), "run-four-way-"));
       try {
+        // Keep the real frozen baselines untouched and stage a stale copy of
+        // one of them under the writeMarkdownReport baseline root seam.
+        const baselineDir = join(dir, "benchmark", "results");
+        mkdirSync(baselineDir, { recursive: true });
+        const sourceOc = join(repoRoot, "benchmark", "results", "oc-baseline.json");
+        const sourceJson = join(repoRoot, "benchmark", "results", "json-format-baseline.json");
+        const staleOc = JSON.parse(readFileSync(sourceOc, "utf8")) as {
+          provenance: { inputs: { taskIssue: string } };
+        };
+        staleOc.provenance.inputs.taskIssue = "stale";
+        writeFileSync(
+          join(baselineDir, "oc-baseline.json"),
+          `${JSON.stringify(staleOc, null, 2)}\n`,
+        );
+        writeFileSync(
+          join(baselineDir, "json-format-baseline.json"),
+          readFileSync(sourceJson, "utf8"),
+        );
+
         const md = join(dir, "four-way.md");
-        writeMarkdownReport(md, report);
+        writeMarkdownReport(md, report, dir);
         const markdown = readFileSync(md, "utf8");
         expect(markdown).toContain("- agent modes: pinned-repair, plan-exec");
         expect(markdown).toContain("````\n# Task: JSON parser");
