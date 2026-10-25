@@ -47,6 +47,7 @@ digraph issues {
   "40" [label="#40 Enforce unique resolved path, symbol, and kind across edit-action clauses"];
   "41" [label="#41 Update edit-action prompts and few-shots for sentinel fences, end, and unique clauses"];
   "42" [label="#42 Add the edit-action BNF to docs/spec.md and align the protocol docs"];
+  "43" [label="#43 Remove the underperforming tc json baseline"];
 
   // parent edges (parent -> child), solid
   "1" -> "2";
