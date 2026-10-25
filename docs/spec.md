@@ -281,8 +281,11 @@ references its parent by id. No nesting, no JSON fallback.
 <path>        ::= NONSPACE+
 <symbol>      ::= NONSPACE+
 <line-text>   ::= { any character except newline }+
-<fence>       ::= <5+ hyphens> NL <raw-lines> NL <same-run-of-hyphens>
-                | <6+ backticks> NL <raw-lines> NL <same-run-of-backticks>
+<fence>       ::= "<<<TC_EDIT_BEGIN>>>" NL <raw-lines> NL "<<<TC_EDIT_END>>>"
+<raw-lines>   ::= ? raw text; each sentinel marker is a whole line with optional
+                    leading/trailing whitespace; no raw line may trim to exactly
+                    <<<TC_EDIT_END>>>; the first exact close line ends the
+                    fence; the body may be empty for an edit-action delete ?
 <text>        ::= <line-text> | NL <fence>
 ```
 
@@ -303,7 +306,12 @@ Rules:
   records. A parent must be declared earlier in the reply or already exist.
 - Stage order is stage-record order; task order within a stage is task-record
   order; edit order within a task is edit-record order.
-- `goal:` / `instruction:` may be one-line text or a following fence.
+- `goal:` / `instruction:` may be one-line text or a following sentinel fence.
+  The fence body is raw, so hyphen runs, backtick runs, `done`, and `end` are
+  ordinary lines; it must be non-empty after trimming, and only an exact
+  `<<<TC_EDIT_END>>>` line closes it (there is no escape). The same `<fence>`
+  production is used by the edit-action reply (§8.2); legacy hyphen/backtick
+  fences are rejected (`PLAN_LEGACY_FENCE`).
 - `create` is top-level only; dotted create is rejected.
 - `write` targets one whole file: `<path>` only, no space or symbol. Its edit
   loc is `{path, symbol: "", kind: "file"}`; `related` and `renameTo` are
@@ -353,7 +361,8 @@ end
 ```
 
 The edit loc is `file "src/json.ts"`; the executor replies with
-`write src/json.ts with <fence> done`.
+`write src/json.ts with <fence>`; the sentinel close terminates the statement
+and no `end` follows.
 
 ### 3.2 Next Task patch
 
@@ -557,13 +566,19 @@ Rules shared by the Plan DSL and edit-action DSL:
 
 - CRLF, blank lines, and indentation are ignored where the grammar is line
   oriented.
-- A whole-reply markdown fence is stripped when it unambiguously wraps the
-  entire reply; this produces a warning, not a silent success.
+- A whole-reply Markdown fence is stripped when it unambiguously wraps the
+  entire reply and its first content line is a Plan, patch, or edit-action
+  statement keyword; this produces a warning (`PLAN_WHOLE_REPLY_FENCE` or
+  `EDIT_WHOLE_REPLY_FENCE`), not a silent success. This outer Markdown fence is
+  separate from the edit-action sentinel fence (§8.2): it wraps the whole reply
+  and is not part of a clause or a replacement body.
 - A missing closing `end` is recovered at EOF or before the next sibling
-  record/clause header, but only when the record/clause boundary is
+  record/statement header, but only when the record/statement boundary is
   unambiguous; it is a warning, not a rejection, when the remaining fields are
-  valid.
-- An unclosed fence is recovered at EOF for diagnostics; the reply is rejected.
+  valid. In the edit-action DSL this applies to `select`, `create`, `delete`,
+  and `read`; a `write` has no `end` and is terminated by its sentinel close.
+- An unclosed sentinel fence is recovered at EOF for diagnostics; the reply is
+  rejected.
 - Truncation is reported as `truncated`; the reply is rejected.
 - Unknown fields/parameters are reported with the nearest valid alternatives;
   they are not silently ignored.
@@ -584,7 +599,8 @@ Plan-specific recovery:
 
 - Accept a bare `NN-slug` id where the grammar expects a quoted id, with a
   warning; quote it internally.
-- Accept `plan`/`patch` headers surrounded by a whole-reply text fence.
+- Accept `plan`/`patch` headers surrounded by a whole-reply Markdown fence (the
+  outer-fence rule above).
 - A missing `goal:` or `instruction:` is an error; the plan/patch is rejected.
 - A record whose parent is missing gets a nearest-id hint; no partial tree.
 - A `finish` without a last `test` task is an error with the exact last task
@@ -594,15 +610,25 @@ Plan-specific recovery:
 
 Edit-action recovery:
 
-- Clause splitting recognizes `select` … `end` and respects fenced bodies, so
-  `select` inside a replacement fence is not a boundary.
-- A missing `end` before the next `select`/EOF is recovered with a warning when
-  the clause boundary is unambiguous; the reply is not rejected solely for
-  this. A truncated fence or mid-clause EOF still rejects.
+- Clause splitting recognizes `select` … `end` and respects sentinel bodies, so
+  `select` inside a replacement body is not a boundary.
+- A missing `end` after `select`, `create`, `delete`, or `read` is recovered
+  with an `EDIT_MISSING_END` warning at EOF or before an unambiguous next
+  statement (`select`, `create`, `delete`, `read`, or `write`); the reply is
+  not rejected solely for this. Arbitrary following text is a hard
+  `EDIT_MISSING_END`, and a `write` has no `end` to recover. A truncated fence
+  or mid-clause EOF still rejects.
+- Legacy hyphen/backtick fences report `EDIT_LEGACY_FENCE`; a misplaced or
+  malformed sentinel reports `EDIT_MALFORMED_FENCE`, trailing text on a
+  close-marker line reports `EDIT_FENCE_TRAILING_TEXT`, and content after a
+  closed fence that is not a new statement reports `EDIT_EMBEDDED_FENCE_END`
+  (there is no escape for a body containing the close marker).
+- The retired `done` terminator reports `EDIT_RETIRED_DONE`; a trailing `end`
+  after a `write` close reports `EDIT_STRAY_END`.
 - `match` without a snippet/regex reports `EDIT_MATCHER_MISSING` with the
   accepted forms and an example.
 - `pick` without `replace`, `rename` mixed with `replace`, unknown
-  `resolve` space, and an empty/malformed fence each get a dedicated code and a
+  `resolve` space, and a malformed fence each get a dedicated code and a
   one-line hint.
 - Multiple clauses are all parsed before any application. One bad editor clause
   rejects all writes; good view-only clauses may still return feedback.
@@ -649,7 +675,7 @@ stage: syntax
 code: EDIT_MATCHER_MISSING
 message: expected a `snippet` or `/regex/` after `match`
 at line 4:7
-  3 | select value answer in src/helper.ts
+  3 | select answer in src/helper.ts
   4 | match
   |       ^
 expected: `snippet` | /regex/
@@ -666,10 +692,17 @@ Shipped error-code families:
 
 - `PLAN_*`: `MISSING_END`, `MISSING_FIELD`, `UNKNOWN_FIELD`, `UNKNOWN_PARENT`,
   `DUPLICATE_ID`, `CREATE_MEMBER`, `FINISH_NOT_LAST`, `STRUCTURE`, `BARE_ID`,
-  `WHOLE_REPLY_FENCE`, `UNCLOSED_FENCE`, `TRUNCATED`;
+  `WHOLE_REPLY_FENCE`, `UNCLOSED_FENCE`, `MALFORMED_FENCE`, `LEGACY_FENCE`,
+  `FENCE_TRAILING_TEXT`, `EMBEDDED_FENCE_END`, `TRUNCATED`;
 - `EDIT_*`: `MISSING_END`, `MISSING_FIELD`, `UNKNOWN_FIELD`, `UNCLOSED_FENCE`,
-  `WHOLE_REPLY_FENCE`, `MATCHER_MISSING`, `PICK_WITHOUT_REPLACE`,
-  `RENAME_MIXED`, `UNKNOWN_SPACE`, `TARGET_MISMATCH`, `TRUNCATED`.
+  `WHOLE_REPLY_FENCE`, `MALFORMED_FENCE`, `LEGACY_FENCE`,
+  `FENCE_TRAILING_TEXT`, `EMBEDDED_FENCE_END`, `RETIRED_DONE`, `STRAY_END`,
+  `MATCHER_MISSING`, `PICK_WITHOUT_REPLACE`, `RENAME_MIXED`, `UNKNOWN_SPACE`,
+  `TARGET_MISMATCH`, `TRUNCATED`.
+
+A repeated resolved target is a `stage: duplicate` rejection from the resolver,
+not a parser error code; the diagnostic names both clause numbers and the
+resolved `(path, symbol, kind)`.
 
 The same renderer is used for plan and action diagnostics so the model sees one
 stable shape. Warnings are surfaced on `LoopResult.warnings`; only errors block
@@ -788,11 +821,179 @@ the reply is applied:
   because the reply replaces the whole file;
 - every editor clause that writes must name the edit's target or a related loc;
   off-target writes reject the whole reply. A `write` action accepts exactly one
-  whole-file `write <path> with <fence> done` and no other statement;
+  whole-file `write <path> with <fence>` and no other statement; the sentinel
+  close terminates it and no `end` follows;
 - other writing file commands (`create`/`delete`/`write`) are rejected;
   `read` and viewer clauses are allowed and only produce feedback.
 
-### 8.2 Action forms
+### 8.2 Edit-action reply BNF
+
+Both the pinned-repair loop and the plan-exec executor read this reply language;
+`src/selection.ts` is its parser. Resolution, range arithmetic, cascade stages,
+atomic application, and the shared gate order are specified in
+[`editing-protocol.md`](editing-protocol.md); that document links back here for
+the plan-exec contract.
+
+```bnf
+<edit-reply>   ::= { <statement> }
+<statement>    ::= <editor> | <file-command>
+
+<editor>       ::= "select" [ <kind> ] <symbol> "in" <path>
+                   [ "resolve" <space> ]
+                   [ "match" ( <snippet> | <regex> ) ]
+                   [ <replacer> | <renamer> ]
+                   "end"
+
+<replacer>     ::= [ "pick" <selecters> ] "replace" "with" <fence>
+<renamer>      ::= "rename" <identifier> "to" <identifier>
+
+<file-command> ::= "create" <path> "end"
+                 | "delete" <path> "end"
+                 | "read" <path> [ "within" <selecters> ] "end"
+                 | "write" <path> [ "within" <selecters> ] "with" <fence>
+                   (* terminated by <<<TC_EDIT_END>>>; no trailing "end" *)
+
+<selecters>    ::= "{" <range> { "," <range> } "}" | <range>
+<range>        ::= <line> [ ":" <column> [ "-" <line> [ ":" <column> ] ] ]
+
+<kind>         ::= "function" | "const" | "let" | "var" | "class"
+                 | "type" | "interface" | "enum" | "namespace"
+<space>        ::= "value" | "type" | "namespace"
+<path>         ::= ? file path token, no whitespace ?
+<symbol>       ::= ? declared identifier ?
+<identifier>   ::= ? TypeScript identifier ?
+<line>         ::= ? positive 1-based integer ?
+<column>       ::= ? positive 1-based integer ?
+<snippet>      ::= ? "`" , source text, "`" ; only \` and \\ are escapes ?
+<regex>        ::= ? "/" , ECMA-262 pattern, "/" ; no flags; \/ decodes to / ?
+<fence>        ::= ? the shared sentinel production in §3: an exact
+                     <<<TC_EDIT_BEGIN>>> line, raw body lines, then an exact
+                     <<<TC_EDIT_END>>> line ?
+```
+
+`<edit-reply>` is the parser's `multiEditor`. Whitespace is insignificant
+between tokens, except inside a `<fence>` body and a `/regex/`. Each statement
+is one `select` clause or one raw file command, and statements apply in
+document order. The reader accepts an empty reply as zero statements, but a
+useful reply carries at least one.
+
+Canonical forms:
+
+- `select … end`; `create <path> end`; `delete <path> end`; and
+  `read <path> [within <selecters>] end` terminate with `end`.
+- `write <path> [within <selecters>] with <fence>` has no trailing `end` (or
+  retired `done`); the `<<<TC_EDIT_END>>>` sentinel closes the statement. A
+  whole-file `write` omits `within`; a ranged write replaces the selected
+  lines.
+- `pick` requires `replace`; `rename` cannot be combined with `pick` or
+  `replace`. A clause with neither `replace` nor `rename` is a viewer; a
+  `pick` clause is never a viewer. An empty fence deletes the target.
+- The optional `<kind>` is the declaration-kind disambiguator. One bare token
+  before `in` is the symbol; with two, the first must be an admitted kind, and
+  any other leading token is a syntax error rather than a symbol name.
+  `resolve <space>` filters the TypeScript symbol space.
+- `pick` and `within` use the same 1-based, inclusive `<selecters>`; braces
+  cannot be empty and a coordinate must be positive.
+- `read` is a viewer: it writes nothing. A failed `read` is feedback and does
+  not discard the reply's editing statements. `create` and `delete` are path
+  commands without a fence; `write` creates a missing file and replaces the
+  whole file or the selected lines through the same gate as an editor.
+
+Fence and terminator rules:
+
+- `<fence>` is the sentinel-only fence shared with the Plan DSL (§3), not a
+  Markdown fence. `<<<TC_EDIT_BEGIN>>>` and `<<<TC_EDIT_END>>>` are exact whole
+  lines, with optional leading or trailing whitespace. The body is raw, so
+  hyphen runs, six-backtick runs, `done`, and `end` are ordinary body lines.
+  Only an exact `<<<TC_EDIT_END>>>` line closes the fence; trailing text on the
+  close line is rejected. A body containing an exact end-marker line has no
+  escape: the first exact line closes it and later content is rejected.
+- A `write` is terminated by its sentinel close. A trailing `end` is
+  `EDIT_STRAY_END`; the retired `done` terminator is `EDIT_RETIRED_DONE` in any
+  statement.
+- The parser may warn and recover a missing `end` after `select`, `create`,
+  `delete`, or `read` at EOF or before an unambiguous next statement
+  (`select`, `create`, `delete`, `read`, or `write`). Arbitrary following text
+  is a hard `EDIT_MISSING_END`. `write` has no `end` to recover. The grammar
+  above still requires `end`, and the prompt and examples always emit it;
+  recovery is tolerance, not a canonical form.
+- The outer whole-reply Markdown fence tolerated by §5.2 is a separate rule; it
+  is not `<fence>` and cannot delimit a replacement body.
+
+**One target per reply.** Within one reply, every `select` clause — viewer or
+editor — plus every `rename` and every implicit create must resolve to a
+distinct `(path, symbol, kind)`. `resolve`, `match`, and `pick` choose a space
+or a span of the same declaration and do not make a new target. A repeat fails
+at `stage: duplicate` before any matcher or write runs; the diagnostic names
+both 1-based clause numbers and the resolved address, and the whole reply
+writes nothing. Split edits to one declaration across exchanges. Raw
+`create`/`delete`/`write` commands have their own path conflicts: create or
+delete a path at most once per reply, and do not combine a create/delete with a
+write or editor on that path.
+
+Examples:
+
+A viewer for one declaration and an editor for another in one reply:
+
+```text
+select function answer in src/helper.ts
+end
+
+select function parse in src/helper.ts
+match `return input;`
+replace with
+<<<TC_EDIT_BEGIN>>>
+return input.trim();
+<<<TC_EDIT_END>>>
+end
+```
+
+A rename uses the same clause shape:
+
+```text
+select answer in src/helper.ts
+rename answer to answerOf
+end
+```
+
+An empty sentinel fence deletes the target:
+
+```text
+select function unused in src/helper.ts
+replace with
+<<<TC_EDIT_BEGIN>>>
+<<<TC_EDIT_END>>>
+end
+```
+
+File commands end with `end` except `write`, whose sentinel close terminates
+it:
+
+```text
+create src/parser.ts end
+delete src/legacy-parser.ts end
+read src/helper.ts within 1-12 end
+```
+
+```text
+write src/parser.ts with
+<<<TC_EDIT_BEGIN>>>
+export function parse(input: string): string {
+  return input.trim();
+}
+<<<TC_EDIT_END>>>
+```
+
+```text
+write src/parser.ts within 2-4 with
+<<<TC_EDIT_BEGIN>>>
+export function parse(input: string): string {
+  return input.trim();
+}
+<<<TC_EDIT_END>>>
+```
+
+### 8.3 Action forms
 
 | Action   | Required reply                                                                                                                                                                                                                                                                           |
 | -------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
@@ -800,7 +1001,7 @@ the reply is applied:
 | `create` | A whole-declaration `replace with <fence>` with no `match`/`pick`; the fence must contain exactly one top-level declaration, the target. Any other body is wrapped by the edit's space (`value` → `let`, `type` → `type`, `namespace` → `namespace`); the created name/space must match. |
 | `delete` | A whole-declaration empty fence, no `match`/`pick`.                                                                                                                                                                                                                                      |
 | `rename` | `rename <current> to <renameTo>`, no `replace`; the new name must equal `renameTo`.                                                                                                                                                                                                      |
-| `write`  | Exactly one `write <path> with <fence> done`, no `within`; the fence carries the complete file.                                                                                                                                                                                         |
+| `write`  | Exactly one `write <path> with <fence>`, no `within`; the sentinel close terminates it, no `end` follows, and the fence carries the complete file.                                                                                                                                    |
 
 A caller update is its own edit. The one exception is a `modify` edit's
 `related` list, which exists for atomic type/representation migrations.
@@ -814,16 +1015,19 @@ and does not expand.
 The driver tolerates a leading `export` the source omitted or the reply re-added,
 matching the edit-dsl #48 rule.
 
-### 8.3 Apply and verify
+### 8.4 Apply and verify
 
 1. Parse with the tolerant edit-action parser. If `ok=false` or any editor
    clause is invalid, reject the whole reply and write nothing; warnings alone
    do not block. Diagnostics list every parsed clause issue.
-2. A `write` edit accepts exactly one `write <path> with <fence> done`
-   statement with no `within`; the new source runs through the parse gate and
-   formatter, then replaces the file. The previous parse is irrelevant because
-   the reply replaces the whole file.
-3. Other edits resolve with `resolveMultiEditor` against the current sources.
+2. A `write` edit accepts exactly one `write <path> with <fence>` statement
+   with no `within`; the sentinel close terminates it and no `end` follows. The
+   new source runs through the parse gate and formatter, then replaces the
+   file. The previous parse is irrelevant because the reply replaces the whole
+   file.
+3. Other edits resolve with `resolveMultiEditor` against the current sources; a
+   repeated resolved `(path, symbol, kind)` rejects the reply at
+   `stage: duplicate` before any matcher runs.
 4. Apply with `applyResolvedRegions`: overlap, parse gate, duplicate guard,
    formatter, post-format no-op.
 5. Write only after every guard passes; nothing is written on a rejection.
@@ -841,7 +1045,7 @@ The executor may make **one** bounded self-check per edit:
 `{"request":"read"}` returns the numbered target source; any other request is
 refused.
 
-### 8.4 Task gates and tests
+### 8.5 Task gates and tests
 
 Every task has a gate that runs **once**, after every edit in that task settles:
 

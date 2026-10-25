@@ -10,14 +10,6 @@
   parent: null
   deps: []
   file: 0025-teach-the-edit-dsl-prompt-to-expand-folded-source-views.md
-- id: 42
-  title: "Add the edit-action BNF to docs/spec.md and align the protocol docs"
-  status: todo
-  priority: medium
-  milestone: null
-  parent: 37
-  deps: [38, 39, 40]
-  file: 0042-add-the-edit-action-bnf-to-docs-spec-md-and-align-the-protocol-docs.md
 - id: 37
   title: "Rework edit-action protocol: sentinel fence, end terminators, unique clause addresses"
   status: todo

@@ -77,8 +77,9 @@ The `pinned-repair` mode is unchanged. The `--format json` result is
    file).
 4. **Edit.** The pinned declaration is shown with 1-based line numbers, and the
    model replies with one edit payload. Under edit-dsl that is one or more
-   `select … end` clauses with 5+ hyphen (or 6+ backtick) replacement fences or
-   a semantic `rename <old> to <new>`, optionally mixed with raw file commands;
+   `select … end` clauses with `<<<TC_EDIT_BEGIN>>>` / `<<<TC_EDIT_END>>>`
+   replacement fences or a semantic `rename <old> to <new>`, optionally mixed
+   with raw file commands;
    under JSON it is an address, an optional `matcher` (snippet or 1-based
    `range`, the latter winning), and a `replacement`. A rename updates the
    declaration and every same-file reference that resolves to it, including

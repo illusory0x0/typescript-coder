@@ -405,7 +405,9 @@ categories:
       - term: pick clause
         definition: One range or a `{a, b, ...}` set; requires `replace`.
       - term: replace with fence
-        definition: 5+ hyphens or 6+ backticks; an empty fence deletes the target.
+        definition: >-
+          The sentinel-only edit-action fence: `<<<TC_EDIT_BEGIN>>>`, the raw
+          body, then `<<<TC_EDIT_END>>>`; an empty fence deletes the target.
       - term: rename clause
         definition: >-
           Rewrites a declaration name and every same-file reference that

@@ -6,7 +6,8 @@ inside it, and supplies replacement text; the harness resolves the address,
 proves the locator unique, splices, gates, and formats. This document describes
 that payload: what the model may send, how each field resolves, and the checks
 that run before a byte reaches disk. The Edit → Verify loop around it is
-[`agent-loop.md`](agent-loop.md).
+[`agent-loop.md`](agent-loop.md); the plan-exec execution contract and the
+edit-action BNF are in [`spec.md`](spec.md) §8.2.
 
 Two reply formats exist, selected by `--protocol-format` (default `edit-dsl`):
 
@@ -54,10 +55,11 @@ Only these keys are admitted. An unexpected key is a `protocol` rejection that
 names it, with targeted hints for the v1 spellings (`name` for `symbol`, and an
 `edits` array, which v2 replaces with one flat object per exchange).
 
-The reply is read tolerantly: a whole-text markdown fence is stripped, and the
-first brace-matched object inside surrounding prose is found by scanning with
-string-literal and escape awareness. Prose around the object is fine; no object
-is not.
+The reply is read tolerantly: a whole-text Markdown wrapper is accepted (the
+outer-fence tolerance in §2 is separate from the edit-action sentinel fence),
+and the first brace-matched object inside surrounding prose is found by
+scanning with string-literal and escape awareness. Prose around the object is
+fine; no object is not.
 
 **Batched replies.** Under the opt-in `--multi-payload` protocol, one
 `{"payloads": [...]}` object carries several flat payloads, editing different
@@ -72,17 +74,18 @@ wrapper; it batches by sending more clauses.
 ## 2. The edit-dsl clause
 
 ```text
-select [kind] <symbol> in <path> [ resolve (value|type|namespace) ] [ match (<snippet> | /regex/) ] [ [ [ pick <range-or-set> ] replace with <fence> ] | rename <old> to <new> ] end
+select [kind] <symbol> in <path> [ resolve (value|type|namespace) ] [ match (<snippet> | /regex/) ] [ [ pick <selecters> ] replace with <fence> | rename <old> to <new> ] end
 ```
 
-A reply is one or more statements — `select` clauses or raw file commands
-(below) — with no markdown fences around the reply (a fenced _reply_ is
-tolerated) and no prose. The grammar is read by a hand-written
-recursive-descent reader in which whitespace between tokens is
-insignificant, except inside a fence body and a `/regex/`. Any malformed input
-throws a `stage: syntax` diagnostic naming the offending field; the loop
-renders it with the failing line, column, and a short excerpt so the retry can
-see exactly where the reply stopped. A partial selection is never returned.
+A reply is zero or more statements — `select` clauses or raw file commands
+(below); a useful reply carries at least one. There is no prose. A Markdown
+fence around the whole reply is tolerated as a separate outer-fence rule
+(below), not as part of `<fence>`. The grammar is read by a hand-written
+recursive-descent reader in which whitespace between tokens is insignificant,
+except inside a `<fence>` body and a `/regex/`. Any malformed input throws a
+`stage: syntax` diagnostic naming the offending field; the loop renders it with
+the failing line, column, and a short excerpt so the retry can see exactly
+where the reply stopped. A partial selection is never returned.
 
 - **Header**: `select`, then one or two bare tokens, then `in <path>`. One token
   is the symbol; two are `<kind> <symbol>`. The admitted kinds are `function`,
@@ -110,12 +113,14 @@ see exactly where the reply stopped. A partial selection is never returned.
   range. A pick-only `{a, b, …}` set is supported as separate regions: the same
   fence replacement is applied to every resolved range (all-or-none at
   resolution; overlapping ranges are a `stage: range` failure).
-- **`replace with <fence>`**: 5 or more hyphens (for example `-----`) or 6 or
-  more backticks on their own line, a raw body, and a closing line of the same
-  run. Only a body line whose delimiter run equals the opening run closes the
-  fence, so a shorter run such as a `---` divider stays ordinary body text. The
-  serializer prefers five hyphens and falls back to six backticks when the body
-  contains a hyphen run. An empty fence deletes the target.
+- **`replace with <fence>`**: the sentinel-only fence shared with the Plan DSL
+  (`spec.md` §3). `<<<TC_EDIT_BEGIN>>>` and `<<<TC_EDIT_END>>>` are exact whole
+  lines, optionally indented or with trailing whitespace; the body is raw, so
+  hyphen runs, six-backtick runs, `done`, and `end` are ordinary body lines.
+  Only an exact close-marker line closes the fence. Trailing text on the
+  close-marker line is rejected, and a body cannot contain an exact
+  close-marker line: the first exact line closes it and later content is
+  rejected, with no escape form. An empty fence deletes the target.
 - **`rename <old> to <new>`**: the other editor form. It rewrites the selected
   declaration name and every same-file reference that lexically resolves to it.
   Shadowed bindings and out-of-scope names are untouched; dotted targets rename
@@ -123,7 +128,8 @@ see exactly where the reply stopped. A partial selection is never returned.
   plus same-class static accesses). A collision with an existing binding at the
   same scope or qualified path is an `address` failure, and a rename cannot be
   combined with `pick` or `replace`.
-- **`end`** terminates the clause.
+- **`end`** terminates a `select` clause. Raw file commands use `end` too,
+  except `write`, whose sentinel close terminates it.
 
 A clause with neither `replace` nor `rename` is a **viewer**: it locates and
 writes nothing (§4). A clause with `replace` is an editor (after `pick` when
@@ -168,12 +174,15 @@ commands applies all regions or none, through the same atomic apply pipeline.
 ISO/IEC 14977 EBNF (originally drafted in `human/edit.md`):
 
 ```ebnf
-multiEditor = { editor | fs } ;
+edit-reply  = { statement } ;
 
-fs          = 'create', path, 'done'
-            | 'delete', path, 'done'
-            | 'read', path, [ 'within', multiRange ], 'done'
-            | 'write', path, [ 'within', multiRange ], 'with', fence, 'done' ;
+statement   = editor | file-command ;
+
+file-command = 'create', path, 'end'
+             | 'delete', path, 'end'
+             | 'read', path, [ 'within', selecters ], 'end'
+             | 'write', path, [ 'within', selecters ], 'with', fence
+             (* sentinel close terminates; no trailing 'end' *) ;
 
 editor      = 'select', [ kind ], symbol, 'in', path,
               [ 'resolve', space ],
@@ -181,10 +190,10 @@ editor      = 'select', [ kind ], symbol, 'in', path,
               [ replacer | renamer ],
               'end' ;
 
-replacer    = [ 'pick', multiRange ], 'replace', 'with', fence ;
+replacer    = [ 'pick', selecters ], 'replace', 'with', fence ;
 renamer     = 'rename', identifier, 'to', identifier ;
 
-multiRange  = '{', range, { ',', range }, '}'
+selecters   = '{', range, { ',', range }, '}'
             | range ;                                   (* single-range sugar *)
 
 range       = line, [ ':', column, [ '-', line, [ ':', column ] ] ] ;
@@ -199,14 +208,34 @@ space       = 'value' | 'type' | 'namespace' ;
 path        = ? file path token ? ;
 symbol      = ? declared identifier ? ;
 identifier  = ? TypeScript identifier ? ;
-snippet     = ? '`' , verbatim source, '`' ? ;
+snippet     = ? '`' , verbatim source, '`' ; only \` and \\ are escapes ? ;
 regex       = ? '/' , ECMA-262 pattern, no flags, '/' ? ;
-fence       = ? 5+ hyphens or 6+ backticks; only a line whose run equals the
-                opening run closes it; closing run matches ? ;
+fence       = ? a line exactly <<<TC_EDIT_BEGIN>>>, raw body lines, then a
+                line exactly <<<TC_EDIT_END>>>; each marker may have leading
+                or trailing whitespace; the first exact close line terminates
+                and nothing may follow it on that line (a later statement may
+                start on the next line); the body may be empty ? ;
 ```
 
 A coordinate is digits only: `0` parses as a `line`/`column` but is rejected as
-not positive, and `multiRange` braces cannot be empty.
+not positive, and `selecters` braces cannot be empty. `end` is required by the
+grammar. For `select`, `create`, `delete`, and `read`, the tolerant reader may
+warn `EDIT_MISSING_END` and recover at EOF or before an unambiguous next
+statement (`select`, `create`, `delete`, `read`, or `write`); arbitrary
+following text is a hard error. A `write` has no `end`: its `<<<TC_EDIT_END>>>`
+close terminates it, and a trailing `end` is `EDIT_STRAY_END`. Prompts and
+examples always emit the canonical terminator; recovery is not taught as a
+form.
+
+### Outer Markdown fence
+
+Separate from `<fence>`, the reply reader strips one Markdown fence that wraps
+the complete reply: 3+ backticks, an optional info string, a closing run at
+least as long, and a first content line that starts with `select`, `create`,
+`delete`, `read`, or `write`. It blanks the fence lines (diagnostic line numbers
+stay stable), parses the bare reply, and records an `EDIT_WHOLE_REPLY_FENCE`
+warning. This outer fence is not recognized inside a clause, does not delimit a
+replacement body, and cannot wrap only part of the reply.
 
 ### Range arithmetic
 
@@ -227,13 +256,16 @@ real position.
 
 ### Raw file commands
 
-`multiEditor` also admits four file commands:
+The reply grammar also admits four file commands:
 
 ```text
-create <path> done
-delete <path> done
-read   <path> [ within <selecters> ] done
-write  <path> [ within <selecters> ] with <fence> done
+create <path> end
+delete <path> end
+read   <path> [ within <selecters> ] end
+write  <path> [ within <selecters> ] with
+<<<TC_EDIT_BEGIN>>>
+<raw body>
+<<<TC_EDIT_END>>>
 ```
 
 - **`create`** creates an empty file. An existing path is an `address` failure;
@@ -247,11 +279,12 @@ write  <path> [ within <selecters> ] with <fence> done
   writes that file. A failed `read` reports its error as feedback and does not
   discard the reply's editing statements. A whole-file result is folded (§4):
   the marker names the hidden range and line counts, and
-  `read <path> within <start>-<end> done` returns that range unfolded.
+  `read <path> within <start>-<end> end` returns that range unfolded.
 - **`write`** replaces the whole file when `within` is absent, or the selected
   text when it is present, and creates the file if it does not exist. The
-  replacement goes through the same parse gate, duplicate guard, formatter, and
-  no-op check as an editor region.
+  sentinel close terminates the statement; no `end` follows. The replacement
+  goes through the same parse gate, duplicate guard, formatter, and no-op check
+  as an editor region.
 
 `within` uses the same 1-based, inclusive `selecters` syntax as `pick`
 (`12`, `12:3`, `12:3-14`, `12:3-14:5`, or a `{…}` set). Multiple selecters are
@@ -261,6 +294,36 @@ commands after the first target is pinned; the first reply is either exactly one
 atomically; a failed `read`, which writes nothing, is feedback rather than a
 rejection. Two creates that append at the same offset are applied in clause
 order; two creates of the same declaration still fail at the duplicate guard.
+Create or delete a path at most once per reply; a create/delete combined with a
+write or editor on that path is a path-conflict rejection.
+
+**One target per reply.** Every `select` clause in one reply — viewer or
+editor — plus every `rename` and every implicit create must resolve to a
+distinct `(path, symbol, kind)`. `resolve`, `match`, and `pick` do not make a
+new target. A repeat fails at `stage: duplicate` before any matcher or write
+runs, naming both clause numbers and the resolved address; the whole reply
+writes nothing. Split edits to one declaration across exchanges.
+
+Canonical examples:
+
+```text
+select function parse in src/a.ts
+match `return input;`
+replace with
+<<<TC_EDIT_BEGIN>>>
+return input.trim();
+<<<TC_EDIT_END>>>
+end
+```
+
+```text
+write src/a.ts with
+<<<TC_EDIT_BEGIN>>>
+export function parse(input: string): string {
+  return input.trim();
+}
+<<<TC_EDIT_END>>>
+```
 
 ## 3. Resolution: the cascade
 
@@ -336,7 +399,7 @@ An edit-dsl clause with no `replace` writes nothing and reports the declaration 
 the next prompt's `# details` block: the source is numbered with its
 file-absolute lines. Source blocks longer than six lines keep the first three and
 last three lines; the middle is replaced with
-`... // content folded, source range: <first>-<last> (<hidden> of <total> lines hidden); expand with read <path> within <first>-<last> done`,
+`... // content folded, source range: <first>-<last> (<hidden> of <total> lines hidden); expand with read <path> within <first>-<last> end`,
 naming the hidden file-absolute lines, how many of the block's lines they hide,
 and the command that expands exactly that range. The same fold applies to viewer
 feedback, command-pinned files, and the `# modified text` confirmation; a
@@ -365,13 +428,13 @@ the vocabulary so metrics compare.
 
 | Stage                  | Cause                                                                                              |
 | ---------------------- | -------------------------------------------------------------------------------------------------- |
-| `syntax`               | Edit-dsl only: the reply does not parse as `select … end`.                                         |
+| `syntax`               | Edit-dsl only: the reply does not parse as a statement (`select … end` or a file command), including a fence or terminator error. |
 | `protocol`             | The json object is malformed, carries an unexpected key, or a JSON payload arrives under edit-dsl. |
 | `echo` / `address`     | The address does not echo the pinned selection, or does not resolve uniquely.                      |
 | `matcher`              | `matcher-unparseable`, `matcher-not-found`, `matcher-ambiguous`, or `regex-invalid`.               |
 | `range`                | A `range`/`pick` that is out of bounds, empty, inverted, or outside the declaration.               |
 | `no-op`                | The replacement equals the text it replaces.                                                       |
-| `repeat` / `duplicate` | A byte-identical resubmission; a duplicate top-level declaration.                                  |
+| `repeat` / `duplicate` | A byte-identical resubmission; a repeated resolved target; a duplicate top-level declaration or create. |
 | `gate`                 | The file parsed before and does not parse after.                                                   |
 | `format`               | oxfmt rejected the result, or the formatted source equals the pre-edit source.                     |
 
@@ -382,12 +445,13 @@ reply was discarded, so the model must resend the full corrected reply.
 ## 6. Application and gating
 
 Nothing is written until the candidate passes, in order: address resolution,
-then matcher/range resolution, then the splice, the **parse gate** (a file that
-parsed must still parse), the **duplicate-declaration guard** (a top-level
-`function`, `class`, or `type` name may not be added twice), the
-**formatter**, and the **post-format no-op check** (a candidate that differs
-only by formatting is rejected as a no-op). A failing gate writes nothing and
-reports its stage.
+the **unique-target claim** (every `select`, `rename`, and implicit create in
+one reply resolves to a distinct `(path, symbol, kind)`), matcher/range
+resolution, then the splice, the **parse gate** (a file that parsed must still
+parse), the **duplicate-declaration guard** (a top-level `function`, `class`, or
+`type` name may not be added twice), the **formatter**, and the **post-format
+no-op check** (a candidate that differs only by formatting is rejected as a
+no-op). A failing gate writes nothing and reports its stage.
 
 The formats differ in what a batch means:
 
@@ -396,18 +460,21 @@ The formats differ in what a batch means:
   exchange is discarded. Overlapping same-file regions discard the exchange and
   name both regions.
 - **Edit-dsl replies are atomic across the editing statements.** Every statement
-  resolves against its file's current source; if any editing statement fails
-  resolution, or the apply pipeline reports any guard/overlap failure, the whole
-  reply is discarded and nothing is written — no file, including creates,
-  deletes, and raw writes. Only a reply with no editing failures writes every
-  resolved region and file command. Multiple creates that append at the same end
-  offset are applied in clause order; duplicate creates of the same declaration
-  still fail at the duplicate guard. A failed `read` is the one exception: it
-  writes nothing by construction, so its error rides the next prompt without
-  discarding the other statements. A mixed viewer+editor reply that fails
-  writes nothing but still carries the viewer feedback. A failing reply is a
-  retry-driving rejection, and the retry must carry the full corrected reply
-  (there is no "already applied" list).
+  resolves against its file's current source. Before any matcher runs, each
+  `select` clause (viewer or editor), `rename`, and implicit create claims its
+  resolved target; a repeated `(path, symbol, kind)` is a `stage: duplicate`
+  rejection that names both clauses and the address and discards the reply. If
+  any editing statement fails resolution, or the apply pipeline reports any
+  guard/overlap failure, the whole reply is discarded and nothing is written —
+  no file, including creates, deletes, and raw writes. Only a reply with no
+  editing failures writes every resolved region and file command. Multiple
+  creates that append at the same end offset are applied in clause order;
+  duplicate creates of the same declaration still fail at the duplicate guard.
+  A failed `read` is the one exception: it writes nothing by construction, so
+  its error rides the next prompt without discarding the other statements. A
+  mixed viewer+editor reply that fails writes nothing but still carries the
+  viewer feedback. A failing reply is a retry-driving rejection, and the retry
+  must carry the full corrected reply (there is no "already applied" list).
 
 A reply whose clauses all fail writes nothing; one whose clauses all apply goes
 to verification. A failed verification does **not** roll back: the attempted
@@ -565,6 +632,9 @@ function gate(source: string, spliced: string): Stage | null {
 - **Per-file application policy.** The edit-dsl reply's document-order,
   independently-guarded splice with an offset delta, versus the json batch's
   all-or-nothing splice (§6).
+- **Unique-target claims.** The resolver's per-reply `(path, symbol, kind)` set
+  across viewers, editors, renames, and implicit creates, and its `duplicate`
+  diagnostic (§6).
 - **Wrapper priority.** A snippet is tried as a statement, a class member, an
   expression, then a statement run; the first wrapper with a structural hit
   wins and later ones are not tried (§3).
