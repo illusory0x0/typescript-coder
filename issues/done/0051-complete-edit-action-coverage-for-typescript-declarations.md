@@ -1,7 +1,7 @@
 ---
 id: 51
 title: "Complete edit-action coverage for TypeScript declarations"
-status: todo
+status: done
 priority: medium
 milestone: null
 parent: null
@@ -49,3 +49,5 @@ No live benchmark is required for acceptance; a measured comparison needs explic
 - Inside a declaration, structural matching is best-effort; regex and `pick` are first-class fallbacks.
 - Anonymous member create (call/construct/index signature) is deferred; named create is handled by #50.
 - Do not tune against the held-out `csv-parser` fixture, regenerate frozen baselines, or run live benchmarks without approval.
+- Children #50/#52/#53/#54 are done. Auditing the umbrella criteria: docs coverage matrix, corpus proof, advisory-only guardrails, and final verification.
+- Resolved: children #50/#52/#53/#54 are done. Added the explicit Declaration coverage matrix to docs/edit-protocol.md (forms -> address -> selectors/create -> limits) and a compact Declaration coverage map to docs/plan-exec.md, aligned with the committed src/matcher-corpus.test.ts FORMS matrix. The corpus proves a selector path per covered declaration/member/module form, with explicit expected failures for unsupported/ambiguous forms. Guardrails remain parse/safe-application only; strategy/style is advisory. Verified after the child work: just typecheck; just test 1619 pass/0 fail; just accept 9/9; git diff --check. No frozen baseline or historical result JSON changed.

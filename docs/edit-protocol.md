@@ -228,6 +228,52 @@ inside one binding is supported. A whole-symbol `replace` or empty-fence delete
 on one of those bindings is rejected because it would silently rewrite a
 sibling binding; target a narrower span or a different declaration instead.
 
+### Declaration coverage matrix
+
+The table maps every covered declaration, member, and module-boundary category
+to its address and selector paths. The committed proof is
+`src/matcher-corpus.test.ts`; its `FORMS` list is authoritative, and a row marked
+**expected failure** is a deliberate unsupported or ambiguous case rather than a
+missing feature. In the selector column, **whole-symbol** means no `match` and no
+`pick` (the indexed declaration span), **`match`** is the structural snippet,
+**`/regex/`** is the regex locator, and **`pick`** is a line/point/range
+selector. **Owner + selector** means select the class/interface/type-alias/
+object/enum owner first; **rejected-with-candidates** means the address or
+matcher fails and names every candidate, never the first.
+
+| Form/owner | Address | Supported selectors/create | Notes/limits |
+| ---------- | ------- | -------------------------- | ------------ |
+| Top-level function | `select function NAME in PATH` (kind optional) | whole-symbol; `match`; `/regex/`; `pick`; `create function NAME` | The declaration is appended at the file end; a body-level edit needs a selector. |
+| Top-level `const`/`let`/`var`/`using` | `select const NAME`, `select let NAME`, or `select var NAME`; `using` uses an omitted kind (`select NAME`) | whole-symbol; `match`; `/regex/`; `pick`; `create const`, `create let`, `create var`, or `create using` | `const`/`let`/`var` are the grammar's variable kinds; `select using NAME` is an **expected syntax failure**. Body-only create is accepted for these kinds. |
+| Top-level class, interface, type alias, enum, namespace | `select <kind> NAME` with `class`, `interface`, `type`, `enum`, or `namespace` (kind optional) | whole-symbol; `match`; `/regex/`; `pick`; `create` the same declaration kind | Class and enum occupy value and type spaces, interface/type alias type, namespace namespace. Create appends exactly one declaration. |
+| Class method/property | `select Widget.render`; `select Widget.count` (omitted kind) | whole-symbol; `match`; `/regex/`; `pick`; `create method Widget.render`; `create property Widget.count` (optional `static`) | The indexed span is the member; an empty-fence delete also removes its separator. |
+| Class getter/setter | `select Widget.value` when only one accessor exists | whole-symbol; `match`; `/regex/`; `pick`; `create getter`, `create setter`, or `create accessor Widget.value` | A getter/setter **pair shares the name**, so the address is ambiguous; select the class owner and `match`/`pick` one accessor. `accessor` create accepts a get or set fence; the pair is legal. |
+| Class constructor | Owner only: `select class Widget` | Owner + `match`/`/regex/`/`pick`; `create constructor Widget` | No name address: the constructor has no index entry. |
+| Class static block, computed member, index signature, constructor parameter property | Owner only: `select class Widget` | Owner + `match`/`/regex/`/`pick`; no create | Not name-addressable. Static blocks and computed names are reached through the class-member context; index signatures and parameter properties are anonymous. |
+| Class auto-accessor (`accessor value = 1`) | Owner only: `select class Widget` | Owner + `/regex/` or `pick`; no create | **Expected failure** for a structural or named-member edit: the parser does not model the form. `create accessor` emits a get/set pair, not this syntax. |
+| Interface or type-literal named method/property | `select Cell.getValue`; `select Snapshot.value`; nested literal members keep the owner path (`Interface.property.member`) | whole-symbol; `match`; `/regex/`; `pick`; `create method` or `create property` with an interface owner | Type-literal member create is deferred. Interface/type-literal named members are renameable. |
+| Interface or type-literal call/construct/index signature | Owner only: `select interface Cell` or `select type Fn` | Owner + `match`/`/regex/`/`pick`; create deferred | Anonymous signatures have no name address; anonymous signature create is out of scope. |
+| Namespace member | `select function Util.helper`; nested `A.B.member` with the declared kind | whole-symbol; `match`; `/regex/`; `pick`; `create <declaration-kind> Util.helper` | The owner must already exist; a dotted create never creates its owner. |
+| Enum member | `select Color.Red` (omitted kind) | whole-symbol; `match`; `/regex/`; `pick`; `create enum-member Color.Red` | Enum-member create requires an existing enum owner. |
+| Object-literal property/method | `select config.timeout`; `select config.run` | whole-symbol; `match`; `/regex/`; `pick`; create deferred | Indexed only when the literal is assigned to a declared variable or class field; an anonymous literal stays owner + selector. Object-literal members are not renameable. |
+| Object-literal getter/setter | A pair shares `select config.value` and is ambiguous; a single accessor may resolve | Owner + `match`/`/regex/`/`pick` (for example `select const config`); create deferred | **Expected address ambiguity** for the pair; pick one accessor through the owner. |
+| Named default export | Declared name: `select function boot`; `select class App` | whole-symbol; `match`; `/regex/`; `pick`; `create export` for a new statement | Only a named default export has a declaration address. |
+| Anonymous default export | File owner: `select file PATH` | File-level `match`/`/regex/`/`pick`; `create export` | File-level editor only; no declaration address and no file-level rename. |
+| Imports: named, default, namespace, type-only, side-effect, `import = require` | File owner: `select file PATH` | File-level `match`/`/regex/`/`pick`; `create import` | One candidate is required; a whole statement or one specifier can be deleted; file-level rename is rejected. |
+| Exports: named, star, re-export, `export =`, export declaration | File owner: `select file PATH`; a declaration export also keeps its declaration address (`export function f` is `select function f`) | File-level `match`/`/regex/`/`pick`; `create export` | An anonymous default export is file-level only; file-level rename is rejected. |
+| Overloads | `select function parse` (or another kind) | rejected-with-candidates; no whole-symbol target | Every overload declaration is a candidate. Overloads share a kind, so no kind token disambiguates; never a silent first match. |
+| Declaration merges | `select class Owner` or `select interface Owner`; an omitted kind is ambiguous | whole-symbol; `match`; `/regex/`; `pick` on the kind-disambiguated declaration | An omitted kind over a merge is rejected-with-candidates; an explicit kind disambiguates a cross-space merge. |
+| Multi-declarator or destructuring binding | `select const first`; `select const a` | Per-binding `match`/`/regex/`/`pick`; whole-symbol replace/delete **rejected** | **Expected failure** for a whole-symbol edit: it would rewrite a sibling binding. Target a narrower span. |
+| Ambiguous or unsupported structural match | Any declaration or owner above | Ambiguous `match` is rejected-with-candidates, then `pick` or a longer snippet; a bare decorator is reached through its owner with a member-inclusive `match`, `/regex/`, or `pick` | **Expected failure** for an ambiguous `match` and for a standalone decorator; the diagnostic lists the candidates or attempted owner contexts. |
+
+**Create limits.** `create` covers named top-level declaration kinds and named
+members of an existing class, interface, namespace, or enum, plus `create import`
+and `create export` at the module boundary. It does not create anonymous
+call/construct/index signatures, type-literal or object-literal members,
+computed members, static blocks, constructor parameter properties, or TypeScript
+auto-accessors. A dotted create never creates its owner. See §2.1 for the
+descriptor and modifier validation.
+
 ### File-level module-boundary select
 
 `select file <path> … replace with <fence> end` gives imports and exports an

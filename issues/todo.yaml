@@ -2,14 +2,6 @@
 # rewrites it; `add` appends; other writes keep it. `check` enforces it.
 # A dep, and every child of an umbrella, must be listed before its dependent.
 
-- id: 51
-  title: "Complete edit-action coverage for TypeScript declarations"
-  status: todo
-  priority: medium
-  milestone: null
-  parent: null
-  deps: []
-  file: 0051-complete-edit-action-coverage-for-typescript-declarations.md
 - id: 44
   title: "Stabilize plan-exec on mini-spreadsheet after guard and matcher changes"
   status: todo

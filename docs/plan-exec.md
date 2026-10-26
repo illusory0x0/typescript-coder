@@ -932,6 +932,29 @@ create adds one new statement. Both use the same parse/format/atomic-apply path;
 a file-level select never falls back to a whole-file write, and a file-level
 rename is rejected.
 
+#### Declaration coverage map
+
+The full matrix is the **Declaration coverage matrix** in
+[`edit-protocol.md`](edit-protocol.md) §2; this is the compact planning view.
+`whole-symbol` is the indexed declaration span, `match` is a structural snippet,
+`/regex/` is a regex locator, and `pick` is a line/point/range selector. Rows
+marked **expected failure** are deliberate.
+
+| Form / owner | Address | Selectors / create |
+| ------------ | ------- | ------------------ |
+| Top-level function, `const`/`let`/`var`/`using`, class, interface, type alias, enum, namespace | `select [kind] NAME`; `using` uses an omitted kind | whole-symbol, `match`, `/regex/`, `pick`; kind-aware `create` (new classes stay prompt-forbidden) |
+| Class method/property/getter/setter | `Widget.member` | whole-symbol, `match`, `/regex/`, `pick`; `create method`, `create property`, `create getter`, `create setter`, or `create accessor`; a getter/setter pair is ambiguous, so use the class owner + `match`/`pick` |
+| Class constructor, static block, computed member, index signature, parameter property, auto-accessor | Owner: `select class Widget` | Owner + `match`/`/regex/`/`pick`; auto-accessor is `/regex/` or `pick` only (**expected failure** for structural); `create constructor` only |
+| Interface/type-literal named method/property | `Cell.getValue`; `Snapshot.value` | whole-symbol, `match`, `/regex/`, `pick`; `create method` or `create property` with an interface owner; type-literal member create is deferred |
+| Interface/type-literal call, construct, index signature | Owner: `select interface Cell` or `select type Fn` | Owner + `match`/`/regex/`/`pick`; create deferred |
+| Namespace/enum member | `Util.helper`; `Color.Red` | whole-symbol, `match`, `/regex/`, `pick`; dotted `create <kind>` or `create enum-member` |
+| Object-literal property/method/getter/setter | `config.timeout`; `config.run`; a getter/setter pair shares `config.value` | whole-symbol, `match`, `/regex/`, `pick` for a named member; accessor pair via the object owner + `match`/`pick`; create deferred |
+| Named/anonymous default export | Declared name (`boot`, `App`); anonymous via `select file PATH` | whole-symbol, `match`, `/regex/`, `pick`; module `create export` |
+| Imports/exports | `select file PATH` | File-level `match`/`/regex/`/`pick`; `create import` or `create export`; no file-level rename |
+| Overloads/merges | `select <kind> NAME` | Overloads are rejected-with-candidates; an explicit kind disambiguates a cross-space merge; an omitted kind over a merge is rejected-with-candidates |
+| Multi-declarator/destructuring binding | `select const first`; `select const a` | Per-binding `match`/`/regex/`/`pick`; whole-symbol replace/delete is **expected failure** |
+| Ambiguous/unsupported structural match | Any owner above | Ambiguous `match` is rejected-with-candidates, then `pick` or a longer snippet; a standalone decorator needs a member-inclusive `match` or `/regex/`/`pick` (**expected failure**) |
+
 ### 8.2 Applying a reply
 
 1. Parse the reply with the edit-action parser. A parse failure writes nothing.
