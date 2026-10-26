@@ -63,9 +63,43 @@ export function extractJsonObject(text: string): unknown {
   throw new Error("no complete JSON object found in the response");
 }
 
+/** One owner-context wrapper attempted by `parseMatcherFragment`. */
+export interface MatcherContextAttempt {
+  /** The model-facing owner context, in priority order. */
+  context: string;
+  /** The wrapper's parse error, or null when the wrapper parsed. */
+  error: string | null;
+}
+
 export type MatcherFragmentResult =
-  | { kind: "parsed"; nodes: Node[]; runs?: Node[][] }
-  | { kind: "unparseable"; message: string };
+  | {
+      kind: "parsed";
+      nodes: Node[];
+      runs?: Node[][];
+      /** Every wrapper attempted, in priority order. */
+      contexts: MatcherContextAttempt[];
+    }
+  | {
+      kind: "unparseable";
+      message: string;
+      /** Every wrapper attempted, in priority order; the context metadata. */
+      contexts: MatcherContextAttempt[];
+    };
+
+const MATCHER_CONTEXTS = [
+  "top-level statement",
+  "class member",
+  "interface/type member",
+  "object-literal member",
+  "function-body statement",
+  "loop body",
+  "switch case",
+  "generator body",
+  "async body",
+  "type expression",
+  "expression",
+  "contiguous statement run",
+] as const;
 
 const MATCHER_SHAPE_ERROR =
   "the matcher does not form a single statement, member, expression, or contiguous run of statements";
@@ -115,68 +149,207 @@ function attemptRunFragment(source: string): RunAttempt {
   }
 }
 
+function firstBodyStatement(
+  source: string,
+  select: (program: Program) => Node[] | null,
+): FragmentAttempt {
+  return attemptFragment(source, (program) => {
+    const body = select(program);
+    return body !== null && body.length === 1 ? (body[0] ?? null) : null;
+  });
+}
+
+function singleDeclaration(program: Program, kind: string): Record<string, unknown> | null {
+  const declaration = program.body.length === 1 ? (program.body[0] ?? null) : null;
+  if (declaration === null || declaration.kind !== kind) {
+    return null;
+  }
+  return declaration as unknown as Record<string, unknown>;
+}
+
+function unparseableMessage(matcher: string, contexts: readonly MatcherContextAttempt[]): string {
+  const firstError = contexts.find((attempt) => attempt.error !== null)?.error;
+  const detail = firstError === null || firstError === undefined ? MATCHER_SHAPE_ERROR : firstError;
+  const decoratorNote = matcher.trimStart().startsWith("@")
+    ? "; a standalone decorator is not a structural matcher owner: select its class or member owner and use a snippet that includes the member, or use `/regex/` or `pick`"
+    : "";
+  return [
+    `the matcher does not parse in any supported owner context (${MATCHER_CONTEXTS.join(", ")})`,
+    detail,
+    `use \`/regex/\` or a \`pick\` range when no structural owner context fits${decoratorNote}`,
+  ].join("; ");
+}
+
 /**
- * Parses a matcher with wrapper heuristics in priority order: a whole
- * statement, then a single class-body member, then an expression, and finally
- * a contiguous run of statements (>1 top-level statement). Each successful
- * single-node wrapper contributes one node; a multi-statement fragment
- * contributes one run. Matching tries the single nodes first, then the runs.
+ * Parses a matcher with owner-context wrappers in priority order: a whole
+ * top-level statement, a single class-body member, an interface/type-literal
+ * member, an object-literal member, a function-body statement, a loop body, a
+ * switch case, a generator body, an async body, a type expression, an
+ * expression, and finally a contiguous run of top-level statements (>1
+ * statement). Each successful single-node wrapper contributes one node; a
+ * multi-statement fragment contributes one run. Matching tries the single nodes
+ * first, then the runs, and returns the first context with at least one match
+ * (`findMatcherMatches`), never a silent first match within that context.
+ *
+ * The wrappers are owner contexts, not semantic validation: this parser is
+ * permissive about `return`/`break` at top level, so several contexts can yield
+ * the same node kind. The context list is diagnostic metadata; the node kinds
+ * decide what can structurally match.
  */
 export function parseMatcherFragment(matcher: string): MatcherFragmentResult {
   const nodes: Node[] = [];
   const runs: Node[][] = [];
-  let firstError: string | null = null;
+  const contexts: MatcherContextAttempt[] = [];
 
-  const statement = attemptFragment(matcher, (program) =>
-    program.body.length === 1 ? (program.body[0] ?? null) : null,
+  const record = (attempt: FragmentAttempt): void => {
+    contexts.push({
+      context: MATCHER_CONTEXTS[contexts.length] ?? "additional context",
+      error: attempt.error,
+    });
+    if (
+      attempt.node !== null &&
+      !nodes.some((existing) => structurallyEqual(existing, attempt.node))
+    ) {
+      nodes.push(attempt.node);
+    }
+  };
+
+  record(
+    attemptFragment(matcher, (program) =>
+      program.body.length === 1 ? (program.body[0] ?? null) : null,
+    ),
   );
-  firstError ??= statement.error;
-  if (statement.node !== null) {
-    nodes.push(statement.node);
-  }
 
-  const member = attemptFragment(`class __Matcher { ${matcher} }`, (program) => {
-    const declaration = program.body.length === 1 ? (program.body[0] ?? null) : null;
-    if (
-      declaration === null ||
-      declaration.kind !== "ClassDeclaration" ||
-      declaration.members.length !== 1
-    ) {
-      return null;
-    }
-    return declaration.members[0] ?? null;
-  });
-  firstError ??= member.error;
-  if (member.node !== null) {
-    nodes.push(member.node);
-  }
+  record(
+    attemptFragment(`class __Matcher { ${matcher} }`, (program) => {
+      const declaration = singleDeclaration(program, "ClassDeclaration");
+      const members = declaration?.["members"];
+      return Array.isArray(members) && members.length === 1
+        ? ((members[0] as Node | undefined) ?? null)
+        : null;
+    }),
+  );
 
-  const expression = attemptFragment(`const __matcher = ${matcher};`, (program) => {
-    const declaration = program.body.length === 1 ? (program.body[0] ?? null) : null;
-    if (
-      declaration === null ||
-      declaration.kind !== "VariableStatement" ||
-      declaration.declarations.length !== 1
-    ) {
-      return null;
-    }
-    return declaration.declarations[0]?.initializer ?? null;
-  });
-  firstError ??= expression.error;
-  if (expression.node !== null) {
-    nodes.push(expression.node);
-  }
+  record(
+    attemptFragment(`interface __Matcher { ${matcher} }`, (program) => {
+      const declaration = singleDeclaration(program, "InterfaceDeclaration");
+      const members = declaration?.["members"];
+      return Array.isArray(members) && members.length === 1
+        ? ((members[0] as Node | undefined) ?? null)
+        : null;
+    }),
+  );
+
+  record(
+    attemptFragment(`const __matcher = { ${matcher} };`, (program) => {
+      const declaration = singleDeclaration(program, "VariableStatement");
+      const declarations = declaration?.["declarations"];
+      if (!Array.isArray(declarations) || declarations.length !== 1) {
+        return null;
+      }
+      const declarator = declarations[0] as { initializer?: Node | null } | undefined;
+      const initializer = declarator?.initializer;
+      if (
+        initializer === null ||
+        initializer === undefined ||
+        (initializer as unknown as { kind?: string }).kind !== "ObjectLiteral"
+      ) {
+        return null;
+      }
+      const properties = (initializer as unknown as { properties: unknown }).properties;
+      return Array.isArray(properties) && properties.length === 1
+        ? ((properties[0] as Node | undefined) ?? null)
+        : null;
+    }),
+  );
+
+  record(
+    firstBodyStatement(`function __matcher() { ${matcher} }`, (program) => {
+      const declaration = singleDeclaration(program, "FunctionDeclaration");
+      const body = declaration?.["body"] as { body?: Node[] } | undefined;
+      return body?.body ?? null;
+    }),
+  );
+
+  record(
+    firstBodyStatement(`while (true) { ${matcher} }`, (program) => {
+      const declaration = singleDeclaration(program, "WhileStatement");
+      const body = declaration?.["body"] as { body?: Node[] } | undefined;
+      return body?.body ?? null;
+    }),
+  );
+
+  record(
+    attemptFragment(`switch (0) { case 0: ${matcher} }`, (program) => {
+      const declaration = singleDeclaration(program, "SwitchStatement");
+      const cases = declaration?.["cases"];
+      if (!Array.isArray(cases) || cases.length !== 1) {
+        return null;
+      }
+      const onlyCase = cases[0] as { consequent?: Node[] } | undefined;
+      const consequent = onlyCase?.consequent;
+      return Array.isArray(consequent) && consequent.length === 1
+        ? ((consequent[0] as Node | undefined) ?? null)
+        : null;
+    }),
+  );
+
+  record(
+    firstBodyStatement(`function* __matcher() { ${matcher} }`, (program) => {
+      const declaration = singleDeclaration(program, "FunctionDeclaration");
+      if (declaration?.["generator"] !== true) {
+        return null;
+      }
+      const body = declaration["body"] as { body?: Node[] } | undefined;
+      return body?.body ?? null;
+    }),
+  );
+
+  record(
+    firstBodyStatement(`async function __matcher() { ${matcher} }`, (program) => {
+      const declaration = singleDeclaration(program, "FunctionDeclaration");
+      if (declaration?.["async"] !== true) {
+        return null;
+      }
+      const body = declaration["body"] as { body?: Node[] } | undefined;
+      return body?.body ?? null;
+    }),
+  );
+
+  record(
+    attemptFragment(`type __Matcher = ${matcher};`, (program) => {
+      const declaration = singleDeclaration(program, "TypeAliasDeclaration");
+      return (declaration?.["type"] as Node | undefined) ?? null;
+    }),
+  );
+
+  record(
+    attemptFragment(`const __matcher = ${matcher};`, (program) => {
+      const declaration = singleDeclaration(program, "VariableStatement");
+      const declarations = declaration?.["declarations"];
+      if (!Array.isArray(declarations) || declarations.length !== 1) {
+        return null;
+      }
+      const declarator = declarations[0] as { initializer?: Node | null } | undefined;
+      return declarator?.initializer ?? null;
+    }),
+  );
 
   const run = attemptRunFragment(matcher);
-  firstError ??= run.error;
+  contexts.push({
+    context: MATCHER_CONTEXTS[contexts.length] ?? "additional context",
+    error: run.error,
+  });
   if (run.run !== null) {
     runs.push(run.run);
   }
 
   if (nodes.length === 0 && runs.length === 0) {
-    return { kind: "unparseable", message: firstError ?? MATCHER_SHAPE_ERROR };
+    return { kind: "unparseable", message: unparseableMessage(matcher, contexts), contexts };
   }
-  return runs.length === 0 ? { kind: "parsed", nodes } : { kind: "parsed", nodes, runs };
+  return runs.length === 0
+    ? { kind: "parsed", nodes, contexts }
+    : { kind: "parsed", nodes, runs, contexts };
 }
 
 const STRUCTURAL_IGNORED_KEYS: ReadonlySet<string> = new Set(["start", "end", "raw"]);
@@ -236,7 +409,7 @@ export type MatcherResult =
   | { kind: "match"; start: number; end: number }
   | { kind: "unparseable"; message: string }
   | { kind: "not-found" }
-  | { kind: "ambiguous"; matches: number };
+  | { kind: "ambiguous"; matches: number; spans: { start: number; end: number }[] };
 
 interface CandidateNode {
   node: Node;
@@ -323,8 +496,10 @@ function collectCandidateNodes(value: unknown, symbol: SymbolRange, out: Candida
  * with `pick` instead of returning on the first hit.
  *
  * For the **first** fragment node (in `parseMatcherFragment`'s priority order)
- * with at least one structural match, all of its spans are returned; else the
- * runs are tried the same way; else `{ kind: "matches", spans: [] }`. An
+ * with at least one structural match, all of its distinct spans are returned;
+ * else the runs are tried the same way; else `{ kind: "matches", spans: [] }`.
+ * Identical spans reached through more than one wrapper or more than one AST
+ * field are deduplicated, so they are one candidate, not an ambiguity. An
  * unparseable fragment is reported as `unparseable`.
  */
 export type MatcherSpans =
@@ -345,13 +520,17 @@ export function findMatcherMatches(
   for (const node of fragment.nodes) {
     const matches = candidates.filter((candidate) => structurallyEqual(candidate.node, node));
     if (matches.length > 0) {
-      return {
-        kind: "matches",
-        spans: matches.map((candidate) => ({
-          start: candidate.node.start,
-          end: candidate.node.end,
-        })),
-      };
+      const seen = new Set<string>();
+      const spans: { start: number; end: number }[] = [];
+      for (const candidate of matches) {
+        const key = `${candidate.node.start}:${candidate.node.end}`;
+        if (seen.has(key)) {
+          continue;
+        }
+        seen.add(key);
+        spans.push({ start: candidate.node.start, end: candidate.node.end });
+      }
+      return { kind: "matches", spans };
     }
   }
   for (const run of fragment.runs ?? []) {
@@ -480,7 +659,7 @@ export function findMatcher(source: string, symbol: SymbolRange, matcher: string
     }
   }
   if (found.spans.length > 1) {
-    return { kind: "ambiguous", matches: found.spans.length };
+    return { kind: "ambiguous", matches: found.spans.length, spans: found.spans };
   }
   return { kind: "not-found" };
 }

@@ -778,6 +778,11 @@ test.skipIf(nestedSmoke)(
       cwd: dir,
       provider,
       io: captured.io,
+      // Keep the nested verification scoped to the copied target test. The
+      // explicit spawn below checks the same file, and `just test` already runs
+      // the full suite; fanning out the copied suite here exceeds its command
+      // timeout and recursively multiplies the work.
+      testCommand: ["bun", "test", "src/index.test.ts"],
     });
     expect(code).toBe(0);
     expect(captured.out.join("\n")).toContain("applied");

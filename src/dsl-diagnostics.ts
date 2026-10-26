@@ -72,6 +72,27 @@ export function positionAtOffset(text: string, offset: number): { line: number; 
   return { line, column: clamped - lineStart + 1 };
 }
 
+/**
+ * The 1-based position and source text of the line containing `offset`. Matcher
+ * ambiguity diagnostics use this to show each candidate as `line:column` plus
+ * the copied source line, so the model can add `pick` coordinates without
+ * re-reading the whole declaration.
+ */
+export function sourceLineAt(
+  text: string,
+  offset: number,
+): { line: number; column: number; text: string } {
+  const { line, column } = positionAtOffset(text, offset);
+  const clamped = Math.max(0, Math.min(offset, text.length));
+  const start = clamped === 0 ? 0 : text.lastIndexOf("\n", clamped - 1) + 1;
+  const end = text.indexOf("\n", clamped);
+  return {
+    line,
+    column,
+    text: text.slice(start, end === -1 ? text.length : end),
+  };
+}
+
 const EXCERPT_LINES_BEFORE = 2;
 const EXCERPT_LINES_AFTER = 1;
 const EXCERPT_WINDOW = 200;

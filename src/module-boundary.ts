@@ -14,7 +14,7 @@
  * atomic apply, and task/node gates stay unchanged.
  */
 import type { SelectionStage } from "./cascade";
-import { positionAtOffset } from "./dsl-diagnostics";
+import { positionAtOffset, sourceLineAt } from "./dsl-diagnostics";
 import { findMatcherMatches, findRegexMatches, structurallyEqual } from "./matcher";
 import { Parser } from "./parser";
 import type { Node, Program, Statement } from "./parser";
@@ -188,9 +188,10 @@ function spanLocation(path: string, source: string, span: Span): string {
 function candidateLine(path: string, source: string, program: Program, span: Span): string {
   const statement = moduleStatementAt(program, span);
   const location = spanLocation(path, source, span);
-  return statement === null
-    ? `- ${location} (outside an import/export statement)`
-    : `- ${location} (${statementLabel(statement)})`;
+  const line = sourceLineAt(source, span.start).text.trim();
+  const label =
+    statement === null ? "(outside an import/export statement)" : `(${statementLabel(statement)})`;
+  return `- ${location} ${label}: ${line}`;
 }
 
 function ambiguousDiagnostics(
@@ -386,7 +387,7 @@ export function resolveFileSelection(
       if (found.kind === "unparseable") {
         return moduleEditFailure(
           "matcher",
-          `stage: matcher\nthe file-level snippet could not be parsed as TypeScript: ${found.message}; copy a complete statement, specifier expression, or expression`,
+          `stage: matcher\nthe file-level snippet could not be parsed as TypeScript: ${found.message}; copy a complete import/export statement, specifier, or expression, or use \`/regex/\` or \`pick\` with file-absolute coordinates`,
         );
       }
       candidates = found.spans;

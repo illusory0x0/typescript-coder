@@ -12,6 +12,7 @@
  * wired into the JSON path, prompts, or the loop yet (#111 does that).
  */
 import { findMatcherMatches, findRegexMatches } from "./matcher";
+import { sourceLineAt } from "./dsl-diagnostics";
 import { resolveEditRange } from "./loop";
 import type { EditRange } from "./loop";
 import { END_OF_LINE_COLUMN } from "./selection";
@@ -94,8 +95,24 @@ function declarationLabel(entry: IndexEntry): string {
   return `${kind} ${JSON.stringify(name)} in ${path}`;
 }
 
+const CANDIDATE_LIST_LIMIT = 8;
+
+function candidateLines(source: string, spans: readonly Span[]): string[] {
+  const listed = spans.slice(0, CANDIDATE_LIST_LIMIT);
+  const lines = ["candidates:"];
+  for (const span of listed) {
+    const at = sourceLineAt(source, span.start);
+    lines.push(`- ${at.line}:${at.column}  ${at.text.trim()}`);
+  }
+  const more = spans.length - listed.length;
+  if (more > 0) {
+    lines.push(`- ... and ${more} more`);
+  }
+  return lines;
+}
+
 function matcherUnparseableDiagnostics(message: string): string {
-  return `stage: matcher\nthe matcher could not be parsed as TypeScript: ${message}; a matcher must be a single copied statement or expression, or a contiguous run of statements copied from one block; omit \`match\` for a whole-declaration rewrite`;
+  return `stage: matcher\nthe matcher could not be parsed as TypeScript: ${message}; a matcher must be a copied top-level statement, class/interface/type/object member, function-body/loop/switch/generator/async statement, type expression, or contiguous run of statements; when no structural owner context fits, use \`/regex/\` or \`pick\` for that span`;
 }
 
 function regexInvalidDiagnostics(entry: IndexEntry, message: string): string {
@@ -106,22 +123,42 @@ function matcherNotFoundDiagnostics(entry: IndexEntry): string {
   return `stage: matcher\nthe matcher was not found inside ${declarationLabel(entry)}; copy a complete snippet from the current source, or omit \`match\` for a whole-declaration rewrite`;
 }
 
-function matcherAmbiguousDiagnostics(entry: IndexEntry, count: number, picked: boolean): string {
+function matcherAmbiguousDiagnostics(
+  entry: IndexEntry,
+  source: string,
+  spans: readonly Span[],
+  picked: boolean,
+): string {
   const pickedNote = picked
-    ? "; the \`pick\` ranges still leave more than one occurrence"
-    : "; add a \`pick\` range to disambiguate, or extend it with more surrounding context";
-  return `stage: matcher\nthe matcher matches ${count} places inside ${declarationLabel(entry)}${pickedNote}`;
+    ? "; the `pick` ranges still leave more than one occurrence"
+    : "; add a `pick` range to disambiguate, or extend it with more surrounding context";
+  return [
+    "stage: matcher",
+    `the matcher matches ${spans.length} places inside ${declarationLabel(entry)}${pickedNote}`,
+    ...candidateLines(source, spans),
+    "use one candidate's line:column in `pick`, or extend the snippet until it is unique",
+  ].join("\n");
 }
 
 function regexNotFoundDiagnostics(entry: IndexEntry): string {
   return `stage: matcher\nthe \`/regex/\` matcher matched nothing inside ${declarationLabel(entry)}; anchor or lengthen the pattern, or use a backtick \`snippet\` copied verbatim from the current source`;
 }
 
-function regexAmbiguousDiagnostics(entry: IndexEntry, count: number, picked: boolean): string {
+function regexAmbiguousDiagnostics(
+  entry: IndexEntry,
+  source: string,
+  spans: readonly Span[],
+  picked: boolean,
+): string {
   const pickedNote = picked
-    ? "; the \`pick\` ranges still leave more than one occurrence"
-    : "; add a \`pick\` range to disambiguate, anchor or lengthen the pattern, or use a backtick \`snippet\` copied verbatim from the current source";
-  return `stage: matcher\nthe \`/regex/\` matcher matches ${count} places inside ${declarationLabel(entry)}${pickedNote}`;
+    ? "; the `pick` ranges still leave more than one occurrence"
+    : "; add a `pick` range to disambiguate, anchor or lengthen the pattern, or use a backtick \`snippet\` copied verbatim from the current source";
+  return [
+    "stage: matcher",
+    `the \`/regex/\` matcher matches ${spans.length} places inside ${declarationLabel(entry)}${pickedNote}`,
+    ...candidateLines(source, spans),
+    "use one candidate's line:column in `pick`, or anchor/lengthen the pattern until it is unique",
+  ].join("\n");
 }
 
 function pickInvalidDiagnostics(
@@ -260,14 +297,14 @@ function narrowByMatches(
   pick: readonly EditRange[] | null,
   spans: readonly Span[],
   notFound: () => string,
-  ambiguous: (count: number, picked: boolean) => string,
+  ambiguous: (spans: readonly Span[], picked: boolean) => string,
 ): NarrowResult {
   if (pick === null) {
     if (spans.length === 0) {
       return { ok: false, cause: "matcher-not-found", diagnostics: notFound() };
     }
     if (spans.length > 1) {
-      return { ok: false, cause: "matcher-ambiguous", diagnostics: ambiguous(spans.length, false) };
+      return { ok: false, cause: "matcher-ambiguous", diagnostics: ambiguous(spans, false) };
     }
     const only = spans[0];
     if (only === undefined) {
@@ -285,7 +322,7 @@ function narrowByMatches(
     return { ok: false, cause: "matcher-not-found", diagnostics: notFound() };
   }
   if (kept.length > 1) {
-    return { ok: false, cause: "matcher-ambiguous", diagnostics: ambiguous(kept.length, true) };
+    return { ok: false, cause: "matcher-ambiguous", diagnostics: ambiguous(kept, true) };
   }
   const only = kept[0];
   if (only === undefined) {
@@ -418,7 +455,7 @@ export function resolveCascade(
       selection.pick,
       found.spans,
       () => regexNotFoundDiagnostics(entry),
-      (count, picked) => regexAmbiguousDiagnostics(entry, count, picked),
+      (spans, picked) => regexAmbiguousDiagnostics(entry, source, spans, picked),
     );
     if (!narrowed.ok) {
       return narrowed;
@@ -441,7 +478,7 @@ export function resolveCascade(
       selection.pick,
       found.spans,
       () => matcherNotFoundDiagnostics(entry),
-      (count, picked) => matcherAmbiguousDiagnostics(entry, count, picked),
+      (spans, picked) => matcherAmbiguousDiagnostics(entry, source, spans, picked),
     );
     if (!narrowed.ok) {
       return narrowed;

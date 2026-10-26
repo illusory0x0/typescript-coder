@@ -1,7 +1,7 @@
 ---
 id: 53
 title: "Extend structural matcher contexts and add a declaration corpus"
-status: todo
+status: done
 priority: medium
 milestone: null
 parent: 51
@@ -47,3 +47,5 @@ git diff --check
 - Do not turn structural matching into a hard requirement: regex and `pick` are first-class.
 - JSX/`.tsx` is out of scope unless separately requested.
 - Dependency added on #54: the corpus required by this issue must cover module-boundary forms, which #54 implements; #53 follows #54 so the corpus can prove the full declaration/member/module matrix.
+- Starting: add interface/type-member, object-member, function-body, and type-expression matcher contexts with context-aware parse diagnostics and candidate locations on ambiguity; build a committed declaration/member/module corpus over the #54 module-boundary support.
+- Resolved: parseMatcherFragment now covers top-level, class, interface/type-member, object-literal member, function-body, loop, switch, generator, async, type-expression, expression, and contiguous-run contexts; identical spans are deduplicated. matcher-ambiguous lists candidate line:column plus source lines (structural and regex), and matcher-unparseable names the attempted contexts and points to regex/pick. Added src/matcher-corpus.test.ts (63 cases) covering the declaration/member/module matrix, including using bindings, object literal methods/accessors, type-literal signatures, class index signatures/parameter properties, import = require, and explicit unsupported auto-accessor/decorator cases. Also scoped the nested cli self-host verification to src/index.test.ts (test-only) so the copied-suite smoke no longer fans out the full suite. Verified: typecheck, 1619 tests pass in 80s, just accept 9/9, diff check. No baseline changes.

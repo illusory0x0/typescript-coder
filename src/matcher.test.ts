@@ -113,6 +113,51 @@ describe("parseMatcherFragment", () => {
     }
     expect(result.runs).toBeUndefined();
   });
+
+  test("records every owner context it attempts, in priority order", () => {
+    const result = parseMatcherFragment("return 1;");
+    expect(result.kind).toBe("parsed");
+    expect(result.contexts.map((attempt) => attempt.context)).toEqual([
+      "top-level statement",
+      "class member",
+      "interface/type member",
+      "object-literal member",
+      "function-body statement",
+      "loop body",
+      "switch case",
+      "generator body",
+      "async body",
+      "type expression",
+      "expression",
+      "contiguous statement run",
+    ]);
+    // Redundant owner contexts do not duplicate the same AST node.
+    if (result.kind === "parsed") {
+      expect(kinds(result)).toEqual(["ReturnStatement"]);
+    }
+  });
+
+  test("an unsupported context names every tried owner and the regex/pick fallbacks", () => {
+    const result = parseMatcherFragment("@sealed");
+    expect(result.kind).toBe("unparseable");
+    if (result.kind !== "unparseable") {
+      return;
+    }
+    expect(result.message).toContain("top-level statement");
+    expect(result.message).toContain("class member");
+    expect(result.message).toContain("interface/type member");
+    expect(result.message).toContain("object-literal member");
+    expect(result.message).toContain("function-body statement");
+    expect(result.message).toContain("loop body");
+    expect(result.message).toContain("switch case");
+    expect(result.message).toContain("generator body");
+    expect(result.message).toContain("async body");
+    expect(result.message).toContain("type expression");
+    expect(result.message).toContain("standalone decorator");
+    expect(result.message).toContain("`/regex/`");
+    expect(result.message).toContain("`pick`");
+    expect(result.contexts.map((attempt) => attempt.context)).toContain("interface/type member");
+  });
 });
 
 describe("structurallyEqual", () => {
@@ -197,10 +242,22 @@ describe("findMatcher", () => {
     expect(findMatcher(HELPER, range, "return 2;")).toEqual({ kind: "not-found" });
   });
 
+  test("deduplicates identical spans reached through more than one AST field", () => {
+    // A destructuring binding's shorthand identifier is reachable through both
+    // the key and the value path; it is still one source span, not an ambiguity.
+    const source = "const { a, b } = pair;\n";
+    const range = symbolRange(source, "a", "const");
+    const result = findMatcher(source, range, "a");
+    expect(result).toEqual({ kind: "match", start: 8, end: 9 });
+  });
+
   test("reports duplicates as ambiguous", () => {
     const source = ["function twice(): number {", "  return 1;", "  return 1;", "}", ""].join("\n");
     const range = symbolRange(source, "twice", "function");
-    expect(findMatcher(source, range, "return 1;")).toEqual({ kind: "ambiguous", matches: 2 });
+    expect(findMatcher(source, range, "return 1;")).toMatchObject({
+      kind: "ambiguous",
+      matches: 2,
+    });
   });
 
   test("matches a sub-expression fragment", () => {
@@ -292,7 +349,7 @@ describe("findMatcher", () => {
     ].join("\n");
     const range = symbolRange(source, "f", "function");
     const matcher = ["const a = 1;", "  const b = 2;", "  return a;"].join("\n");
-    expect(findMatcher(source, range, matcher)).toEqual({ kind: "ambiguous", matches: 2 });
+    expect(findMatcher(source, range, matcher)).toMatchObject({ kind: "ambiguous", matches: 2 });
   });
 
   test("does not match a run across a container boundary", () => {
@@ -308,6 +365,177 @@ describe("findMatcher", () => {
     const range = symbolRange(source, "f", "function");
     const matcher = ["const a = 1;", "  return a;"].join("\n");
     expect(findMatcher(source, range, matcher)).toEqual({ kind: "not-found" });
+  });
+});
+
+describe("findMatcher owner contexts (#53)", () => {
+  function matchSlice(source: string, name: string, kind: string, matcher: string): string {
+    const range = symbolRange(source, name, kind);
+    const result = findMatcher(source, range, matcher);
+    if (result.kind !== "match") {
+      throw new Error(`expected a match, got ${result.kind}`);
+    }
+    return source.slice(result.start, result.end);
+  }
+
+  test("matches an interface method and property member", () => {
+    const source = [
+      "export interface Cell {",
+      "  read(): number;",
+      "  value: string;",
+      "}",
+      "",
+    ].join("\n");
+    expect(matchSlice(source, "Cell", "interface", "read(): number;")).toBe("read(): number");
+    expect(matchSlice(source, "Cell", "interface", "value: string;")).toBe("value: string");
+  });
+
+  test("matches a type-literal method and property member through the type alias", () => {
+    const source = [
+      "export type Snapshot = {",
+      "  read(): number;",
+      "  value: string;",
+      "};",
+      "",
+    ].join("\n");
+    expect(matchSlice(source, "Snapshot", "type", "read(): number;")).toBe("read(): number");
+    expect(matchSlice(source, "Snapshot", "type", "value: string;")).toBe("value: string");
+  });
+
+  test("matches call, construct, and index signatures", () => {
+    const source = [
+      "export interface Api {",
+      "  (input: string): number;",
+      "  new (input: string): Cell;",
+      "  [key: string]: unknown;",
+      "}",
+      "",
+    ].join("\n");
+    expect(matchSlice(source, "Api", "interface", "(input: string): number;")).toBe(
+      "(input: string): number",
+    );
+    expect(matchSlice(source, "Api", "interface", "new (input: string): Cell;")).toBe(
+      "new (input: string): Cell",
+    );
+    expect(matchSlice(source, "Api", "interface", "[key: string]: unknown;")).toBe(
+      "[key: string]: unknown",
+    );
+  });
+
+  test("matches an object-literal member", () => {
+    const source = ["const config = {", "  timeout: 1000,", "  retries: 3,", "};", ""].join("\n");
+    expect(matchSlice(source, "config", "const", "timeout: 1000,")).toBe("timeout: 1000");
+  });
+
+  test("matches function-body statements, including if and throw", () => {
+    const source = [
+      "export function run(ready: boolean): void {",
+      "  if (!ready) {",
+      '    throw new Error("not ready");',
+      "  }",
+      "  return;",
+      "}",
+      "",
+    ].join("\n");
+    expect(matchSlice(source, "run", "function", 'throw new Error("not ready");')).toBe(
+      'throw new Error("not ready");',
+    );
+    expect(
+      matchSlice(
+        source,
+        "run",
+        "function",
+        'if (!ready) {\n    throw new Error("not ready");\n  }',
+      ),
+    ).toBe(["if (!ready) {", '    throw new Error("not ready");', "  }"].join("\n"));
+  });
+
+  test("matches a loop body break and a switch-case break", () => {
+    const loop = [
+      "export function scan(items: number[]): void {",
+      "  for (const item of items) {",
+      "    break;",
+      "  }",
+      "}",
+      "",
+    ].join("\n");
+    expect(matchSlice(loop, "scan", "function", "break;")).toBe("break;");
+
+    const sw = [
+      "export function pick(value: number): void {",
+      "  switch (value) {",
+      "    case 0:",
+      "      break;",
+      "  }",
+      "}",
+      "",
+    ].join("\n");
+    expect(matchSlice(sw, "pick", "function", "break;")).toBe("break;");
+
+    const continued = [
+      "export function skip(items: number[]): void {",
+      "  for (const item of items) {",
+      "    if (item < 0) {",
+      "      continue;",
+      "    }",
+      "  }",
+      "}",
+      "",
+    ].join("\n");
+    expect(matchSlice(continued, "skip", "function", "continue;")).toBe("continue;");
+  });
+
+  test("matches generator yield and async await statements", () => {
+    const generator = [
+      "export function* values(): Generator<number> {",
+      "  yield 1;",
+      "}",
+      "",
+    ].join("\n");
+    expect(matchSlice(generator, "values", "function", "yield 1;")).toBe("yield 1;");
+
+    const asyncSource = [
+      "export async function save(): Promise<void> {",
+      "  await persist();",
+      "}",
+      "",
+    ].join("\n");
+    expect(matchSlice(asyncSource, "save", "function", "await persist();")).toBe(
+      "await persist();",
+    );
+  });
+
+  test("matches a type expression inside an annotation", () => {
+    const source = ["export interface Pair {", "  value: A | B;", "}", ""].join("\n");
+    expect(matchSlice(source, "Pair", "interface", "A | B")).toBe("A | B");
+  });
+
+  test("matches a class static block", () => {
+    const source = [
+      "export class Widget {",
+      "  static {",
+      "    this.seed = 1;",
+      "  }",
+      "}",
+      "",
+    ].join("\n");
+    expect(matchSlice(source, "Widget", "class", "static {\n    this.seed = 1;\n  }")).toBe(
+      ["static {", "    this.seed = 1;", "  }"].join("\n"),
+    );
+  });
+
+  test("matches a decorated class member as one member span", () => {
+    const source = [
+      "@sealed",
+      "export class Widget {",
+      "  @logged",
+      "  method(): void {}",
+      "}",
+      "",
+    ].join("\n");
+    expect(matchSlice(source, "Widget", "class", "@logged\n  method(): void {}")).toBe(
+      ["@logged", "  method(): void {}"].join("\n"),
+    );
   });
 });
 

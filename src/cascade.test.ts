@@ -161,6 +161,9 @@ describe("resolveCascade: ambiguity and misses", () => {
     );
     expect(result.cause).toBe("matcher-ambiguous");
     expect(result.diagnostics).toContain("matches 2 places");
+    expect(result.diagnostics).toContain("candidates:");
+    expect(result.diagnostics).toContain("2:3  return 1;");
+    expect(result.diagnostics).toContain("3:3  return 1;");
   });
 
   test("a missing match is matcher-not-found", () => {
@@ -187,6 +190,9 @@ describe("resolveCascade: ambiguity and misses", () => {
     );
     expect(result.cause).toBe("matcher-unparseable");
     expect(result.diagnostics).toContain("could not be parsed");
+    expect(result.diagnostics).toContain("interface/type member");
+    expect(result.diagnostics).toContain("`/regex/`");
+    expect(result.diagnostics).toContain("`pick`");
   });
 
   test("a malformed regex is regex-invalid, not a not-implemented failure", () => {
@@ -258,6 +264,9 @@ describe("resolveCascade: regex matcher", () => {
     expect(result.cause).toBe("matcher-ambiguous");
     expect(result.diagnostics).toContain("/regex/");
     expect(result.diagnostics).toContain("matches 2 places");
+    expect(result.diagnostics).toContain("candidates:");
+    expect(result.diagnostics).toContain("2:3  return 1;");
+    expect(result.diagnostics).toContain("3:3  return 1;");
   });
 
   test("pick narrows an ambiguous regex to the second occurrence", () => {

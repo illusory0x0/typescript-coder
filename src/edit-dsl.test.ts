@@ -1075,6 +1075,7 @@ describe("file-level module-boundary select (#54)", () => {
     expect(result.failures[0]?.stage).toBe("matcher");
     expect(result.failures[0]?.diagnostics).toContain("a.ts:1:1");
     expect(result.failures[0]?.diagnostics).toContain("a.ts:2:1");
+    expect(result.failures[0]?.diagnostics).toContain('import "side-effect";');
     expect(result.failures[0]?.diagnostics).toContain("exactly one span");
   });
 

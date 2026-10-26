@@ -36,6 +36,7 @@ import {
   toLines,
 } from "./commit";
 import { LexError } from "./lexer";
+import { sourceLineAt } from "./dsl-diagnostics";
 import { ParseError, Parser } from "./parser";
 import {
   buildIndexTolerant,
@@ -3433,10 +3434,24 @@ function resolveEntrySplice(
     }
     if (matched.kind === "ambiguous") {
       const { line, column } = lineColumnAt(sourceBefore, entry.node.start);
+      const listed = matched.spans.slice(0, 8);
+      const more = matched.spans.length - listed.length;
+      const candidates = [
+        "candidates:",
+        ...listed.map((span) => {
+          const at = sourceLineAt(sourceBefore, span.start);
+          return `- ${at.line}:${at.column}  ${at.text.trim()}`;
+        }),
+        ...(more > 0 ? [`- ... and ${more} more`] : []),
+      ];
       return {
         ok: false,
         cause: "matcher-ambiguous",
-        diagnostics: `stage: matcher\nthe matcher matches ${matched.matches} places inside ${locator.kind} ${JSON.stringify(locator.name)} in ${target} (line ${line}, column ${column}); extend it with more surrounding context`,
+        diagnostics: [
+          `stage: matcher\nthe matcher matches ${matched.matches} places inside ${locator.kind} ${JSON.stringify(locator.name)} in ${target} (line ${line}, column ${column}); extend it with more surrounding context`,
+          ...candidates,
+          "use one candidate's line:column in a range, or extend the snippet until it is unique",
+        ].join("\n"),
       };
     }
     // A match over the whole declaration gets the same modifier tolerance as a

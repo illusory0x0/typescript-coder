@@ -115,7 +115,10 @@ A select clause is never a file command. A select clause with `replace` or
   so any other leading token is a syntax error rather than a symbol name. The
   declaration kind is the legacy disambiguator; omitted, it means any kind. A
   variable declaration resolves under its `const`, `let`, or `var` keyword; the
-  index's internal `variable` label is not a grammar kind.
+  index's internal `variable` label is not a grammar kind. A top-level `using`
+  declaration is indexed as a variable binding and is addressed with an omitted
+  kind (`select resource in …`); `using` is not a `select` kind token, so
+  `select using resource in …` is a syntax error. `create using` is supported.
 - **`resolve`**: optional, after the path. `resolve value`, `resolve type`, or
   `resolve namespace` filters the address to that TypeScript symbol space; it is
   the disambiguator when the same name is declared more than once. Omitted, any
@@ -184,17 +187,20 @@ An address is `(path, symbol, kind)`. `symbol` is dotted when the declaration is
 nested; `kind` is a grammar kind or the omitted wildcard. The index emits:
 
 - top-level, namespace, and class declarations/members as before;
-- interface and type-literal members as `Interface.member`, `Alias.member`, and
-  nested literal members as `Interface.property.member`. A type literal is
-  reached from a declared type alias or an interface property's type (including
-  parenthesized and union/intersection literals); its members keep that owner
-  path;
+- interface and type-literal methods and properties as `Interface.member`,
+  `Alias.member`, and nested literal members as `Interface.property.member`. A
+  type literal is reached from a declared type alias or an interface property's
+  type (including parenthesized and union/intersection literals); its members
+  keep that owner path. Call, construct, and index signatures have no name;
+  select the interface or type-alias owner and use `match`/`pick`/regex;
 - enum members as `Enum.Member` with kind `enum-member`;
-- object-literal properties and methods owned by a declared variable or class
-  field, recursively: `config.timeout`, `config.server.port`,
-  `Service.config.retries`. Only a literal assigned to that binding is indexed;
-  an anonymous literal (a call argument, return value, or function-local
-  variable) has no address and stays a `match`/`pick` target;
+- object-literal properties, methods, and getters/setters owned by a declared
+  variable or class field, recursively: `config.timeout`, `config.run`,
+  `config.server.port`, `Service.config.retries`. A getter/setter pair shares
+  `config.value` and is therefore ambiguous by name; select the object owner and
+  `match`/`pick` the individual accessor. Only a literal assigned to that
+  binding is indexed; an anonymous literal (a call argument, return value, or
+  function-local variable) has no address and stays a `match`/`pick` target;
 - named default exports by their declared name (`export default function boot`
   is `boot`, `export default class App` is `App`). An anonymous default export
   has no synthetic name and is an owner + `match`/`pick` target.
@@ -202,9 +208,12 @@ nested; `kind` is a grammar kind or the omitted wildcard. The index emits:
 A member's indexed span is the parser's member span, so `modify` and `rename`
 touch only that member. An empty-fence whole-member delete also removes the
 member's following `,`/`;`, or its preceding separator for the last member; the
-parse/format gate is the final check. Computed member names (`[expression]`) and
-class static blocks are **not name-addressable**: select the owner and use
-`match`/`pick`.
+parse/format gate is the final check. Computed member names (`[expression]`),
+class static blocks, class index signatures, and constructor parameter
+properties are **not name-addressable**: select the class owner and use
+`match`/`pick`/regex. A class auto-accessor (`accessor value = 1;`) is not
+modeled by the parser, so a structural or named member edit is unsupported;
+select the class owner and use `/regex/` or `pick` for its text.
 
 Overload signatures and declaration merges never resolve to a silent first
 declaration. Every declaration is an index candidate, and an address that
@@ -228,9 +237,10 @@ an existing regular file.
 
 - `match` (a structural snippet or `/regex/`) or `pick` locates the target. The
   candidate must lie inside exactly one top-level import/export statement:
-  `import`/`import =`, `export { … }`, `export … from`, `export *`, a default
-  export, an export declaration (`export function …`), or `export =`. A match
-  that lands outside one is an `address` rejection that names its location.
+  `import`/`import =` (including `import fs = require("fs")`), `export { … }`,
+  `export … from`, `export *`, a default export, an export declaration
+  (`export function …`), or `export =`. A match that lands outside one is an
+  `address` rejection that names its location.
 - Exactly one candidate is required. Multiple candidates are rejected with each
   `path:line:column` and its statement kind; the harness never picks the first.
   A `pick` with a `match` filters candidates with the normal point/contained
@@ -712,16 +722,91 @@ Both formats reduce to the same narrowing, one stage at a time.
    rule against the current source.
 2. **Match.** The locator matches _inside_ the declaration's span only.
    - A **snippet** is parsed as TypeScript and compared **structurally**: its
-     AST must equal a candidate's AST, ignoring spans, raw text, and trivia. A
-     wrapper heuristic tries, in priority order, a single statement, a single
-     class-body member, an expression, and finally a contiguous run of two or
-     more statements against consecutive sibling slots. Each successful
-     single-node wrapper is a candidate; a run becomes one span covering it.
+     AST must equal a candidate's AST, ignoring spans, raw text, and trivia. The
+     owner-context wrappers are tried in priority order: a top-level statement,
+     a class-body member, an interface/type-literal member, an object-literal
+     member, a function-body statement, a loop body, a switch case, a generator
+     body, an async body, a type expression, an expression, and finally a
+     contiguous run of two or more top-level statements against consecutive
+     sibling slots. Each successful single-node wrapper is a candidate; a run
+     becomes one span covering it. Identical AST nodes reached through more than
+     one wrapper or more than one object field are deduplicated by source span,
+     so a shorthand destructuring identifier is one candidate, not an ambiguity.
+     The first context (in that order) with at least one match supplies the
+     candidate set; every match in that context is kept. `findMatcherMatches`
+     never silently returns the first of several matches.
    - A **regex** compiles with the `g` and `m` flags and **no user-supplied
      flags**. `m` anchors `^` and `$` at line boundaries _inside the
      declaration_; `.` does not cross newlines (there is no `s`). Only fully
      contained matches count, and a zero-width match is a valid insertion-point
      span.
+
+   **Owner-context matrix.** These wrappers are syntactic owner contexts, not
+   semantic validation; the parser is permissive, so several wrappers may yield
+   the same node kind. The matrix records what each wrapper can reach:
+
+   | Owner context            | Wrapper                                     | Typical forms                                                                               |
+   | ------------------------ | ------------------------------------------- | ------------------------------------------------------------------------------------------- |
+   | top-level statement      | the fragment as a program                   | function, `const`/`let`/`var`, class, interface, type alias, enum, namespace, import/export |
+   | class member             | `class __Matcher { <fragment> }`            | method, property, getter, setter, constructor, decorated member, static block               |
+   | interface/type member    | `interface __Matcher { <fragment> }`        | interface and type-literal methods/properties, call/construct/index signatures              |
+   | object-literal member    | `const __matcher = { <fragment> };`         | property, method, getter/setter                                                             |
+   | function-body statement  | `function __matcher() { <fragment> }`       | `return`, `throw`, `if`, `for`, `while`, `try`, local declarations                         |
+   | loop body                | `while (true) { <fragment> }`               | standalone `break`/`continue`                                                               |
+   | switch case              | `switch (0) { case 0: <fragment> }`         | `break`/`continue` in a case                                                                |
+   | generator body           | `function* __matcher() { <fragment> }`      | `yield`/`yield*`                                                                            |
+   | async body               | `async function __matcher() { <fragment> }` | `await`                                                                                     |
+   | type expression          | `type __Matcher = <fragment>;`              | union/intersection, type literal, type reference, function/constructor type                 |
+   | expression               | `const __matcher = <fragment>;`             | a sub-expression                                                                            |
+   | contiguous statement run | two or more top-level statements            | a run of consecutive sibling statements                                                     |
+
+   **Decorators, static blocks, and computed names.** A decorated class or member
+   is reachable as one class-member fragment that includes its decorators. A
+   **standalone** `@decorator` is not an owner context: select its class/member
+   owner and use a snippet that includes the member, or edit the decorator text
+   with `/regex/` or `pick`. A static block is reached through the class-member
+   wrapper (or an inner statement). Computed member names (`[expression]`) are
+   not name-addressable, so select the owner and use `match`/`pick`/regex.
+   Overload signatures, declaration merges, and duplicate declarations remain
+   separate address candidates; an explicit `kind` disambiguates a cross-space
+   merge, and an address that still matches more than one is rejected. A
+   whole-symbol edit on a multi-declarator or destructuring binding is rejected
+   because it would rewrite a sibling; a `match`/`pick` inside one binding is
+   supported.
+
+   **Ambiguity diagnostics.** A structural match with more than one span is
+   `matcher-ambiguous` and lists up to eight candidates as `line:column` plus
+   the copied source line, so the model can add a `pick` point/range or extend
+   the snippet. It never picks the first. `/regex/` ambiguity uses the same
+   candidate list while keeping its resolution behavior, and `pick` filtering
+   runs before the ambiguity check; when the picked ranges still leave more than
+   one candidate, the diagnostic says so. A viewer is the information-gathering
+   exception: it returns every occurrence and writes nothing (§4).
+
+   **Regex and `pick` are first-class fallbacks.** A structural success is not
+   required. When no owner context parses the fragment, the failure is
+   `matcher-unparseable` and names every attempted owner context (top-level
+   statement, class member, interface/type member, object-literal member,
+   function-body/loop/switch/generator/async body, type expression, expression,
+   contiguous run) and points at `/regex/` or `pick`. An unsupported form is
+   never silently skipped.
+
+   **Corpus policy.** `src/matcher-corpus.test.ts` is the committed proof of
+   declaration-level completeness. Its `FORMS` matrix lists every covered
+   declaration/member/module form; each form has a success case through
+   structural matching, `/regex/`, or `pick`, or an explicit expected-failure
+   case. The matrix includes declaration/owner forms, object-literal methods and
+   accessors, type-literal signatures, class index signatures and constructor
+   parameter properties, `import = require`, the omitted-kind `using` address,
+   and the explicit `using`-kind/auto-accessor rejections. Success cases run the
+   real `parseMultiEditor` + `resolveMultiEditor` +
+   `applyResolvedRegions`/`parseCheck` path and assert the applied source and a
+   passing parse/format gate. Failure cases assert a clear diagnostic and no
+   queued write (overloads/merges, computed names, decorators, and
+   multi-declarator/destructuring whole-symbol edits). The corpus is
+   self-contained and must not depend on `benchmark/fixtures` or `human/`; add a
+   new form to the matrix only with its case.
+
 3. **Pick.** Each range resolves through the shared range resolver (bounds,
    inclusiveness, declaration containment). With a `match`, the candidate set is
    filtered by the selecter kind: a **point** keeps candidates whose span
@@ -762,7 +847,8 @@ These guards run before any gate:
   practical limit.
 - **Snippet parse.** A snippet must parse even when it is structurally
   ambiguous; an unparseable fragment is `matcher-unparseable` with the parser's
-  position.
+  position and the attempted owner contexts, and points at `/regex/` or `pick`
+  for a span no structural owner context can describe.
 
 ## 4. Viewers
 

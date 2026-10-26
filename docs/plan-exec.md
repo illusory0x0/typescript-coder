@@ -900,13 +900,31 @@ Addresses are declaration-level and may be dotted: namespace and class members
 as before, interface/type-literal members (`Cell.getValue`), enum members
 (`Color.Red`), object-literal members owned by a declared variable or class field
 (`config.timeout`, `config.server.port`), and named default exports by their
-declared name. Anonymous default exports, computed member names, and class static
-blocks have no synthetic name and are owner + `match`/`pick` targets. Overloads,
+declared name. Anonymous default exports, computed member names, class static
+blocks, class index signatures, and constructor parameter properties have no
+synthetic name and are owner + `match`/`pick`/regex targets; call/construct/index
+signatures on interfaces and type literals work the same way. Object-literal
+methods are named (`config.run`); a getter/setter pair shares `config.value` and
+needs the object owner plus `match`/`pick` for one accessor. A top-level `using`
+binding is addressed with an omitted kind because `using` is not a `select` kind
+token. A class auto-accessor is not structurally modeled; use the class owner
+with `/regex/` or `pick` for its text. Overloads,
 declaration merges, and duplicates never resolve to a silent first declaration:
 the address is rejected with each candidate named, unless an explicit `kind`
 disambiguates a cross-space merge. A whole-symbol edit on a multi-declarator or
 destructuring binding is rejected because it would rewrite siblings; use a
 per-binding `match`/`pick` span instead.
+
+Structural `match` is best-effort across the owner contexts documented in
+[`edit-protocol.md`](edit-protocol.md) §3 (top-level statement, class member,
+interface/type member, object-literal member, function/loop/switch/generator/async
+body, and type expression). Ambiguous structural and regex matches list each
+candidate's `line:column` and source line and never pick the first; a standalone
+decorator is reached through its owner with a member snippet or with `/regex/`/
+`pick`. Regex and `pick` remain first-class fallbacks, and
+`src/matcher-corpus.test.ts` proves at least one selector path per covered
+declaration/member/module form (with explicit expected failures for unsupported
+or ambiguous forms).
 
 Imports and exports are the exception: they have no declaration address. A
 `select file` clause owns one existing statement or specifier, and a module
