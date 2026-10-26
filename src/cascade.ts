@@ -17,6 +17,7 @@ import type { EditRange } from "./loop";
 import { END_OF_LINE_COLUMN } from "./selection";
 import type { Selection } from "./selection";
 import type { IndexEntry } from "./utility";
+import { memberDeletionRange } from "./utility";
 import type { RangeResolutionFailure } from "./loop";
 
 /** The finest stage that resolved a target. */
@@ -452,6 +453,21 @@ export function resolveCascade(
 
   if (selection.replacement === null) {
     return { ok: true, start, end, text: "", viewer: true, stage, gateStart: start };
+  }
+
+  // A whole-member empty fence deletes the member and its separator. The
+  // parser's member span excludes `,`/`;`, so a raw splice would leave a
+  // dangling separator behind; the parse/format gate remains the final check.
+  if (
+    selection.matcher === null &&
+    selection.pick === null &&
+    selection.replacement.trim() === ""
+  ) {
+    const memberRange = memberDeletionRange(source, entry.node);
+    if (memberRange !== null) {
+      start = memberRange.start;
+      end = memberRange.end;
+    }
   }
 
   // A target that begins at the declaration gets the `export` tolerance; a

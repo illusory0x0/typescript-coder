@@ -260,7 +260,13 @@ test("namespace declarations merge into one symbol and one scope", () => {
   expect(resolveIn(firstScope, "b", "value")).not.toBeNull();
   const index = buildIndex([{ path, source }]);
   const entries = index.lookup({ path, name: "N", kind: "namespace" });
-  expect(entries).toHaveLength(1);
+  // Merged declarations stay separate candidates: the resolver must reject the
+  // ambiguous address instead of silently editing the first namespace body.
+  expect(entries).toHaveLength(2);
+  expect(entries.map((entry) => entry.node.start)).toEqual([
+    source.indexOf("namespace N"),
+    source.indexOf("namespace N", 1),
+  ]);
   expect(entries[0]?.symbol.declarations).toHaveLength(2);
 });
 
@@ -292,6 +298,191 @@ test("private class members index with their # prefix and stay distinct from pub
   expect(index.byName("x")).toHaveLength(0);
   expect(field[0]?.locator.name).toBe("A.#x");
 });
+
+test("interface and type-literal members index with dotted addresses", () => {
+  const path = "src/members.ts";
+  const source = [
+    "interface Cell {",
+    "  value: number;",
+    "  getValue(): number;",
+    "  nested: {",
+    "    id: string;",
+    "    run(): void;",
+    "  };",
+    "  [key: string]: unknown;",
+    "  (): void;",
+    "}",
+    "type Box = {",
+    "  read(): string;",
+    "  inner: { flag: boolean };",
+    "};",
+  ].join("\n");
+  const index = buildIndex([{ path, source }]);
+  const expectEntry = (name: string, kind: string, slice: string): void => {
+    const entries = index.lookup({ path, name, kind });
+    expect(entries).toHaveLength(1);
+    const entry = entries[0];
+    expect(entry?.node.start).toBe(source.indexOf(slice));
+    expect(source.slice(entry?.node.start, entry?.node.end).startsWith(slice)).toBe(true);
+  };
+  expectEntry("Cell.value", "property", "value: number");
+  expectEntry("Cell.getValue", "method", "getValue(): number");
+  expectEntry("Cell.nested", "property", "nested: {");
+  expectEntry("Cell.nested.id", "property", "id: string");
+  expectEntry("Cell.nested.run", "method", "run(): void");
+  expectEntry("Box.read", "method", "read(): string");
+  expectEntry("Box.inner.flag", "property", "flag: boolean");
+  expect(index.lookup({ path, name: "Cell.key", kind: "" })).toHaveLength(0);
+  expect(index.lookup({ path, name: "Cell", kind: "" })).toHaveLength(1);
+  expect(index.lookup({ path, name: "Box", kind: "" })).toHaveLength(1);
+});
+
+test("enum members index as dotted enum-member entries", () => {
+  const path = "src/color.ts";
+  const source = ["enum Color {", "  Red = 1,", "  Green,", "  Blue = 3,", "}"].join("\n");
+  const index = buildIndex([{ path, source }]);
+  const red = index.lookup({ path, name: "Color.Red", kind: "enum-member" });
+  expect(red).toHaveLength(1);
+  expect(source.slice(red[0]?.node.start, red[0]?.node.end)).toBe("Red = 1");
+  const green = index.lookup({ path, name: "Color.Green", kind: "" });
+  expect(green).toHaveLength(1);
+  expect(source.slice(green[0]?.node.start, green[0]?.node.end)).toBe("Green");
+  expect(declarationKind(green[0]?.node)).toBe("EnumMember");
+});
+
+test("object-literal members index only under a declared variable or class field", () => {
+  const path = "src/config.ts";
+  const source = [
+    "const config = {",
+    "  timeout: 100,",
+    "  server: {",
+    '    host: "localhost",',
+    "    start() {},",
+    "  },",
+    '  ["computed"]: 1,',
+    "  ...extra,",
+    "};",
+    "class Service {",
+    "  static config = { retries: 3 };",
+    "}",
+    "configure({ notOwned: 1 });",
+    "function local() {",
+    "  const hidden = { value: 1 };",
+    "  return hidden.value;",
+    "}",
+  ].join("\n");
+  const index = buildIndex([{ path, source }]);
+  const timeout = index.lookup({ path, name: "config.timeout", kind: "property" });
+  expect(timeout).toHaveLength(1);
+  expect(source.slice(timeout[0]?.node.start, timeout[0]?.node.end)).toBe("timeout: 100");
+  const host = index.lookup({ path, name: "config.server.host", kind: "property" });
+  expect(host).toHaveLength(1);
+  expect(source.slice(host[0]?.node.start, host[0]?.node.end)).toBe('host: "localhost"');
+  const start = index.lookup({ path, name: "config.server.start", kind: "method" });
+  expect(start).toHaveLength(1);
+  expect(source.slice(start[0]?.node.start, start[0]?.node.end)).toContain("start() {}");
+  expect(index.lookup({ path, name: "config.computed", kind: "" })).toHaveLength(0);
+  expect(index.lookup({ path, name: "Service.config.retries", kind: "property" })).toHaveLength(1);
+  expect(index.lookup({ path, name: "hidden.value", kind: "" })).toHaveLength(0);
+  expect(index.byName("notOwned")).toHaveLength(0);
+});
+
+test("named default exports are addressable while anonymous ones bind nothing", () => {
+  const path = "src/default.ts";
+  const named = [
+    "export default function boot(): number {",
+    "  return 1;",
+    "}",
+    "export default class App {",
+    "  run() {}",
+    "}",
+  ].join("\n");
+  const index = buildIndex([{ path, source: named }]);
+  expect(index.lookup({ path, name: "boot", kind: "function" })).toHaveLength(1);
+  expect(index.lookup({ path, name: "App", kind: "class" })).toHaveLength(1);
+  expect(index.lookup({ path, name: "App.run", kind: "method" })).toHaveLength(1);
+
+  const anonymous = buildIndex([
+    { path, source: "export default function () {}\nexport default class {}\n" },
+  ]);
+  expect(anonymous.entries).toEqual([]);
+});
+
+test("class/interface merging stays visible as separate candidates", () => {
+  const path = "src/merge.ts";
+  const source = "interface Mixed { value: number }\nclass Mixed { run() {} }\n";
+  const index = buildIndex([{ path, source }]);
+  const all = index.lookup({ path, name: "Mixed", kind: "" });
+  expect(all).toHaveLength(2);
+  expect(new Set(all.map((entry) => entry.locator.kind))).toEqual(new Set(["interface", "class"]));
+  expect(index.lookup({ path, name: "Mixed", kind: "class" })).toHaveLength(1);
+  expect(index.lookup({ path, name: "Mixed", kind: "interface" })).toHaveLength(1);
+});
+
+test("multi-declarator and destructuring bindings are marked unsafe as wholes", () => {
+  const path = "src/bindings.ts";
+  const source = [
+    "const first = 1, second = 2;",
+    "const { a, b } = pair;",
+    "const [c, d] = pair;",
+    "const safe = 3;",
+  ].join("\n");
+  const index = buildIndex([{ path, source }]);
+  const restrictionOf = (name: string, kind = "variable") => {
+    const entries = index.lookup({ path, name, kind });
+    expect(entries).toHaveLength(1);
+    return entries[0]?.wholeSymbolRestriction;
+  };
+  expect(restrictionOf("first")?.reason).toBe("multi-declarator");
+  expect(restrictionOf("second")?.reason).toBe("multi-declarator");
+  expect(restrictionOf("a")?.reason).toBe("destructuring");
+  expect(restrictionOf("b")?.reason).toBe("destructuring");
+  expect(restrictionOf("c")?.reason).toBe("destructuring");
+  expect(restrictionOf("d")?.reason).toBe("destructuring");
+  expect(restrictionOf("safe")).toBeUndefined();
+});
+
+test("member indexing is deterministic and emits no duplicate entries", () => {
+  const files: SourceFile[] = [
+    {
+      path: "src/stable.ts",
+      source: [
+        "interface Cell { value: number; getValue(): number }",
+        "enum Color { Red, Green }",
+        "const config = { timeout: 1, nested: { flag: true } };",
+      ].join("\n"),
+    },
+  ];
+  const first = buildIndex(files);
+  const second = buildIndex(files);
+  const keys = first.entries.map(
+    (entry) =>
+      `${entry.locator.path}\0${entry.locator.name}\0${entry.locator.kind}\0${entry.node.start}`,
+  );
+  expect(keys).toEqual(
+    second.entries.map(
+      (entry) =>
+        `${entry.locator.path}\0${entry.locator.name}\0${entry.locator.kind}\0${entry.node.start}`,
+    ),
+  );
+  expect(new Set(keys).size).toBe(keys.length);
+  expect(indexNames(first)).toEqual([
+    "Cell",
+    "Cell.value",
+    "Cell.getValue",
+    "Color",
+    "Color.Red",
+    "Color.Green",
+    "config",
+    "config.timeout",
+    "config.nested",
+    "config.nested.flag",
+  ]);
+});
+
+function indexNames(index: SymbolIndex): string[] {
+  return [...new Set(index.entries.map((entry) => entry.locator.name))];
+}
 
 test("buildIndex accepts modern syntax that used to throw", () => {
   const path = "src/modern.ts";
@@ -416,15 +607,24 @@ test("imported names are excluded from the index while real declarations remain"
   expect(index.lookup({ path, name: "keep", kind: "variable" })).toHaveLength(1);
 });
 
-test("overload sets index as a single entry", () => {
+test("overload sets index every declaration as an explicit candidate", () => {
   const path = "src/overload.ts";
   const source =
     "function f(a: string): void; function f(a: number): void; function f(a: unknown) {}";
   const index = buildIndex([{ path, source }]);
   const entries = index.lookup({ path, name: "f", kind: "function" });
-  expect(entries).toHaveLength(1);
+  // Never collapse an overload set to its first declaration: the resolver can
+  // then reject the ambiguous address with all candidates named.
+  expect(entries).toHaveLength(3);
+  expect(entries.map((entry) => entry.node.start)).toEqual([
+    source.indexOf("function f"),
+    source.indexOf("function f", 1),
+    source.indexOf("function f", source.indexOf("function f", 1) + 1),
+  ]);
   expect(entries[0]?.symbol.declarations).toHaveLength(3);
-  expect(entries[0]?.node).toBe(entries[0]?.symbol.declarations[0]);
+  for (const entry of entries) {
+    expect(entry.symbol.declarations).toContain(entry.node);
+  }
 });
 
 test("index kinds disambiguate declarations and lookup is exact", () => {

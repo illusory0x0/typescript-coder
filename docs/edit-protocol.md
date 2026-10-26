@@ -172,6 +172,47 @@ next reply carries the edit. An editor select clause (with `replace` or
 missing path, a missing symbol, or a space miss pins mode `create`, and the next
 prompt asks for a create clause.
 
+### Address rules for declarations and members
+
+An address is `(path, symbol, kind)`. `symbol` is dotted when the declaration is
+nested; `kind` is a grammar kind or the omitted wildcard. The index emits:
+
+- top-level, namespace, and class declarations/members as before;
+- interface and type-literal members as `Interface.member`, `Alias.member`, and
+  nested literal members as `Interface.property.member`. A type literal is
+  reached from a declared type alias or an interface property's type (including
+  parenthesized and union/intersection literals); its members keep that owner
+  path;
+- enum members as `Enum.Member` with kind `enum-member`;
+- object-literal properties and methods owned by a declared variable or class
+  field, recursively: `config.timeout`, `config.server.port`,
+  `Service.config.retries`. Only a literal assigned to that binding is indexed;
+  an anonymous literal (a call argument, return value, or function-local
+  variable) has no address and stays a `match`/`pick` target;
+- named default exports by their declared name (`export default function boot`
+  is `boot`, `export default class App` is `App`). An anonymous default export
+  has no synthetic name and is an owner + `match`/`pick` target.
+
+A member's indexed span is the parser's member span, so `modify` and `rename`
+touch only that member. An empty-fence whole-member delete also removes the
+member's following `,`/`;`, or its preceding separator for the last member; the
+parse/format gate is the final check. Computed member names (`[expression]`) and
+class static blocks are **not name-addressable**: select the owner and use
+`match`/`pick`.
+
+Overload signatures and declaration merges never resolve to a silent first
+declaration. Every declaration is an index candidate, and an address that
+matches more than one is rejected with each candidate's line/column. A `kind`
+can disambiguate a merge across symbol spaces (`class` vs `interface`,
+`enum` vs `namespace`); overload signatures share a kind and are rejected until
+a narrower target exists. Duplicate declarations are rejected the same way.
+
+A multi-declarator statement (`const a = 1, b = 2`) or destructuring binding
+(`const { a, b } = pair`) remains addressable per binding, and `match`/`pick`
+inside one binding is supported. A whole-symbol `replace` or empty-fence delete
+on one of those bindings is rejected because it would silently rewrite a
+sibling binding; target a narrower span or a different declaration instead.
+
 ### Rename semantics
 
 A rename is resolved against the whole file before any splice is queued. The
@@ -183,11 +224,19 @@ included. Function, class, interface, and type-alias declarations rename their
 same-file references by value/type space.
 
 Dotted targets use the full locator path (`Color.Red`, `Widget.field`, `A.B`)
-and rename only the final segment. Qualified references are matched
-structurally: `X.A.B` and `A.B.Z` do not match target `A.B`, and a same-named
-member on another enum/class is untouched. Class field references are limited
-to `this.field` and same-class static accesses; arbitrary receiver-typed
+and rename only the final segment. Interface and type-literal members are
+qualified type bindings, so `Cell.value` and `Snapshot.nested.flag` rename their
+declaration and same-file qualified type references. Qualified references are
+matched structurally: `X.A.B` and `A.B.Z` do not match target `A.B`, and a
+same-named member on another enum/class is untouched. Class field references are
+limited to `this.field` and same-class static accesses; arbitrary receiver-typed
 `obj.field` accesses are not rewritten.
+
+Object-literal member targets are **not renameable** (an `address` failure);
+computed member names and static blocks have no name-addressable declaration to
+rename. A same-file rename of an ordinary binding, namespace, class, enum,
+interface, type alias, enum member, class field/method, or interface/type-literal
+member is supported. A rename is still not a cross-file/type-checker rename.
 
 A rename failure (unresolved or ambiguous address, invalid new name, or a
 collision at the same scope/qualified path) is reported at the `address` stage
@@ -555,6 +604,10 @@ Both formats reduce to the same narrowing, one stage at a time.
    an interface or type alias occupies type, and a namespace declaration
    occupies the namespace space. A space miss names the available spaces and
    never falls back to another one; the JSON payload path passes no space.
+   Dotted member addresses follow the rules above (`Cell.getValue`,
+   `Color.Red`, `config.timeout`, a named default export's name). Overloaded,
+   merged, or duplicate declarations stay separate candidates; an address
+   matching more than one is rejected with every candidate named.
    Re-pinning is expressed, in edit-dsl, by naming a different declaration in
    the clause's own `select`; the new address faces the same unique-resolution
    rule against the current source.
@@ -587,7 +640,9 @@ Both formats reduce to the same narrowing, one stage at a time.
    otherwise it is the resolved match span. A rewrite that starts at the
    declaration's start gets the **`export` tolerance**: an indexed node range
    excludes a wrapping `export`, so a replacement that still carries it keeps
-   exactly one copy. A body-level target is never stripped.
+   exactly one copy. A body-level target is never stripped. A whole-symbol
+   target on a multi-declarator or destructuring binding is rejected before the
+   splice because it would rewrite a sibling binding.
 
 The policy is total, and nothing is guessed: exactly one candidate at the finest
 supplied stage is the target, zero is `matcher-not-found`, and more than one is

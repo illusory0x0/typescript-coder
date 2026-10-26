@@ -811,26 +811,17 @@ describe("resolveEditDslReply (#111)", () => {
     );
   });
 
-  test("a duplicate-symbol viewer renders every declaration and names the delete repair", () => {
+  test("a duplicate-symbol address is rejected instead of selecting the first copy", () => {
     const source = ["export type Value = number;", "", "export type Value = string;", ""].join(
       "\n",
     );
     const selections = parseSelection("select type Value in a.ts end");
     const result = resolveEditDslReply(selections, deps(source));
-    expect(result.failures).toEqual([]);
-    expect(result.viewers).toHaveLength(1);
-    const viewer = result.viewers[0];
-    expect(viewer?.duplicates).toHaveLength(2);
-    expect(viewer?.duplicateNote).toContain(
-      'Duplicate declarations: the top-level type "Value" in a.ts is declared 2 times, at a.ts:1 and a.ts:3.',
-    );
-    const feedback = renderViewerFeedback(result.viewers);
-    expect(feedback).toContain("1 | export type Value = number;");
-    expect(feedback).toContain("duplicate declaration at a.ts:3");
-    expect(feedback).toContain("3 | export type Value = string;");
-    expect(feedback).toContain(
-      "To remove one duplicate, reply with an empty-fence `replace with` clause on this address",
-    );
+    expect(result.viewers).toEqual([]);
+    expect(result.regions).toEqual([]);
+    expect(result.failures).toHaveLength(1);
+    expect(result.failures[0]?.stage).toBe("address");
+    expect(result.failures[0]?.diagnostics).toContain("no unique declaration");
   });
 
   test("the fold marker stays self-describing with or without a total", () => {
@@ -946,16 +937,166 @@ describe("resolveEditDslReply (#111)", () => {
     expect(result.failures[0]?.stage).toBe("matcher");
     expect(result.failures[0]?.diagnostics).toContain("stage: matcher");
   });
+});
 
-  test("an editor with an invalid pick range reports stage range and renders no block", () => {
-    const selections = parseSelection(
-      "select function twice in a.ts\nmatch `return 1;`\npick 99\nreplace with\n<<<TC_EDIT_BEGIN>>>\n  return 2;\n<<<TC_EDIT_END>>>\nend",
+describe("nested declaration addresses (#52)", () => {
+  const replace = (body: string): string =>
+    ["replace with", "<<<TC_EDIT_BEGIN>>>", body, "<<<TC_EDIT_END>>>", "end"].join("\n");
+
+  test("modifies and deletes an interface member through its dotted address", () => {
+    const source = ["interface Cell {", "  value: number;", "  getValue(): number;", "}"].join(
+      "\n",
     );
-    const result = resolveEditDslReply(selections, deps(TWICE));
-    expect(result.viewers).toEqual([]);
+    const modify = resolveEditDslReply(
+      parseSelection(`select Cell.value in a.ts\n${replace("value: string;")}`),
+      deps(source),
+    );
+    expect(modify.failures).toEqual([]);
+    const modified = modify.regions[0];
+    expect(modified?.start).toBe(source.indexOf("value: number"));
+    expect(modified?.end).toBe(source.indexOf("value: number") + "value: number".length);
+
+    const remove = resolveEditDslReply(
+      parseSelection(`select Cell.value in a.ts\n${replace("")}`),
+      deps(source),
+    );
+    expect(remove.failures).toEqual([]);
+    const removed = remove.regions[0];
+    expect(removed?.start).toBe(source.indexOf("value: number"));
+    expect(removed?.end).toBe(source.indexOf("value: number") + "value: number;".length);
+  });
+
+  test("modifies and deletes an enum member including its separator", () => {
+    const source = ["enum Color {", "  Red = 1,", "  Green,", "  Blue = 3", "}"].join("\n");
+    const modify = resolveEditDslReply(
+      parseSelection(`select Color.Red in a.ts\n${replace("Red = 10")}`),
+      deps(source),
+    );
+    expect(modify.regions[0]?.start).toBe(source.indexOf("Red = 1"));
+    expect(modify.regions[0]?.end).toBe(source.indexOf("Red = 1") + "Red = 1".length);
+
+    const middle = resolveEditDslReply(
+      parseSelection(`select Color.Green in a.ts\n${replace("")}`),
+      deps(source),
+    );
+    const middleStart = source.indexOf("Green");
+    expect(middle.regions[0]?.start).toBe(middleStart);
+    expect(middle.regions[0]?.end).toBe(source.indexOf(",", middleStart) + 1);
+
+    const last = resolveEditDslReply(
+      parseSelection(`select Color.Blue in a.ts\n${replace("")}`),
+      deps(source),
+    );
+    const lastStart = source.indexOf("Blue");
+    expect(last.regions[0]?.start).toBe(source.lastIndexOf(",", lastStart));
+    expect(last.regions[0]?.end).toBe(lastStart + "Blue = 3".length);
+  });
+
+  test("modifies and deletes object-literal members recursively", () => {
+    const source = [
+      "const config = {",
+      "  timeout: 100,",
+      "  server: {",
+      '    host: "localhost",',
+      "    port: 80",
+      "  },",
+      "};",
+    ].join("\n");
+    const host = resolveEditDslReply(
+      parseSelection(`select config.server.host in a.ts\n${replace('host: "remote";')}`),
+      deps(source),
+    );
+    expect(host.failures).toEqual([]);
+    expect(host.regions[0]?.start).toBe(source.indexOf('host: "localhost"'));
+
+    const timeout = resolveEditDslReply(
+      parseSelection(`select config.timeout in a.ts\n${replace("")}`),
+      deps(source),
+    );
+    expect(timeout.failures).toEqual([]);
+    const timeoutStart = source.indexOf("timeout: 100");
+    expect(timeout.regions[0]?.start).toBe(timeoutStart);
+    expect(timeout.regions[0]?.end).toBe(source.indexOf(",", timeoutStart) + 1);
+
+    const port = resolveEditDslReply(
+      parseSelection(`select config.server.port in a.ts\n${replace("")}`),
+      deps(source),
+    );
+    const portStart = source.indexOf("port: 80");
+    expect(port.regions[0]?.start).toBe(source.lastIndexOf(",", portStart));
+    expect(port.regions[0]?.end).toBe(portStart + "port: 80".length);
+  });
+
+  test("modifies and deletes a named default export through its declared name", () => {
+    const source = "export default function boot(): number {\n  return 1;\n}\n";
+    const modify = resolveEditDslReply(
+      parseSelection(
+        `select boot in a.ts\n${replace("function boot(): number {\n  return 2;\n}")}`,
+      ),
+      deps(source),
+    );
+    expect(modify.failures).toEqual([]);
+    expect(modify.regions[0]?.start).toBe("export default ".length);
+    expect(modify.regions[0]?.text).toContain("return 2;");
+
+    const remove = resolveEditDslReply(
+      parseSelection(`select boot in a.ts\n${replace("")}`),
+      deps(source),
+    );
+    expect(remove.failures).toEqual([]);
+    expect(remove.regions[0]?.start).toBe(0);
+    expect(remove.regions[0]?.end).toBe(source.trimEnd().length);
+  });
+
+  test("rejects a whole-symbol edit on a multi-declarator binding", () => {
+    const source = "const first = 1, second = 2;\n";
+    const result = resolveEditDslReply(
+      parseSelection(`select first in a.ts\n${replace("const first = 10;")}`),
+      deps(source),
+    );
     expect(result.regions).toEqual([]);
     expect(result.failures).toHaveLength(1);
-    expect(result.failures[0]?.stage).toBe("range");
-    expect(result.failures[0]?.diagnostics).toContain("stage: range");
+    expect(result.failures[0]?.stage).toBe("address");
+    expect(result.failures[0]?.diagnostics).toContain("silently rewrite a sibling binding");
+    expect(result.failures[0]?.diagnostics).toContain("match");
+  });
+
+  test("allows a matcher edit on one multi-declarator/destructuring binding", () => {
+    const multi = resolveEditDslReply(
+      parseSelection(`select first in a.ts\nmatch \`1\`\n${replace("10")}`),
+      deps("const first = 1, second = 2;\n"),
+    );
+    expect(multi.failures).toEqual([]);
+    expect(multi.regions[0]?.text).toBe("10");
+    expect(multi.regions[0]?.start).toBe("const first = ".length);
+    expect(multi.regions[0]?.end).toBe("const first = 1".length);
+
+    const picked = resolveEditDslReply(
+      parseSelection(`select first in a.ts\npick 1:15\n${replace("10")}`),
+      deps("const first = 1, second = 2;\n"),
+    );
+    expect(picked.failures).toEqual([]);
+    expect(picked.regions[0]?.text).toBe("10");
+    expect(picked.regions[0]?.start).toBe("const first = ".length);
+    expect(picked.regions[0]?.end).toBe("const first = 1".length);
+
+    const destructured = resolveEditDslReply(
+      parseSelection(`select a in a.ts\nmatch \`1\`\n${replace("3")}`),
+      deps("const { a = 1, b = 2 } = pair;\n"),
+    );
+    expect(destructured.failures).toEqual([]);
+    expect(destructured.regions[0]?.text).toBe("3");
+    expect(destructured.regions[0]?.start).toBe("const { a = ".length);
+    expect(destructured.regions[0]?.end).toBe("const { a = 1".length);
+  });
+
+  test("rejects a whole-symbol edit on a destructuring binding", () => {
+    const result = resolveEditDslReply(
+      parseSelection(`select a in a.ts\n${replace("const { a } = pair;")}`),
+      deps("const { a, b } = pair;\n"),
+    );
+    expect(result.regions).toEqual([]);
+    expect(result.failures[0]?.stage).toBe("address");
+    expect(result.failures[0]?.diagnostics).toContain("destructuring pattern");
   });
 });

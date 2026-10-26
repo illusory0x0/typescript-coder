@@ -45,6 +45,11 @@ export async function applyEdits(
     if (target === undefined) {
       throw new Error(`no symbol ${edit.locator.kind} ${edit.locator.name} in ${fileName}`);
     }
+    if (matches.length > 1) {
+      throw new Error(
+        `symbol ${edit.locator.kind} ${edit.locator.name} in ${fileName} resolves to ${matches.length} declarations; the harness never picks one silently`,
+      );
+    }
     replacements.push({
       start: target.node.start,
       end: target.node.end,

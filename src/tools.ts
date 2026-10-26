@@ -4,13 +4,18 @@ import type { IndexEntry, Locator, SourceFile } from "./utility";
 import type {
   ClassDeclaration,
   EnumDeclaration,
+  EnumMember,
   FunctionDeclaration,
   ImportEqualsDeclaration,
   InterfaceDeclaration,
   MemberName,
   MethodDeclaration,
+  MethodSignature,
   NamespaceDeclaration,
   Node,
+  ObjectMethod,
+  Property,
+  PropertySignature,
   TypeAliasDeclaration,
   VariableDeclarator,
 } from "./parser";
@@ -71,9 +76,32 @@ function declarationNameSpan(node: Node, source: string): Span | null {
     case "ClassDeclaration":
       return spanOf((declaration as FunctionDeclaration | ClassDeclaration).name);
     case "MethodDeclaration":
+    case "MethodSignature":
     case "ObjectMethod":
     case "PropertyDeclaration":
-      return memberNameSpan((declaration as MethodDeclaration).name);
+    case "PropertySignature":
+      return memberNameSpan(
+        (declaration as MethodDeclaration | MethodSignature | ObjectMethod | PropertySignature)
+          .name,
+      );
+    case "Property": {
+      const property = declaration as Property;
+      if (property.computed) {
+        return null;
+      }
+      switch (property.key.kind) {
+        case "Identifier":
+        case "StringLiteral":
+        case "NumberLiteral":
+          return spanOf(property.key);
+        default:
+          return null;
+      }
+    }
+    case "EnumMember": {
+      const name = (declaration as EnumMember).name;
+      return name.kind === "Identifier" ? spanOf(name) : null;
+    }
     case "InterfaceDeclaration":
       return spanOf((declaration as InterfaceDeclaration).name);
     case "TypeAliasDeclaration":

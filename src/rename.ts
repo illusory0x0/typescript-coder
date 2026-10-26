@@ -507,6 +507,7 @@ class RenameModel {
         this.visitClassDeclaration(statement, scope);
         return;
       case "InterfaceDeclaration": {
+        const interfacePath = this.qualify(statement.name.name);
         this.declare(
           scope,
           statement.name.name,
@@ -514,6 +515,7 @@ class RenameModel {
           ["interface"],
           statement,
           statement.name,
+          interfacePath,
         );
         const interfaceScope = this.child("block", scope);
         this.visitTypeParameters(statement.typeParameters, interfaceScope);
@@ -521,15 +523,24 @@ class RenameModel {
           this.visitType(base, interfaceScope, "type");
         }
         for (const member of statement.members) {
-          this.visitTypeMember(member, interfaceScope);
+          this.visitTypeMember(member, interfaceScope, interfacePath);
         }
         return;
       }
       case "TypeAliasDeclaration": {
-        this.declare(scope, statement.name.name, ["type"], ["type"], statement, statement.name);
+        const aliasPath = this.qualify(statement.name.name);
+        this.declare(
+          scope,
+          statement.name.name,
+          ["type"],
+          ["type"],
+          statement,
+          statement.name,
+          aliasPath,
+        );
         const aliasScope = this.child("block", scope);
         this.visitTypeParameters(statement.typeParameters, aliasScope);
-        this.visitType(statement.type, aliasScope, "type");
+        this.visitType(statement.type, aliasScope, "type", aliasPath);
         return;
       }
       case "EnumDeclaration": {
@@ -1400,7 +1411,12 @@ class RenameModel {
     return { start, end: start + last.length };
   }
 
-  private visitType(type: Type, scope: LexicalScope, space: SymbolSpace): void {
+  private visitType(
+    type: Type,
+    scope: LexicalScope,
+    space: SymbolSpace,
+    ownerPath: string | null = null,
+  ): void {
     switch (type.kind) {
       case "TypeReference": {
         const first = firstQualifiedSegment(type.name);
@@ -1430,20 +1446,20 @@ class RenameModel {
         return;
       }
       case "ParenthesizedType":
-        this.visitType(type.type, scope, space);
+        this.visitType(type.type, scope, space, ownerPath);
         return;
       case "UnionType":
       case "IntersectionType":
         for (const item of type.types) {
-          this.visitType(item, scope, "type");
+          this.visitType(item, scope, space, ownerPath);
         }
         return;
       case "ArrayType":
-        this.visitType(type.elementType, scope, "type");
+        this.visitType(type.elementType, scope, "type", ownerPath);
         return;
       case "TupleType":
         for (const element of type.elements) {
-          this.visitType(element.elementType, scope, "type");
+          this.visitType(element.elementType, scope, "type", ownerPath);
         }
         return;
       case "IndexedAccessType":
@@ -1457,7 +1473,7 @@ class RenameModel {
       }
       case "TypeLiteral":
         for (const member of type.members) {
-          this.visitTypeMember(member, scope);
+          this.visitTypeMember(member, scope, ownerPath);
         }
         return;
       case "FunctionType":
@@ -1516,15 +1532,32 @@ class RenameModel {
     this.visitType(type.falseType, inferScope, "type");
   }
 
-  private visitTypeMember(member: TypeMember, scope: LexicalScope): void {
+  private visitTypeMember(
+    member: TypeMember,
+    scope: LexicalScope,
+    ownerPath: string | null = null,
+  ): void {
     switch (member.kind) {
-      case "PropertySignature":
+      case "PropertySignature": {
+        const identifier = member.name.kind === "Identifier" ? member.name : null;
+        const name = identifier?.name ?? null;
+        const memberPath = ownerPath === null || name === null ? null : `${ownerPath}.${name}`;
+        if (memberPath !== null && name !== null) {
+          this.declareQualified(name, memberPath, ["type"], ["property"], member, identifier);
+        }
         this.visitMemberName(member.name, scope);
         if (member.type !== null) {
-          this.visitType(member.type, scope, "type");
+          this.visitType(member.type, scope, "type", memberPath);
         }
         return;
+      }
       case "MethodSignature": {
+        const identifier = member.name.kind === "Identifier" ? member.name : null;
+        const name = identifier?.name ?? null;
+        const memberPath = ownerPath === null || name === null ? null : `${ownerPath}.${name}`;
+        if (memberPath !== null && name !== null) {
+          this.declareQualified(name, memberPath, ["type"], ["method"], member, identifier);
+        }
         this.visitMemberName(member.name, scope);
         const functionScope = this.child("block", scope);
         this.visitTypeParameters(member.typeParameters, functionScope);
@@ -1748,9 +1781,12 @@ export function resolveLocalRename(
   model.setFileName(fileName);
   const targets = model.findTargets(locator, options);
   if (targets.length === 0) {
+    const dottedNote = locator.name.includes(".")
+      ? "; dotted rename targets cover namespace, class, enum, and interface/type-literal members, but object-literal, computed, and static-block members are not renameable"
+      : "";
     return {
       ok: false,
-      diagnostics: `cannot resolve ${locator.kind || "symbol"} \`${locator.name}\` in ${fileName}`,
+      diagnostics: `cannot resolve ${locator.kind || "symbol"} \`${locator.name}\` in ${fileName}${dottedNote}`,
     };
   }
   if (targets.length > 1) {

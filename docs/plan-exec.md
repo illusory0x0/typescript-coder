@@ -884,6 +884,18 @@ creates are separate statements: several creates for distinct declarations may
 share a reply, a member create inserts into an existing owner, and a dotted
 create never creates its owner.
 
+Addresses are declaration-level and may be dotted: namespace and class members
+as before, interface/type-literal members (`Cell.getValue`), enum members
+(`Color.Red`), object-literal members owned by a declared variable or class field
+(`config.timeout`, `config.server.port`), and named default exports by their
+declared name. Anonymous default exports, computed member names, and class static
+blocks have no synthetic name and are owner + `match`/`pick` targets. Overloads,
+declaration merges, and duplicates never resolve to a silent first declaration:
+the address is rejected with each candidate named, unless an explicit `kind`
+disambiguates a cross-space merge. A whole-symbol edit on a multi-declarator or
+destructuring binding is rejected because it would rewrite siblings; use a
+per-binding `match`/`pick` span instead.
+
 ### 8.2 Applying a reply
 
 1. Parse the reply with the edit-action parser. A parse failure writes nothing.
@@ -896,10 +908,11 @@ create never creates its owner.
 5. Write all changed files, create empty files for `create <path> end`, apply
    declaration/member insertions, and delete files for `delete` only after every
    guard passed. Nothing is written on a rejection.
-6. A whole-symbol variable edit expands to the enclosing `VariableStatement`
-   (including `export`); a multi-declarator statement is rejected. A rename keeps
-   its binding span. `export` modifier differences are tolerated in both
-   directions.
+6. A variable edit is addressed at its declarator; a whole-symbol edit on a
+   multi-declarator statement or destructuring binding is rejected rather than
+   rewriting a sibling. A named-member edit replaces only the member span; an
+   empty-fence delete also removes its `,`/`;` separator. A rename keeps its
+   binding span. `export` modifier differences are tolerated in both directions.
 
 A reply that carries only viewers or reads writes nothing; its feedback becomes
 the next attempt's prompt. A reply that produces no source change is a no-op

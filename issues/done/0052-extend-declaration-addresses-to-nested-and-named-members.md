@@ -1,7 +1,7 @@
 ---
 id: 52
 title: "Extend declaration addresses to nested and named members"
-status: todo
+status: done
 priority: medium
 milestone: null
 parent: 51
@@ -49,3 +49,5 @@ git diff --check
 - Import/export statements are #54; kind-aware create is #50; structural matcher contexts are #53.
 - This issue does not add new strategy constraints: multiple candidates are an application-safety error, not a style preference.
 - Keep the existing rename limitations documented rather than silently expanding them.
+- Starting: extend the symbol index/address model to interface/type-literal/enum/object-literal members, named default exports, overload/merging ambiguity, and multi-declarator safety, on top of the new WorkNode + kind-aware create model.
+- Resolved: index/address support for interface and type-literal members, enum members, object-literal members owned by declared variables/class fields, and named default exports. All overload/merge declarations are candidates and ambiguous addresses are rejected with candidates; multi-declarator/destructuring whole-symbol edits are rejected while match/pick inside one binding works; whole-member deletion expands over its separator. Rename covers interface/type-literal members; object-literal, computed, and static-block members are documented non-renameable. Verified: typecheck, 1510 tests pass, fast accept 9/9, full accept --all 10/10 including self-host (the transient self-host failure reported during implementation did not reproduce), diff check. No baseline changes.

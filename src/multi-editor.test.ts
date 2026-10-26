@@ -958,3 +958,57 @@ describe("resolveMultiEditor kind-aware create (#50)", () => {
     expect(withEmptyCreate.failures[0]?.diagnostics).toContain("empty-file create");
   });
 });
+
+describe("nested declaration addresses (#52)", () => {
+  test("renames an enum member and its same-enum references", () => {
+    const source = ["enum Color { Red, Green }", "const value = Color.Red;", ""].join("\n");
+    const result = resolve("select Color.Red in src/a.ts\nrename Red to Crimson\nend", {
+      "src/a.ts": source,
+    });
+    expect(result.failures).toEqual([]);
+    expect(result.regions).toHaveLength(2);
+    expect(result.regions.map((region) => region.text)).toEqual(["Crimson", "Crimson"]);
+    expect(source.slice(result.regions[0]?.start, result.regions[0]?.end)).toBe("Red");
+    expect(source.slice(result.regions[1]?.start, result.regions[1]?.end)).toBe("Red");
+  });
+
+  test("renames an interface/type-literal member and its qualified type reference", () => {
+    const source = ["interface Cell { value: number }", "type V = Cell.value;", ""].join("\n");
+    const result = resolve("select Cell.value in src/a.ts\nrename value to item\nend", {
+      "src/a.ts": source,
+    });
+    expect(result.failures).toEqual([]);
+    expect(result.regions).toHaveLength(2);
+    expect(result.regions.map((region) => region.text)).toEqual(["item", "item"]);
+    expect(source.slice(result.regions[0]?.start, result.regions[0]?.end)).toBe("value");
+    expect(source.slice(result.regions[1]?.start, result.regions[1]?.end)).toBe("value");
+  });
+
+  test("rejects an object-literal member rename with a clear limitation", () => {
+    const source = "const config = { timeout: 1 };\n";
+    const result = resolve("select config.timeout in src/a.ts\nrename timeout to delay\nend", {
+      "src/a.ts": source,
+    });
+    expect(result.regions).toEqual([]);
+    expect(result.failures).toHaveLength(1);
+    expect(result.failures[0]?.stage).toBe("address");
+    expect(result.failures[0]?.diagnostics).toContain("object-literal");
+  });
+
+  test("rejects an unsafe whole-symbol delete of a destructuring binding", () => {
+    const result = resolve(
+      [
+        "select a in src/a.ts",
+        "replace with",
+        "<<<TC_EDIT_BEGIN>>>",
+        "",
+        "<<<TC_EDIT_END>>>",
+        "end",
+      ].join("\n"),
+      { "src/a.ts": "const { a, b } = pair;\n" },
+    );
+    expect(result.regions).toEqual([]);
+    expect(result.failures[0]?.stage).toBe("address");
+    expect(result.failures[0]?.diagnostics).toContain("destructuring pattern");
+  });
+});

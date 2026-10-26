@@ -77,14 +77,13 @@ test("rejects overlapping edits", async () => {
   ).rejects.toThrow(/overlapping edits/);
 });
 
-test("replaces only the first declaration of an overload set", async () => {
-  const result = await applyEdits(
-    "function f(a: string): void;\nfunction f(a: number): void;\nfunction f(a: unknown) {}\n",
-    [edit("f", "function", "function f(value: unknown): void {\n  return;\n}")],
-  );
-  expect(result).toBe(
-    "function f(value: unknown): void {\n  return;\n}\nfunction f(a: number): void;\nfunction f(a: unknown) {}\n",
-  );
+test("rejects an overload set instead of replacing its first declaration", async () => {
+  await expect(
+    applyEdits(
+      "function f(a: string): void;\nfunction f(a: number): void;\nfunction f(a: unknown) {}\n",
+      [edit("f", "function", "function f(value: unknown): void {\n  return;\n}")],
+    ),
+  ).rejects.toThrow(/resolves to 3 declarations; the harness never picks one silently/);
 });
 
 test("rejects when the replacement text cannot be parsed", async () => {

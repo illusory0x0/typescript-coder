@@ -5,16 +5,21 @@ import type {
   ClassDeclaration,
   ClassExpression,
   ClassMember,
+  EnumDeclaration,
   ExportDefaultDeclaration,
   Expression,
   FunctionDeclaration,
   ImportDeclaration,
+  InterfaceDeclaration,
   MemberName,
   NamespaceDeclaration,
   Node,
+  ObjectLiteral,
   Parameter,
   Program,
   Statement,
+  Type,
+  TypeMember,
   VariableStatement,
 } from "./parser";
 
@@ -481,10 +486,25 @@ export function grammarKindsForEntryKind(entryKind: string): readonly string[] {
   return entryKind === "variable" ? VARIABLE_LOCATOR_KINDS : [entryKind];
 }
 
+/**
+ * Why an index entry cannot be addressed as a whole declaration even though its
+ * name resolves: a variable binding that shares its statement with a sibling
+ * declarator, or a destructuring binding whose declarator also contains sibling
+ * bindings. `match`/`pick` inside the entry stay available.
+ */
+export type WholeSymbolRestrictionReason = "multi-declarator" | "destructuring";
+
+export interface WholeSymbolRestriction {
+  reason: WholeSymbolRestrictionReason;
+  detail: string;
+}
+
 export interface IndexEntry {
   locator: Locator;
   symbol: Symbol;
   node: Node;
+  /** Present when a whole-symbol edit would rewrite sibling bindings. */
+  wholeSymbolRestriction?: WholeSymbolRestriction;
 }
 
 export interface SourceFile {
@@ -601,6 +621,7 @@ function declarationKind(node: Node): string | null {
     case "FunctionDeclaration":
       return "function";
     case "MethodDeclaration":
+    case "MethodSignature":
     case "ObjectMethod":
       return "method";
     case "ClassDeclaration":
@@ -609,6 +630,11 @@ function declarationKind(node: Node): string | null {
       return "interface";
     case "TypeAliasDeclaration":
       return "type";
+    case "PropertySignature":
+    case "Property":
+      return "property";
+    case "EnumMember":
+      return "enum-member";
     case "VariableDeclarator":
     case "VariableStatement":
     case "PropertyDeclaration":
@@ -721,14 +747,397 @@ function importBindingNodes(program: Program): Set<Node> {
   return nodes;
 }
 
+/**
+ * Mark variable bindings that cannot be edited as a whole declaration without
+ * touching a sibling binding: a destructuring pattern shares one declarator for
+ * every name, and a multi-declarator statement has sibling declarators in the
+ * same statement. Per-binding `match`/`pick` edits remain available.
+ */
+function variableBindingRestrictions(program: Program): Map<Node, WholeSymbolRestriction> {
+  const restrictions = new Map<Node, WholeSymbolRestriction>();
+  const visitVariable = (statement: VariableStatement): void => {
+    const multiple = statement.declarations.length > 1;
+    for (const declarator of statement.declarations) {
+      if (declarator.name.kind !== "Identifier") {
+        restrictions.set(declarator, {
+          reason: "destructuring",
+          detail:
+            "the binding is part of a destructuring pattern whose declarator also contains sibling bindings",
+        });
+      } else if (multiple) {
+        restrictions.set(declarator, {
+          reason: "multi-declarator",
+          detail: "the binding shares its statement with sibling declarators",
+        });
+      }
+    }
+  };
+  const visitStatements = (statements: readonly Statement[]): void => {
+    for (const statement of statements) {
+      visitStatement(statement);
+    }
+  };
+  const visitStatement = (statement: Statement): void => {
+    switch (statement.kind) {
+      case "VariableStatement":
+        visitVariable(statement);
+        return;
+      case "BlockStatement":
+        visitStatements(statement.body);
+        return;
+      case "IfStatement":
+        visitStatement(statement.consequent);
+        if (statement.alternate !== null) {
+          visitStatement(statement.alternate);
+        }
+        return;
+      case "WhileStatement":
+      case "DoWhileStatement":
+        visitStatement(statement.body);
+        return;
+      case "ForStatement":
+        if (statement.init !== null && statement.init.kind === "VariableStatement") {
+          visitVariable(statement.init);
+        }
+        visitStatement(statement.body);
+        return;
+      case "ForInStatement":
+      case "ForOfStatement":
+        if (statement.left.kind === "VariableStatement") {
+          visitVariable(statement.left);
+        }
+        visitStatement(statement.body);
+        return;
+      case "SwitchStatement":
+        for (const switchCase of statement.cases) {
+          visitStatements(switchCase.consequent);
+        }
+        return;
+      case "TryStatement":
+        visitStatement(statement.block);
+        if (statement.handler !== null) {
+          visitStatement(statement.handler.body);
+        }
+        if (statement.finalizer !== null) {
+          visitStatement(statement.finalizer);
+        }
+        return;
+      case "LabeledStatement":
+        visitStatement(statement.body);
+        return;
+      case "NamespaceDeclaration":
+        visitStatements(statement.body);
+        return;
+      case "ExportNamedDeclaration":
+        if (statement.declaration !== null) {
+          visitStatement(statement.declaration);
+        }
+        return;
+      case "ExportDefaultDeclaration":
+        if (
+          statement.declaration.kind === "FunctionDeclaration" ||
+          statement.declaration.kind === "ClassDeclaration"
+        ) {
+          visitStatement(statement.declaration);
+        }
+        return;
+      default:
+        return;
+    }
+  };
+  visitStatements(program.body);
+  return restrictions;
+}
+
+type AddMemberEntry = (node: Node, name: string, kind: string, space: SymbolSpace) => void;
+
+/** The source name of an object-literal property key, or null when computed. */
+function propertyKeyName(key: Expression, computed: boolean): string | null {
+  if (computed) {
+    return null;
+  }
+  switch (key.kind) {
+    case "Identifier":
+      return key.name;
+    case "StringLiteral":
+      return key.value;
+    case "NumberLiteral":
+      return key.raw;
+    default:
+      return null;
+  }
+}
+
+// Unwrap the expression forms that keep an object literal's owner unchanged.
+function objectLiteralValue(expression: Expression): ObjectLiteral | null {
+  switch (expression.kind) {
+    case "ObjectLiteral":
+      return expression;
+    case "ParenthesizedExpression":
+    case "NonNullExpression":
+    case "AsExpression":
+    case "TypeAssertion":
+      return objectLiteralValue(expression.expression);
+    default:
+      return null;
+  }
+}
+
+/**
+ * Index named members that the binder does not scope: interface/type-literal
+ * members, enum members, and object-literal properties/methods owned by a
+ * declared variable or class field. Addresses stay dotted and reuse the owner's
+ * namespace/class prefix, e.g. `Cell.getValue`, `Color.Red`, `config.timeout`.
+ */
+function collectNestedMemberEntries(program: Program, add: AddMemberEntry): void {
+  const collectTypeMembers = (members: readonly TypeMember[], owner: string): void => {
+    for (const member of members) {
+      switch (member.kind) {
+        case "PropertySignature": {
+          const name = memberName(member.name);
+          if (name === null) {
+            continue;
+          }
+          const path = `${owner}.${name}`;
+          add(member, path, "property", "type");
+          if (member.type !== null) {
+            collectType(member.type, path);
+          }
+          break;
+        }
+        case "MethodSignature": {
+          const name = memberName(member.name);
+          if (name !== null) {
+            add(member, `${owner}.${name}`, "method", "type");
+          }
+          break;
+        }
+        default:
+          break;
+      }
+    }
+  };
+  const collectType = (type: Type, owner: string): void => {
+    switch (type.kind) {
+      case "TypeLiteral":
+        collectTypeMembers(type.members, owner);
+        return;
+      case "ParenthesizedType":
+        collectType(type.type, owner);
+        return;
+      case "UnionType":
+      case "IntersectionType":
+        for (const item of type.types) {
+          collectType(item, owner);
+        }
+        return;
+      case "ArrayType":
+        collectType(type.elementType, owner);
+        return;
+      case "TupleType":
+        for (const element of type.elements) {
+          collectType(element.elementType, owner);
+        }
+        return;
+      default:
+        return;
+    }
+  };
+  const collectObject = (literal: ObjectLiteral, owner: string): void => {
+    for (const item of literal.properties) {
+      if (item.kind === "SpreadElement") {
+        continue;
+      }
+      if (item.kind === "ObjectMethod") {
+        const name = memberName(item.name);
+        if (name !== null) {
+          add(item, `${owner}.${name}`, "method", "value");
+        }
+        continue;
+      }
+      const name = propertyKeyName(item.key, item.computed);
+      if (name === null) {
+        continue;
+      }
+      add(item, `${owner}.${name}`, "property", "value");
+      const nested = objectLiteralValue(item.value);
+      if (nested !== null) {
+        collectObject(nested, `${owner}.${name}`);
+      }
+    }
+  };
+  const collectClassObjects = (
+    declaration: ClassDeclaration | ClassExpression,
+    owner: string,
+  ): void => {
+    for (const member of declaration.members) {
+      if (member.kind !== "PropertyDeclaration" || member.initializer === null) {
+        continue;
+      }
+      const name = memberName(member.name);
+      if (name === null) {
+        continue;
+      }
+      const literal = objectLiteralValue(member.initializer);
+      if (literal !== null) {
+        collectObject(literal, `${owner}.${name}`);
+      }
+    }
+  };
+  const collectVariable = (statement: VariableStatement, prefix: string): void => {
+    for (const declarator of statement.declarations) {
+      if (declarator.name.kind !== "Identifier" || declarator.initializer === null) {
+        continue;
+      }
+      const literal = objectLiteralValue(declarator.initializer);
+      if (literal !== null) {
+        collectObject(literal, `${prefix}${declarator.name.name}`);
+      }
+    }
+  };
+  const visitStatements = (statements: readonly Statement[], prefix: string): void => {
+    for (const statement of statements) {
+      switch (statement.kind) {
+        case "NamespaceDeclaration":
+          visitStatements(statement.body, `${prefix}${statement.name}.`);
+          break;
+        case "ExportNamedDeclaration":
+          if (statement.declaration !== null) {
+            visitStatements([statement.declaration], prefix);
+          }
+          break;
+        case "ExportDefaultDeclaration": {
+          const inner = statement.declaration;
+          if (inner.kind === "ClassDeclaration" && inner.name !== null) {
+            collectClassObjects(inner, `${prefix}${inner.name.name}`);
+          }
+          break;
+        }
+        case "InterfaceDeclaration": {
+          const declaration = statement as InterfaceDeclaration;
+          collectTypeMembers(declaration.members, `${prefix}${declaration.name.name}`);
+          break;
+        }
+        case "TypeAliasDeclaration":
+          collectType(statement.type, `${prefix}${statement.name.name}`);
+          break;
+        case "EnumDeclaration": {
+          const declaration = statement as EnumDeclaration;
+          for (const member of declaration.members) {
+            const name = memberName(member.name);
+            if (name !== null) {
+              add(member, `${prefix}${declaration.name.name}.${name}`, "enum-member", "value");
+            }
+          }
+          break;
+        }
+        case "VariableStatement":
+          collectVariable(statement, prefix);
+          break;
+        case "ClassDeclaration":
+          if (statement.name !== null) {
+            collectClassObjects(statement, `${prefix}${statement.name.name}`);
+          }
+          break;
+        default:
+          break;
+      }
+    }
+  };
+  visitStatements(program.body, "");
+}
+
+/**
+ * The separator-expanded deletion range for a named member (interface/type
+ * literal, enum, or object literal). The parser's member span excludes the
+ * trailing `,`/`;`, so deleting just the node would leave a dangling separator;
+ * remove the following separator, or the preceding one for a final member.
+ * Returns null for nodes whose deletion needs no separator handling.
+ */
+export function memberDeletionRange(
+  source: string,
+  node: Node,
+): { start: number; end: number } | null {
+  if (!("kind" in node)) {
+    return null;
+  }
+  const kind = (node as { kind: string }).kind;
+  const separators =
+    kind === "PropertySignature" || kind === "MethodSignature"
+      ? ";,"
+      : kind === "EnumMember" || kind === "Property" || kind === "ObjectMethod"
+        ? ","
+        : "";
+  if (separators === "") {
+    return null;
+  }
+  let start = node.start;
+  let end = node.end;
+  let after = end;
+  while (after < source.length && /\s/.test(source[after] ?? "")) {
+    after += 1;
+  }
+  const following = source[after];
+  if (following !== undefined && separators.includes(following)) {
+    end = after + 1;
+  } else {
+    let before = start;
+    while (before > 0 && /\s/.test(source[before - 1] ?? "")) {
+      before -= 1;
+    }
+    const preceding = source[before - 1];
+    if (preceding !== undefined && separators.includes(preceding)) {
+      start = before - 1;
+    }
+  }
+  return { start, end };
+}
+
+/** The whole-symbol rejection for an entry that would rewrite sibling bindings. */
+export function wholeSymbolRestrictionDiagnostics(entry: IndexEntry): string | null {
+  const restriction = entry.wholeSymbolRestriction;
+  if (restriction === undefined) {
+    return null;
+  }
+  const { kind, name, path } = entry.locator;
+  const label = kind === "" ? JSON.stringify(name) : `${kind} ${JSON.stringify(name)}`;
+  return [
+    "stage: address",
+    `cannot edit the whole ${label} in ${path}: ${restriction.detail}; the edit would silently rewrite a sibling binding`,
+    "target one binding with `match` or `pick` inside the binding (or a JSON matcher/range), or address a narrower declaration",
+  ].join("\n");
+}
+
 function indexEntriesForFile(file: SourceFile): IndexEntry[] {
   const entries: IndexEntry[] = [];
   const program = new Parser(file.source).parseProgram();
   const binder = new Binder(program);
   const imported = importBindingNodes(program);
+  const restrictions = variableBindingRestrictions(program);
   /** Tracks (name, kind) pairs already emitted per declaration node. */
   const emitted = new Map<Node, Set<string>>();
   const cache = new Map<Scope, string | null>();
+  const addEntry = (node: Node, name: string, kind: string, symbol: Symbol): void => {
+    const key = `${name}\u0000${kind}`;
+    const seen = emitted.get(node);
+    if (seen === undefined) {
+      emitted.set(node, new Set([key]));
+    } else if (seen.has(key)) {
+      return;
+    } else {
+      seen.add(key);
+    }
+    const restriction = restrictions.get(node);
+    const entry: IndexEntry = {
+      locator: { path: file.path, name, kind },
+      symbol,
+      node,
+    };
+    if (restriction !== undefined) {
+      entry.wholeSymbolRestriction = restriction;
+    }
+    entries.push(entry);
+  };
   for (const scope of binder.scopes) {
     const prefix = scopePrefix(scope, binder.rootScope, cache);
     if (prefix === null) {
@@ -736,40 +1145,34 @@ function indexEntriesForFile(file: SourceFile): IndexEntry[] {
     }
     for (const symbols of scope.bindings.values()) {
       for (const symbol of symbols) {
-        const node = symbol.declarations[0];
-        if (node === undefined) {
-          continue;
+        // Emit every declaration of the symbol. Overload signatures and merged
+        // namespaces/interfaces must stay visible as separate candidates so the
+        // resolver rejects an ambiguous address instead of silently editing the
+        // first declaration.
+        for (const node of symbol.declarations) {
+          if (scope.kind === "class" && node === scope.node) {
+            continue;
+          }
+          if (imported.has(node)) {
+            continue;
+          }
+          const kind = declarationKind(node);
+          if (kind === null) {
+            continue;
+          }
+          addEntry(node, `${prefix}${symbol.name}`, kind, symbol);
         }
-        if (scope.kind === "class" && node === scope.node) {
-          continue;
-        }
-        if (imported.has(node)) {
-          continue;
-        }
-        const kind = declarationKind(node);
-        if (kind === null) {
-          continue;
-        }
-        const name = `${prefix}${symbol.name}`;
-        // Class and enum declarations bind in both the value and type spaces
-        // with the same declaration node; collapse them into one entry.
-        const key = `${name}\u0000${kind}`;
-        const seen = emitted.get(node);
-        if (seen === undefined) {
-          emitted.set(node, new Set([key]));
-        } else if (seen.has(key)) {
-          continue;
-        } else {
-          seen.add(key);
-        }
-        entries.push({
-          locator: { path: file.path, name, kind },
-          symbol,
-          node,
-        });
       }
     }
   }
+  collectNestedMemberEntries(program, (node, name, kind, space) => {
+    addEntry(node, name, kind, {
+      name,
+      space,
+      declarations: [node],
+      scope: binder.rootScope,
+    });
+  });
   return entries;
 }
 
@@ -778,7 +1181,20 @@ function sortedEntries(entries: IndexEntry[]): IndexEntry[] {
     if (left.locator.path !== right.locator.path) {
       return left.locator.path < right.locator.path ? -1 : 1;
     }
-    return left.node.start - right.node.start;
+    if (left.node.start !== right.node.start) {
+      return left.node.start - right.node.start;
+    }
+    if (left.node.end !== right.node.end) {
+      return left.node.end - right.node.end;
+    }
+    if (left.locator.name !== right.locator.name) {
+      return left.locator.name < right.locator.name ? -1 : 1;
+    }
+    return left.locator.kind < right.locator.kind
+      ? -1
+      : left.locator.kind > right.locator.kind
+        ? 1
+        : 0;
   });
 }
 

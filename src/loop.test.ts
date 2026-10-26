@@ -61,6 +61,7 @@ import {
   renderSelfCheckCommand,
   renderSelfCheckRead,
   resolveEditRange,
+  resolveCurrentEntry,
   runLoop as runLoopBase,
   selectorOf,
   selectorsOf,
@@ -289,6 +290,105 @@ describe("buildContextYaml", () => {
       "",
     ].join("\n");
     expect(buildContextYaml(files)).toBe(expected);
+  });
+});
+
+describe("declaration addresses (#52)", () => {
+  test("an overload address is rejected with every candidate named", () => {
+    const source =
+      "function f(a: string): void;\nfunction f(a: number): void;\nfunction f(a: unknown) {}\n";
+    const result = resolveCurrentEntry(source, "src/overload.ts", {
+      path: "src/overload.ts",
+      name: "f",
+      kind: "function",
+    });
+    expect(result.ok).toBe(false);
+    if (!result.ok) {
+      expect(result.diagnostics).toContain("matches 3 declarations");
+      expect(result.diagnostics).toContain("the harness never picks one silently");
+      expect(result.diagnostics).toContain("(line 1, column 1)");
+      expect(result.diagnostics).toContain("(line 2, column 1)");
+      expect(result.diagnostics).toContain("(line 3, column 1)");
+    }
+  });
+
+  test("a class/interface merge is disambiguated by kind, not by first declaration", () => {
+    const source = "interface Mixed { value: number }\nclass Mixed { run() {} }\n";
+    const path = "src/merge.ts";
+    const ambiguous = resolveCurrentEntry(source, path, { path, name: "Mixed", kind: "" });
+    expect(ambiguous.ok).toBe(false);
+    if (!ambiguous.ok) {
+      expect(ambiguous.diagnostics).toContain("matches 2 declarations");
+    }
+    const classEntry = resolveCurrentEntry(source, path, { path, name: "Mixed", kind: "class" });
+    expect(classEntry.ok).toBe(true);
+    if (classEntry.ok) {
+      expect(classEntry.entry.locator.kind).toBe("class");
+      expect(source.slice(classEntry.entry.node.start, classEntry.entry.node.end)).toContain(
+        "class Mixed",
+      );
+    }
+  });
+
+  test("a named default export resolves while an anonymous one stays undeclared", () => {
+    const named = "export default function boot(): number {\n  return 1;\n}\n";
+    const path = "src/default.ts";
+    const resolved = resolveCurrentEntry(named, path, { path, name: "boot", kind: "function" });
+    expect(resolved.ok).toBe(true);
+    if (resolved.ok) {
+      expect(resolved.entry.node.start).toBe("export default ".length);
+    }
+    const anonymous = resolveCurrentEntry("export default function () {}\n", path, {
+      path,
+      name: "boot",
+      kind: "function",
+    });
+    expect(anonymous.ok).toBe(false);
+    if (!anonymous.ok) {
+      expect(anonymous.undeclared).toBe(true);
+    }
+  });
+
+  test("nested member entries resolve with their own parser spans", () => {
+    const source = [
+      "interface Cell { getValue(): number }",
+      "enum Color { Red }",
+      "const config = { timeout: 1 };",
+    ].join("\n");
+    const path = "src/members.ts";
+    for (const [name, kind, expected] of [
+      ["Cell.getValue", "method", "getValue(): number"],
+      ["Color.Red", "enum-member", "Red"],
+      ["config.timeout", "property", "timeout: 1"],
+    ] as const) {
+      const resolved = resolveCurrentEntry(source, path, { path, name, kind });
+      expect(resolved.ok).toBe(true);
+      if (resolved.ok) {
+        expect(source.slice(resolved.entry.node.start, resolved.entry.node.end)).toBe(expected);
+      }
+    }
+  });
+
+  test("resolveCurrentEntry marks whole-symbols that would rewrite siblings", () => {
+    const path = "src/bindings.ts";
+    const multi = resolveCurrentEntry("const first = 1, second = 2;\n", path, {
+      path,
+      name: "first",
+      kind: "const",
+    });
+    expect(multi.ok).toBe(true);
+    if (multi.ok) {
+      expect(multi.entry.wholeSymbolRestriction?.reason).toBe("multi-declarator");
+    }
+    const destructured = resolveCurrentEntry("const { a, b } = pair;\n", path, {
+      path,
+      name: "a",
+      kind: "const",
+    });
+    expect(destructured.ok).toBe(true);
+    if (destructured.ok) {
+      expect(destructured.entry.wholeSymbolRestriction?.reason).toBe("destructuring");
+    }
   });
 });
 
@@ -8997,7 +9097,7 @@ describe("edit-dsl protocol (#111/#119)", () => {
     ).toBe(true);
   }, 30000);
 
-  test("a duplicate top-level declaration is named in retry diagnostics and repairable by deletion", async () => {
+  test("a duplicate top-level declaration is rejected with both candidates named", async () => {
     const dir = fixtureDir();
     writeFileSync(
       join(dir, "src", "helper.ts"),
@@ -9012,26 +9112,18 @@ describe("edit-dsl protocol (#111/#119)", () => {
         "",
       ].join("\n"),
     );
-    const firstCopy = ["export function answer(): number {", "  return 1;", "}"].join("\n");
     const address = { path: "src/helper.ts", name: "answer", kind: "function" };
     const provider = new ScriptedProvider([
       editDslSelect("answer", "src/helper.ts", "value"),
-      // Rewriting the visible (indexed) copy with identical text is a no-op.
-      editDslReply({
-        locator: address,
-        space: null,
-        matcher: null,
-        pick: null,
-        replacement: firstCopy,
-      }),
-      // The prescribed repair: an empty fence deletes the indexed copy.
-      editDslReply({
-        locator: address,
-        space: null,
-        matcher: null,
-        pick: null,
-        replacement: "",
-      }),
+      [
+        "write src/helper.ts with",
+        "<<<TC_EDIT_BEGIN>>>",
+        "export function answer(): number {",
+        "  return 2;",
+        "}",
+        "<<<TC_EDIT_END>>>",
+      ].join("\n"),
+      "Great! I resolve this problem!",
     ]);
     const result = await runLoopBase({
       cwd: dir,
@@ -9041,16 +9133,12 @@ describe("edit-dsl protocol (#111/#119)", () => {
       testCommand: ["bun", "test"],
     });
     expect(result.ok).toBe(true);
-    // The select turn's `# details` names both copies and the repair.
-    const details = provider.calls[1]?.at(-1)?.content ?? "";
-    expect(details).toContain("Duplicate declarations:");
-    expect(details).toContain("src/helper.ts:1 and src/helper.ts:5");
-    expect(details).toContain("empty-fence");
-    // The no-op retry carries the same duplicate note.
-    const retry = provider.calls[2]?.at(-1)?.content ?? "";
-    expect(retry).toContain("stage: no-op");
-    expect(retry).toContain("Duplicate declarations:");
-    expect(retry).toContain("src/helper.ts:1 and src/helper.ts:5");
+    // The ambiguous select names every candidate instead of editing the first.
+    const retry = provider.calls[1]?.at(-1)?.content ?? "";
+    expect(retry).toContain("matches 2 declarations");
+    expect(retry).toContain("the harness never picks one silently");
+    expect(retry).toContain("(line 1, column 8)");
+    expect(retry).toContain("(line 5, column 8)");
     const finalSource = helperSource(dir);
     expect(finalSource).not.toContain("return 1;");
     expect(finalSource).toContain("return 2;");

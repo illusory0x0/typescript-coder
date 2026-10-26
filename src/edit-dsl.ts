@@ -18,7 +18,7 @@ import type { Node, Program, Statement } from "./parser";
 import type { Selection } from "./selection";
 import { Binder } from "./utility";
 import type { IndexEntry, Locator, SymbolSpace } from "./utility";
-import { duplicateDeclarations } from "./utility";
+import { duplicateDeclarations, wholeSymbolRestrictionDiagnostics } from "./utility";
 import type { EditRange } from "./loop";
 
 /** #110 `MatcherKind`, mirrored to avoid a value-level import cycle with loop. */
@@ -629,6 +629,24 @@ export function resolveEditDslReply(
     // The resolved entry's locator is authoritative: an omitted kind becomes
     // the declaration's actual kind, and a class addressed through value or
     // type resolves to the one `class` entry (#40).
+    const restricted = wholeSymbolRestrictionDiagnostics(address.entry);
+    if (
+      restricted !== null &&
+      selection.matcher === null &&
+      selection.pick === null &&
+      selection.replacement !== null
+    ) {
+      failures.push({
+        index,
+        path,
+        locator: selection.locator,
+        stage: "address",
+        cause: null,
+        diagnostics: restricted,
+        undeclaredName: null,
+      });
+      continue;
+    }
     const duplicate = claimEditDslTarget(
       claims,
       {

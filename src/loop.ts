@@ -36,7 +36,13 @@ import {
 } from "./commit";
 import { LexError } from "./lexer";
 import { ParseError, Parser } from "./parser";
-import { buildIndexTolerant, declarationSpaces, grammarKindsForEntryKind } from "./utility";
+import {
+  buildIndexTolerant,
+  declarationSpaces,
+  grammarKindsForEntryKind,
+  memberDeletionRange,
+  wholeSymbolRestrictionDiagnostics,
+} from "./utility";
 import { buildSignatureViewFromEntry } from "./scroll";
 import { checkTool, testTool } from "./tools";
 import { usageFromRaw } from "./replay-format";
@@ -3519,6 +3525,10 @@ function resolvePayloadSpan(
       undeclaredName: resolved.undeclared ? payload.locator.name : null,
     };
   }
+  const restricted = wholeSymbolRestrictionDiagnostics(resolved.entry);
+  if (restricted !== null && payload.matcher === null && payload.range === null) {
+    return { ok: false, stage: "address", diagnostics: restricted };
+  }
   const spliced = resolveEntrySplice(
     sourceBefore,
     target,
@@ -3683,8 +3693,14 @@ function createExistsDiagnostics(
 }
 
 // The index node excludes a wrapping `export`; deleting an exported
-// declaration should not leave a dangling `export` keyword behind.
-function deleteRange(program: Program, node: Node): { start: number; end: number } {
+// declaration should not leave a dangling `export` keyword behind. A named
+// member (interface/type literal, enum, object literal) also expands over its
+// `,`/`;` separator so the member splice stays parseable.
+function deleteRange(program: Program, node: Node, source: string): { start: number; end: number } {
+  const memberRange = memberDeletionRange(source, node);
+  if (memberRange !== null) {
+    return memberRange;
+  }
   for (const statement of program.body) {
     if (
       statement.kind !== "ExportNamedDeclaration" &&
@@ -3773,7 +3789,7 @@ async function executeDeletion(input: DeletionInput): Promise<LoopResult> {
       "prev-broken",
     );
   }
-  const range = deleteRange(prevCheck.program, node);
+  const range = deleteRange(prevCheck.program, node, baseSource);
   const spliced = applyMatcherSplice(baseSource, range.start, range.end, "");
   const gate = parseCheck(spliced);
   if (!gate.ok) {
@@ -4345,6 +4361,12 @@ function resolveSelection(
   const entry = matches[0];
   if (entry === undefined) {
     return { ok: false, diagnostic: addressMissDiagnostics(locator, [], sourceByPath) };
+  }
+  if (response.mode === "delete") {
+    const restriction = wholeSymbolRestrictionDiagnostics(entry);
+    if (restriction !== null) {
+      return { ok: false, diagnostic: restriction };
+    }
   }
   return { ok: true, selection: { mode: response.mode, locator, entry } };
 }

@@ -342,6 +342,67 @@ describe("resolveLocalRename", () => {
     }
   });
 
+  test("renames interface/type-literal members and their qualified type references", () => {
+    const source = [
+      "interface Cell {",
+      "  value: number;",
+      "  getValue(): number;",
+      "}",
+      "type Snapshot = {",
+      "  value: string;",
+      "  nested: { flag: boolean };",
+      "};",
+      "type A = Cell.value;",
+      "type B = Snapshot.value;",
+      "type C = Snapshot.nested.flag;",
+      "",
+    ].join("\n");
+    expect(rename(source, locator("Cell.value", ""), "value", "item")).toBe(
+      [
+        "interface Cell {",
+        "  item: number;",
+        "  getValue(): number;",
+        "}",
+        "type Snapshot = {",
+        "  value: string;",
+        "  nested: { flag: boolean };",
+        "};",
+        "type A = Cell.item;",
+        "type B = Snapshot.value;",
+        "type C = Snapshot.nested.flag;",
+        "",
+      ].join("\n"),
+    );
+    expect(rename(source, locator("Snapshot.nested.flag", ""), "flag", "enabled")).toBe(
+      [
+        "interface Cell {",
+        "  value: number;",
+        "  getValue(): number;",
+        "}",
+        "type Snapshot = {",
+        "  value: string;",
+        "  nested: { enabled: boolean };",
+        "};",
+        "type A = Cell.value;",
+        "type B = Snapshot.value;",
+        "type C = Snapshot.nested.enabled;",
+        "",
+      ].join("\n"),
+    );
+  });
+
+  test("rejects an object-literal member rename with a limitation", () => {
+    const source = "const config = { timeout: 1 };\n";
+    const result = resolveLocalRename(source, "a.ts", locator("config.timeout", ""), {
+      from: "timeout",
+      to: "delay",
+    });
+    expect(result.ok).toBe(false);
+    if (!result.ok) {
+      expect(result.diagnostics).toContain("object-literal");
+    }
+  });
+
   test("renames class fields and this.field references only", () => {
     const source = [
       "class Widget {",
