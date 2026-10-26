@@ -19,13 +19,45 @@
   deps: [49]
   file: 0048-make-plan-exec-choose-whole-file-writes-by-context.md
 - id: 50
-  title: "Allow dotted create to insert class and namespace members"
+  title: "Make create targets kind-aware for declarations and members"
+  status: todo
+  priority: medium
+  milestone: null
+  parent: 51
+  deps: [49]
+  file: 0050-allow-dotted-create-to-insert-class-and-namespace-members.md
+- id: 52
+  title: "Extend declaration addresses to nested and named members"
+  status: todo
+  priority: medium
+  milestone: null
+  parent: 51
+  deps: []
+  file: 0052-extend-declaration-addresses-to-nested-and-named-members.md
+- id: 53
+  title: "Extend structural matcher contexts and add a declaration corpus"
+  status: todo
+  priority: medium
+  milestone: null
+  parent: 51
+  deps: []
+  file: 0053-extend-structural-matcher-contexts-and-add-a-declaration-corpus.md
+- id: 54
+  title: "Support file-level select for import and export statements"
+  status: todo
+  priority: medium
+  milestone: null
+  parent: 51
+  deps: [50]
+  file: 0054-support-file-level-select-for-import-and-export-statements.md
+- id: 51
+  title: "Complete edit-action coverage for TypeScript declarations"
   status: todo
   priority: medium
   milestone: null
   parent: null
-  deps: [49]
-  file: 0050-allow-dotted-create-to-insert-class-and-namespace-members.md
+  deps: []
+  file: 0051-complete-edit-action-coverage-for-typescript-declarations.md
 - id: 44
   title: "Stabilize plan-exec on mini-spreadsheet after guard and matcher changes"
   status: todo
