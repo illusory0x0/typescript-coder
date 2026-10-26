@@ -35,7 +35,7 @@ Make the executor choose between whole-file writes, whole-declaration rewrites, 
 - [ ] The planner's optional `approach` hint can name a technique or describe one, but the executor may override it; validation and review never require adherence.
 - [ ] The guide preserves `write` as valid and never rejects an edit solely for its size or shape; it tells the executor to choose from the source it can see, not from a planner-selected action. A planner-provided `approach` hint is advice the executor may override.
 - [ ] The review prompt uses the same criteria when a node gate fails; it repeats a whole-file write only when the diagnostics show broad structural breakage.
-- [ ] The harness tracks whole-file writes to existing files and emits a non-blocking advisory on the next executor turn when the write is large or when the same node writes the whole file twice in a row. The advisory names the observed size/coverage and suggests a targeted repair; it does not change records, status, gate results, or termination.
+- [ ] The harness tracks whole-file writes to existing files and emits a non-blocking advisory on the next executor turn when the write is large or when the node writes the whole file again without an intervening targeted edit. The advisory names the observed size/coverage and suggests a targeted repair; it does not change records, status, gate results, or termination.
 - [ ] The advisory does not fire for a new file's skeleton write or for a targeted declaration edit.
 - [ ] Tests cover the prompt guide, advisory trigger and non-trigger cases, the targeted-repair path, and non-regression of the existing #46 post-edit `tsc` advisory.
 - [ ] `docs/plan-exec.md` documents the decision rules and the advisory as guidance, not a hard gate.
@@ -57,6 +57,6 @@ A live mini-spreadsheet pilot is optional follow-up evidence, not part of this i
 
 - Depends on #49: the executor only owns the action once the hints-based work DAG lands.
 - Parent #44: this is the strategy/cost half of stabilizing the mini-spreadsheet plan-exec path.
-- Choose one documented soft threshold (for example, an existing file over N lines whose write covers a stated share of it) and test it; the threshold is guidance, not a policy gate.
+- Use a relative size/coverage heuristic for the advisory, not a hard cap or a fixed step count; the advisory is guidance, not a policy gate.
 - Keep the DAG/schema change out of this issue.
 - Do not regenerate frozen baselines or spend live benchmark tokens without approval.
