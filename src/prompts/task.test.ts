@@ -9,7 +9,9 @@ import {
   buildTaskReviewPrompt,
   buildTaskReviewRetryPrompt,
   buildTaskTurnPrompt,
+  TASK_EDIT_STRATEGY_GUIDE,
   TASK_EDITING_TECHNIQUES,
+  TASK_FAILED_WRITE_REPAIR_ADVICE,
   TASK_FUNCTIONAL_STYLE,
   TASK_PLANNING_WORKFLOW,
   TASK_PLANNER_VIEW,
@@ -130,6 +132,22 @@ describe("execution prompts", () => {
     expect(prompt).not.toContain("MAX_TASK");
   });
 
+  test("the execution guide chooses an action from the source and keeps write valid", () => {
+    const prompt = buildTaskExecutionSystemPrompt();
+    expect(prompt).toContain(TASK_EDIT_STRATEGY_GUIDE);
+    expect(TASK_EDIT_STRATEGY_GUIDE).toContain("New file or skeleton");
+    expect(TASK_EDIT_STRATEGY_GUIDE).toContain("Local edit in an existing file");
+    expect(TASK_EDIT_STRATEGY_GUIDE).toContain("Several related declarations in one file");
+    expect(TASK_EDIT_STRATEGY_GUIDE).toContain("Large declaration rewrite");
+    expect(TASK_EDIT_STRATEGY_GUIDE).toContain("Whole-file rewrite of an existing file");
+    expect(TASK_EDIT_STRATEGY_GUIDE).toContain("no hard size or shape rejection");
+    expect(TASK_EDIT_STRATEGY_GUIDE).toContain(TASK_FAILED_WRITE_REPAIR_ADVICE);
+    expect(TASK_EDIT_STRATEGY_GUIDE).toContain("`write` is always a valid action");
+    expect(TASK_EDIT_STRATEGY_GUIDE).toContain("advice you may override");
+    expect(TASK_EDIT_STRATEGY_GUIDE).toContain("Small requirement on a small file");
+    expect(TASK_EDIT_STRATEGY_GUIDE).toContain("large module");
+  });
+
   test("functional style stays the shared plan-exec block", () => {
     expect(TASK_FUNCTIONAL_STYLE).toContain("Prefer ML-style functional TypeScript");
     expect(TASK_FUNCTIONAL_STYLE).toContain("Do not create new classes");
@@ -181,6 +199,19 @@ describe("execution prompts", () => {
     expect(prompt).toContain("read");
     expect(prompt).toContain("No hinted source is available");
   });
+
+  test("renders the soft edit strategy advisory as separate guidance", () => {
+    const prompt = buildTaskTurnPrompt({
+      node: node("03-impl"),
+      views: [],
+      editStrategyAdvisory:
+        "`src/helper.ts` existed with 300 lines before the write and has 301 lines after it.",
+    });
+    expect(prompt).toContain("# Edit strategy advisory");
+    expect(prompt).toContain("src/helper.ts");
+    expect(prompt).toContain("300 lines");
+    expect(prompt).toContain("Reply with the edit-dsl clauses");
+  });
 });
 
 describe("review prompts", () => {
@@ -207,6 +238,19 @@ describe("review prompts", () => {
     expect(prompt).toContain("do not hard-reject a strategy");
     expect(prompt).not.toContain("at most one patch per Task");
     expect(prompt).not.toContain("one review");
+  });
+
+  test("a failed gate carries the targeted-repair criteria", () => {
+    const prompt = buildTaskReviewPrompt({
+      node: node("03-impl"),
+      gate: { verify: "tsc", ok: false, diagnostics: "src/helper.ts(2,3): error TS2322" },
+      diff: '--- a/src/helper.ts\n+++ b/src/helper.ts\n@@ -1 +1 @@\n-return 1;\n+return "bad";',
+    });
+    expect(prompt).toContain("Gate: tsc failed.");
+    expect(prompt).toContain("# Failed-gate edit strategy");
+    expect(prompt).toContain(TASK_FAILED_WRITE_REPAIR_ADVICE);
+    expect(prompt).toContain("broad structural breakage");
+    expect(prompt).toContain("not a gate");
   });
 
   test("a review retry keeps the approve-or-patch contract", () => {

@@ -151,6 +151,10 @@ function editDsl(replacement: string): string {
   ].join("\n");
 }
 
+function wholeFileWrite(path: string, source: string): string {
+  return [`write ${path} with`, "<<<TC_EDIT_BEGIN>>>", source, "<<<TC_EDIT_END>>>"].join("\n");
+}
+
 const GOOD_EDIT = editDsl("export function answer(): number {\n  return 2;\n}");
 const BAD_EDIT = editDsl("export function answer(): number {\n  return 3;\n}");
 const SETTINGS_EDIT = [
@@ -419,6 +423,176 @@ describe("executor autonomy", () => {
     expect(review).toContain("# Out-of-hint edits");
     expect(review).toContain("src/extra.ts");
     expect(review).toContain("+++ b/src/extra.ts");
+  }, 30000);
+});
+
+describe("edit strategy advisory", () => {
+  test("a large whole-file rewrite gets an advisory with gate diagnostics on the next turn", async () => {
+    const dir = project();
+    const padding = Array.from(
+      { length: 130 },
+      (_, index) => `export const pad${index} = ${index};`,
+    );
+    const source = [
+      "export function largeAnswer(): number {",
+      "  return 1;",
+      "}",
+      ...padding,
+      "",
+    ].join("\n");
+    writeFileSync(join(dir, "src", "large.ts"), source);
+    const large = workNode(2, "large", {
+      verify: "tsc",
+      instruction: "Keep the large module compiling.",
+      hints: [{ path: "src/large.ts", symbol: "", kind: "file" }],
+    });
+    const answer = workNode(3, "answer", {
+      after: [nodeId(2, "large")],
+      instruction: "Change answer so the test passes.",
+    });
+    const broken = wholeFileWrite("src/large.ts", source.replace("return 1;", 'return "bad";'));
+    const repair = [
+      "select largeAnswer in src/large.ts resolve value",
+      "replace with",
+      "<<<TC_EDIT_BEGIN>>>",
+      "export function largeAnswer(): number {",
+      "  return 1;",
+      "}",
+      "<<<TC_EDIT_END>>>",
+      "end",
+    ].join("\n");
+    const provider = new ScriptedProvider([
+      planText([large, answer]),
+      broken,
+      repair,
+      "approve",
+      GOOD_EDIT,
+      "approve",
+    ]);
+    const result = await runTaskLoop(baseOptions(dir, provider));
+    expect(result.ok).toBe(true);
+    const execution = promptsStartingWith(provider, "# Work node");
+    expect(execution).toHaveLength(3);
+    expect(execution[1]).toContain("# Gate diagnostics");
+    expect(execution[1]).toContain("TS2322");
+    expect(execution[1]).toContain("# Edit strategy advisory");
+    expect(execution[1]).toContain("src/large.ts");
+    expect(execution[1]).toContain("existed with 133 lines before the write");
+    expect(execution[1]).toContain("120-line heuristic");
+    expect(execution[1]).toContain("single-declaration rewrite");
+    expect(execution[1]).toContain("This is advice, not a gate");
+    // The advisory adds no record and does not change status or the gate result.
+    expect(result.records.map((record) => record.outcome)).toEqual([
+      "applied",
+      "tsc",
+      "applied",
+      "ok",
+      "applied",
+      "ok",
+    ]);
+    expect(result.nodes?.map((entry) => [entry.id, entry.status])).toEqual([
+      [nodeId(2, "large"), "passed"],
+      [nodeId(3, "answer"), "passed"],
+    ]);
+  }, 30000);
+
+  test("a new file's first whole-file write gets no advisory", async () => {
+    const dir = project();
+    const create = workNode(2, "new", {
+      verify: "tsc",
+      instruction: "Create the new module.",
+      hints: [{ path: "src/new.ts", symbol: "", kind: "file" }],
+    });
+    const answer = workNode(3, "answer", {
+      after: [nodeId(2, "new")],
+      instruction: "Change answer so the test passes.",
+    });
+    const broken = wholeFileWrite("src/new.ts", 'export const broken: number = "bad";\n');
+    const repair = [
+      "select broken in src/new.ts resolve value",
+      "replace with",
+      "<<<TC_EDIT_BEGIN>>>",
+      "export const broken: number = 1;",
+      "<<<TC_EDIT_END>>>",
+      "end",
+    ].join("\n");
+    const provider = new ScriptedProvider([
+      planText([create, answer]),
+      broken,
+      repair,
+      "approve",
+      GOOD_EDIT,
+      "approve",
+    ]);
+    const result = await runTaskLoop(baseOptions(dir, provider));
+    expect(result.ok).toBe(true);
+    const execution = promptsStartingWith(provider, "# Work node");
+    expect(execution).toHaveLength(3);
+    expect(execution[1]).toContain("# Gate diagnostics");
+    expect(execution[1]).not.toContain("# Edit strategy advisory");
+  }, 30000);
+
+  test("a targeted edit gets no whole-file advisory", async () => {
+    const dir = project();
+    const node = workNode(2, "answer");
+    const provider = new ScriptedProvider([planText([node]), BAD_EDIT, GOOD_EDIT, "approve"]);
+    const result = await runTaskLoop(baseOptions(dir, provider));
+    expect(result.ok).toBe(true);
+    const execution = promptsStartingWith(provider, "# Work node");
+    expect(execution).toHaveLength(2);
+    expect(execution[1]).toContain("# Gate diagnostics");
+    expect(execution[1]).not.toContain("# Edit strategy advisory");
+  }, 30000);
+
+  test("a repeated whole-file write without a targeted edit gets an advisory", async () => {
+    const dir = project();
+    const node = workNode(2, "answer");
+    const first = wholeFileWrite(
+      "src/helper.ts",
+      "export function answer(): number {\n  return 3;\n}",
+    );
+    const second = wholeFileWrite(
+      "src/helper.ts",
+      "export function answer(): number {\n  return 4;\n}",
+    );
+    const provider = new ScriptedProvider([planText([node]), first, second, GOOD_EDIT, "approve"]);
+    const result = await runTaskLoop(baseOptions(dir, provider));
+    expect(result.ok).toBe(true);
+    const execution = promptsStartingWith(provider, "# Work node");
+    expect(execution).toHaveLength(3);
+    expect(execution[1]).not.toContain("# Edit strategy advisory");
+    expect(execution[2]).toContain("# Edit strategy advisory");
+    expect(execution[2]).toContain("already rewrote it as a whole file");
+    expect(execution[2]).toContain("existed with 3 lines before the write and has 3 lines after");
+  }, 30000);
+
+  test("a targeted edit resets the whole-file repeat tracking", async () => {
+    const dir = project();
+    const node = workNode(2, "answer");
+    const first = wholeFileWrite(
+      "src/helper.ts",
+      "export function answer(): number {\n  return 3;\n}",
+    );
+    const targeted = editDsl("export function answer(): number {\n  return 4;\n}");
+    const second = wholeFileWrite(
+      "src/helper.ts",
+      "export function answer(): number {\n  return 5;\n}",
+    );
+    const provider = new ScriptedProvider([
+      planText([node]),
+      first,
+      targeted,
+      second,
+      GOOD_EDIT,
+      "approve",
+    ]);
+    const result = await runTaskLoop(baseOptions(dir, provider));
+    expect(result.ok).toBe(true);
+    const execution = promptsStartingWith(provider, "# Work node");
+    expect(execution).toHaveLength(4);
+    expect(execution[1]).not.toContain("# Edit strategy advisory");
+    expect(execution[2]).not.toContain("# Edit strategy advisory");
+    expect(execution[3]).not.toContain("# Edit strategy advisory");
   }, 30000);
 });
 

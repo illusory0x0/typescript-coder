@@ -1,7 +1,7 @@
 ---
 id: 48
 title: "Make the plan-exec executor choose whole-file writes by context"
-status: todo
+status: done
 priority: medium
 milestone: null
 parent: 44
@@ -60,3 +60,4 @@ A live mini-spreadsheet pilot is optional follow-up evidence, not part of this i
 - Use a relative size/coverage heuristic for the advisory, not a hard cap or a fixed step count; the advisory is guidance, not a policy gate.
 - Keep the DAG/schema change out of this issue.
 - Do not regenerate frozen baselines or spend live benchmark tokens without approval.
+- Resolved: executor now gets a situation-aware whole-file/whole-declaration/targeted decision guide plus the three-technique knowledge base; a soft advisory appears after a whole-file write to an existing file at/above the documented 120-line heuristic or after a repeated whole-file write without an intervening targeted edit; new files and targeted edits do not trigger it. The advisory never changes records, status, gates, or termination. Verified: prompt/task tests (15), task-loop tests (23), just typecheck, just test (1453 pass), just accept (9/9), git diff --check. Known note: the review prompt carries failed-gate strategy advice, but the current driver invokes review only after a passing gate; failed-node recovery goes through gate diagnostics/planner patch.

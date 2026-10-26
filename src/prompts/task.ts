@@ -5,9 +5,9 @@
  * Planning context (stability-descending): role -> requirement + symbol index
  * -> (re-plan only) work graph, statuses, and diagnostics.
  *
- * Execution context: role + editing techniques + edit-action grammar (stable
- * for the node) -> the work-node turn (instruction, hints, approach, gate
- * diagnostics, source views).
+ * Execution context: role + editing decision guide/techniques + edit-action
+ * grammar (stable for the node) -> the work-node turn (instruction, hints,
+ * approach, gate diagnostics, edit-strategy advisory, source views).
  *
  * The planner emits a flat work-node DAG as the Plan DSL, then patches it. A
  * WorkNode is the verification boundary. The executor owns the concrete edit
@@ -52,7 +52,7 @@ view or a no-progress cycle forces the Plan/patch reply. Never use \`replace\`,
 
 /**
  * The functional style shared by the planner and executor prompts
- * (`docs/plan-exec.md` §1.3). Keep this literal identical to the plan-exec block.
+ * (`docs/plan-exec.md` §1.4). Keep this literal identical to the plan-exec block.
  */
 export const TASK_FUNCTIONAL_STYLE = `Prefer ML-style functional TypeScript:
 - Data + functions over classes and prototypes.
@@ -71,6 +71,29 @@ export const TASK_EDITING_TECHNIQUES = `Editing techniques (advice, not rules; c
 2. Large module -> scaffold the exported types, signatures, and stub bodies first, then fill bodies with targeted edits.
 3. Complex refactor -> introduce a parallel \`xxV1\` implementation, copy the existing behavior, test it, switch the call sites, then remove the old path.
 Later techniques can be added; no technique is a gate.`;
+
+/**
+ * The shared recovery criteria for a failed or unhelpful whole-file write.
+ * Used by the execution decision guide and the failed-gate review turn.
+ */
+export const TASK_FAILED_WRITE_REPAIR_ADVICE = `After a failed or unhelpful whole-file write:
+- Read the diagnostics first; repair the named declarations with a targeted \`match\`/\`pick\` or a single-declaration rewrite.
+- Repeat a whole-file write only when the diagnostics show broad structural breakage across the file.
+- This is advice, not a gate: no write is rejected for its size or shape.`;
+
+/**
+ * Situation-aware edit decision guide. The executor owns the choice from the
+ * source; a planner `approach` is advice it may override.
+ */
+export const TASK_EDIT_STRATEGY_GUIDE = `How to choose an edit (advice, not rules; decide from the source you can see):
+- New file or skeleton: \`write\` the whole file, or \`create\` it and add the top-level declarations.
+- Local edit in an existing file: prefer a \`match\`/\`pick\` or a single-declaration \`select … replace\`; a whole-file rewrite discards unchanged code.
+- Several related declarations in one file: edit each declaration, splitting replies when one declaration would repeat; a small, tightly coupled file may still be clearest as one whole-file write.
+- Large declaration rewrite: rewrite only that declaration and leave the file's other declarations untouched.
+- Whole-file rewrite of an existing file: valid when the change touches most of the file or a targeted edit would be riskier. There is no hard size or shape rejection.
+- Small requirement on a small file: one whole-file \`write\` is often cheapest; for a large module, scaffold first and fill bodies with finer edits.
+${TASK_FAILED_WRITE_REPAIR_ADVICE}
+A planner \`approach\` hint is advice you may override, and \`write\` is always a valid action.`;
 
 const TASK_PLAN_EXAMPLE = `plan "01-main"
 goal: Make the failing test pass.
@@ -335,6 +358,8 @@ export function buildTaskExecutionSystemPrompt(): string {
     "",
     TASK_FUNCTIONAL_STYLE,
     "",
+    TASK_EDIT_STRATEGY_GUIDE,
+    "",
     TASK_EDITING_TECHNIQUES,
     "",
     taskEditDslInstruction(),
@@ -365,6 +390,8 @@ export interface TaskTurnInput {
   gateDiagnostics?: string;
   /** Read/viewer feedback from the previous attempt; writes nothing. */
   feedback?: string;
+  /** Soft, non-blocking advice after a large or repeated whole-file write. */
+  editStrategyAdvisory?: string;
 }
 
 function renderSourceView(view: TaskSourceView): string[] {
@@ -424,6 +451,9 @@ export function buildTaskTurnPrompt(input: TaskTurnInput): string {
   if (input.feedback !== undefined && input.feedback.trim() !== "") {
     blocks.push("", "# Source feedback", "", input.feedback.trim());
   }
+  if (input.editStrategyAdvisory !== undefined && input.editStrategyAdvisory.trim() !== "") {
+    blocks.push("", "# Edit strategy advisory", "", input.editStrategyAdvisory.trim());
+  }
   blocks.push("", "# Source views", "");
   if (input.views.length === 0) {
     blocks.push("No hinted source is available; inspect the workspace with `read` first.");
@@ -475,6 +505,9 @@ export function buildTaskReviewPrompt(input: TaskReviewInput): string {
   const blocks = ["# Review", "", `Gate: ${verify} ${gate.ok ? "passed" : "failed"}.`];
   if (gate.diagnostics !== null && gate.diagnostics.trim() !== "") {
     blocks.push("", "```", gate.diagnostics.trim(), "```");
+  }
+  if (!gate.ok) {
+    blocks.push("", "# Failed-gate edit strategy", "", TASK_FAILED_WRITE_REPAIR_ADVICE);
   }
   blocks.push(
     "",

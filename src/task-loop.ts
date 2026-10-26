@@ -284,6 +284,24 @@ function locatorOfHint(hint: WorkNode["hints"][number]): Locator {
 // ---------------------------------------------------------------------------
 // Applying one execution reply
 
+/** A whole-file `write` that the reply actually applied. */
+interface WholeFileWrite {
+  path: string;
+  /** Whether the file existed before this write (a new skeleton did not). */
+  existed: boolean;
+  /** Lines in the file before the write. */
+  priorLines: number;
+  /** Lines in the formatted file after the write. */
+  newLines: number;
+}
+
+/**
+ * Soft size heuristic for the whole-file edit advisory: rewriting an existing
+ * file at least this many lines long is worth a targeted-edit nudge. It is
+ * advisory only and never rejects or caps a write.
+ */
+export const LARGE_WHOLE_FILE_WRITE_LINES = 120;
+
 interface ReplyOutcome {
   ok: boolean;
   /** A read-only reply wrote nothing; its feedback becomes the next prompt. */
@@ -293,6 +311,21 @@ interface ReplyOutcome {
   appliedLocators: Locator[];
   /** Files the reply wrote, created, or deleted (repository-relative). */
   paths: string[];
+  /** Whole-file writes applied by this reply; absent on a rejection. */
+  wholeFileWrites?: WholeFileWrite[];
+  /** True when the reply also applied a targeted edit or file command. */
+  targetedEdit?: boolean;
+}
+
+function sourceLineCount(source: string): number {
+  if (source === "") {
+    return 0;
+  }
+  const lines = source.replace(/\r\n?/g, "\n").split("\n");
+  if (lines[lines.length - 1] === "") {
+    lines.pop();
+  }
+  return lines.length;
 }
 
 interface ExecutionContext {
@@ -592,6 +625,7 @@ async function applyEditReply(
   const commandWrites: { index: number; path: string; replacement: string }[] = [];
   const commandWriteIndices = new Set<number>();
   const commandWritePaths = new Set<string>();
+  const wholeFileWriteMeta = new Map<string, WholeFileWrite>();
   for (let index = 0; index < statements.length; index += 1) {
     const statement = statements[index];
     if (statement?.type !== "fs" || statement.statement.op !== "write") {
@@ -613,6 +647,15 @@ async function applyEditReply(
       path: statement.statement.path,
       replacement: statement.statement.replacement,
     });
+    if (statement.statement.ranges === null) {
+      const prior = readFileIfExists(join(context.cwd, statement.statement.path));
+      wholeFileWriteMeta.set(statement.statement.path, {
+        path: statement.statement.path,
+        existed: prior !== null,
+        priorLines: prior === null ? 0 : sourceLineCount(prior),
+        newLines: sourceLineCount(statement.statement.replacement),
+      });
+    }
     commandWriteIndices.add(index);
   }
   const renameIndices = new Set<number>();
@@ -800,6 +843,10 @@ async function applyEditReply(
         paths: [],
       };
     }
+    const meta = wholeFileWriteMeta.get(write.path);
+    if (meta !== undefined) {
+      meta.newLines = sourceLineCount(formatted);
+    }
     preparedWrites.push({ path: write.path, source: formatted });
   }
 
@@ -811,6 +858,12 @@ async function applyEditReply(
   const changes = [...uniqueWrites].filter(
     ([path, source]) => source !== readTarget(context.cwd, path),
   );
+  const changedPaths = new Set(changes.map(([path]) => path));
+  const wholeFileWrites = [...wholeFileWriteMeta.values()].filter((write) =>
+    changedPaths.has(write.path),
+  );
+  const targetedEdit =
+    expandedRegions.length > 0 || resolution.creates.length > 0 || resolution.deletes.length > 0;
   if (changes.length === 0 && resolution.deletes.length === 0 && resolution.creates.length === 0) {
     return {
       ok: false,
@@ -857,6 +910,8 @@ async function applyEditReply(
     paths: [
       ...new Set([...uniqueWrites.keys(), ...resolution.deletes.map((deletion) => deletion.path)]),
     ],
+    wholeFileWrites,
+    targetedEdit,
   };
 }
 
@@ -1173,6 +1228,47 @@ function changedPaths(cwd: string, bases: ReadonlyMap<string, string>): string[]
 function outOfHintPaths(node: WorkNode, changed: readonly string[]): string[] {
   const hinted = new Set(node.hints.map((hint) => hint.path));
   return changed.filter((path) => !hinted.has(path));
+}
+
+/**
+ * A non-blocking nudge on the next executor turn: a whole-file write replaced a
+ * large existing file, or the node rewrote the same file without a targeted
+ * edit in between. It never changes records, statuses, gates, or termination.
+ */
+function editStrategyAdvisory(
+  writes: readonly WholeFileWrite[],
+  repeated: ReadonlySet<string>,
+): string | null {
+  const findings: string[] = [];
+  for (const write of writes) {
+    if (!write.existed) {
+      continue;
+    }
+    const isRepeated = repeated.has(write.path);
+    const isLarge = write.priorLines >= LARGE_WHOLE_FILE_WRITE_LINES;
+    if (!isRepeated && !isLarge) {
+      continue;
+    }
+    const reasons = [
+      `\`${write.path}\` existed with ${write.priorLines} lines before the write and has ${write.newLines} lines after it`,
+    ];
+    reasons.push(
+      isRepeated
+        ? "this node already rewrote it as a whole file with no intervening targeted edit"
+        : `the file is at or above the soft ${LARGE_WHOLE_FILE_WRITE_LINES}-line heuristic`,
+    );
+    findings.push(`- ${reasons.join("; ")}.`);
+  }
+  if (findings.length === 0) {
+    return null;
+  }
+  return [
+    "This is advice, not a gate: the write was applied and the node status and gate result are unchanged.",
+    "",
+    ...findings,
+    "",
+    "Prefer a targeted `match`/`pick` or a single-declaration rewrite. Repeat a whole-file write only when the diagnostics show broad structural breakage across the file.",
+  ].join("\n");
 }
 
 // ---------------------------------------------------------------------------
@@ -1666,9 +1762,12 @@ export async function runTaskLoop(options: LoopOptions): Promise<LoopResult> {
       ],
     };
     const seen = new Set<string>();
+    /** Whole-file-written paths since the last targeted edit, per work node. */
+    const wholeFileWritesSinceEdit = new Set<string>();
     let priorGate: string | undefined;
     let priorDiagnostics: string | undefined;
     let feedback: string | undefined;
+    let strategyAdvisory: string | undefined;
 
     for (;;) {
       let response: ChatResponse;
@@ -1722,6 +1821,19 @@ export async function runTaskLoop(options: LoopOptions): Promise<LoopResult> {
           payloads: 1,
           appliedLocators: outcome.appliedLocators,
         });
+        const writes = outcome.wholeFileWrites ?? [];
+        const repeatedWrites = new Set(
+          writes
+            .filter((write) => write.existed && wholeFileWritesSinceEdit.has(write.path))
+            .map((write) => write.path),
+        );
+        for (const write of writes) {
+          wholeFileWritesSinceEdit.add(write.path);
+        }
+        strategyAdvisory = editStrategyAdvisory(writes, repeatedWrites) ?? undefined;
+        if (outcome.targetedEdit === true) {
+          wholeFileWritesSinceEdit.clear();
+        }
         const gate = await verifyNode(context, bases, outcome.paths);
         if (gate.ok) {
           return { kind: "passed", gateDiagnostics: null };
@@ -1743,6 +1855,7 @@ export async function runTaskLoop(options: LoopOptions): Promise<LoopResult> {
           finishReason: response.finishReason,
           payloads: 0,
         });
+        strategyAdvisory = undefined;
         priorGate = undefined;
         priorDiagnostics = outcome.viewerOnly ? undefined : diagnostics;
         feedback = outcome.feedback ?? undefined;
@@ -1772,6 +1885,7 @@ export async function runTaskLoop(options: LoopOptions): Promise<LoopResult> {
           ...(priorDiagnostics === undefined ? {} : { diagnostics: priorDiagnostics }),
           ...(priorGate === undefined ? {} : { gateDiagnostics: priorGate }),
           ...(feedback === undefined ? {} : { feedback }),
+          ...(strategyAdvisory === undefined ? {} : { editStrategyAdvisory: strategyAdvisory }),
         }),
       });
     }

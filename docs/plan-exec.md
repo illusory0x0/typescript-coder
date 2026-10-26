@@ -133,13 +133,43 @@ do not require adherence. Canonical examples:
 - a small requirement on a small file may justify one whole-file write;
 - a large greenfield module should scaffold top-level declarations and stub
   bodies first, then fill bodies with targeted edits;
-- an existing large file usually needs targeted edits, not a rewrite.
+- an existing large file often needs targeted edits, though a whole-file rewrite
+  remains valid when the change is broad or a targeted edit would be riskier.
 
 The planner recommends a workflow (inspect → contract → scaffold → implement →
 verify) but does not impose it. A single node, a linear chain, and a branching DAG
 are all valid shapes.
 
-### 1.3 Functional style
+### 1.3 Editing decision guide
+
+The executor owns the action and granularity. It chooses from the source it sees;
+the guidance below is advisory, and `write` is always valid. No edit is rejected
+merely for its size or shape.
+
+- **New file or skeleton:** write the whole file, or create it and add the
+  top-level declarations.
+- **Local edit in an existing file:** prefer a `match`/`pick` or a
+  single-declaration `select … replace`; a whole-file rewrite discards unchanged
+  code.
+- **Several related declarations in one file:** edit each declaration, splitting
+  replies when one declaration would repeat; a small, tightly coupled file may
+  still be clearest as one whole-file write.
+- **Large declaration rewrite:** rewrite only that declaration and leave the
+  file's other declarations untouched.
+- **Whole-file rewrite of an existing file:** valid when the change touches most
+  of the file or a targeted edit would be riskier than the rewrite; there is no
+  hard size or shape rejection.
+- **Recovery after a failed or unhelpful whole-file write:** read the diagnostics
+  first and repair the named declarations with a targeted edit; repeat the
+  whole-file write only when the diagnostics show broad structural breakage.
+
+The executor carries a small, growing knowledge base of techniques: a whole-file
+write for a simple small file; scaffold a large module, then fill bodies; a
+parallel `xxV1` refactor, test, swap call sites, then clean up. Techniques are
+composable advice, not gates. A planner `approach` may name one, and the executor
+may override it.
+
+### 1.4 Functional style
 
 Planner and executor prefer ML-style functional TypeScript:
 
@@ -172,15 +202,15 @@ Prefer ML-style functional TypeScript:
   member with `create`.
 ```
 
-### 1.4 Limits
+### 1.5 Limits
 
-| Limit                | Value       |
-| -------------------- | ----------- |
-| Plan goal length     | 1,000 chars |
-| Instruction length   | 4,000 chars |
-| Approach length      | 2,000 chars |
-| Phase length         | 200 chars   |
-| Token budget         | 120,000     |
+| Limit              | Value       |
+| ------------------ | ----------- |
+| Plan goal length   | 1,000 chars |
+| Instruction length | 4,000 chars |
+| Approach length    | 2,000 chars |
+| Phase length       | 200 chars   |
+| Token budget       | 120,000     |
 
 There is no WorkNode count cap in the DSL parser or graph validator, and no
 fixed per-turn node cap. Plan growth is bounded by the model's token budget and
@@ -272,6 +302,9 @@ The review checks:
 - edits outside the hinted paths are justified by the instruction and visible;
 - no dotted `create`, no new class, no heavy OOP;
 - helper decomposition is reasonable and symbols resolve;
+- after a failed gate, prefer a targeted repair of the named declarations;
+  repeat a whole-file write only for broad structural breakage (advice, not a
+  gate);
 - if `finish` is present, the final node is last and verifies `test`.
 
 The review reply is either `approve` or a patch. Review uses the same planner
@@ -830,6 +863,17 @@ the hinted paths when the instruction requires it, may choose a whole-file write
 or a targeted declaration edit, and may override the approach. Review receives
 the full changed-path diff and an explicit out-of-hint list.
 
+After an applied reply the driver tracks whole-file `write`s per work node. On
+the next executor turn it adds a separate `# Edit strategy advisory` when the
+write replaced an existing file of at least 120 lines (a soft heuristic) or when
+the node writes the same file as a whole file again without an intervening
+targeted edit. The advisory names the observed line counts and suggests a
+targeted `match`/`pick` or a single-declaration rewrite. It is guidance only: it
+does not change records, status, gate results, or termination. It does not fire
+for a new file's first write or for a targeted
+`modify`/`create`/`delete`/`rename` edit. A targeted edit resets the repeat
+tracking, and there is no fixed cap.
+
 The hard application guardrail stays: each clause in one reply must resolve to a
 different declaration `(path, symbol, kind)`. Multiple edits to one declaration
 are split across replies, even with different `match`/`pick` spans. Dotted member
@@ -904,18 +948,19 @@ The planner is re-invoked when:
 
 Caps:
 
-| Limit                      | Value                    |
-| -------------------------- | ------------------------ |
-| Plan goal length           | 1,000 chars              |
-| Instruction length         | 4,000 chars              |
-| Approach length            | 2,000 chars              |
-| Phase length               | 200 chars                |
-| Token budget               | 120,000 default          |
-| Node/exchange/review caps  | none (budget + progress) |
+| Limit                     | Value                    |
+| ------------------------- | ------------------------ |
+| Plan goal length          | 1,000 chars              |
+| Instruction length        | 4,000 chars              |
+| Approach length           | 2,000 chars              |
+| Phase length              | 200 chars                |
+| Token budget              | 120,000 default          |
+| Node/exchange/review caps | none (budget + progress) |
 
 Growth is bounded by the token budget, repeated/no-progress fingerprints, and the
 DSL/safety validation. There is no 3-exchange, 1-viewer, 1-review, 32-round, or
-3-consecutive-length cap in plan-exec.
+3-consecutive-length cap in plan-exec. The 120-line whole-file advisory heuristic
+is not a cap: it never rejects an edit or ends a node.
 
 Failure paths use the existing termination matrix plus `task-exhausted`; the run
 still makes one summary call. `task-exhausted` covers a node that stops making
@@ -1017,6 +1062,11 @@ Shipped design decisions:
 11. **Driver modules:** `src/task-loop.ts` owns scheduling, node execution,
     gates, review, and the final result; `src/prompts/task.ts` owns all
     planner/executor/review prompt text.
+12. **Edit strategy advisory:** the executor prompt carries a situation-aware
+    decision guide plus the advisory techniques; the driver adds a non-blocking
+    `# Edit strategy advisory` after a large or repeated whole-file write. The
+    120-line heuristic is soft, and a failed gate still returns actionable
+    diagnostics without rolling back the applied write.
 
 Implementation notes:
 
@@ -1049,7 +1099,8 @@ Implementation notes:
   issues, no partial writes.
 - `bun test src/task-loop.test.ts` — initial/patched DAG scheduling, ready order,
   blocked dependents, executor autonomy (multiple clauses/actions, write vs
-  targeted, out-of-hint diff), gate retries, repeated/no-progress, token budget,
+  targeted, out-of-hint diff), the large/repeated whole-file advisory and its
+  non-trigger/reset paths, gate retries, repeated/no-progress, token budget,
   planner inspection, multi-node patches, review reopen, and final test/finish.
 - `bun test src/result.test.ts src/main.test.ts src/cli.test.ts` —
   `typescript-coder-result@3` node summaries and text/JSON output.
