@@ -48,6 +48,9 @@ describe("planning prompts", () => {
     expect(prompt).not.toContain('edit "');
     expect(prompt).not.toContain("Stage -> Task");
     expect(prompt).toContain("no node-count, planning-round, viewer, or exchange cap");
+    expect(prompt).not.toContain("A dotted class member is not a create target");
+    expect(prompt).not.toContain("never plan a dotted `create`");
+    expect(prompt).toContain("A `create` adds one named declaration or member");
   });
 
   test("the workflow recommends inspect -> contract -> scaffold -> implement -> verify without forcing a shape", () => {
@@ -125,6 +128,10 @@ describe("execution prompts", () => {
     expect(prompt).toContain("Editing techniques");
     expect(prompt).toContain("different declaration `(path, symbol, kind)`");
     expect(prompt).toContain("`create <path> end`");
+    expect(prompt).toContain("create [static] <kind> <name> in <path>");
+    expect(prompt).toContain("`enum-member`");
+    expect(prompt).toContain("dotted `Owner.name`");
+    expect(prompt).not.toContain("never create a dotted member");
     expect(prompt).toContain("`delete <path> end`");
     expect(prompt).toContain("`read <path>");
     expect(prompt).toContain("`write <path> with");

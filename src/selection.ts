@@ -55,6 +55,83 @@ export interface CreateFileStatement {
   path: string;
 }
 
+/** The top-level declaration kinds an explicit create can add. */
+export type DeclarationCreateKind =
+  | "function"
+  | "class"
+  | "interface"
+  | "type"
+  | "enum"
+  | "namespace"
+  | "const"
+  | "let"
+  | "var"
+  | "using";
+
+/** The member kinds an explicit create can add to an existing owner. */
+export type MemberCreateKind =
+  | "method"
+  | "property"
+  | "getter"
+  | "setter"
+  | "accessor"
+  | "constructor"
+  | "enum-member";
+
+/** Every kind keyword admitted by `create <kind> <name> in <path> with <fence>`. */
+export type CreateDeclarationKind = DeclarationCreateKind | MemberCreateKind;
+
+export const DECLARATION_CREATE_KINDS: ReadonlySet<string> = new Set<DeclarationCreateKind>([
+  "function",
+  "class",
+  "interface",
+  "type",
+  "enum",
+  "namespace",
+  "const",
+  "let",
+  "var",
+  "using",
+]);
+
+export const MEMBER_CREATE_KINDS: ReadonlySet<string> = new Set<MemberCreateKind>([
+  "method",
+  "property",
+  "getter",
+  "setter",
+  "accessor",
+  "constructor",
+  "enum-member",
+]);
+
+/** Member kinds that may carry the descriptor's optional `static` modifier. */
+export const STATIC_CREATE_KINDS: ReadonlySet<string> = new Set<MemberCreateKind>([
+  "method",
+  "property",
+  "getter",
+  "setter",
+  "accessor",
+]);
+
+export function isCreateDeclarationKind(token: string): token is CreateDeclarationKind {
+  return DECLARATION_CREATE_KINDS.has(token) || MEMBER_CREATE_KINDS.has(token);
+}
+
+/**
+ * A `create [static] <kind> <name> in <path> with <fence> end` declaration or
+ * member create. `name` is a top-level identifier, a dotted `Owner.member`, or,
+ * for `constructor`, the owner name. A top-level declaration kind with a dotted
+ * name inserts that declaration into a namespace owner.
+ */
+export interface CreateDeclarationStatement {
+  op: "create-declaration";
+  path: string;
+  kind: CreateDeclarationKind;
+  name: string;
+  static: boolean;
+  replacement: string;
+}
+
 /** A `delete <path> end` file command. */
 export interface DeleteFileStatement {
   op: "delete";
@@ -82,6 +159,7 @@ export interface WriteFileStatement {
 
 export type FileStatement =
   | CreateFileStatement
+  | CreateDeclarationStatement
   | DeleteFileStatement
   | ReadFileStatement
   | WriteFileStatement;
@@ -501,11 +579,129 @@ class SelectionReader {
     this.syntax("EDIT_RETIRED_DONE", detail, { expected, found: "done", hint });
   }
 
-  private parseCreate(): CreateFileStatement {
+  /**
+   * The tokens between `create` and the fence opener or `end`, without
+   * consuming input. Used only to distinguish `create <path> end` from
+   * `create <kind> <name> in <path> with …`: a kind-looking path stays a file
+   * command when the statement carries no `in` header.
+   */
+  private createHeaderTokens(): string[] {
+    let cursor = this.pos;
+    const tokens: string[] = [];
+    while (cursor < this.length) {
+      while (cursor < this.length && isWhitespace(this.text[cursor] ?? "")) {
+        cursor += 1;
+      }
+      if (cursor >= this.length) {
+        break;
+      }
+      const start = cursor;
+      while (cursor < this.length && !isWhitespace(this.text[cursor] ?? "")) {
+        cursor += 1;
+      }
+      const token = this.text.slice(start, cursor);
+      if (token === "with" || token === "end") {
+        break;
+      }
+      tokens.push(token);
+      // A declaration header is at most `[static] kind name in path`; anything
+      // longer is not a valid header, and the normal parser reports it.
+      if (tokens.length > 8) {
+        break;
+      }
+    }
+    return tokens;
+  }
+
+  private createDeclarationAhead(): boolean {
+    const tokens = this.createHeaderTokens();
+    const first = tokens[0];
+    if (first === undefined) {
+      return false;
+    }
+    // An explicit `in <path>` header is a declaration/member create, even when
+    // the kind token is unknown, so the diagnostic can name the bad kind. A
+    // single token is always a path, including the literal path `in`.
+    if (tokens.length > 1 && tokens.includes("in")) {
+      return true;
+    }
+    if (!isCreateDeclarationKind(first) && first !== "static") {
+      return false;
+    }
+    // A path literally named like a kind remains a file command when there is
+    // no `in`. More than one header token means the intent is a declaration
+    // create even when `in` is missing, so the diagnostic can name it.
+    return tokens.length > 1;
+  }
+
+  private parseCreate(): FileStatement {
     this.expectKeyword("create", "expected `create` to begin a file command");
+    if (this.createDeclarationAhead()) {
+      return this.parseCreateDeclaration();
+    }
     const path = this.readToken("expected a file path after `create`");
     this.consumeEnd("`create` command");
     return { op: "create", path };
+  }
+
+  private parseCreateDeclaration(): CreateDeclarationStatement {
+    this.skipWhitespace();
+    let isStatic = false;
+    if (this.matchKeyword("static")) {
+      isStatic = true;
+    }
+    const kindToken = this.readToken(
+      isStatic
+        ? "expected a class member kind after `create static`"
+        : "expected a declaration or member kind after `create`",
+    );
+    if (!isCreateDeclarationKind(kindToken)) {
+      this.syntax(
+        "EDIT_UNKNOWN_FIELD",
+        `unknown create kind \`${kindToken}\`; expected a declaration kind or a member kind`,
+        {
+          expected: [...DECLARATION_CREATE_KINDS, ...MEMBER_CREATE_KINDS],
+          found: kindToken,
+          hint: "use `create <path> end` for an empty file, or `create <kind> <name> in <path> with <fence> end`",
+        },
+      );
+    }
+    if (isStatic && !MEMBER_CREATE_KINDS.has(kindToken)) {
+      this.syntax(
+        "EDIT_UNKNOWN_FIELD",
+        `\`static\` is only valid before a member kind (${[...MEMBER_CREATE_KINDS].join(", ")}); \`${kindToken}\` cannot be static`,
+        {
+          expected: [...MEMBER_CREATE_KINDS],
+          found: kindToken,
+          hint: "drop `static`, or use `create static method Owner.name in <path> with <fence> end`",
+        },
+      );
+    }
+    const name = this.readToken(`expected a declaration name after \`create ${kindToken}\``);
+    this.expectKeyword(
+      "in",
+      `expected \`in <path>\` after \`create ${kindToken} ${name}\`; use \`create <path> end\` for an empty file`,
+    );
+    const path = this.readToken("expected a file path after `in`");
+    // The canonical form uses `with`, but the issue's recommended header may
+    // place the fence directly after the path; accept both.
+    if (!this.matchKeyword("with")) {
+      this.skipWhitespace();
+      if (!this.text.startsWith(EDIT_FENCE_BEGIN, this.pos)) {
+        this.expectKeyword("with", "expected `with` before the create fence");
+      }
+    }
+    this.lastFenceClosed = false;
+    const replacement = this.parseFence();
+    this.consumeEnd("`create` command");
+    return {
+      op: "create-declaration",
+      path,
+      kind: kindToken,
+      name,
+      static: isStatic,
+      replacement,
+    };
   }
 
   private parseDelete(): DeleteFileStatement {
@@ -1338,6 +1534,8 @@ export function serializeFileStatement(statement: FileStatement): string {
   switch (statement.op) {
     case "create":
       return `create ${statement.path} end`;
+    case "create-declaration":
+      return `create ${statement.static ? "static " : ""}${statement.kind} ${statement.name} in ${statement.path} with\n${renderFence(statement.replacement)}\nend`;
     case "delete":
       return `delete ${statement.path} end`;
     case "read": {

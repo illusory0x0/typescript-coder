@@ -360,7 +360,31 @@ function createBodyText(selection: Selection, body: string): CreateBody {
       };
     }
   }
-  return { ok: true, text: body, declaration: { kind: declarationKindOf(declaration), name } };
+  return {
+    ok: true,
+    text: body,
+    declaration: { kind: createdDeclarationKind(declaration, program), name },
+  };
+}
+
+// A completed variable declaration is appended verbatim, but its precise
+// const/let/var/using identity still matters for the one-target-per-reply claim:
+// an implicit `select const X` and an explicit `create const X` are the same
+// declaration even though the binder nodes a `VariableDeclarator`.
+function createdDeclarationKind(declaration: Node, program: Program): string {
+  const kind = declarationKindOf(declaration);
+  if (kind !== "variable") {
+    return kind;
+  }
+  for (const statement of program.body) {
+    const inner = statement.kind === "ExportNamedDeclaration" ? statement.declaration : statement;
+    if (inner !== null && inner.kind === "VariableStatement") {
+      if (declaration.start >= inner.start && declaration.end <= inner.end) {
+        return inner.declarationKind;
+      }
+    }
+  }
+  return kind;
 }
 
 // The declaration kind the fence body actually creates (#13). The locator's
@@ -384,6 +408,8 @@ export function declarationKindOf(declaration: Node): string {
       return "namespace";
     case "VariableDeclarator":
       return "variable";
+    case "VariableStatement":
+      return (declaration as Node & { declarationKind: string }).declarationKind;
     default:
       return kind;
   }

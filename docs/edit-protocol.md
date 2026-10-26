@@ -204,10 +204,19 @@ edit-reply   = { statement } ;
 statement    = select-clause | file-command ;
 
 file-command = 'create', path, 'end'
+             | 'create', [ 'static' ], create-kind, create-name, 'in', path,
+               [ 'with' ], fence, 'end'
              | 'delete', path, 'end'
              | 'read', path, [ 'within', selecters ], 'end'
              | 'write', path, [ 'within', selecters ], 'with', fence
              (* sentinel close terminates; no trailing 'end' *) ;
+
+create-kind  = declaration-kind | member-kind ;
+declaration-kind = 'function' | 'class' | 'interface' | 'type' | 'enum'
+                 | 'namespace' | 'const' | 'let' | 'var' | 'using' ;
+member-kind  = 'method' | 'property' | 'getter' | 'setter'
+             | 'accessor' | 'constructor' | 'enum-member' ;
+create-name  = symbol | dotted-symbol | owner ;  (* constructor names only its owner *)
 
 select-clause = 'select', [ kind ], symbol, 'in', path,
                 [ 'resolve', space ],
@@ -233,6 +242,8 @@ kind         = 'function' | 'const' | 'let' | 'var' | 'class'
 space        = 'value' | 'type' | 'namespace' ;
 path         = ? file path token ? ;
 symbol       = ? declared identifier ? ;
+dotted-symbol = symbol, '.', symbol, { '.', symbol } ;
+owner        = symbol, { '.', symbol } ;
 identifier   = ? TypeScript identifier ? ;
 snippet      = ? '`' , verbatim source, '`' ; only \` and \\ are escapes ? ;
 regex        = ? '/' , ECMA-262 pattern, no flags, '/' ? ;
@@ -253,6 +264,64 @@ braces cannot be empty. `end` is required by the grammar. For `select`,
 a hard error. A `write` has no `end`: its `<<<TC_EDIT_END>>>` close terminates
 it, and a trailing `end` is `EDIT_STRAY_END`. Prompts and examples always emit
 the canonical terminator; recovery is not taught as a form.
+
+### Declaration and member create
+
+`create <kind> <name> in <path> with <fence> end` is the precise create form.
+The kind token and the `in` header dispatch it; without `in`, the token is a
+path and the statement is the empty-file command. `with` is the canonical
+spelling but may be omitted, with the fence following the header directly. The
+admitted kinds are:
+
+| Owner     | Kinds                                                                                         |
+| --------- | --------------------------------------------------------------------------------------------- |
+| top level | `function`, `class`, `interface`, `type`, `enum`, `namespace`, `const`, `let`, `var`, `using` |
+| class     | `method`, `property`, `getter`, `setter`, `accessor`, `constructor`                           |
+| interface | `method`, `property`                                                                          |
+| namespace | the top-level declaration kinds with a dotted owner                                           |
+| enum      | `enum-member`                                                                                 |
+
+A member address is dotted (`Parser.parseValue`, `Cell.value`,
+`Util.helper`); `constructor` names only its owner (`create constructor Parser
+in …`). `method` and `property` may target a class or an interface; `getter`,
+`setter`, `accessor`, and `constructor` require a class; `enum-member` requires
+an enum; a declaration kind with a dotted name requires a namespace owner.
+`accessor` accepts a getter or a setter in the fence; a getter/setter pair is
+the one legal same-name member pair. Optional `static` is admitted only before
+a class member kind and must match the fence member's own `static` exactly. A
+static descriptor on an interface method/property, enum member, namespace
+declaration, or constructor is rejected; only class methods, properties,
+getters, setters, and accessors can be static.
+
+The fence is validated before anything is written:
+
+- A top-level create must contain exactly one top-level declaration with the
+  descriptor's name and kind, occupying a compatible TypeScript symbol space.
+  A body-only fence is wrapped only for `const`, `let`, `var`, and `using`
+  (`const NAME = <body>;` and so on); every other top-level kind requires the
+  complete declaration.
+- A member create parses the fence in a synthetic owner wrapper and requires
+  exactly one member or declaration with the requested name and actual kind.
+  The owner must resolve to exactly one existing class, interface, namespace,
+  or enum. A missing owner, a merged/ambiguous owner with candidates, or a
+  wrong-kind owner is an `address` failure. A dotted create never creates its
+  owner; create the top-level declaration in a separate statement.
+- Modifiers carried by the fence (`export`, `default`, `declare`, `abstract`,
+  `static`, `readonly`, access modifiers, `override`, `async`, generator) are
+  validated against the descriptor and owner. A static/instance identity
+  mismatch is rejected rather than silently accepted.
+- A duplicate top-level name, a duplicate member name (respecting static vs
+  instance and getter/setter identity), an unsafe path, a malformed fence, or
+  an empty fence is a `stage: address` or `stage: duplicate` failure and writes
+  nothing. Each `(path, symbol, kind)` is claimed once per reply.
+
+The declaration is appended at the file's end (creating the file and parent
+directories when absent); a member is inserted before the owner body's closing
+brace, with indentation the formatter normalizes. Both forms then go through
+the same parse gate, duplicate guard, formatter, write, and node gate as any
+other edit. Several creates for distinct declarations may share a reply;
+same-file creates and edits apply atomically. Anonymous call/construct/index
+signature create and object-literal member create are out of scope.
 
 ### Tolerant recovery and error codes
 
@@ -320,10 +389,16 @@ real position.
 
 ### File commands
 
-The reply grammar also admits four file commands:
+The reply grammar also admits four file-command families:
 
 ```text
 create <path> end
+create [static] <kind> <name> in <path> with
+<<<TC_EDIT_BEGIN>>>
+<declaration or member>
+<<<TC_EDIT_END>>>
+end
+
 delete <path> end
 read   <path> [ within <selecters> ] end
 write  <path> [ within <selecters> ] with
@@ -332,8 +407,8 @@ write  <path> [ within <selecters> ] with
 <<<TC_EDIT_END>>>
 ```
 
-- **`create`** creates an empty file. An existing path is an `address` failure;
-  parent directories are created. It does not run the parse/format gate.
+- **`create <path> end`** creates an empty file. An existing path is an `address` failure; parent directories are created. It does not run the parse/format gate. A path literally named like a create kind (for example `create function end`) remains this empty-file form because it has no `in` header.
+- **`create [static] <kind> <name> in <path> with <fence> end`** adds exactly one named declaration or member (§2.1). The descriptor is authoritative; a fence that declares a different name/kind, an invalid modifier, an unsafe path, or a duplicate name is rejected without writing.
 - **`delete`** removes an existing regular file inside the workspace. A missing
   path is an `address` failure; directories and paths outside the workspace are
   rejected. `human/` is read-only for agents.
@@ -359,11 +434,14 @@ select clause or file commands, not both. The editing statements apply
 atomically; a failed `read`, which writes nothing, is feedback rather than a
 rejection. Two creates that append at the same offset are applied in statement
 order; two creates of the same declaration still fail at the duplicate guard.
-Create or delete a path at most once per reply; a create/delete combined with a
-write or select clause on that path is a path-conflict rejection.
+Same-owner member creates insert in statement order. Create or delete a path at
+most once per reply; a create/delete combined with a write or select clause on
+that path is a path-conflict rejection (a declaration create may share a file
+with an edit of a different declaration, but not with a whole-file `write`, a
+`delete`, or an empty-file `create`).
 
 **One target per reply.** Every select clause in one reply — viewer, editor, or
-rename — plus every implicit create must resolve to a distinct
+rename — plus every create (implicit or explicit) must resolve to a distinct
 `(path, symbol, kind)`. `resolve`, `match`, and `pick` do not make a new target.
 A repeat fails at `stage: duplicate` before any matcher or write runs, naming
 both statement numbers and the resolved address; the whole reply writes nothing.
@@ -419,6 +497,27 @@ it:
 create src/parser.ts end
 delete src/legacy-parser.ts end
 read src/helper.ts within 1-12 end
+```
+
+A kind-aware create adds one top-level declaration or one member of an existing
+owner:
+
+```text
+create function parseJson in src/json.ts with
+<<<TC_EDIT_BEGIN>>>
+export function parseJson(text: string): unknown {
+  return JSON.parse(text);
+}
+<<<TC_EDIT_END>>>
+end
+
+create static method Parser.parse in src/parser.ts with
+<<<TC_EDIT_BEGIN>>>
+static parse(text: string): Parser {
+  return new Parser(text);
+}
+<<<TC_EDIT_END>>>
+end
 ```
 
 A whole-file write:
@@ -551,17 +650,17 @@ next diagnostics. The feedback ends by asking for an editor select clause: add
 Every rejection carries a `stage:` tag and costs one exchange. Both formats share
 the vocabulary so metrics compare.
 
-| Stage                  | Cause                                                                                              |
-| ---------------------- | -------------------------------------------------------------------------------------------------- |
+| Stage                  | Cause                                                                                                                             |
+| ---------------------- | --------------------------------------------------------------------------------------------------------------------------------- |
 | `syntax`               | Edit-dsl only: the reply does not parse as a statement (`select … end` or a file command), including a fence or terminator error. |
-| `protocol`             | The JSON payload object is malformed, carries an unexpected key, or a JSON payload arrives under edit-dsl. |
-| `echo` / `address`     | The address does not echo the pinned selection, or does not resolve uniquely.                      |
-| `matcher`              | `matcher-unparseable`, `matcher-not-found`, `matcher-ambiguous`, or `regex-invalid`.               |
-| `range`                | A `range`/`pick` that is out of bounds, empty, inverted, or outside the declaration.               |
-| `no-op`                | The replacement equals the text it replaces.                                                       |
-| `repeat` / `duplicate` | A byte-identical resubmission; a repeated resolved target; a duplicate top-level declaration or create. |
-| `gate`                 | The file parsed before and does not parse after.                                                   |
-| `format`               | oxfmt rejected the result, or the formatted source equals the pre-edit source.                     |
+| `protocol`             | The JSON payload object is malformed, carries an unexpected key, or a JSON payload arrives under edit-dsl.                        |
+| `echo` / `address`     | The address does not echo the pinned selection, or does not resolve uniquely.                                                     |
+| `matcher`              | `matcher-unparseable`, `matcher-not-found`, `matcher-ambiguous`, or `regex-invalid`.                                              |
+| `range`                | A `range`/`pick` that is out of bounds, empty, inverted, or outside the declaration.                                              |
+| `no-op`                | The replacement equals the text it replaces.                                                                                      |
+| `repeat` / `duplicate` | A byte-identical resubmission; a repeated resolved target; a duplicate top-level declaration or create.                           |
+| `gate`                 | The file parsed before and does not parse after.                                                                                  |
+| `format`               | oxfmt rejected the result, or the formatted source equals the pre-edit source.                                                    |
 
 When an edit-dsl statement fails, its diagnostic names the statement, its
 position in the reply (`clause N of M`), its locator and path, and states that
@@ -614,7 +713,10 @@ state stays on disk and its diagnostics open the next round (see
 appends the fence body as a new top-level declaration, creating the file and its
 parent directories as needed, spliced at the file's current end behind a
 separating newline. `match` and `pick` do not change creation; they are ignored
-when the symbol is missing. Viewers never create.
+when the symbol is missing. Viewers never create. The kind-aware
+`create <kind> <name> in <path> with <fence> end` statement (§2.1) is the
+precise form when the fence is not a complete declaration or when a member is
+the target; the implicit path remains for a whole-declaration `select … replace`.
 
 The fence body is validated before it is appended:
 

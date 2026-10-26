@@ -383,6 +383,76 @@ describe("executor autonomy", () => {
     expect(readFileSync(join(dir, "src", "created.ts"), "utf8")).toBe("");
   }, 30000);
 
+  test("creates a top-level declaration through the kind-aware create statement", async () => {
+    const dir = project();
+    const create = workNode(2, "json", {
+      verify: "tsc",
+      instruction: "Create src/json.ts with an exported parseJson function.",
+      hints: [{ path: "src/json.ts", symbol: "", kind: "file" }],
+    });
+    const final = workNode(3, "answer", {
+      after: [nodeId(2, "json")],
+      instruction: "Change answer so the test passes.",
+    });
+    const reply = [
+      "create function parseJson in src/json.ts with",
+      "<<<TC_EDIT_BEGIN>>>",
+      "export function parseJson(text: string): string {",
+      "  return text;",
+      "}",
+      "<<<TC_EDIT_END>>>",
+      "end",
+    ].join("\n");
+    const provider = new ScriptedProvider([
+      planText([create, final]),
+      reply,
+      "approve",
+      GOOD_EDIT,
+      "approve",
+    ]);
+    const result = await runTaskLoop(baseOptions(dir, provider));
+    expect(result.ok).toBe(true);
+    expect(readFileSync(join(dir, "src", "json.ts"), "utf8")).toContain("function parseJson");
+  }, 30000);
+
+  test("creates a class member through the kind-aware create statement", async () => {
+    const dir = project();
+    writeFileSync(
+      join(dir, "src", "parser.ts"),
+      "export class Parser {\n  parseValue(): number {\n    return 1;\n  }\n}\n",
+    );
+    const create = workNode(2, "member", {
+      verify: "tsc",
+      instruction: "Add a trim method to the Parser class.",
+      hints: [{ path: "src/parser.ts", symbol: "Parser", kind: "value" }],
+    });
+    const final = workNode(3, "answer", {
+      after: [nodeId(2, "member")],
+      instruction: "Change answer so the test passes.",
+    });
+    const reply = [
+      "create method Parser.trim in src/parser.ts with",
+      "<<<TC_EDIT_BEGIN>>>",
+      "trim(): string {",
+      '  return "";',
+      "}",
+      "<<<TC_EDIT_END>>>",
+      "end",
+    ].join("\n");
+    const provider = new ScriptedProvider([
+      planText([create, final]),
+      reply,
+      "approve",
+      GOOD_EDIT,
+      "approve",
+    ]);
+    const result = await runTaskLoop(baseOptions(dir, provider));
+    expect(result.ok).toBe(true);
+    const source = readFileSync(join(dir, "src", "parser.ts"), "utf8");
+    expect(source).toContain("trim(): string");
+    expect(source.indexOf("trim(): string")).toBeLessThan(source.lastIndexOf("}"));
+  }, 30000);
+
   test("chooses a whole-file write even when the approach hint prefers targeted edits", async () => {
     const dir = project();
     const node = workNode(2, "answer", {

@@ -2,14 +2,6 @@
 # rewrites it; `add` appends; other writes keep it. `check` enforces it.
 # A dep, and every child of an umbrella, must be listed before its dependent.
 
-- id: 50
-  title: "Make create targets kind-aware for declarations and members"
-  status: todo
-  priority: medium
-  milestone: null
-  parent: 51
-  deps: [49]
-  file: 0050-allow-dotted-create-to-insert-class-and-namespace-members.md
 - id: 52
   title: "Extend declaration addresses to nested and named members"
   status: todo

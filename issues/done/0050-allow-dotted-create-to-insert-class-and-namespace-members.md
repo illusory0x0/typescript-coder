@@ -1,7 +1,7 @@
 ---
 id: 50
 title: "Make create targets kind-aware for declarations and members"
-status: todo
+status: done
 priority: medium
 milestone: null
 parent: 51
@@ -53,3 +53,5 @@ No live benchmark is required for acceptance; a measured comparison needs explic
 - `select` keeps `value|type|namespace`; create gets its own descriptor rather than overloading symbol-space resolution.
 - Object-literal member create, anonymous signatures, and module-boundary import/export create are separate (#52/#54 or future work).
 - Member lookup should reuse the existing symbol index’s dotted-member entries rather than inventing a second address vocabulary.
+- Starting: kind-aware create descriptor for named top-level declarations and class/interface/namespace/enum members; anonymous signature create remains deferred.
+- Resolved: added kind-aware create statements. Top-level kinds (function/class/interface/type/enum/namespace/const/let/var/using) and member kinds (method/property/getter/setter/accessor/constructor/enum-member) use an explicit Owner.name descriptor; a dotted create inserts before the existing owner body and never creates the owner. Static is class-only and must match the fence; fence name/kind/space/modifiers are validated; duplicates, missing/ambiguous owners, unsafe paths, and malformed fences reject atomically. Anonymous signatures and object-literal creates remain deferred. Verified: typecheck, 1486 tests pass, accept 9/9, diff check. No baseline changes.

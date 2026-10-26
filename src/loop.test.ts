@@ -9287,6 +9287,8 @@ describe("edit-dsl protocol (#111/#119)", () => {
     expect(system.startsWith("You are a TypeScript expert using the Edit-action DSL")).toBe(true);
     expect(system).toContain("This is the Edit-action DSL.");
     expect(system).toContain("a bare `select <symbol> in <path> end` is a viewer");
+    expect(system).toContain("`create [static] <kind> <name> in <path> with <fence> end`");
+    expect(system).toContain("a dotted create never creates its owner");
     expect(system).toContain("Edits are small and addressable");
     expect(system).toContain("Editing clauses in one reply apply atomically");
     expect(system).not.toContain("Tools: `select … end` with no `replace` is a viewer");
@@ -9335,6 +9337,8 @@ describe("edit-dsl protocol (#111/#119)", () => {
     expect(examples).toContain("read src/lisp.ts within 4-335 end");
     expect(examples).toContain("Whole-file repair");
     expect(examples).toContain("write src/lisp.ts with");
+    expect(examples).toContain("Kind-aware create");
+    expect(examples).toContain("create method Parser.parseValue in src/parser.ts with");
     expect(instruction).toContain("read src/lisp.ts within 4-335 end");
 
     // The JSON protocol prompts stay byte-identical: no fold guidance leaks in.
@@ -9764,6 +9768,66 @@ describe("edit-dsl protocol (#111/#119)", () => {
     expect(createPrompt).toContain("Target file:");
     expect(createPrompt).toContain("src/extra.ts");
     expect(readFileSync(join(dir, "src", "extra.ts"), "utf8")).toContain("export function extra");
+  }, 30000);
+
+  test("under edit-dsl a first-turn kind-aware create statement creates a declaration", async () => {
+    const dir = passingFixtureDir();
+    const reply = [
+      "create function extra in src/extra.ts with",
+      "<<<TC_EDIT_BEGIN>>>",
+      "export function extra(): number {",
+      "  return 1;",
+      "}",
+      "<<<TC_EDIT_END>>>",
+      "end",
+    ].join("\n");
+    const provider = new ScriptedProvider([reply, "Great! I resolve this problem!"]);
+    const result = await runLoop({
+      cwd: dir,
+      issue: "add an extra declaration",
+      provider,
+      protocolFormat: "edit-dsl",
+      checkCommand: TSC,
+      testCommand: ["bun", "test"],
+    });
+    expect(result.ok).toBe(true);
+    expect(readFileSync(join(dir, "src", "extra.ts"), "utf8")).toContain("export function extra");
+    expect(result.records.map((record) => record.outcome)).toEqual([
+      "selected",
+      "applied",
+      "ok",
+      "confirmed",
+    ]);
+  }, 30000);
+
+  test("under edit-dsl a first-turn kind-aware create adds a class member", async () => {
+    const dir = passingFixtureDir();
+    writeFileSync(
+      join(dir, "src", "parser.ts"),
+      "export class Parser {\n  parseValue(): number {\n    return 1;\n  }\n}\n",
+    );
+    const reply = [
+      "create method Parser.trim in src/parser.ts with",
+      "<<<TC_EDIT_BEGIN>>>",
+      "trim(): string {",
+      '  return "";',
+      "}",
+      "<<<TC_EDIT_END>>>",
+      "end",
+    ].join("\n");
+    const provider = new ScriptedProvider([reply, "Great! I resolve this problem!"]);
+    const result = await runLoop({
+      cwd: dir,
+      issue: "add a method",
+      provider,
+      protocolFormat: "edit-dsl",
+      checkCommand: TSC,
+      testCommand: ["bun", "test"],
+    });
+    expect(result.ok).toBe(true);
+    const source = readFileSync(join(dir, "src", "parser.ts"), "utf8");
+    expect(source).toContain("trim(): string");
+    expect(source.indexOf("trim(): string")).toBeLessThan(source.lastIndexOf("}"));
   }, 30000);
 
   test("under edit-dsl a first-turn editor applies without a second provider call", async () => {
@@ -10677,7 +10741,9 @@ describe("edit-dsl protocol (#111/#119)", () => {
     const create = buildCreatePrompt(addressJson, "src/new.ts", "edit-dsl");
     expect(create).toContain("A reply is one or more `select … end` clauses");
     expect(create).toContain("does not take `match` or `pick`");
-    expect(create).toContain("appends the COMPLETE declaration");
+    expect(create).toContain("An implicit create remains available");
+    expect(create).toContain("create [static] <kind> <name> in <path>");
+    expect(create).toContain("a dotted create never creates its owner");
     expect(create).toContain("select function f in src/x.ts");
     expect(create).not.toContain("Output ONE flat JSON object");
     const retry = buildRetryPrompt({
@@ -11283,7 +11349,7 @@ describe("edit-dsl protocol (#111/#119)", () => {
     expect(edit).not.toMatch(/^`{6,}$/m);
     const writeExample = edit.slice(
       edit.indexOf("8. Whole-file repair:"),
-      edit.indexOf("End of examples."),
+      edit.indexOf("9. Kind-aware create:"),
     );
     expect(writeExample.trimEnd().endsWith("<<<TC_EDIT_END>>>")).toBe(true);
     expect(writeExample).not.toMatch(/\b(done|end)\b/);

@@ -60,7 +60,7 @@ export const TASK_FUNCTIONAL_STYLE = `Prefer ML-style functional TypeScript:
 - Implement behavior as top-level functions with explicit parameter and return types.
 - Extract small helpers when they make the code clearer; do not force an extra work node.
 - Do not create new classes, inheritance, \`super\`, implicit \`this\`, private state, getters/setters, or class-based state machines.
-- If an existing class must change, modify it minimally; never create a dotted member with \`create\`.`;
+- If an existing class must change, modify it minimally.`;
 
 /**
  * Advisory editing techniques. The executor may choose, combine, or ignore
@@ -90,6 +90,7 @@ export const TASK_EDIT_STRATEGY_GUIDE = `How to choose an edit (advice, not rule
 - Local edit in an existing file: prefer a \`match\`/\`pick\` or a single-declaration \`select … replace\`; a whole-file rewrite discards unchanged code.
 - Several related declarations in one file: edit each declaration, splitting replies when one declaration would repeat; a small, tightly coupled file may still be clearest as one whole-file write.
 - Large declaration rewrite: rewrite only that declaration and leave the file's other declarations untouched.
+- Add one named declaration to a file: use \`create <kind> <name> in <path> with <fence> end\`; for a class/interface/namespace/enum member use the member kind and a dotted \`Owner.name\` (the owner must already exist).
 - Whole-file rewrite of an existing file: valid when the change touches most of the file or a targeted edit would be riskier. There is no hard size or shape rejection.
 - Small requirement on a small file: one whole-file \`write\` is often cheapest; for a large module, scaffold first and fill bodies with finer edits.
 ${TASK_FAILED_WRITE_REPAIR_ADVICE}
@@ -163,7 +164,7 @@ const TASK_PLAN_FIELDS = `- The initial reply is the flat Plan DSL. Start with t
 - \`after\` lists dependency node ids; the executor runs only nodes whose dependencies passed. A node may depend on a node declared later in the same reply as long as the graph stays acyclic. Record order is the deterministic readiness tie-break.
 - \`verify\` is the node gate: \`tsc\` runs the type check, \`test\` runs the type check and the test suite after each applied executor reply.
 - \`instruction:\` is a self-contained local goal for the executor; it does not see the requirement. Do not paste a whole file into an instruction.
-- \`hint file <path>\` marks a whole-file target; \`hint <value|type|namespace> <symbol> in <path>\` marks a declaration. Hints are advisory guidance, not an allowlist.
+- \`hint file <path>\` marks a whole-file target; \`hint <value|type|namespace> <symbol> in <path>\` marks a declaration, including a dotted member such as \`Parser.parseValue\`. Hints are advisory guidance, not an allowlist.
 - \`approach:\` is optional advisory strategy. \`phase:\` is an optional workflow label such as \`scaffold\` or \`implement\`; it never changes scheduling.
 - Every id is a quoted "NN-slug": two or more digits, a hyphen, then lowercase kebab words (for example "01-main"). Plan and node ids share one namespace and are globally unique.
 - \`goal:\`, \`instruction:\`, \`approach:\`, and \`phase:\` carry one-line text after the label, or an empty label followed by \`<<<TC_EDIT_BEGIN>>>\` on its own line, the raw text lines, then \`<<<TC_EDIT_END>>>\` on its own line. The body is raw: hyphen runs, backticks, \`done\`, and \`end\` are ordinary text lines. A node record ends with \`end\`.
@@ -175,10 +176,10 @@ const TASK_PLAN_RULES = `Rules:
 3. Prefer top-level functions with explicit types. Extract a helper when it makes the code easier to read; keep the caller thin.
 4. Hints identify likely targets, not every file the instruction may touch. The executor may edit outside them when the instruction requires it; review sees those edits.
 5. \`approach\` may recommend a whole-file write for a small change, scaffold-then-fill for a large module, or a parallel implementation for a risky refactor. Never make a technique mandatory.
-6. A \`create\` adds one top-level declaration. A dotted class member is not a create target; modify the class instead.
+6. A \`create\` adds one named declaration or member. A top-level kind without a dot creates a new declaration; a member kind with a dotted \`Owner.name\` adds to an existing class/interface/namespace/enum, whose owner must already exist. A \`create\` never creates the owner itself.
 7. Do not target *.test.ts unless the requirement explicitly changes tests; copy required behavior into the instruction.
 8. End the run with a \`test\` node and a trailing \`finish\`. If the current last test node has passed, a bare \`patch\` + \`finish\` is enough.
-9. Do not plan a new class. If an existing class must change, modify it; never plan a dotted \`create\`.
+9. Do not plan a new class. If an existing class must change, prefer a minimal targeted edit; a named member \`create\` is valid when it is the smallest change.
 10. Emit only the Plan DSL records on a planning turn: no JSON, no markdown fence around the whole reply, and no prose. A read-only viewer request is the only non-Plan reply accepted before a Plan/patch.
 11. There is no node-count, planning-round, viewer, or exchange cap. Growth is bounded by the token budget and repeated/no-progress detection.`;
 
@@ -346,6 +347,7 @@ export function taskEditDslInstruction(): string {
     "Clause: `select <symbol> in <path> [ resolve <value|type|namespace> ] [ match (<snippet> | /regex/) ] [ [ pick <range> ] replace with <fence> | rename <old> to <new> ] end`.",
     "`match` accepts only a backtick snippet or `/regex/`; `match (` and unquoted code are rejected. A snippet must be a complete statement or expression, or a contiguous run of complete statements copied from the target, never an unbalanced partial function body; if the span is hard to copy, omit `match` and rewrite the whole declaration. It locates a span inside the declaration; `pick` narrows a match and requires `replace`; omit `match` to rewrite the whole declaration; an empty body deletes it. Open the body with `<<<TC_EDIT_BEGIN>>>` on its own line and close it with `<<<TC_EDIT_END>>>` on its own line; the body is raw text (hyphen runs, backticks, `done`, and `end` are ordinary body lines). `pick` coordinates are the 1-based file-absolute lines of the content view.",
     "For a whole-file edit, `write <path> with <<<TC_EDIT_BEGIN>>> … <<<TC_EDIT_END>>>` replaces the file with the raw body; no terminator follows the sentinel close. `create <path> end` adds an empty file, `delete <path> end` removes one, and `read <path> [within <range>] end` only returns source.",
+    "A kind-aware create adds one named declaration or member: `create [static] <kind> <name> in <path> with <fence> end`. Top-level kinds are `function`, `class`, `interface`, `type`, `enum`, `namespace`, `const`, `let`, `var`, and `using`; member kinds are `method`, `property`, `getter`, `setter`, `accessor`, `constructor`, and `enum-member`. Use a dotted `Owner.name` for a member (or `create constructor Owner …`); the owner must already be a class/interface/namespace/enum, because a dotted create never creates its owner. `method`/`property` work in classes and interfaces, `getter`/`setter`/`accessor`/`constructor` in classes, and declaration kinds with a dotted namespace owner add namespace members. The fence must declare exactly that name and kind, and its modifiers must fit: `export`/`default`/`declare`/`abstract` come from the declaration text, while the descriptor's optional `static` must match a class member's `static` exactly. An absent symbol in a whole-declaration `select … replace` still creates implicitly.",
     "",
     "You do not run the type check; the harness runs the node gate after every applied reply. Hints and `approach` are advice: edit outside the hinted paths when the instruction requires it, and choose the action and granularity that fit the source.",
   ].join("\n");

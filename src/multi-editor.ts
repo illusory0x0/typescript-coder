@@ -1,4 +1,5 @@
 import { claimEditDslTarget, foldSourceLines, resolveEditDslReply } from "./edit-dsl";
+import { resolveCreateDeclaration } from "./create-declaration";
 import type {
   EditDslDeps,
   EditDslFailure,
@@ -9,7 +10,13 @@ import type {
 import type { EditRange } from "./loop";
 import { resolveLocalRename } from "./rename";
 import { END_OF_LINE_COLUMN } from "./selection";
-import type { EditStatement, FileStatement, RenameSpec, Selection } from "./selection";
+import type {
+  CreateDeclarationStatement,
+  EditStatement,
+  FileStatement,
+  RenameSpec,
+  Selection,
+} from "./selection";
 import type { Locator } from "./utility";
 
 /** One line of a `read` result, numbered exactly like the other prompt blocks. */
@@ -292,6 +299,23 @@ function conflictFailure(index: number, path: string, detail: string): EditDslFa
   };
 }
 
+function createDeclarationFailure(
+  index: number,
+  statement: CreateDeclarationStatement,
+  stage: EditDslFailure["stage"],
+  diagnostics: string,
+): EditDslFailure {
+  return {
+    index,
+    path: statement.path,
+    locator: { path: statement.path, name: statement.name, kind: statement.kind },
+    stage,
+    cause: null,
+    diagnostics,
+    undeclaredName: null,
+  };
+}
+
 /**
  * Resolve a `multiEditor` reply. Editors go through the existing cascade; file
  * commands are validated against the pre-reply snapshot (a `read` always sees
@@ -410,6 +434,36 @@ export function resolveMultiEditor(
   for (const region of regions) {
     touched.set(region.path, region.index);
   }
+  // Pre-scan the destructive commands so a create declaration conflicts with a
+  // write/delete whatever their statement order. Multiple declaration creates on
+  // one path are allowed; an empty-file `create` of that path is not.
+  const writePaths = new Map<string, number>();
+  const deletePaths = new Map<string, number>();
+  const emptyCreatePaths = new Map<string, number>();
+  const declarationPaths = new Map<string, number>();
+  const memberClaims = new Map<string, number>();
+  for (let index = 0; index < statements.length; index += 1) {
+    const statement = statements[index];
+    if (statement?.type !== "fs") {
+      continue;
+    }
+    switch (statement.statement.op) {
+      case "write":
+        writePaths.set(statement.statement.path, index);
+        break;
+      case "delete":
+        deletePaths.set(statement.statement.path, index);
+        break;
+      case "create":
+        emptyCreatePaths.set(statement.statement.path, index);
+        break;
+      case "create-declaration":
+        declarationPaths.set(statement.statement.path, index);
+        break;
+      default:
+        break;
+    }
+  }
 
   const checkMutation = (index: number, path: string, op: "create" | "delete"): string | null => {
     if (!deps.isSafePath(path)) {
@@ -448,7 +502,12 @@ export function resolveMultiEditor(
           );
           continue;
         }
-        if (touched.has(fs.path)) {
+        if (
+          touched.has(fs.path) ||
+          declarationPaths.has(fs.path) ||
+          writePaths.has(fs.path) ||
+          deletePaths.has(fs.path)
+        ) {
           failures.push(
             conflictFailure(
               index,
@@ -460,6 +519,109 @@ export function resolveMultiEditor(
         }
         created.set(fs.path, index);
         creates.push({ index, path: fs.path });
+        continue;
+      }
+      case "create-declaration": {
+        if (!deps.isSafePath(fs.path)) {
+          failures.push(
+            createDeclarationFailure(
+              index,
+              fs,
+              "address",
+              `stage: address\ncannot create ${JSON.stringify(fs.kind)} ${JSON.stringify(fs.name)} in ${JSON.stringify(fs.path)}: the path is outside the editable workspace`,
+            ),
+          );
+          continue;
+        }
+        if (emptyCreatePaths.has(fs.path)) {
+          failures.push(
+            conflictFailure(
+              index,
+              fs.path,
+              `create ${JSON.stringify(fs.path)} conflicts with an empty-file create of the same path in this reply`,
+            ),
+          );
+          continue;
+        }
+        if (writePaths.has(fs.path)) {
+          failures.push(
+            conflictFailure(
+              index,
+              fs.path,
+              `create ${JSON.stringify(fs.kind)} ${JSON.stringify(fs.name)} conflicts with a whole-file write of ${JSON.stringify(fs.path)} in this reply`,
+            ),
+          );
+          continue;
+        }
+        if (deletePaths.has(fs.path)) {
+          failures.push(
+            conflictFailure(
+              index,
+              fs.path,
+              `create ${JSON.stringify(fs.kind)} ${JSON.stringify(fs.name)} conflicts with a delete of ${JSON.stringify(fs.path)} in this reply`,
+            ),
+          );
+          continue;
+        }
+        const source = deps.sourceFor(fs.path);
+        const createdDeclaration = resolveCreateDeclaration(fs, source);
+        if (!createdDeclaration.ok) {
+          failures.push(
+            createDeclarationFailure(
+              index,
+              fs,
+              createdDeclaration.stage,
+              createdDeclaration.diagnostics,
+            ),
+          );
+          continue;
+        }
+        if (createdDeclaration.memberKey !== null) {
+          const earlier = memberClaims.get(createdDeclaration.memberKey);
+          if (earlier !== undefined) {
+            failures.push(
+              conflictFailure(
+                index,
+                fs.path,
+                `statements ${earlier + 1} and ${index + 1} both create the same member of ${JSON.stringify(
+                  fs.name.split(".").slice(0, -1).join(".") || fs.name,
+                )} in ${JSON.stringify(fs.path)}; create a member name once per reply`,
+              ),
+            );
+            continue;
+          }
+          memberClaims.set(createdDeclaration.memberKey, index);
+        }
+        const duplicate = claimEditDslTarget(
+          targetClaims,
+          {
+            path: fs.path,
+            name: createdDeclaration.declaration.name,
+            kind: createdDeclaration.declaration.kind,
+          },
+          index,
+          true,
+        );
+        if (duplicate !== null) {
+          failures.push(createDeclarationFailure(index, fs, "duplicate", duplicate));
+          continue;
+        }
+        regions.push({
+          index,
+          path: fs.path,
+          locator: {
+            path: fs.path,
+            name: createdDeclaration.declaration.name,
+            kind: createdDeclaration.declaration.kind,
+          },
+          start: createdDeclaration.start,
+          end: createdDeclaration.end,
+          text: createdDeclaration.text,
+          stage: "whole-symbol",
+          matcherKind: null,
+          create: true,
+        });
+        touched.set(fs.path, index);
         continue;
       }
       case "delete": {
@@ -479,7 +641,12 @@ export function resolveMultiEditor(
           );
           continue;
         }
-        if (touched.has(fs.path)) {
+        if (
+          touched.has(fs.path) ||
+          emptyCreatePaths.has(fs.path) ||
+          declarationPaths.has(fs.path) ||
+          writePaths.has(fs.path)
+        ) {
           failures.push(
             conflictFailure(
               index,
@@ -537,7 +704,7 @@ export function resolveMultiEditor(
           );
           continue;
         }
-        if (destructive.has(fs.path) || created.has(fs.path)) {
+        if (destructive.has(fs.path) || created.has(fs.path) || declarationPaths.has(fs.path)) {
           failures.push(
             conflictFailure(
               index,

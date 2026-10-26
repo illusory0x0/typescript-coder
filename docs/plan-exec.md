@@ -147,7 +147,7 @@ the guidance below is advisory, and `write` is always valid. No edit is rejected
 merely for its size or shape.
 
 - **New file or skeleton:** write the whole file, or create it and add the
-  top-level declarations.
+  top-level declarations with `create <kind> <name> in <path> with <fence> end`.
 - **Local edit in an existing file:** prefer a `match`/`pick` or a
   single-declaration `select … replace`; a whole-file rewrite discards unchanged
   code.
@@ -179,7 +179,8 @@ Planner and executor prefer ML-style functional TypeScript:
 - small, named helper functions; a thin orchestrator calling them;
 - no new `class`, inheritance, `super`, implicit `this`, private state,
   getters/setters, or class-based state machines;
-- existing classes: minimal `modify` only, never a dotted `create`.
+- existing classes: minimal targeted edits; a named member `create` is valid
+  when it is the smallest change.
 
 The planner decides helper decomposition. A single-file change does **not** need
 several nodes; one node is valid when its gate can pass. Do not split work just to
@@ -198,8 +199,7 @@ Prefer ML-style functional TypeScript:
   work node.
 - Do not create new classes, inheritance, `super`, implicit `this`, private
   state, getters/setters, or class-based state machines.
-- If an existing class must change, modify it minimally; never create a dotted
-  member with `create`.
+- If an existing class must change, modify it minimally.
 ```
 
 ### 1.5 Limits
@@ -300,7 +300,7 @@ The review checks:
 
 - the diff implements the node instruction and contains no unrelated edits;
 - edits outside the hinted paths are justified by the instruction and visible;
-- no dotted `create`, no new class, no heavy OOP;
+- no new class, no heavy OOP; named member creates are valid;
 - helper decomposition is reasonable and symbols resolve;
 - after a failed gate, prefer a targeted repair of the named declarations;
   repeat a whole-file write only for broad structural breakage (advice, not a
@@ -856,6 +856,9 @@ or more edit-dsl clauses and/or file commands:
 
 - `select … end` with `replace`, `rename`, `match`, `pick`, or a viewer slice;
 - `create <path> end`, `delete <path> end`, `read <path> [within …] end`;
+- `create [static] <kind> <name> in <path> with <fence> end` for one named
+  top-level declaration or one member of an existing class/interface/namespace/
+  enum (a dotted `Owner.name`; the owner must already exist);
 - `write <path> with <fence>` for a whole-file replacement.
 
 Hints and `approach` are advice, not an allowlist. The executor may edit outside
@@ -876,8 +879,10 @@ tracking, and there is no fixed cap.
 
 The hard application guardrail stays: each clause in one reply must resolve to a
 different declaration `(path, symbol, kind)`. Multiple edits to one declaration
-are split across replies, even with different `match`/`pick` spans. Dotted member
-creation remains a separate capability tracked by #50 and is not added here.
+are split across replies, even with different `match`/`pick` spans. Kind-aware
+creates are separate statements: several creates for distinct declarations may
+share a reply, a member create inserts into an existing owner, and a dotted
+create never creates its owner.
 
 ### 8.2 Applying a reply
 
@@ -888,8 +893,9 @@ creation remains a separate capability tracked by #50 and is not added here.
    gate, duplicate-declaration guard, formatter, no-op guard).
 4. Prepare whole-file `write` commands separately: parse and format the
    replacement, then include it in the atomic write set.
-5. Write all changed files, create empty files for `create`, and delete files for
-   `delete` only after every guard passed. Nothing is written on a rejection.
+5. Write all changed files, create empty files for `create <path> end`, apply
+   declaration/member insertions, and delete files for `delete` only after every
+   guard passed. Nothing is written on a rejection.
 6. A whole-symbol variable edit expands to the enclosing `VariableStatement`
    (including `export`); a multi-declarator statement is rejected. A rename keeps
    its binding span. `export` modifier differences are tolerated in both
@@ -1008,9 +1014,11 @@ summaries; the historical `@1` schema used numeric task/edit ids.
   possible but out of scope.
 - **Result schema @3.** `LoopResult.nodes` replaces `LoopResult.tasks`. Consumers
   of `@2` task/edit summaries must migrate.
-- **Class members are not first-class creates.** New classes are forbidden;
-  existing classes are extended with a whole-class `modify` (optionally with
-  stubs) and then member `modify` edits. Dotted `create` is rejected.
+- **Anonymous and object-literal member creates are deferred.** Named
+  class/interface/namespace/enum members are created with the kind-aware
+  `create` statement; call/construct/index signatures and object-literal members
+  are not. New classes remain forbidden by prompt policy, not by create
+  validation.
 - **Rename is same-file.** It inherits the existing renamer's scope (declaration
   plus same-file references). Cross-file renames need caller edits first, or
   escalation.
@@ -1052,8 +1060,9 @@ Shipped design decisions:
 7. **JSON compatibility:** no runtime JSON fallback and no migration tool in
    v1; old plan-exec replay bundles with JSON plan replies are incompatible and
    need manual conversion if retained.
-8. **Functional policy:** hard prompt ban on new classes; dotted `create` is
-   rejected by validation; existing classes are minimal `modify` only.
+8. **Functional policy:** hard prompt ban on new classes; existing classes are
+   minimal targeted edits, and a named member `create` is valid when it is the
+   smallest change.
 9. **Execution application:** edit-dsl clauses and file commands apply
    atomically through the shared resolver/commit pipeline; the
    one-declaration-per-reply guardrail is hard.

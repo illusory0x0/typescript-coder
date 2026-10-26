@@ -1121,3 +1121,157 @@ describe("parseMultiEditor", () => {
     expect(() => parseMultiEditor("rename src/a.ts")).toThrow(/select/);
   });
 });
+
+describe("create declaration statements (#50)", () => {
+  test("parses every top-level declaration kind", () => {
+    const kinds = [
+      "function",
+      "class",
+      "interface",
+      "type",
+      "enum",
+      "namespace",
+      "const",
+      "let",
+      "var",
+      "using",
+    ] as const;
+    for (const kind of kinds) {
+      const text = [
+        `create ${kind} Target in src/target.ts with`,
+        BEGIN,
+        "// body",
+        END,
+        "end",
+      ].join("\n");
+      const [statement] = parseMultiEditor(text);
+      expect(statement).toEqual({
+        type: "fs",
+        statement: {
+          op: "create-declaration",
+          path: "src/target.ts",
+          kind,
+          name: "Target",
+          static: false,
+          replacement: "// body",
+        },
+      });
+    }
+  });
+
+  test("parses every member kind, including static, accessor, and constructor", () => {
+    const cases = [
+      ["method", "Owner.member", false],
+      ["property", "Owner.member", false],
+      ["getter", "Owner.member", false],
+      ["setter", "Owner.member", false],
+      ["accessor", "Owner.member", false],
+      ["constructor", "Owner", false],
+      ["enum-member", "Owner.member", false],
+      ["method", "Owner.member", true],
+      ["property", "Owner.member", true],
+    ] as const;
+    for (const [kind, name, isStatic] of cases) {
+      const text = [
+        `create ${isStatic ? "static " : ""}${kind} ${name} in src/owner.ts with`,
+        BEGIN,
+        "member",
+        END,
+        "end",
+      ].join("\n");
+      const [statement] = parseMultiEditor(text);
+      expect(statement).toEqual({
+        type: "fs",
+        statement: {
+          op: "create-declaration",
+          path: "src/owner.ts",
+          kind,
+          name,
+          static: isStatic,
+          replacement: "member",
+        },
+      });
+    }
+  });
+
+  test("a path literally named like a kind stays an empty-file create", () => {
+    for (const kind of ["function", "type", "static", "enum-member", "in"]) {
+      const [statement] = parseMultiEditor(`create ${kind} end`);
+      expect(statement).toEqual({
+        type: "fs",
+        statement: { op: "create", path: kind },
+      });
+    }
+  });
+
+  test("accepts the fence directly after the header as well as after with", () => {
+    const text = [
+      "create function parseJson in src/json.ts",
+      BEGIN,
+      "export function parseJson(): void {}",
+      END,
+      "end",
+    ].join("\n");
+    const [statement] = parseMultiEditor(text);
+    expect(statement).toEqual({
+      type: "fs",
+      statement: {
+        op: "create-declaration",
+        path: "src/json.ts",
+        kind: "function",
+        name: "parseJson",
+        static: false,
+        replacement: "export function parseJson(): void {}",
+      },
+    });
+  });
+
+  test("round-trips declaration creates and member creates", () => {
+    const text = [
+      "create function parseJson in src/json.ts with",
+      BEGIN,
+      "export function parseJson(input: string): string {",
+      "  return input;",
+      "}",
+      END,
+      "end",
+      "",
+      "create static method Parser.parse in src/parser.ts with",
+      BEGIN,
+      "static parse(): number {",
+      "  return 1;",
+      "}",
+      END,
+      "end",
+      "",
+      "create enum-member Color.Red in src/color.ts with",
+      BEGIN,
+      "Red = 0",
+      END,
+      "end",
+      "",
+      "create src/empty.ts end",
+    ].join("\n");
+    expect(serializeMultiEditor(parseMultiEditor(text))).toBe(text);
+  });
+
+  test("rejects an unknown create kind and a static non-member kind", () => {
+    expect(() =>
+      parseMultiEditor(["create widget X in src/a.ts with", BEGIN, "x", END, "end"].join("\n")),
+    ).toThrow(/unknown create kind/);
+    expect(() =>
+      parseMultiEditor(
+        ["create static const X in src/a.ts with", BEGIN, "x", END, "end"].join("\n"),
+      ),
+    ).toThrow(/static/);
+  });
+
+  test("requires in, with, and the fence close", () => {
+    expect(() =>
+      parseMultiEditor(["create function f src/a.ts with", BEGIN, "x", END, "end"].join("\n")),
+    ).toThrow(/in <path>/);
+    expect(() =>
+      parseMultiEditor(["create function f in src/a.ts with", BEGIN, "x"].join("\n")),
+    ).toThrow(/UNCLOSED_FENCE|unclosed fence/i);
+  });
+});
