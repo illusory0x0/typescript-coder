@@ -16,6 +16,14 @@ Under the hints-based DAG model (#49), the planner no longer selects each edit's
 
 In the mini-spreadsheet pilots, whole-file writes of an existing ~839-line file dominated the budget: 21k–23k characters per write, 6k–7k completion tokens, and prompts growing to 20k–38k tokens. The one-rep pilot stopped at 127,438 cache-excluded loop tokens against the 120k budget after reaching 56/60 tests with `tsc` clean. The earlier five-rep runs also failed, so this is a strategy/cost issue rather than a single-run outlier.
 
+The executor should carry a small, growing knowledge base of editing techniques rather than a single rule. Initial examples:
+
+1. **Simple requirement / small file**: one whole-file write is often the cheapest and clearest.
+2. **Large module**: write the exported types, signatures, and stub bodies first (whole-file or declaration creates), then fill implementations with fine-grained edits.
+3. **Complex refactor**: introduce a parallel `xxV1` implementation, copy the original behavior, test it, switch call sites, then remove the old implementation; clean up last.
+
+These are suggestions the executor may choose or ignore from the source; they are not gates. The planner may name one in an optional `approach` hint, but the executor owns the decision.
+
 ## Goal
 
 Make the executor choose between whole-file writes, whole-declaration rewrites, and targeted edits from the current source, file size, and diff scope, with a non-blocking advisory for large or consecutive whole-file writes.
@@ -23,6 +31,8 @@ Make the executor choose between whole-file writes, whole-declaration rewrites, 
 ## Acceptance criteria
 
 - [ ] The executor prompt contains a situation-aware decision guide: new file/skeleton; local edit in an existing file; several related declarations in one file; large declaration rewrite; whole-file rewrite; and recovery after a failed or unhelpful write. The guide distinguishes a small requirement where a whole-file write is reasonable from a large module where the executor should scaffold top-level declarations first and then fill bodies with finer edits.
+- [ ] The executor prompt exposes a small, documented editing-techniques knowledge base (at least: simple-file whole write; large-module skeleton then fill; parallel `xxV1` refactor then swap and clean up), marked advisory. No technique is mandatory, and the executor may combine or ignore them based on the source.
+- [ ] The planner's optional `approach` hint can name a technique or describe one, but the executor may override it; validation and review never require adherence.
 - [ ] The guide preserves `write` as valid and never rejects an edit solely for its size or shape; it tells the executor to choose from the source it can see, not from a planner-selected action. A planner-provided `approach` hint is advice the executor may override.
 - [ ] The review prompt uses the same criteria when a node gate fails; it repeats a whole-file write only when the diagnostics show broad structural breakage.
 - [ ] The harness tracks whole-file writes to existing files and emits a non-blocking advisory on the next executor turn when the write is large or when the same node writes the whole file twice in a row. The advisory names the observed size/coverage and suggests a targeted repair; it does not change records, status, gate results, or termination.

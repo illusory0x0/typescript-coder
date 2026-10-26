@@ -4,7 +4,7 @@
 
 - id: 49
   title: "Replace plan-exec's Stage/Task/Edit tree with a hints-based work DAG"
-  status: todo
+  status: in-progress
   priority: medium
   milestone: null
   parent: null
