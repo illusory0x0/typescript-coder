@@ -52,6 +52,8 @@ digraph issues {
   "45" [label="#45 Make plan-exec matcher failures recover in one bounded correction"];
   "46" [label="#46 Make large-edit tsc advisories actionable in plan-exec"];
   "47" [label="#47 Align benchmark token-budget with cache-excluded report accounting"];
+  "48" [label="#48 Make plan-exec choose whole-file writes by context"];
+  "49" [label="#49 Model plan-exec as a task-level DAG with dependency edges"];
 
   // parent edges (parent -> child), solid
   "1" -> "2";
@@ -87,6 +89,7 @@ digraph issues {
   "37" -> "42";
   "44" -> "45";
   "44" -> "46";
+  "44" -> "48";
 
   // dependency edges (blocker -> blocked), dashed
   "2" -> "3" [style=dashed, label="blocks"];

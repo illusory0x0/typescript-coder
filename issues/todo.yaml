@@ -2,6 +2,14 @@
 # rewrites it; `add` appends; other writes keep it. `check` enforces it.
 # A dep, and every child of an umbrella, must be listed before its dependent.
 
+- id: 48
+  title: "Make plan-exec choose whole-file writes by context"
+  status: todo
+  priority: medium
+  milestone: null
+  parent: 44
+  deps: []
+  file: 0048-make-plan-exec-choose-whole-file-writes-by-context.md
 - id: 44
   title: "Stabilize plan-exec on mini-spreadsheet after guard and matcher changes"
   status: todo
@@ -10,3 +18,11 @@
   parent: null
   deps: [47]
   file: 0044-stabilize-plan-exec-on-mini-spreadsheet-after-guard-and-matcher-changes.md
+- id: 49
+  title: "Model plan-exec as a task-level DAG with dependency edges"
+  status: todo
+  priority: medium
+  milestone: null
+  parent: null
+  deps: []
+  file: 0049-model-plan-exec-as-a-task-level-dag-with-dependency-edges.md
