@@ -355,6 +355,20 @@ export function taskEditDslInstruction(): string {
   ].join("\n");
 }
 
+/**
+ * The binding output contract at the end of the execution system prompt. The
+ * executor previously matched the agentic prompt with native tool-call markup
+ * even though the harness sends no tool definitions, so this names the absence
+ * of tools and the literal edit-dsl text form explicitly.
+ */
+export const TASK_EXECUTION_OUTPUT_CONTRACT = `Output contract (binding):
+- No tools are available on this turn; do not call tools or emit tool-call markup.
+- \`read\`, \`select\`, \`write\`, \`create\`, and \`delete\` are literal edit-dsl text commands, not function calls.
+- Never emit \`<|...|>\`, \`<｜...｜>\`, or any DSML/tool-call markup.
+- The block opened by \`<<<TC_EDIT_BEGIN>>>\` and closed by \`<<<TC_EDIT_END>>>\` is plain text: it is not a Markdown code fence and not a tool-call boundary.
+- Reply with edit-dsl only: no prose preamble, no Markdown fence around the reply, no JSON.
+- A viewer/read is inspection only; to finish a node, include edit clauses or file commands.`;
+
 /** The execution system prompt: the editing grammar and techniques, stable per node. */
 export function buildTaskExecutionSystemPrompt(): string {
   return [
@@ -368,7 +382,9 @@ export function buildTaskExecutionSystemPrompt(): string {
     "",
     taskEditDslInstruction(),
     "",
-    "Reply with only the clauses that carry the node out; no prose and no JSON. The harness runs the node gate after every applied reply. There is no fixed attempt limit: a repeated no-progress reply or the token budget ends the node.",
+    "The harness runs the node gate after every applied reply. There is no fixed attempt limit: a repeated no-progress reply or the token budget ends the node.",
+    "",
+    TASK_EXECUTION_OUTPUT_CONTRACT,
     "",
   ].join("\n");
 }
@@ -467,7 +483,7 @@ export function buildTaskTurnPrompt(input: TaskTurnInput): string {
     }
   }
   blocks.push(
-    "Reply with the edit-dsl clauses or file commands for this work node. You may use multiple clauses and multiple actions in one reply; each declaration may appear at most once.",
+    "Reply with the edit-dsl clauses or file commands for this work node. You may use multiple clauses and multiple actions in one reply; each declaration may appear at most once. No tools are available: send edit-dsl text only, never DSML/tool-call markup, and treat the sentinel block as literal text.",
   );
   return blocks.join("\n");
 }

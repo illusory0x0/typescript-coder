@@ -1122,6 +1122,96 @@ describe("parseMultiEditor", () => {
   });
 });
 
+describe("reply entry recovery", () => {
+  test("accepts a single leading prose preamble with a warning", () => {
+    const parsed = parseMultiEditorDetailed(
+      ["I will inspect the helper first.", "", "select answer in src/helper.ts", "end"].join("\n"),
+    );
+    expect(parsed.ok).toBe(true);
+    expect(parsed.value).toHaveLength(1);
+    expect(parsed.value?.[0]?.type).toBe("editor");
+    const warning = parsed.issues.find((issue) => issue.code === "EDIT_PROSE_PREAMBLE");
+    expect(warning?.severity).toBe("warning");
+    expect(warning?.message).toContain("ignored 1 leading prose line");
+  });
+
+  test("accepts a prose preamble before a file command", () => {
+    const parsed = parseMultiEditorDetailed(
+      ["Here is the write:", "write src/a.ts with", BEGIN, "export const a = 2;", END].join("\n"),
+    );
+    expect(parsed.ok).toBe(true);
+    const statement = parsed.value?.[0];
+    expect(statement?.type).toBe("fs");
+    expect(parsed.issues.some((issue) => issue.code === "EDIT_PROSE_PREAMBLE")).toBe(true);
+  });
+
+  test("rejects prose followed by an invalid edit-dsl suffix", () => {
+    const parsed = parseMultiEditorDetailed(
+      ["Here is the edit:", "select answer in src/helper.ts", "pick 2", "end"].join("\n"),
+    );
+    expect(parsed.ok).toBe(false);
+    expect(parsed.value).toEqual([]);
+    expect(parsed.issues.some((issue) => issue.code === "EDIT_PROSE_PREAMBLE")).toBe(false);
+  });
+
+  test("does not trim a mixed command line or trailing prose", () => {
+    const mixed = parseMultiEditorDetailed(
+      [
+        "Here is the edit:",
+        "select answer in src/helper.ts end and write src/helper.ts",
+        "end",
+      ].join("\n"),
+    );
+    expect(mixed.ok).toBe(false);
+    expect(mixed.issues.some((issue) => issue.code === "EDIT_PROSE_PREAMBLE")).toBe(false);
+    const trailing = parseMultiEditorDetailed(
+      ["Here is the edit:", "select answer in src/helper.ts end", "that should do it"].join("\n"),
+    );
+    expect(trailing.ok).toBe(false);
+    expect(trailing.issues.some((issue) => issue.code === "EDIT_PROSE_PREAMBLE")).toBe(false);
+  });
+
+  test("reports DSML/tool-call markup and produces no edit", () => {
+    const parsed = parseMultiEditorDetailed(
+      [
+        "<｜｜DSML｜｜ calls>",
+        '<｜｜DSML｜｜ invoke name="select" file="src/helper.ts">',
+        '<｜｜DSML｜｜ parameter name="symbol">answer</｜｜DSML｜｜ parameter>',
+      ].join("\n"),
+    );
+    expect(parsed.ok).toBe(false);
+    expect(parsed.value).toEqual([]);
+    expect(parsed.issues).toHaveLength(1);
+    const issue = parsed.issues[0];
+    expect(issue?.code).toBe("EDIT_DSML_UNSUPPORTED");
+    expect(issue?.stage).toBe("protocol");
+    expect(issue?.message).toContain("no tool namespace");
+    expect(issue?.message).toContain("literal edit-dsl text commands");
+    expect(issue?.message).toContain("Reply with edit-dsl only");
+    expect(issue?.message).toContain("literal text");
+  });
+
+  test("reports ASCII DSML markers after prose", () => {
+    const parsed = parseMultiEditorDetailed(
+      ["Let me read that file.", "<|tool calls|>", '<|invoke name="read">'].join("\n"),
+    );
+    expect(parsed.ok).toBe(false);
+    expect(parsed.issues[0]?.code).toBe("EDIT_DSML_UNSUPPORTED");
+    expect(parsed.issues[0]?.found).toBe("<|tool calls|>");
+  });
+
+  test("a DSML-looking literal inside a valid fence body is untouched", () => {
+    const body = 'const marker = "<|not a tool|>";';
+    const [statement] = parseMultiEditor(["write src/a.ts with", BEGIN, body, END].join("\n"));
+    expect(statement?.type).toBe("fs");
+    if (statement?.type === "fs" && statement.statement.op === "write") {
+      expect(statement.statement.replacement).toBe(body);
+    } else {
+      throw new Error("expected a write statement");
+    }
+  });
+});
+
 describe("create declaration statements (#50)", () => {
   test("parses every top-level declaration kind", () => {
     const kinds = [

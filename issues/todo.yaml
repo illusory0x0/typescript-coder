@@ -4,7 +4,7 @@
 
 - id: 44
   title: "Stabilize plan-exec on mini-spreadsheet after guard and matcher changes"
-  status: todo
+  status: in-progress
   priority: medium
   milestone: null
   parent: null

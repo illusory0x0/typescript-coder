@@ -25,7 +25,7 @@ import type {
   DeclarationCreateKind,
   MemberCreateKind,
 } from "./selection";
-import { STATIC_CREATE_KINDS } from "./selection";
+import { EDIT_FENCE_BEGIN, EDIT_FENCE_END, STATIC_CREATE_KINDS } from "./selection";
 import type { SymbolSpace } from "./utility";
 
 /** Owner kinds a dotted member create can address. */
@@ -150,6 +150,21 @@ const PRIVATE_IDENTIFIER = /^#[A-Za-z_$][A-Za-z0-9_$]*$/;
 function describe(statement: CreateDeclarationStatement): string {
   const staticText = statement.static ? "static " : "";
   return `${staticText}${statement.kind} ${JSON.stringify(statement.name)} in ${JSON.stringify(statement.path)}`;
+}
+
+/** The whole-file alternative for a mixed declaration list or kind change. */
+function writeRemediation(path: string): string {
+  return `for a mixed declaration list or a whole-file change, use \`write ${path} with ${EDIT_FENCE_BEGIN} … ${EDIT_FENCE_END}\``;
+}
+
+/** A concrete create target for the fence's actual kind, plus the write escape. */
+function createKindRemediation(
+  statement: CreateDeclarationStatement,
+  actualKind: string,
+  actualName: string | null,
+): string {
+  const name = actualName === null ? statement.name : actualName;
+  return `use \`create ${actualKind} ${JSON.stringify(name)} in ${statement.path} with <fence> end\` when that kind is intended, or make the fence declare the descriptor's ${statement.kind}; ${writeRemediation(statement.path)}`;
 }
 
 function failure(
@@ -471,7 +486,7 @@ function declarationShapeMismatch(
       "address",
       "EDIT_CREATE_NAME_MISMATCH",
       `the fence declares ${JSON.stringify(info.name ?? "<anonymous>")}, not ${JSON.stringify(statement.name)}`,
-      `make the fence declare exactly one ${statement.kind} named ${JSON.stringify(statement.name)}`,
+      createKindRemediation(statement, info.kind, info.name),
     );
   }
   if (info.kind !== statement.kind) {
@@ -484,8 +499,8 @@ function declarationShapeMismatch(
         expected === undefined ? "" : ` (${spaceList(expected)} space)`
       }`,
       namespaceMember
-        ? "a namespace member create uses the declaration kind it inserts; change the descriptor or the fence"
-        : "change the descriptor kind or make the fence declare the requested kind",
+        ? `a namespace member create uses the declaration kind it inserts; change the descriptor or the fence; ${writeRemediation(statement.path)}`
+        : createKindRemediation(statement, info.kind, statement.name),
     );
   }
   if (info.spaces.length === 0) {
@@ -634,7 +649,7 @@ function resolveTopLevel(
         "address",
         "EDIT_CREATE_MALFORMED",
         `the fence contains ${program.body.length} top-level statements; an explicit create adds exactly one declaration`,
-        `send exactly one ${statement.kind} declaration`,
+        `send exactly one ${statement.kind} declaration; ${writeRemediation(statement.path)}`,
       );
     } else {
       const firstStatement = program.body[0];

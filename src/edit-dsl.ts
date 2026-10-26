@@ -16,7 +16,7 @@ import type { CascadeCause, SelectionStage } from "./cascade";
 import { resolveFileSelection } from "./module-boundary";
 import { Parser } from "./parser";
 import type { Node, Program, Statement } from "./parser";
-import { isFileSelection } from "./selection";
+import { EDIT_FENCE_BEGIN, EDIT_FENCE_END, isFileSelection } from "./selection";
 import type { Selection } from "./selection";
 import { Binder } from "./utility";
 import type { IndexEntry, Locator, SymbolSpace } from "./utility";
@@ -277,11 +277,13 @@ function createAddressDiagnostics(selection: Selection, detail: string): string 
     selection.space === null
       ? ""
       : `; the clause asks for the ${JSON.stringify(selection.space)} space, so the created declaration must occupy that space`;
+  const kind = locator.kind === "" || locator.kind === "file" ? "<kind>" : locator.kind;
   return [
     "stage: address",
     "code: EDIT_TARGET_MISMATCH",
     `cannot create ${label} in ${locator.path}: ${detail}${spaceNote}`,
     "hint: make the fence declare exactly the clause's target, or send a body that the clause's space can wrap",
+    `repair: for a mixed declaration list or a whole-file change, use \`write ${locator.path} with ${EDIT_FENCE_BEGIN} … ${EDIT_FENCE_END}\`; for one declaration, use \`create ${kind} ${JSON.stringify(locator.name)} in ${locator.path} with <fence> end\` and keep the selected declaration's kind`,
     `a create fence must contain either one complete top-level declaration named ${JSON.stringify(locator.name)}, or a body that is not a declaration list (it is then wrapped by the requested space)`,
   ].join("\n");
 }

@@ -11,6 +11,7 @@ import {
   buildTaskTurnPrompt,
   TASK_EDIT_STRATEGY_GUIDE,
   TASK_EDITING_TECHNIQUES,
+  TASK_EXECUTION_OUTPUT_CONTRACT,
   TASK_FAILED_WRITE_REPAIR_ADVICE,
   TASK_FUNCTIONAL_STYLE,
   TASK_PLANNING_WORKFLOW,
@@ -163,6 +164,30 @@ describe("execution prompts", () => {
     expect(TASK_FUNCTIONAL_STYLE).toContain("Prefer ML-style functional TypeScript");
     expect(TASK_FUNCTIONAL_STYLE).toContain("Do not create new classes");
     expect(buildTaskExecutionSystemPrompt()).toContain(TASK_FUNCTIONAL_STYLE);
+  });
+
+  test("the execution prompt ends with a binding no-tools edit-dsl contract", () => {
+    const prompt = buildTaskExecutionSystemPrompt();
+    expect(prompt.trimEnd().endsWith(TASK_EXECUTION_OUTPUT_CONTRACT)).toBe(true);
+    expect(TASK_EXECUTION_OUTPUT_CONTRACT).toContain("No tools are available on this turn");
+    expect(TASK_EXECUTION_OUTPUT_CONTRACT).toContain(
+      "`read`, `select`, `write`, `create`, and `delete` are literal edit-dsl text commands, not function calls",
+    );
+    expect(TASK_EXECUTION_OUTPUT_CONTRACT).toContain("Never emit `<|...|>`, `<｜...｜>`");
+    expect(TASK_EXECUTION_OUTPUT_CONTRACT).toContain(
+      "is plain text: it is not a Markdown code fence and not a tool-call boundary",
+    );
+    expect(TASK_EXECUTION_OUTPUT_CONTRACT).toContain("no prose preamble, no Markdown fence");
+    expect(TASK_EXECUTION_OUTPUT_CONTRACT).toContain(
+      "A viewer/read is inspection only; to finish a node, include edit clauses or file commands",
+    );
+  });
+
+  test("the execution turn repeats the no-tools/no-DSML instruction", () => {
+    const prompt = buildTaskTurnPrompt({ node: node("02-answer"), views: [] });
+    expect(prompt).toContain("No tools are available");
+    expect(prompt).toContain("never DSML/tool-call markup");
+    expect(prompt).toContain("treat the sentinel block as literal text");
   });
 
   test("one execution turn carries the node, advice, diagnostics, and source views", () => {

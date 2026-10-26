@@ -1568,6 +1568,136 @@ function offsetFor(text: string, line: number, column: number): number {
   return Math.max(0, Math.min(offset + Math.max(0, column - 1), text.length));
 }
 
+/** A line that starts an edit-dsl statement, used to bound a prose preamble. */
+const EDIT_STATEMENT_LINE = /^(select|create|delete|read|write)\b/;
+
+/** Native tool-call/DSML markers, which the harness never parses as edit-dsl. */
+const DSML_MARKER = /<[|｜][^\n]*[|｜][^\n>]*>/;
+
+interface LeadingDsml {
+  line: number;
+  column: number;
+  marker: string;
+}
+
+/**
+ * Find a DSML/tool-call marker in the reply's leading non-command region: from
+ * the first nonblank line through the first edit-dsl statement line. The
+ * harness never parses the markup or guesses the invocation it describes.
+ */
+function leadingDsmlMarker(text: string): LeadingDsml | null {
+  const lines = text.replace(/\r\n?/g, "\n").split("\n");
+  let index = 0;
+  while (index < lines.length && (lines[index] ?? "").trim() === "") {
+    index += 1;
+  }
+  for (; index < lines.length; index += 1) {
+    const line = lines[index] ?? "";
+    if (EDIT_STATEMENT_LINE.test(line.trim())) {
+      break;
+    }
+    const match = DSML_MARKER.exec(line);
+    if (match !== null) {
+      return {
+        line: index + 1,
+        column: Math.max(1, line.indexOf(match[0]) + 1),
+        marker: match[0],
+      };
+    }
+  }
+  return null;
+}
+
+function dsmlIssue(text: string, marker: LeadingDsml): DslIssue {
+  return {
+    severity: "error",
+    stage: "protocol",
+    code: "EDIT_DSML_UNSUPPORTED",
+    message:
+      "DSML/tool-call markup is not supported: this turn has no tool namespace, and `read`, `select`, `write`, `create`, and `delete` are literal edit-dsl text commands, not function calls. Reply with edit-dsl only; the `<<<TC_EDIT_BEGIN>>>` … `<<<TC_EDIT_END>>>` block is literal text.",
+    line: marker.line,
+    column: marker.column,
+    excerpt: text,
+    expected: ["edit-dsl reply"],
+    found: marker.marker,
+    hint: "remove the `<|...|>`/`<｜...｜>` markup and send the edit-dsl clauses or file commands as plain text",
+    recovered: false,
+  };
+}
+
+/**
+ * The one safe recovery after a direct parse failure: ignore a single leading
+ * prose block, but only when the first statement-looking line starts a suffix
+ * that parses on its own. Everything from that line on is kept verbatim, so a
+ * mixed command line or trailing prose still fails instead of being trimmed.
+ */
+function recoverProsePreamble(
+  text: string,
+  mode: "selection" | "multi",
+  initialIssues: readonly DslIssue[],
+): DslParseResult<Selection[] | EditStatement[]> | null {
+  const lines = text.replace(/\r\n?/g, "\n").split("\n");
+  let firstContent = 0;
+  while (firstContent < lines.length && (lines[firstContent] ?? "").trim() === "") {
+    firstContent += 1;
+  }
+  if (firstContent >= lines.length) {
+    return null;
+  }
+  let command = firstContent;
+  while (command < lines.length && !EDIT_STATEMENT_LINE.test((lines[command] ?? "").trim())) {
+    command += 1;
+  }
+  // The reply must begin with prose, not a malformed command; there is no
+  // recovery when the first nonblank line already looks like edit-dsl.
+  if (command >= lines.length || command === firstContent) {
+    return null;
+  }
+  const proseLines = lines.slice(firstContent, command).filter((line) => line.trim() !== "").length;
+  const proseWarning: DslIssue = {
+    severity: "warning",
+    stage: "syntax",
+    code: "EDIT_PROSE_PREAMBLE",
+    message: `ignored ${proseLines} leading prose line(s) before the edit-dsl reply`,
+    line: firstContent + 1,
+    column: 1,
+    excerpt: text,
+    expected: ["bare edit-dsl reply"],
+    found: "prose preamble",
+    recovered: true,
+  };
+  const withoutPreamble = [...lines];
+  for (let index = 0; index < command; index += 1) {
+    withoutPreamble[index] = "";
+  }
+  const reader = new SelectionReader(withoutPreamble.join("\n"), [...initialIssues, proseWarning]);
+  const parsed = mode === "selection" ? reader.detailedSelection() : reader.detailedMulti();
+  return parsed.ok ? parsed : null;
+}
+
+function parseReply(
+  text: string,
+  mode: "selection" | "multi",
+): DslParseResult<Selection[] | EditStatement[]> {
+  const stripped = stripWholeReplyFence(text);
+  const initialIssues = stripped.warning === null ? [] : [stripped.warning];
+  const reader = new SelectionReader(stripped.text, initialIssues);
+  const direct = mode === "selection" ? reader.detailedSelection() : reader.detailedMulti();
+  if (direct.ok) {
+    return direct;
+  }
+  const dsml = leadingDsmlMarker(stripped.text);
+  if (dsml !== null) {
+    return {
+      ok: false,
+      value: [],
+      issues: [dsmlIssue(stripped.text, dsml)],
+      truncated: direct.truncated,
+    };
+  }
+  return recoverProsePreamble(stripped.text, mode, initialIssues) ?? direct;
+}
+
 function failureFor(
   text: string,
   result: DslParseResult<Selection[] | EditStatement[]>,
@@ -1582,21 +1712,13 @@ function failureFor(
 }
 
 function detailedSelection(text: string): DslParseResult<Selection[]> {
-  const stripped = stripWholeReplyFence(text);
-  const reader = new SelectionReader(
-    stripped.text,
-    stripped.warning === null ? [] : [stripped.warning],
-  );
-  return reader.detailedSelection();
+  const result = parseReply(text, "selection");
+  return { ...result, value: (result.value as Selection[] | undefined) ?? [] };
 }
 
 function detailedMultiEditor(text: string): DslParseResult<EditStatement[]> {
-  const stripped = stripWholeReplyFence(text);
-  const reader = new SelectionReader(
-    stripped.text,
-    stripped.warning === null ? [] : [stripped.warning],
-  );
-  return reader.detailedMulti();
+  const result = parseReply(text, "multi");
+  return { ...result, value: (result.value as EditStatement[] | undefined) ?? [] };
 }
 
 /**

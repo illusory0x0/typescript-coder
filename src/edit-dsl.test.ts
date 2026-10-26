@@ -702,6 +702,8 @@ describe("resolveEditDslReply (#111)", () => {
     expect(result.failures[0]?.stage).toBe("address");
     expect(result.failures[0]?.diagnostics).toContain("code: EDIT_TARGET_MISMATCH");
     expect(result.failures[0]?.diagnostics).toContain('declares no top-level "missing"');
+    expect(result.failures[0]?.diagnostics).toContain("write a.ts with");
+    expect(result.failures[0]?.diagnostics).toContain("create <kind>");
   });
 
   test("a declaration list with exactly one declaration named the symbol is appended verbatim", () => {
@@ -724,6 +726,8 @@ describe("resolveEditDslReply (#111)", () => {
     expect(result.regions).toEqual([]);
     expect(result.failures[0]?.stage).toBe("address");
     expect(result.failures[0]?.diagnostics).toContain("exactly one");
+    expect(result.failures[0]?.diagnostics).toContain("write a.ts with");
+    expect(result.failures[0]?.diagnostics).toContain('create <kind> "missing"');
   });
 
   test("a kind miss is not a create", () => {

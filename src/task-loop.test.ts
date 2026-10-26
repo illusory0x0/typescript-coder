@@ -526,6 +526,61 @@ describe("executor autonomy", () => {
     expect(result.records.filter((record) => record.outcome === "applied")).toHaveLength(2);
   }, 30000);
 
+  test("records selectors, stages, matcher kinds, creates, and clause payloads", async () => {
+    const dir = project();
+    const node = workNode(2, "answer", {
+      instruction: "Change answer and extra, create a file, and remove ready in one reply.",
+      hints: [
+        { path: "src/helper.ts", symbol: "answer", kind: "value" },
+        { path: "src/extra.ts", symbol: "extra", kind: "value" },
+      ],
+    });
+    const matchedExtra = [
+      "select extra in src/extra.ts resolve value",
+      "match /extra = 1/",
+      "replace with",
+      "<<<TC_EDIT_BEGIN>>>",
+      "extra = 2",
+      "<<<TC_EDIT_END>>>",
+      "end",
+    ].join("\n");
+    const badMatcher = [
+      EXTRA_EDIT,
+      "select answer in src/helper.ts resolve value",
+      "match `this text is not in the file`",
+      "replace with",
+      "<<<TC_EDIT_BEGIN>>>",
+      "export function answer(): number {",
+      "  return 2;",
+      "}",
+      "<<<TC_EDIT_END>>>",
+      "end",
+    ].join("\n");
+    const batch = [
+      GOOD_EDIT,
+      matchedExtra,
+      "create src/created.ts end",
+      "delete src/ready.ts end",
+    ].join("\n");
+    const provider = new ScriptedProvider([planText([node]), badMatcher, batch, "approve"]);
+    const result = await runTaskLoop(baseOptions(dir, provider));
+    expect(result.ok).toBe(true);
+    const exchanges = result.records.filter((record) => record.kind === "exchange");
+    expect(exchanges.map((record) => record.outcome)).toEqual(["matcher", "applied"]);
+    const rejected = exchanges[0];
+    expect(rejected?.payloads).toBe(2);
+    expect(rejected?.selectors).toEqual(["whole-symbol"]);
+    expect(rejected?.stages).toEqual(["whole-symbol"]);
+    expect(rejected?.matcherKinds).toEqual([null]);
+    expect(rejected?.creates).toBe(0);
+    const applied = exchanges[1];
+    expect(applied?.payloads).toBe(4);
+    expect(applied?.selectors).toEqual(["whole-symbol", "matcher"]);
+    expect(applied?.stages).toEqual(["whole-symbol", "match"]);
+    expect(applied?.matcherKinds).toEqual([null, "regex"]);
+    expect(applied?.creates).toBe(1);
+  }, 30000);
+
   test("chooses a whole-file write even when the approach hint prefers targeted edits", async () => {
     const dir = project();
     const node = workNode(2, "answer", {
@@ -566,6 +621,55 @@ describe("executor autonomy", () => {
     expect(review).toContain("# Out-of-hint edits");
     expect(review).toContain("src/extra.ts");
     expect(review).toContain("+++ b/src/extra.ts");
+  }, 30000);
+});
+
+describe("address feedback", () => {
+  test("whole-declaration shape failures point to write, create, and the selected kind", async () => {
+    const dir = project();
+    const node = workNode(2, "answer");
+    const multi = [
+      "select answer in src/helper.ts resolve value",
+      "replace with",
+      "<<<TC_EDIT_BEGIN>>>",
+      "export function answer(): number {",
+      "  return 2;",
+      "}",
+      "export const sibling = 1;",
+      "<<<TC_EDIT_END>>>",
+      "end",
+    ].join("\n");
+    const kindChange = [
+      "select function answer in src/helper.ts",
+      "replace with",
+      "<<<TC_EDIT_BEGIN>>>",
+      "export const answer = 2;",
+      "<<<TC_EDIT_END>>>",
+      "end",
+    ].join("\n");
+    const provider = new ScriptedProvider([
+      planText([node]),
+      multi,
+      kindChange,
+      GOOD_EDIT,
+      "approve",
+    ]);
+    const result = await runTaskLoop(baseOptions(dir, provider));
+    expect(result.ok).toBe(true);
+    const execution = promptsStartingWith(provider, "# Work node");
+    expect(execution).toHaveLength(3);
+    expect(execution[1]).toContain("write src/helper.ts with");
+    expect(execution[1]).toContain("create <kind> <name> in src/helper.ts");
+    expect(execution[1]).toContain("keep the selected function");
+    expect(execution[2]).toContain("to change the declaration's kind");
+    expect(execution[2]).toContain("keep the selected function");
+    expect(execution[2]).toContain("write src/helper.ts with");
+    expect(result.records.map((record) => record.outcome)).toEqual([
+      "address",
+      "address",
+      "applied",
+      "ok",
+    ]);
   }, 30000);
 });
 
@@ -757,14 +861,60 @@ describe("gates and progress", () => {
     expect(execution[1]).toContain("# Gate diagnostics");
   }, 30000);
 
-  test("allows repeated read self-checks instead of keeping a one-read cap", async () => {
+  test("rejects an identical repeated viewer when the workspace has not changed", async () => {
     const dir = project();
     const node = workNode(2, "answer");
     const read = "read src/helper.ts within 2-2 end";
     const provider = new ScriptedProvider([planText([node]), read, read, GOOD_EDIT, "approve"]);
     const result = await runTaskLoop(baseOptions(dir, provider));
     expect(result.ok).toBe(true);
+    const outcomes = result.records.map((record) => record.outcome);
+    expect(outcomes.slice(0, 3)).toEqual(["viewer", "protocol", "applied"]);
+    const execution = promptsStartingWith(provider, "# Work node");
+    expect(execution).toHaveLength(3);
+    expect(execution[2]).toContain("same viewer/read was already requested");
+    expect(execution[2]).toContain("Reply with the edit clauses or file commands");
+  }, 30000);
+
+  test("allows different read self-checks without a viewer cap", async () => {
+    const dir = project();
+    const node = workNode(2, "answer");
+    const provider = new ScriptedProvider([
+      planText([node]),
+      "read src/helper.ts within 1-1 end",
+      "read src/extra.ts within 1-1 end",
+      GOOD_EDIT,
+      "approve",
+    ]);
+    const result = await runTaskLoop(baseOptions(dir, provider));
+    expect(result.ok).toBe(true);
+    expect(result.records.filter((record) => record.outcome === "viewer")).toHaveLength(2);
     expect(promptsStartingWith(provider, "# Work node")).toHaveLength(3);
+  }, 30000);
+
+  test("allows the same viewer again after an applied edit changes the source", async () => {
+    const dir = project();
+    const node = workNode(2, "answer");
+    const read = "read src/helper.ts within 2-2 end";
+    const provider = new ScriptedProvider([
+      planText([node]),
+      read,
+      BAD_EDIT,
+      read,
+      GOOD_EDIT,
+      "approve",
+    ]);
+    const result = await runTaskLoop(baseOptions(dir, provider));
+    expect(result.ok).toBe(true);
+    expect(result.records.map((record) => record.outcome)).toEqual([
+      "viewer",
+      "applied",
+      "tests",
+      "viewer",
+      "applied",
+      "ok",
+    ]);
+    expect(promptsStartingWith(provider, "# Work node")).toHaveLength(4);
   }, 30000);
 
   test("stops on a repeated no-progress fingerprint without a fixed attempt cap", async () => {

@@ -54,6 +54,7 @@ import {
   resolveCurrentEntry,
   safeMutablePath,
   selectSpecFiles,
+  selectorFromStage,
   tokenBudgetDiagnostics,
   totalLoopTokens,
   withEffort,
@@ -61,15 +62,18 @@ import {
   zeroLoopUsage,
 } from "./loop";
 import type {
+  EditSelector,
   ExchangeOutcome,
   LoopOptions,
   LoopRecord,
   LoopResult,
   LoopTokens,
   LoopUsage,
+  MatcherKind,
   ProviderLike,
   TerminationReason,
 } from "./loop";
+import type { SelectionStage } from "./cascade";
 import type { ChatMessage, ChatResponse } from "./openai";
 import {
   buildTaskExecutionSystemPrompt,
@@ -223,6 +227,10 @@ function writeRecord(
     finishReason: string | null;
     payloads?: number;
     appliedLocators?: Locator[];
+    selectors?: EditSelector[];
+    stages?: SelectionStage[];
+    matcherKinds?: (MatcherKind | null)[];
+    creates?: number;
   },
 ): void {
   records.push(
@@ -238,6 +246,10 @@ function writeRecord(
       finishReason: input.finishReason,
       payloads: input.payloads ?? 0,
       appliedLocators: input.appliedLocators,
+      selectors: input.selectors,
+      stages: input.stages,
+      matcherKinds: input.matcherKinds,
+      creates: input.creates,
     }),
   );
 }
@@ -311,10 +323,35 @@ interface ReplyOutcome {
   appliedLocators: Locator[];
   /** Files the reply wrote, created, or deleted (repository-relative). */
   paths: string[];
+  /** Edit-dsl clauses the reply carried (viewers and file commands included). */
+  payloads: number;
+  /** Selectors for `resolution.regions`, parallel to `stages`. */
+  selectors?: EditSelector[];
+  /** Cascade stages of `resolution.regions`. */
+  stages?: SelectionStage[];
+  /** Matcher kinds for `resolution.regions`, parallel to `stages`. */
+  matcherKinds?: (MatcherKind | null)[];
+  /** Implicit/declaration/module creates plus empty-file creates. */
+  creates?: number;
   /** Whole-file writes applied by this reply; absent on a rejection. */
   wholeFileWrites?: WholeFileWrite[];
   /** True when the reply also applied a targeted edit or file command. */
   targetedEdit?: boolean;
+}
+
+/** The record metadata derived from one resolved reply. */
+function replyTelemetry(
+  payloads: number,
+  resolution: MultiEditorResolution,
+): Pick<ReplyOutcome, "payloads" | "selectors" | "stages" | "matcherKinds" | "creates"> {
+  return {
+    payloads,
+    selectors: resolution.regions.map((region) => selectorFromStage(region.stage)),
+    stages: resolution.regions.map((region) => region.stage),
+    matcherKinds: resolution.regions.map((region) => region.matcherKind),
+    creates:
+      resolution.regions.filter((region) => region.create).length + resolution.creates.length,
+  };
 }
 
 function sourceLineCount(source: string): number {
@@ -449,6 +486,23 @@ function targetDeclarationShape(source: string, entry: IndexEntry): DeclarationS
 }
 
 /**
+ * The remediation appended to a whole-declaration shape failure: a
+ * multi-declaration or kind-changing replacement needs the whole-file `write`
+ * form or one declaration per reply, and a different kind needs an explicit
+ * create/write rather than silently changing the selected declaration.
+ */
+function declarationShapeRemediation(
+  path: string,
+  target: DeclarationShape,
+  kindChanged: boolean,
+): string {
+  const write = `\`write ${path} with <<<TC_EDIT_BEGIN>>> … <<<TC_EDIT_END>>>\``;
+  return kindChanged
+    ? `hint: to change the declaration's kind, use ${write} for the new form; otherwise keep the selected ${target.kind} ${JSON.stringify(target.name)}. For several declarations, send one declaration per reply or one \`create <kind> <name> in ${path} with <fence> end\` clause per added declaration.`
+    : `hint: use ${write} for a multi-declaration or name-changing replacement, or split the change into one declaration per reply with a \`create <kind> <name> in ${path} with <fence> end\` clause per new declaration; a whole-declaration replacement must keep the selected ${target.kind} ${JSON.stringify(target.name)}.`;
+}
+
+/**
  * A whole-declaration modify replaces the declaration span, not just a body.
  * It must still produce exactly the same top-level declaration kind and name;
  * otherwise `NAME_ERROR = ...` can pass the parse gate and fail only at tsc.
@@ -472,22 +526,22 @@ function declarationShapeProblem(
     .map((statement) => unwrapTopLevelDeclaration(statement))
     .filter((declaration): declaration is Node => declaration !== null);
   if (declarations.length !== 1) {
-    return `stage: address\ncode: EDIT_DECLARATION_MISMATCH\na whole-declaration modify must produce exactly one top-level declaration named ${JSON.stringify(target.name)}; got ${declarations.length}`;
+    return `stage: address\ncode: EDIT_DECLARATION_MISMATCH\na whole-declaration modify must produce exactly one top-level declaration named ${JSON.stringify(target.name)}; got ${declarations.length}\n${declarationShapeRemediation(entry.locator.path, target, false)}`;
   }
   const declaration = declarations[0];
   if (declaration === undefined) {
-    return `stage: address\ncode: EDIT_DECLARATION_MISMATCH\nthe replacement declares no top-level ${JSON.stringify(target.name)}`;
+    return `stage: address\ncode: EDIT_DECLARATION_MISMATCH\nthe replacement declares no top-level ${JSON.stringify(target.name)}\n${declarationShapeRemediation(entry.locator.path, target, false)}`;
   }
   const name = declarationNodeName(declaration);
   if (name !== target.name) {
-    return `stage: address\ncode: EDIT_DECLARATION_MISMATCH\nthe replacement must declare ${JSON.stringify(target.name)}, not ${JSON.stringify(name ?? "<not a declaration>")}`;
+    return `stage: address\ncode: EDIT_DECLARATION_MISMATCH\nthe replacement must declare ${JSON.stringify(target.name)}, not ${JSON.stringify(name ?? "<not a declaration>")}\n${declarationShapeRemediation(entry.locator.path, target, false)}`;
   }
   const kind =
     (declaration as Node & { kind?: string }).kind === "VariableStatement"
       ? ((declaration as Node & { declarationKind?: string }).declarationKind ?? "variable")
       : declarationKindOf(declaration);
   if (kind !== target.kind) {
-    return `stage: address\ncode: EDIT_DECLARATION_MISMATCH\nthe replacement for ${JSON.stringify(target.kind)} ${JSON.stringify(target.name)} must remain a ${target.kind} declaration; got ${kind}`;
+    return `stage: address\ncode: EDIT_DECLARATION_MISMATCH\nthe replacement for ${JSON.stringify(target.kind)} ${JSON.stringify(target.name)} must remain a ${target.kind} declaration; got ${kind}\n${declarationShapeRemediation(entry.locator.path, target, true)}`;
   }
   return null;
 }
@@ -591,6 +645,7 @@ async function applyEditReply(
       feedback: null,
       appliedLocators: [],
       paths: [],
+      payloads: 0,
     };
   }
   for (const warning of parsed.issues.filter((issue) => issue.severity === "warning")) {
@@ -606,20 +661,29 @@ async function applyEditReply(
       feedback: null,
       appliedLocators: [],
       paths: [],
+      payloads: 0,
     };
   }
 
   const resolution = resolveMultiEditor(statements, editDslDeps(context));
+  const telemetry = replyTelemetry(statements.length, resolution);
   const feedback = feedbackOf(resolution);
+  const rejected = (
+    diagnostics: string,
+    feedbackValue: string | null,
+    extra: Partial<ReplyOutcome> = {},
+  ): ReplyOutcome => ({
+    ok: false,
+    viewerOnly: false,
+    diagnostics,
+    feedback: feedbackValue,
+    appliedLocators: [],
+    paths: [],
+    ...telemetry,
+    ...extra,
+  });
   if (resolution.failures.length > 0) {
-    return {
-      ok: false,
-      viewerOnly: false,
-      diagnostics: rejectionText(resolution, statements.length),
-      feedback,
-      appliedLocators: [],
-      paths: [],
-    };
+    return rejected(rejectionText(resolution, statements.length), feedback);
   }
 
   const commandWrites: { index: number; path: string; replacement: string }[] = [];
@@ -632,14 +696,10 @@ async function applyEditReply(
       continue;
     }
     if (commandWritePaths.has(statement.statement.path)) {
-      return {
-        ok: false,
-        viewerOnly: false,
-        diagnostics: `stage: protocol\nthe reply writes ${JSON.stringify(statement.statement.path)} more than once; write a file once per reply`,
+      return rejected(
+        `stage: protocol\nthe reply writes ${JSON.stringify(statement.statement.path)} more than once; write a file once per reply`,
         feedback,
-        appliedLocators: [],
-        paths: [],
-      };
+      );
     }
     commandWritePaths.add(statement.statement.path);
     commandWrites.push({
@@ -705,26 +765,12 @@ async function applyEditReply(
     if (region.stage === "whole-symbol" && region.text.trim() !== "") {
       const shape = declarationShapeProblem(source, existing.entry, region.text);
       if (shape !== null) {
-        return {
-          ok: false,
-          viewerOnly: false,
-          diagnostics: shape,
-          feedback,
-          appliedLocators: [],
-          paths: [],
-        };
+        return rejected(shape, feedback);
       }
     }
     const expanded = expandVariableRegion(source, existing.entry, region);
     if ("error" in expanded) {
-      return {
-        ok: false,
-        viewerOnly: false,
-        diagnostics: expanded.error,
-        feedback,
-        appliedLocators: [],
-        paths: [],
-      };
+      return rejected(expanded.error, feedback);
     }
     if (expanded === region && region.stage === "whole-symbol" && region.text.trim() !== "") {
       const selection = withExportText(source, existing.entry, {
@@ -746,31 +792,23 @@ async function applyEditReply(
     const creates = resolution.creates.length;
     const deletes = resolution.deletes.length;
     if (creates === 0 && deletes === 0) {
-      return {
-        ok: false,
-        viewerOnly: true,
-        diagnostics:
-          feedback === null
-            ? "stage: protocol\nthe reply carried a viewer but resolved no occurrence; reply with an edit clause"
-            : `stage: protocol\nthe reply only located source and wrote nothing; add the edit clauses or file commands for this work node.\n\n${feedback}`,
+      return rejected(
+        feedback === null
+          ? "stage: protocol\nthe reply carried a viewer but resolved no occurrence; reply with an edit clause"
+          : `stage: protocol\nthe reply only located source and wrote nothing; add the edit clauses or file commands for this work node.\n\n${feedback}`,
         feedback,
-        appliedLocators: [],
-        paths: [],
-      };
+        { viewerOnly: true },
+      );
     }
   }
 
   const commandPaths = new Set(commandWrites.map((write) => write.path));
   for (const region of expandedRegions) {
     if (commandPaths.has(region.path)) {
-      return {
-        ok: false,
-        viewerOnly: false,
-        diagnostics: `stage: protocol\nthe reply both edits and whole-file-writes ${JSON.stringify(region.path)}; split those actions across replies`,
+      return rejected(
+        `stage: protocol\nthe reply both edits and whole-file-writes ${JSON.stringify(region.path)}; split those actions across replies`,
         feedback,
-        appliedLocators: [],
-        paths: [],
-      };
+      );
     }
   }
 
@@ -796,52 +834,27 @@ async function applyEditReply(
           },
         });
   if (failure !== null) {
-    return {
-      ok: false,
-      viewerOnly: false,
-      diagnostics: feedback === null ? failure : `${failure}\n\n${feedback}`,
-      feedback,
-      appliedLocators: [],
-      paths: [],
-    };
+    return rejected(feedback === null ? failure : `${failure}\n\n${feedback}`, feedback);
   }
 
   const preparedWrites: { path: string; source: string }[] = [...writes];
   for (const write of commandWrites) {
     const parsedWrite = parseCheck(write.replacement);
     if (!parsedWrite.ok) {
-      return {
-        ok: false,
-        viewerOnly: false,
-        diagnostics: gateDiagnostics(0, write.replacement, parsedWrite.failure),
-        feedback,
-        appliedLocators: [],
-        paths: [],
-      };
+      return rejected(gateDiagnostics(0, write.replacement, parsedWrite.failure), feedback);
     }
     let formatted: string;
     try {
       formatted = await formatSource(write.path, write.replacement);
     } catch (error) {
-      return {
-        ok: false,
-        viewerOnly: false,
-        diagnostics: `stage: format\nthe whole-file write could not be formatted: ${error instanceof Error ? error.message : String(error)}`,
+      return rejected(
+        `stage: format\nthe whole-file write could not be formatted: ${error instanceof Error ? error.message : String(error)}`,
         feedback,
-        appliedLocators: [],
-        paths: [],
-      };
+      );
     }
     const formattedCheck = parseCheck(formatted);
     if (!formattedCheck.ok) {
-      return {
-        ok: false,
-        viewerOnly: false,
-        diagnostics: gateDiagnostics(0, formatted, formattedCheck.failure),
-        feedback,
-        appliedLocators: [],
-        paths: [],
-      };
+      return rejected(gateDiagnostics(0, formatted, formattedCheck.failure), feedback);
     }
     const meta = wholeFileWriteMeta.get(write.path);
     if (meta !== undefined) {
@@ -865,14 +878,7 @@ async function applyEditReply(
   const targetedEdit =
     expandedRegions.length > 0 || resolution.creates.length > 0 || resolution.deletes.length > 0;
   if (changes.length === 0 && resolution.deletes.length === 0 && resolution.creates.length === 0) {
-    return {
-      ok: false,
-      viewerOnly: false,
-      diagnostics: NOOP_DIAGNOSTICS,
-      feedback,
-      appliedLocators: [],
-      paths: [],
-    };
+    return rejected(NOOP_DIAGNOSTICS, feedback);
   }
 
   for (const [path, source] of uniqueWrites) {
@@ -910,6 +916,7 @@ async function applyEditReply(
     paths: [
       ...new Set([...uniqueWrites.keys(), ...resolution.deletes.map((deletion) => deletion.path)]),
     ],
+    ...telemetry,
     wholeFileWrites,
     targetedEdit,
   };
@@ -1762,6 +1769,8 @@ export async function runTaskLoop(options: LoopOptions): Promise<LoopResult> {
       ],
     };
     const seen = new Set<string>();
+    /** Exact read-only reply fingerprints, keyed by reply content + workspace state. */
+    const viewerSeen = new Set<string>();
     /** Whole-file-written paths since the last targeted edit, per work node. */
     const wholeFileWritesSinceEdit = new Set<string>();
     let priorGate: string | undefined;
@@ -1807,6 +1816,16 @@ export async function runTaskLoop(options: LoopOptions): Promise<LoopResult> {
         iteration,
       };
       const outcome = await applyEditReply(context, content, bases);
+      const workspaceKey = workspaceFingerprint(cwd, bases);
+      // Read-only replies are inspection, not progress. A viewer/read may be
+      // repeated only after the workspace changes; an identical reply against
+      // the same source is a protocol rejection that asks for an edit.
+      let duplicateViewer = false;
+      if (outcome.viewerOnly) {
+        const viewerKey = hashText(`${content}\n${workspaceKey}`);
+        duplicateViewer = viewerSeen.has(viewerKey);
+        viewerSeen.add(viewerKey);
+      }
       let diagnostics: string | null;
       if (outcome.ok) {
         writeRecord(records, {
@@ -1818,8 +1837,12 @@ export async function runTaskLoop(options: LoopOptions): Promise<LoopResult> {
           replacement: content,
           diagnostics: outcome.diagnostics,
           finishReason: response.finishReason,
-          payloads: 1,
+          payloads: outcome.payloads,
           appliedLocators: outcome.appliedLocators,
+          selectors: outcome.selectors,
+          stages: outcome.stages,
+          matcherKinds: outcome.matcherKinds,
+          creates: outcome.creates,
         });
         const writes = outcome.wholeFileWrites ?? [];
         const repeatedWrites = new Set(
@@ -1843,30 +1866,43 @@ export async function runTaskLoop(options: LoopOptions): Promise<LoopResult> {
         priorDiagnostics = undefined;
         feedback = outcome.feedback ?? undefined;
       } else {
-        diagnostics = outcome.diagnostics ?? "stage: protocol\nthe reply was rejected";
+        const viewerNoProgress = duplicateViewer
+          ? "stage: protocol\nthe same viewer/read was already requested and the workspace has not changed; inspection makes no progress. Reply with the edit clauses or file commands for this work node now."
+          : null;
+        diagnostics =
+          viewerNoProgress ?? outcome.diagnostics ?? "stage: protocol\nthe reply was rejected";
         writeRecord(records, {
           iteration,
           kind: "exchange",
           exchange: null,
           node,
-          outcome: outcome.viewerOnly ? "viewer" : outcomeOf(stageOf(diagnostics)),
+          outcome: duplicateViewer
+            ? "protocol"
+            : outcome.viewerOnly
+              ? "viewer"
+              : outcomeOf(stageOf(diagnostics)),
           replacement: content,
           diagnostics,
           finishReason: response.finishReason,
-          payloads: 0,
+          payloads: outcome.payloads,
+          selectors: outcome.selectors,
+          stages: outcome.stages,
+          matcherKinds: outcome.matcherKinds,
+          creates: outcome.creates,
         });
         strategyAdvisory = undefined;
         priorGate = undefined;
-        priorDiagnostics = outcome.viewerOnly ? undefined : diagnostics;
-        feedback = outcome.feedback ?? undefined;
+        priorDiagnostics = duplicateViewer || !outcome.viewerOnly ? diagnostics : undefined;
+        feedback = duplicateViewer ? undefined : (outcome.feedback ?? undefined);
       }
 
-      const stateKey = hashText(`${workspaceFingerprint(cwd, bases)}\n${diagnostics ?? ""}`);
+      const stateKey = hashText(`${workspaceKey}\n${diagnostics ?? ""}`);
       const replyKey = hashText(`${content}\n${stateKey}`);
-      // Read-only replies are an inspection tool, not progress: a `read` may be
-      // repeated until the token budget runs out. Rejected or applied replies
-      // participate in the repeated fingerprint/no-progress stop.
-      if (!outcome.viewerOnly) {
+      // A successful viewer is inspection and is bounded by `viewerSeen`. A
+      // duplicate viewer is a protocol rejection and joins the ordinary
+      // repeated fingerprint so a model that ignores the edit request stops.
+      const inspectionOnly = outcome.viewerOnly && !duplicateViewer;
+      if (!inspectionOnly) {
         if (seen.has(replyKey) || seen.has(stateKey)) {
           return {
             kind: "failed",

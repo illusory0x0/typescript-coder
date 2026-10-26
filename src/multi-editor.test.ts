@@ -431,6 +431,8 @@ describe("resolveMultiEditor kind-aware create (#50)", () => {
     expect(kind.failures[0]?.stage).toBe("address");
     expect(kind.failures[0]?.diagnostics).toContain("EDIT_CREATE_KIND_MISMATCH");
     expect(kind.failures[0]?.diagnostics).toContain('"function"');
+    expect(kind.failures[0]?.diagnostics).toContain('create const "target"');
+    expect(kind.failures[0]?.diagnostics).toContain("write src/a.ts with");
 
     const name = resolve(
       createDeclaration("function", "target", "src/a.ts", "function other(): void {}"),
@@ -439,6 +441,8 @@ describe("resolveMultiEditor kind-aware create (#50)", () => {
     expect(name.regions).toEqual([]);
     expect(name.failures[0]?.diagnostics).toContain("EDIT_CREATE_NAME_MISMATCH");
     expect(name.failures[0]?.diagnostics).toContain('"other"');
+    expect(name.failures[0]?.diagnostics).toContain('create function "other"');
+    expect(name.failures[0]?.diagnostics).toContain("write src/a.ts with");
 
     const space = resolve(createDeclaration("type", "target", "src/a.ts", "class target {}"), {
       "src/a.ts": "",
