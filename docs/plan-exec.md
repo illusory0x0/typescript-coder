@@ -838,13 +838,13 @@ The reply grammar and select clause/file command forms are owned by
 [`edit-protocol.md`](edit-protocol.md) §2. This table maps a Plan action to the
 reply shape plan-exec accepts.
 
-| Action   | Required reply                                                                                                                                                                                                                                                                           |
-| -------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| `modify` | At least one `replace with <fence>` clause on the target or a related loc (a viewer alone is rejected). A whole-declaration `modify` (no `match`/`pick`) must leave one top-level declaration with the same name and exact declaration kind; `export` modifier differences are tolerated. A bare `match (` is `EDIT_MATCHER_MISSING`; use a backtick snippet, `/regex/`, or omit `match`. |
-| `create` | A whole-declaration `replace with <fence>` with no `match`/`pick`; the fence must contain exactly one top-level declaration, the target. Any other body is wrapped by the edit's space (`value` → `let`, `type` → `type`, `namespace` → `namespace`); the created name/space must match. |
-| `delete` | A whole-declaration empty fence, no `match`/`pick`.                                                                                                                                                                                                                                      |
-| `rename` | `rename <current> to <renameTo>`, no `replace`; the new name must equal `renameTo`.                                                                                                                                                                                                      |
-| `write`  | Exactly one `write <path> with <fence>`, no `within`; the sentinel close terminates it, no `end` follows, and the fence carries the complete file.                                                                                                                                    |
+| Action   | Required reply                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                               |
+| -------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `modify` | At least one `replace with <fence>` clause on the target or a related loc (a viewer alone is rejected). A whole-declaration `modify` (no `match`/`pick`) must leave one top-level declaration with the same name and exact declaration kind; `export` modifier differences are tolerated. A bare `match (` is `EDIT_MATCHER_MISSING`; use a backtick snippet, `/regex/`, or omit `match`. A snippet must be a complete statement or expression, or a contiguous run of complete statements; an unbalanced partial function body is rejected. |
+| `create` | A whole-declaration `replace with <fence>` with no `match`/`pick`; the fence must contain exactly one top-level declaration, the target. Any other body is wrapped by the edit's space (`value` → `let`, `type` → `type`, `namespace` → `namespace`); the created name/space must match.                                                                                                                                                                                                                                                     |
+| `delete` | A whole-declaration empty fence, no `match`/`pick`.                                                                                                                                                                                                                                                                                                                                                                                                                                                                                          |
+| `rename` | `rename <current> to <renameTo>`, no `replace`; the new name must equal `renameTo`.                                                                                                                                                                                                                                                                                                                                                                                                                                                          |
+| `write`  | Exactly one `write <path> with <fence>`, no `within`; the sentinel close terminates it, no `end` follows, and the fence carries the complete file.                                                                                                                                                                                                                                                                                                                                                                                           |
 
 A caller update is its own edit. The one exception is a `modify` edit's
 `related` list, which exists for atomic type/representation migrations.
@@ -888,10 +888,13 @@ earlier without rejecting the intermediate type-broken states that a multi-edit
 Task legitimately needs.
 
 A rejected reply or a read-only viewer costs one exchange. Per edit: at most 3
-exchanges. Two consecutive `EDIT_TARGET_MISMATCH` replies end the edit with
-`ADDRESS_RETRY_LIMIT` and trigger a repair patch instead of retrying the same
-address. Exhaustion marks the edit and task `failed` and triggers a patch
-re-plan.
+exchanges. A malformed matcher (`EDIT_MATCHER_MISSING` or a snippet that does
+not parse) gets one dedicated format correction; a second consecutive malformed
+matcher requires omitting `match`/`pick` and replacing the whole declaration.
+Both recoveries consume the same exchange budget. Two consecutive
+`EDIT_TARGET_MISMATCH` replies end the edit with `ADDRESS_RETRY_LIMIT` and
+trigger a repair patch instead of retrying the same address. Exhaustion marks
+the edit and task `failed` and triggers a patch re-plan.
 
 The executor may make **one** bounded self-check per edit:
 `{"request":"read"}` returns the numbered target source; any other request is

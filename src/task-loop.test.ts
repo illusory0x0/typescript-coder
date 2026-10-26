@@ -3,8 +3,13 @@ import { mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "nod
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { runLoop } from "./loop";
-import { MAX_TASK_PLAN_ROUNDS, runTaskLoop } from "./task-loop";
+import { MAX_TASK_EXCHANGES, MAX_TASK_PLAN_ROUNDS, runTaskLoop } from "./task-loop";
 import { serializePlanDsl } from "./plan-dsl";
+import {
+  TASK_MATCHER_CORRECTION,
+  TASK_MATCHER_FALLBACK,
+  TASK_MATCHER_FORMAT_HELP,
+} from "./prompts/task";
 import type { EditNode, Stage, TaskNode } from "./tasks";
 import type { ProviderLike } from "./loop";
 import type { ChatMessage, ChatOptions, ChatResponse, ToolDefinition } from "./openai";
@@ -1353,7 +1358,7 @@ end`;
     expect(readFileSync(join(dir, "src", "unused.ts"), "utf8").trim()).toBe("");
   }, 30000);
 
-  test("a missing matcher gets concrete matcher guidance", async () => {
+  test("a missing matcher recovers in one correction with a whole-declaration replace", async () => {
     const dir = project();
     const plan = planText([stageSpec(1, [taskSpec(1)])], true);
     const badMatcher = [
@@ -1371,9 +1376,147 @@ end`;
     const result = await runTaskLoop(baseOptions(dir, provider));
     expect(result.ok).toBe(true);
     expect(result.records[0]?.diagnostics).toContain("EDIT_MATCHER_MISSING");
-    const prompt = provider.calls[2]?.at(-1)?.content ?? "";
-    expect(prompt).toContain("# Matcher format");
-    expect(prompt).toContain("Never write `match (`");
+    const correction = provider.calls[2]?.at(-1)?.content ?? "";
+    expect(correction).not.toContain("# Matcher format");
+    expect(correction).not.toContain(TASK_MATCHER_FORMAT_HELP);
+    expect(correction).toContain("# Matcher correction");
+    expect(correction).toContain(TASK_MATCHER_CORRECTION);
+    expect(correction).not.toContain(TASK_MATCHER_FALLBACK);
+    const applied = result.records.find((record) => record.outcome === "applied");
+    expect(applied?.replacement).toBe(GOOD_EDIT);
+    expect(applied?.locator.path).toBe("src/helper.ts");
+    expect(applied?.locator.name).toBe("answer");
+    expect(result.records.some((record) => record.replacement?.startsWith("write "))).toBe(false);
+    expect(
+      result.records.filter((record) => record.kind === "exchange").length,
+    ).toBeLessThanOrEqual(MAX_TASK_EXCHANGES);
+    const source = readFileSync(join(dir, "src", "helper.ts"), "utf8");
+    expect(source).toContain("return 2;");
+    expect(source).not.toContain("return 1;");
+  }, 30000);
+
+  test("a matcher that does not parse gets the same bounded correction", async () => {
+    const dir = project();
+    const plan = planText([stageSpec(1, [taskSpec(1)])], true);
+    const badMatcher = [
+      "select answer in src/helper.ts resolve value",
+      "match `if (value) {`",
+      "replace with",
+      "<<<TC_EDIT_BEGIN>>>",
+      "export function answer(): number {",
+      "  return 2;",
+      "}",
+      "<<<TC_EDIT_END>>>",
+      "end",
+    ].join("\n");
+    const provider = new ScriptedProvider([plan, badMatcher, GOOD_EDIT]);
+    const result = await runTaskLoop(baseOptions(dir, provider));
+    expect(result.ok).toBe(true);
+    expect(result.records[0]?.outcome).toBe("matcher");
+    expect(result.records[0]?.diagnostics).toContain("could not be parsed as TypeScript");
+    const correction = provider.calls[2]?.at(-1)?.content ?? "";
+    expect(correction).not.toContain("# Matcher format");
+    expect(correction).not.toContain(TASK_MATCHER_FORMAT_HELP);
+    expect(correction).toContain("# Matcher correction");
+    expect(correction).toContain(TASK_MATCHER_CORRECTION);
+    const applied = result.records.find((record) => record.outcome === "applied");
+    expect(applied?.replacement).toBe(GOOD_EDIT);
+    expect(readFileSync(join(dir, "src", "helper.ts"), "utf8")).toContain("return 2;");
+  }, 30000);
+
+  test("a second malformed matcher falls back to a whole-declaration replace", async () => {
+    const dir = project();
+    const plan = planText([stageSpec(1, [taskSpec(1)])], true);
+    const missingMatcher = [
+      "select answer in src/helper.ts resolve value",
+      "match ( return 1; )",
+      "replace with",
+      "<<<TC_EDIT_BEGIN>>>",
+      "export function answer(): number {",
+      "  return 2;",
+      "}",
+      "<<<TC_EDIT_END>>>",
+      "end",
+    ].join("\n");
+    const unparseableMatcher = [
+      "select answer in src/helper.ts resolve value",
+      "match `if (value) {`",
+      "replace with",
+      "<<<TC_EDIT_BEGIN>>>",
+      "export function answer(): number {",
+      "  return 2;",
+      "}",
+      "<<<TC_EDIT_END>>>",
+      "end",
+    ].join("\n");
+    const provider = new ScriptedProvider([plan, missingMatcher, unparseableMatcher, GOOD_EDIT]);
+    const result = await runTaskLoop(baseOptions(dir, provider));
+    expect(result.ok).toBe(true);
+    expect(result.records[0]?.diagnostics).toContain("EDIT_MATCHER_MISSING");
+    expect(result.records[1]?.diagnostics).toContain("could not be parsed as TypeScript");
+    const firstCorrection = provider.calls[2]?.at(-1)?.content ?? "";
+    expect(firstCorrection).toContain(TASK_MATCHER_CORRECTION);
+    expect(firstCorrection).not.toContain(TASK_MATCHER_FALLBACK);
+    const fallback = provider.calls[3]?.at(-1)?.content ?? "";
+    expect(fallback).not.toContain("# Matcher format");
+    expect(fallback).not.toContain(TASK_MATCHER_FORMAT_HELP);
+    expect(fallback).toContain("# Matcher correction");
+    expect(fallback).toContain(TASK_MATCHER_FALLBACK);
+    expect(fallback).toContain("Omit `match` and `pick`");
+    expect(fallback).not.toContain("match `return 1;`");
+    expect(fallback).not.toContain("pick 2");
+    expect(
+      result.records.filter((record) => record.kind === "exchange").length,
+    ).toBeLessThanOrEqual(MAX_TASK_EXCHANGES);
+    const applied = result.records.find((record) => record.outcome === "applied");
+    expect(applied?.replacement).toBe(GOOD_EDIT);
+    expect(applied?.locator.path).toBe("src/helper.ts");
+    expect(applied?.locator.name).toBe("answer");
+    expect(result.records.some((record) => record.replacement?.startsWith("write "))).toBe(false);
+    const source = readFileSync(join(dir, "src", "helper.ts"), "utf8");
+    expect(source).toContain("return 2;");
+    expect(source).not.toContain("return 1;");
+  }, 30000);
+
+  test("a non-malformed matcher failure resets the correction streak", async () => {
+    const dir = project();
+    const plan = planText([stageSpec(1, [taskSpec(1)])], true);
+    const missingMatcher = [
+      "select answer in src/helper.ts resolve value",
+      "match ( return 1; )",
+      "replace with",
+      "<<<TC_EDIT_BEGIN>>>",
+      "export function answer(): number {",
+      "  return 2;",
+      "}",
+      "<<<TC_EDIT_END>>>",
+      "end",
+    ].join("\n");
+    const notFoundMatcher = [
+      "select answer in src/helper.ts resolve value",
+      "match `return 3;`",
+      "replace with",
+      "<<<TC_EDIT_BEGIN>>>",
+      "export function answer(): number {",
+      "  return 2;",
+      "}",
+      "<<<TC_EDIT_END>>>",
+      "end",
+    ].join("\n");
+    const provider = new ScriptedProvider([plan, missingMatcher, notFoundMatcher, GOOD_EDIT]);
+    const result = await runTaskLoop(baseOptions(dir, provider));
+    expect(result.ok).toBe(true);
+    expect(result.records[1]?.diagnostics).toContain("was not found");
+    const correction = provider.calls[2]?.at(-1)?.content ?? "";
+    expect(correction).toContain("# Matcher correction");
+    const afterNotFound = provider.calls[3]?.at(-1)?.content ?? "";
+    expect(afterNotFound).toContain("# Matcher format");
+    expect(afterNotFound).toContain(TASK_MATCHER_FORMAT_HELP);
+    expect(afterNotFound).not.toContain("# Matcher correction");
+    expect(
+      result.records.filter((record) => record.kind === "exchange").length,
+    ).toBeLessThanOrEqual(MAX_TASK_EXCHANGES);
+    expect(readFileSync(join(dir, "src", "helper.ts"), "utf8")).toContain("return 2;");
   }, 30000);
 
   test("an off-target edit is rejected without touching the file", async () => {

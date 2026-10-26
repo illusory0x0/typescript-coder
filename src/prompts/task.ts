@@ -383,7 +383,7 @@ const TASK_ACTION_RULES: Record<string, string> = {
 export const TASK_SELF_CHECK_OFFER =
   'You may make at most one bounded self-check read per edit: reply with exactly {"request":"read"} to see the current source again; the harness returns it, then asks again.';
 
-/** Extra guidance after an EDIT_MATCHER_MISSING rejection. */
+/** Extra guidance after a malformed matcher. */
 export const TASK_MATCHER_FORMAT_HELP = `Matcher format:
 - match \`copied snippet\`
 - match /regex/
@@ -395,6 +395,25 @@ function body with an unbalanced brace. If the span is hard to copy, omit
 \`match\` and replace the whole declaration.
 
 Never write \`match (\` or unquoted code after \`match\`; that is a syntax error.`;
+
+/** The first malformed-matcher correction on the next turn (#45). */
+export const TASK_MATCHER_CORRECTION = `Your previous matcher was malformed. Reply with exactly one of:
+- match \`complete snippet\` — a complete statement or expression, or a contiguous run of complete statements, copied from the target;
+- match /regex/ — a valid ECMA-262 pattern with no flags;
+- omit \`match\` and replace the whole declaration.
+
+The snippet must not be an unbalanced partial function body. Repeating \`match (\`,
+unquoted code after \`match\`, or a partial snippet is rejected. Do not substitute
+a whole-file \`write\` for this edit.`;
+
+/** The bounded whole-declaration fallback after a second malformed matcher (#45). */
+export const TASK_MATCHER_FALLBACK = `The matcher was malformed twice in a row. Omit \`match\` and \`pick\` and return
+the complete declaration in one \`select … replace with <fence> end\` clause. Do
+not send \`match\` or a partial snippet in this reply, and do not substitute a
+whole-file \`write\` for this edit.`;
+
+/** A malformed-matcher recovery state: one correction, then the bounded fallback. */
+export type TaskMatcherFailure = "malformed" | "repeated";
 
 /**
  * The execution instruction. It teaches the same clause grammar as the edit
@@ -408,26 +427,41 @@ export function taskEditDslInstruction(): string {
     "Every clause in one reply must resolve to a different declaration `(path, symbol, kind)`; target one declaration at most once per reply, even with different `match` or `pick` spans, and split edits to one declaration across exchanges.",
     "",
     "Clause: `select <symbol> in <path> [ resolve <value|type|namespace> ] [ match (<snippet> | /regex/) ] [ [ pick <range> ] replace with <fence> | rename <old> to <new> ] end`.",
-    "`match` accepts only a backtick snippet or `/regex/`; `match (` and unquoted code are rejected. It locates a span inside the declaration; `pick` narrows a match and requires `replace`; omit `match` to rewrite the whole declaration; an empty body deletes it. Open the body with `<<<TC_EDIT_BEGIN>>>` on its own line and close it with `<<<TC_EDIT_END>>>` on its own line; the body is raw text (hyphen runs, backticks, `done`, and `end` are ordinary body lines). `pick` coordinates are the 1-based file-absolute lines of the content view.",
+    "`match` accepts only a backtick snippet or `/regex/`; `match (` and unquoted code are rejected. A snippet must be a complete statement or expression, or a contiguous run of complete statements copied from the target, never an unbalanced partial function body; if the span is hard to copy, omit `match` and rewrite the whole declaration. It locates a span inside the declaration; `pick` narrows a match and requires `replace`; omit `match` to rewrite the whole declaration; an empty body deletes it. Open the body with `<<<TC_EDIT_BEGIN>>>` on its own line and close it with `<<<TC_EDIT_END>>>` on its own line; the body is raw text (hyphen runs, backticks, `done`, and `end` are ordinary body lines). `pick` coordinates are the 1-based file-absolute lines of the content view.",
     "For a whole-file edit, `write <path> with <<<TC_EDIT_BEGIN>>> … <<<TC_EDIT_END>>>` replaces the file with the raw body; no terminator follows the sentinel close.",
     "",
     "You do not run the type check; the harness runs the task gate after every edit in the task settles. An edit may also change the same-file declarations listed in its `related` field.",
   ].join("\n");
 }
 
-/** One action-specific example, injected only after a format rejection. */
-export function taskEditDslHelp(action: EditNode["action"]): string {
+/**
+ * One action-specific example, injected only after a format rejection. The
+ * `wholeDeclaration` form drops the match-bearing modify example so the
+ * repeated-matcher fallback cannot re-teach the rejected form (#45).
+ */
+export function taskEditDslHelp(action: EditNode["action"], wholeDeclaration = false): string {
   const examples: Record<EditNode["action"], string> = {
-    modify: [
-      "select answer in src/a.ts resolve value",
-      "match `return 1;`",
-      "pick 2",
-      "replace with",
-      "<<<TC_EDIT_BEGIN>>>",
-      "return 2;",
-      "<<<TC_EDIT_END>>>",
-      "end",
-    ].join("\n"),
+    modify: wholeDeclaration
+      ? [
+          "select answer in src/a.ts resolve value",
+          "replace with",
+          "<<<TC_EDIT_BEGIN>>>",
+          "export function answer(): number {",
+          "  return 2;",
+          "}",
+          "<<<TC_EDIT_END>>>",
+          "end",
+        ].join("\n")
+      : [
+          "select answer in src/a.ts resolve value",
+          "match `return 1;`",
+          "pick 2",
+          "replace with",
+          "<<<TC_EDIT_BEGIN>>>",
+          "return 2;",
+          "<<<TC_EDIT_END>>>",
+          "end",
+        ].join("\n"),
     create: [
       "select double in src/a.ts resolve value",
       "replace with",
@@ -493,6 +527,11 @@ export interface TaskTurnInput {
   context?: string;
   /** Append one action-specific example after a format/address rejection. */
   help?: boolean;
+  /**
+   * Malformed-matcher recovery for this turn: `malformed` is the first
+   * correction, `repeated` demands a whole-declaration rewrite (#45).
+   */
+  matcherFailure?: TaskMatcherFailure;
 }
 
 function numberedView(source: string, startLine = 1): string {
@@ -562,14 +601,28 @@ export function buildTaskTurnPrompt(input: TaskTurnInput): string {
       TASK_SELF_CHECK_OFFER,
     );
     if (
-      input.diagnostics.includes("EDIT_MATCHER_MISSING") ||
-      input.diagnostics.includes("stage: matcher")
+      input.matcherFailure === undefined &&
+      (input.diagnostics.includes("EDIT_MATCHER_MISSING") ||
+        input.diagnostics.includes("stage: matcher"))
     ) {
       blocks.push("", "# Matcher format", "", TASK_MATCHER_FORMAT_HELP);
     }
   }
+  if (input.matcherFailure !== undefined) {
+    blocks.push(
+      "",
+      "# Matcher correction",
+      "",
+      input.matcherFailure === "repeated" ? TASK_MATCHER_FALLBACK : TASK_MATCHER_CORRECTION,
+    );
+  }
   if (input.help === true) {
-    blocks.push("", "# Format help", "", taskEditDslHelp(edit.action));
+    blocks.push(
+      "",
+      "# Format help",
+      "",
+      taskEditDslHelp(edit.action, input.matcherFailure === "repeated"),
+    );
   }
   blocks.push(
     "",

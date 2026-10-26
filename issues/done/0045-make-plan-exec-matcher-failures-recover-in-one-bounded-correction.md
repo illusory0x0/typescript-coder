@@ -1,7 +1,7 @@
 ---
 id: 45
 title: "Make plan-exec matcher failures recover in one bounded correction"
-status: todo
+status: done
 priority: medium
 milestone: null
 parent: 44
@@ -56,3 +56,4 @@ just typecheck && just test
 Do not solve this by silently treating `match (` as a snippet or by disabling
 matcher validation. The issue is to make the correction path deterministic and
 cheap.
+- Resolved 2026-10-26: malformed matchers (EDIT_MATCHER_MISSING or an unparseable snippet) now get one dedicated correction, then a bounded fallback that requires omitting match/pick and replacing the whole declaration; the generic matcher help still covers not-found/ambiguous/invalid-regex failures. The parser stayed strict, the system prompt and docs state the snippet-completeness rule, and the fallback stays inside MAX_TASK_EXCHANGES. Verified: matcher-scoped task-loop tests (4 pass), prompts/task tests (25 pass), just typecheck && just test (1495 pass).

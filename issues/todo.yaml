@@ -2,14 +2,6 @@
 # rewrites it; `add` appends; other writes keep it. `check` enforces it.
 # A dep, and every child of an umbrella, must be listed before its dependent.
 
-- id: 45
-  title: "Make plan-exec matcher failures recover in one bounded correction"
-  status: todo
-  priority: medium
-  milestone: null
-  parent: 44
-  deps: []
-  file: 0045-make-plan-exec-matcher-failures-recover-in-one-bounded-correction.md
 - id: 46
   title: "Make large-edit tsc advisories actionable in plan-exec"
   status: todo

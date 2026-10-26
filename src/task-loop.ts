@@ -85,6 +85,7 @@ import {
   renderTaskContentView,
   replanDelta,
 } from "./prompts/task";
+import type { TaskMatcherFailure } from "./prompts/task";
 import {
   activeStage,
   activeTask,
@@ -203,6 +204,22 @@ function outcomeOf(stage: string): ExchangeOutcome {
 function stageOf(diagnostics: string): string {
   const match = /^stage:\s*(\S+)/m.exec(diagnostics);
   return match?.[1] ?? "protocol";
+}
+
+/**
+ * Only the two malformed-matcher classes get the bounded correction (#45):
+ * a missing matcher value and a snippet that does not parse. Matcher-not-found,
+ * matcher-ambiguous, and invalid-regex replies keep the general matcher help;
+ * they are selector problems, not malformed syntax.
+ */
+function isMalformedMatcher(diagnostics: string): boolean {
+  if (diagnostics.includes("EDIT_MATCHER_MISSING")) {
+    return true;
+  }
+  return (
+    stageOf(diagnostics) === "matcher" &&
+    diagnostics.includes("the matcher could not be parsed as TypeScript")
+  );
 }
 
 /**
@@ -1230,8 +1247,11 @@ async function executeEdit(
   let selfCheckUsed = false;
   let formatHelp = false;
   let addressMismatches = 0;
+  let malformedMatchers = 0;
 
   for (let exchange = 1; exchange <= MAX_TASK_EXCHANGES; exchange += 1) {
+    const matcherFailure: TaskMatcherFailure | undefined =
+      malformedMatchers === 0 ? undefined : malformedMatchers === 1 ? "malformed" : "repeated";
     const view = declarationView(context.cwd, edit);
     const contextText = [
       `This is micro edit #${edit.id} in task #${task.id}, stage #${stage.id}. Do not change declarations outside this edit's target and related list.`,
@@ -1253,6 +1273,7 @@ async function executeEdit(
       startLine: view.startLine,
       diagnostics,
       help: formatHelp,
+      matcherFailure,
       context: contextText,
     });
     const last = chat.messages[chat.messages.length - 1];
@@ -1303,9 +1324,11 @@ async function executeEdit(
     if (request.kind === "error") {
       diagnostics = request.diagnostics;
       formatHelp = true;
+      malformedMatchers = 0;
       continue;
     }
     if (request.kind === "ok") {
+      malformedMatchers = 0;
       if (selfCheckUsed) {
         diagnostics =
           "stage: protocol\nthe edit already used its one read; return the edit clauses now";
@@ -1328,6 +1351,7 @@ async function executeEdit(
     if (doneWord) {
       diagnostics = `stage: protocol\nTASK_DONE ends an edit that applied a change; this edit has not changed ${formatTaskLoc(edit.loc)} yet, so reply with the edit clauses`;
       formatHelp = true;
+      malformedMatchers = 0;
       writeRecord(context.records, {
         iteration: context.iteration,
         kind: "exchange",
@@ -1346,6 +1370,7 @@ async function executeEdit(
       const addressMismatch =
         stageOf(diagnostics) === "address" && /EDIT_TARGET_MISMATCH/.test(diagnostics);
       addressMismatches = addressMismatch ? addressMismatches + 1 : 0;
+      malformedMatchers = isMalformedMatcher(diagnostics) ? malformedMatchers + 1 : 0;
       formatHelp =
         outcome.viewerOnly ||
         /^stage: (protocol|syntax|address|matcher|range|no-op)/.test(diagnostics);
@@ -1369,6 +1394,7 @@ async function executeEdit(
       continue;
     }
     formatHelp = false;
+    malformedMatchers = 0;
     writeRecord(context.records, {
       iteration: context.iteration,
       kind: "exchange",

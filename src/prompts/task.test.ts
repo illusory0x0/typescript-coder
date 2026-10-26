@@ -13,6 +13,8 @@ import {
   renderTaskContentView,
   taskEditDslHelp,
   TASK_FUNCTIONAL_STYLE,
+  TASK_MATCHER_CORRECTION,
+  TASK_MATCHER_FALLBACK,
   TASK_PATCH_EXAMPLE,
   TASK_PATCH_FINAL_EXAMPLE,
   TASK_PLAN_COMPLEX_EXAMPLE,
@@ -304,9 +306,11 @@ describe("execution prompts", () => {
     expect(prompt).toContain("Workflow:\n1. Read the target source");
     expect(prompt).toContain("Clause: `select <symbol> in <path>");
     expect(prompt).toContain("whole-file edit");
+    expect(prompt).toContain("A snippet must be a complete statement or expression");
+    expect(prompt).toContain("unbalanced partial function body");
   });
 
-  test("an EDIT_MATCHER_MISSING retry carries concrete matcher help", () => {
+  test("a malformed-matcher retry carries only the dedicated correction", () => {
     const state = stateOf();
     const stage = state.stages[0] as Stage;
     const task = stage.tasks[0] as TaskNode;
@@ -318,10 +322,56 @@ describe("execution prompts", () => {
       contentView: "export function answer(): number {\n  return 1;\n}",
       diagnostics: "stage: syntax\ncode: EDIT_MATCHER_MISSING",
       help: true,
+      matcherFailure: "malformed",
+    });
+    expect(prompt).not.toContain("# Matcher format");
+    expect(prompt).not.toContain(TASK_MATCHER_FORMAT_HELP);
+    expect(prompt).toContain("# Matcher correction");
+    expect(prompt).toContain(TASK_MATCHER_CORRECTION);
+    expect(prompt).toContain("complete statement or expression");
+    expect(prompt).not.toContain(TASK_MATCHER_FALLBACK);
+  });
+
+  test("a non-malformed matcher failure keeps the generic matcher help", () => {
+    const state = stateOf();
+    const stage = state.stages[0] as Stage;
+    const task = stage.tasks[0] as TaskNode;
+    const prompt = buildTaskTurnPrompt({
+      state,
+      stage,
+      task,
+      edit: task.edits[0] as EditNode,
+      contentView: "export function answer(): number {\n  return 1;\n}",
+      diagnostics:
+        'stage: matcher\nthe matcher was not found inside function "answer" in src/helper.ts',
+      help: true,
     });
     expect(prompt).toContain("# Matcher format");
     expect(prompt).toContain(TASK_MATCHER_FORMAT_HELP);
-    expect(prompt).toContain("Never write `match (`");
+    expect(prompt).not.toContain("# Matcher correction");
+  });
+
+  test("the repeated-matcher fallback demands no match and drops the match example", () => {
+    const state = stateOf();
+    const stage = state.stages[0] as Stage;
+    const task = stage.tasks[0] as TaskNode;
+    const prompt = buildTaskTurnPrompt({
+      state,
+      stage,
+      task,
+      edit: task.edits[0] as EditNode,
+      contentView: "export function answer(): number {\n  return 1;\n}",
+      diagnostics: "stage: matcher\nthe matcher could not be parsed as TypeScript: error",
+      help: true,
+      matcherFailure: "repeated",
+    });
+    expect(prompt).not.toContain("# Matcher format");
+    expect(prompt).not.toContain(TASK_MATCHER_FORMAT_HELP);
+    expect(prompt).toContain("# Matcher correction");
+    expect(prompt).toContain(TASK_MATCHER_FALLBACK);
+    expect(prompt).toContain("Omit `match` and `pick`");
+    expect(prompt).toContain(taskEditDslHelp("modify", true));
+    expect(prompt).not.toContain("match `return 1;`");
   });
 
   test("the edit instruction requires distinct declarations across clauses", () => {
