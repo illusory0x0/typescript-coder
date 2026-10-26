@@ -237,8 +237,10 @@ categories:
           `task-exhausted` (`docs/plan-exec.md` §9).
       - term: token-budget
         definition: >-
-          Accumulated provider tokens strictly exceed the budget (default
-          120000). The in-flight response is not applied or verified.
+          Accumulated tokens strictly exceed the configured budget (default
+          120000). The core CLI counts raw provider tokens; the benchmark counts
+          cache-excluded loop tokens. The in-flight response is not applied or
+          verified.
       - term: edit-exhausted
         definition: The run cannot produce a valid edit within the round/iteration caps.
       - term: task-exhausted
@@ -352,8 +354,9 @@ categories:
           multi-variant run).
       - term: benchmark --token-budget
         definition: >-
-          tc side only: aborts a run once accumulated provider tokens strictly
-          exceed n; default 120000.
+          tc side only: aborts a run once accumulated cache-excluded loop tokens
+          (cache-miss input + output + reasoning) strictly exceed n; the final
+          termination summary is not counted; default 120000.
       - term: benchmark --effort
         definition: >-
           tc side only: forces `reasoning_effort` on every Edit-loop call,
@@ -447,7 +450,8 @@ categories:
         definition: >-
           The cache-excluded, like-for-like triple used by reports: `in` is
           cache-miss input, `out` is output including reasoning, and
-          `total = in + out`.
+          `total = in + out`. `loop` is that same total over tc loop calls only
+          (the budget basis; null on the oc side).
       - term: normalizeBuckets
         definition: >-
           Shared normalization in `src/benchmark-pricing.ts` that converts each
@@ -793,7 +797,8 @@ categories:
       - term: total versus billable total
         definition: >-
           `tokens.total` may include cache or be derived; `tokens.billable.total`
-          is the report's comparison basis.
+          is the report's comparison basis, and `tokens.billable.loop` is the tc
+          budget basis excluding the final termination summary.
       - term: duration versus window
         definition: >-
           `durationMs` covers model work only; `startedAt`/`finishedAt` define

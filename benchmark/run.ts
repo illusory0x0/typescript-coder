@@ -14,6 +14,7 @@ import { fileURLToPath } from "node:url";
 import { archiveFailureArtifacts, writeFailureArtifact } from "../src/failure-artifact";
 import {
   buildSystemPrompt,
+  cacheExcludedTokens,
   canonicalAgentMode,
   DEFAULT_AGENT_MODE,
   exchangeStats,
@@ -21,7 +22,13 @@ import {
 } from "../src/loop";
 import { buildTaskExecutionSystemPrompt, buildTaskPlanningSystemPrompt } from "../src/prompts/task";
 import { OpenAIProvider, readConfigFromEnv } from "../src/openai";
-import type { AgentMode, ProviderLike, ProtocolFormat, RejectionCause } from "../src/loop";
+import type {
+  AgentMode,
+  LoopTokens,
+  ProviderLike,
+  ProtocolFormat,
+  RejectionCause,
+} from "../src/loop";
 import { ReplayRecorder, usageFromRaw } from "../src/replay-format";
 import {
   PRICING_FETCHED_ON,
@@ -83,8 +90,35 @@ interface TokenUsage {
  * `out` is output (reasoning included), and `total = in + out`. Cache-hit input
  * is deliberately excluded so the two sides compare on the same basis.
  */
+export interface RunBillable extends BillableTokens {
+  /**
+   * The cache-excluded total over loop calls only, excluding a tc run's final
+   * termination summary (#47): the `--token-budget` basis. Null on the oc side
+   * and when the side reported no usage.
+   */
+  readonly loop: number | null;
+}
+
 export interface RunTokens extends TokenUsage {
-  readonly billable: BillableTokens;
+  readonly billable: RunBillable;
+}
+
+/**
+ * Per-run billable split (#47): `total` covers every provider call the side
+ * made (for tc that includes the final termination summary); `loop` applies the
+ * same cache-excluded formula to the loop calls only — the `--token-budget`
+ * basis. `loopTokens` is the tc loop result's tally, passed as null on the oc
+ * side or when usage is unavailable.
+ */
+export function billableForRun(
+  totalUsage: TokenUsage,
+  loopTokens: LoopTokens | null,
+  side: Side,
+): RunBillable {
+  return {
+    ...billableTokens(totalUsage, side),
+    loop: side === "tc" && loopTokens !== null ? cacheExcludedTokens(loopTokens) : null,
+  };
 }
 
 interface CommandOutcome {
@@ -157,6 +191,8 @@ interface SideOutcome {
   readonly startedAt: string;
   readonly finishedAt: string;
   readonly tokens: TokenUsage;
+  /** tc loop-call tally (the budget basis); null on the oc side and on a tc error. */
+  readonly loopTokens: LoopTokens | null;
   readonly usageAvailable: boolean;
   readonly usageSource: string;
   readonly rawUsage: unknown;
@@ -501,7 +537,8 @@ Options:
   --json <path>                              report output path (default: benchmark/results/)
   --replay-dir <path>                        write per-run tc-side replay bundles to <path>
   --token-budget <n>                         abort a tc-side run once accumulated cache-excluded
-                                             tokens exceed n (default: 120000)
+                                             loop tokens exceed n; the final termination summary
+                                             is not budgeted (default: 120000)
   --effort <none|low|high|max>               force this reasoning_effort on every tc-side
                                              model call (default: none)
   --multi-payload                            opt in to multi-payload exchanges (#69) on the
@@ -1312,6 +1349,7 @@ async function runTypescriptCoderSide(options: {
     startedAt,
     finishedAt,
     tokens,
+    loopTokens: result?.tokens ?? null,
     usageAvailable,
     usageSource: usageAvailable ? "chat-completions" : "unavailable",
     rawUsage: provider.rawUsages,
@@ -1462,6 +1500,7 @@ async function runOpencodeSide(options: {
     startedAt,
     finishedAt,
     tokens,
+    loopTokens: null,
     usageAvailable,
     usageSource,
     rawUsage,
@@ -1701,7 +1740,16 @@ async function runOnce(job: BenchmarkJob, context: RunContext): Promise<RunRecor
     // on the state left on disk (#43); judge fields stay as recorded.
     ok: outcome.terminationReason === null && judge.ok,
     sideOk: outcome.sideOk,
-    tokens: { ...outcome.tokens, billable: billableTokens(outcome.tokens, side) },
+    tokens: {
+      ...outcome.tokens,
+      // The loop split is only meaningful with reported usage; `total` keeps
+      // its existing zero-bucket treatment when usage is unavailable.
+      billable: billableForRun(
+        outcome.tokens,
+        outcome.usageAvailable ? outcome.loopTokens : null,
+        side,
+      ),
+    },
     usageAvailable: outcome.usageAvailable,
     usageSource: outcome.usageSource,
     rawUsage: outcome.rawUsage,
@@ -2508,7 +2556,11 @@ export function writeMarkdownReport(
     "",
     "tc: OpenAI-compatible `usage` from the provider, summed over every chat request",
     "(input/prompt, output/completion, total; cache and reasoning counters are kept per",
-    "record).",
+    "record). The loop enforces its budget before the termination summary call, so",
+    "`tokens.billable.total` includes that final summary while `tokens.billable.loop`",
+    "covers loop calls only: `tokens.billable.loop` is the `--token-budget` basis and",
+    "`tokens.billable.total` is the all-calls headline. The oc side has no loop split",
+    "(null).",
     "",
     "oc: usage read from `opencode session export` (`info.tokens`), falling back to",
     "`opencode stats --json`; input/output come from the reported session usage and total",
@@ -2807,19 +2859,24 @@ export function writeMarkdownReport(
   lines.push("## Raw runs", "");
   lines.push(
     "Provider-reported buckets, verbatim: tc `Raw in`/`Raw total` include cache hits;",
-    "oc `Raw in` excludes them. The cache-excluded comparison total is in the tables",
-    "above (and each row's `tokens.billable`), not here.",
+    "oc `Raw in` excludes them. `Loop total` is `tokens.billable.loop` (tc loop calls",
+    "only, the `--token-budget` basis; n/a for oc), while the cache-excluded",
+    "all-calls comparison total (`tokens.billable.total`, including a tc termination",
+    "summary) is in the tables above, not here.",
     "",
-    "| Task | Side | Protocol | Agent mode | Rep | OK | Raw in | Raw out | Raw total | Cost | Rate | Steps | Dur (s) |",
-    "| --- | --- | --- | --- | ---: | --- | ---: | ---: | ---: | ---: | --- | ---: | ---: |",
+    "| Task | Side | Protocol | Agent mode | Rep | OK | Raw in | Raw out | Raw total | Loop total | Cost | Rate | Steps | Dur (s) |",
+    "| --- | --- | --- | --- | ---: | --- | ---: | ---: | ---: | ---: | ---: | --- | ---: | ---: |",
   );
   for (const run of report.runs) {
+    const loopTotal = run.tokens.billable.loop ?? null;
     lines.push(
       `| ${run.task} | ${run.side} | ${run.protocol ?? "n/a"} | ${run.agentMode ?? "n/a"} | ${run.rep} | ${
         run.ok ? "yes" : "no"
       } | ${formatTokenCount(
         run.tokens.input,
-      )} | ${formatTokenCount(run.tokens.output)} | ${formatTokenCount(run.tokens.total)} | ${formatUsd(
+      )} | ${formatTokenCount(run.tokens.output)} | ${formatTokenCount(run.tokens.total)} | ${
+        loopTotal === null ? "n/a" : formatTokenCount(loopTotal)
+      } | ${formatUsd(
         run.cost ?? null,
       )} | ${run.rateClass ?? "n/a"} | ${formatTokenCount(run.steps)} | ${formatSeconds(
         run.durationMs,

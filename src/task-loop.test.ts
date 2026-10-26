@@ -2,7 +2,7 @@ import { afterEach, describe, expect, test } from "bun:test";
 import { mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { runLoop } from "./loop";
+import { cacheExcludedTokens, runLoop } from "./loop";
 import { MAX_TASK_EXCHANGES, MAX_TASK_PLAN_ROUNDS, runTaskLoop } from "./task-loop";
 import { serializePlanDsl } from "./plan-dsl";
 import {
@@ -868,6 +868,32 @@ describe("runTaskLoop", () => {
     expect(result.terminationReason).toBe("token-budget");
     expect(result.usage?.review.total).toBe(15);
     expect(result.diagnostics).toContain("token budget");
+  }, 30000);
+
+  test("a reasoning-bearing reply counts toward the cache-excluded budget", async () => {
+    const dir = project();
+    const plan = planText([stageSpec(1, [taskSpec(1)])], true);
+    // Cache-excluded = (10 - 10) + 5 + 30 = 35 per call; without reasoning it
+    // would be 5 and stay under the 34-token budget.
+    const rawUsage = {
+      prompt_tokens: 10,
+      completion_tokens: 5,
+      total_tokens: 45,
+      reasoning_tokens: 30,
+      prompt_tokens_details: { cached_tokens: 10 },
+    };
+    const provider = new ScriptedProvider([plan, GOOD_EDIT], [], rawUsage);
+    const result = await runTaskLoop({
+      ...baseOptions(dir, provider),
+      tokenBudget: 34,
+      tokenBudgetBasis: "cache-excluded",
+    });
+    expect(result.ok).toBe(false);
+    expect(result.terminationReason).toBe("token-budget");
+    expect(result.diagnostics).toContain("cache-excluded");
+    expect(result.usage?.planning.reasoning).toBe(30);
+    expect(result.tokens.reasoning).toBe(30);
+    expect(cacheExcludedTokens(result.tokens)).toBe(35);
   }, 30000);
 
   test("a failed final task reopens in place and keeps finalTaskId", async () => {

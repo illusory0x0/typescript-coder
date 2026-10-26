@@ -1,7 +1,7 @@
 ---
 id: 47
 title: "Align benchmark token-budget with cache-excluded report accounting"
-status: todo
+status: done
 priority: medium
 milestone: null
 parent: null
@@ -69,3 +69,5 @@ just typecheck && just test
 This issue is independent of the plan-exec code-generation failures. It is
 filed because the accounting mismatch makes benchmark token comparisons and
 budget diagnostics misleading.
+- Starting work: align cache-excluded budget basis with report accounting; expose loop vs total billable; update docs; add deterministic tests. No baseline regeneration.
+- Resolved: cache-excluded loop budget now includes reasoning; LoopTokens carries reasoning; tc report rows expose billable.loop (loop-only budget basis) alongside billable.total (all calls, including the termination summary); docs and CLI help state the distinction. Deterministic tests cover reasoning, the post-termination summary, plan-exec, and report rendering. just typecheck + just test: 1503 pass, 0 fail. No baseline changes.

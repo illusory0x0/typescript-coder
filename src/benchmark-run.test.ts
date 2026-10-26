@@ -19,6 +19,23 @@ interface BillableTriple {
   total: number;
 }
 
+interface TokenUsageLike {
+  input: number | null;
+  output: number | null;
+  cacheRead: number | null;
+  cacheWrite: number | null;
+  reasoning: number | null;
+  total: number | null;
+}
+
+interface LoopTokensLike {
+  input: number;
+  output: number;
+  total: number;
+  cacheRead: number;
+  reasoning: number;
+}
+
 interface TokenStatsLike {
   mean: number | null;
   total: number | null;
@@ -81,6 +98,11 @@ interface RunModule {
     agentModes?: readonly string[],
   ): JobLike[];
   scheduleJobGroups(jobs: readonly JobLike[]): ScheduledJobLike[][];
+  billableForRun(
+    totalUsage: TokenUsageLike,
+    loopTokens: LoopTokensLike | null,
+    side: "tc" | "oc",
+  ): BillableTriple & { loop: number | null };
   runPool<Job, Result>(
     jobs: readonly Job[],
     concurrency: number,
@@ -151,6 +173,7 @@ function makeRun(
     reasoning: 0,
     total: buckets.input + buckets.output,
   };
+  const billable = billableTokens(raw, side);
   return {
     task,
     side,
@@ -159,7 +182,9 @@ function makeRun(
     rep: 1,
     ok: true,
     sideOk: true,
-    tokens: { ...raw, billable: billableTokens(raw, side) },
+    // Synthetic runs have no post-termination summary: loop == total for tc,
+    // and the oc side has no loop split (#47).
+    tokens: { ...raw, billable: { ...billable, loop: side === "tc" ? billable.total : null } },
     usageAvailable: true,
     usageSource: "test",
     rawUsage: null,
@@ -309,6 +334,53 @@ describe("cache-excluded token triple (#89)", () => {
   });
 });
 
+describe("billable loop vs total split (#47)", () => {
+  // Cache-excluded loop tally: miss = input - cacheRead, out = output + reasoning.
+  const loopTokens = (): LoopTokensLike => ({
+    input: 500,
+    output: 20,
+    total: 550,
+    cacheRead: 400,
+    reasoning: 30,
+  });
+  const totalUsage = (
+    input: number,
+    output: number,
+    reasoning: number,
+    cacheRead = 0,
+  ): TokenUsageLike => ({
+    input,
+    output,
+    cacheRead,
+    cacheWrite: null,
+    reasoning,
+    total: input + output + reasoning,
+  });
+
+  test.skipIf(!runModulePresent)("a post-termination summary raises total above loop", async () => {
+    const { billableForRun } = await loadRunModule();
+    // Loop: (500 - 400) + 20 + 30 = 150. Total adds a 1000-in/100-out summary.
+    const billable = billableForRun(totalUsage(1500, 120, 30, 400), loopTokens(), "tc");
+    expect(billable.loop).toBe(150);
+    expect(billable.total).toBe(1250);
+    expect(billable.loop).toBeLessThan(billable.total);
+  });
+
+  test.skipIf(!runModulePresent)("loop equals total without a summary call", async () => {
+    const { billableForRun } = await loadRunModule();
+    const billable = billableForRun(totalUsage(500, 20, 30, 400), loopTokens(), "tc");
+    expect(billable.loop).toBe(150);
+    expect(billable.total).toBe(150);
+  });
+
+  test.skipIf(!runModulePresent)("the oc side has no loop split", async () => {
+    const { billableForRun } = await loadRunModule();
+    expect(billableForRun(totalUsage(100, 20, 0), null, "oc").loop).toBeNull();
+    // Even a stray loop tally never applies to oc.
+    expect(billableForRun(totalUsage(100, 20, 0), loopTokens(), "oc").loop).toBeNull();
+  });
+});
+
 describe("rendered report (#89)", () => {
   test.skipIf(!runModulePresent)(
     "prints the cache-excluded tables and the multiplier summary",
@@ -364,6 +436,15 @@ describe("rendered report (#89)", () => {
         );
         expect(markdown).toContain("oc 1.56x tc overall");
         expect(markdown).toContain("json-parser oc 1.86x tc");
+        // #47: the raw-runs table separates the budget basis from the all-calls
+        // total; synthetic tc rows have loop == total and oc rows are n/a.
+        expect(markdown).toContain("Loop total");
+        expect(markdown).toContain(
+          "| json-parser | tc | n/a | n/a | 1 | yes | 1,000 | 500 | 1,500 | 700 |",
+        );
+        expect(markdown).toContain(
+          "| json-parser | oc | n/a | n/a | 1 | yes | 900 | 400 | 1,300 | n/a |",
+        );
         // #101: adoption surfaces per task/side and per side.
         expect(markdown).toContain("## Selector adoption (#101)");
         expect(markdown).toContain(

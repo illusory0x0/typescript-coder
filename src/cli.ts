@@ -16,7 +16,7 @@ export interface CliOptions {
   targets: Locator[] | null;
   /** stdout format (#80): `text` (default) or the machine-readable `json` result. */
   format: "text" | "json";
-  /** Hard per-call token budget (#80); null = the loop default. */
+  /** Hard raw provider-token budget (#80); null = the loop default. */
   tokenBudget: number | null;
   /** Verify command run after an edit (#80); null = the tools default. */
   checkCommand: string[] | null;
@@ -315,8 +315,9 @@ export function helpText(): string {
     "  --format <text|json>",
     "                     stdout format (default: text); json prints exactly one",
     "                     typescript-coder-result@2 object on stdout",
-    "  --token-budget <n> hard per-call token budget as a positive integer",
-    "                     (default: 120000)",
+    "  --token-budget <n> hard raw-token budget as a positive integer (provider",
+    "                     total, or prompt+completion when total is absent;",
+    "                     default: 120000)",
     "  --check <cmd>      verify command to run after an edit; the value is split",
     "                     on whitespace into argv",
     "  --test <cmd>       test command to run after an edit; the value is split",

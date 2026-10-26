@@ -25,7 +25,9 @@
 // `normalizeBuckets` is also the single source of the report's like-for-like
 // token total (#89): total = cache-miss input + output, with cache-hit input
 // excluded. That is the cross-side comparison metric; the raw provider buckets
-// stay in each result row.
+// stay in each result row. The tc loop's `cacheExcludedTokens` (src/loop.ts)
+// applies the same formula to loop-call buckets for the `cache-excluded` budget
+// basis and the report's `billable.loop` split (#47).
 //
 // Straddling runs: when a run crosses a peak/off-peak boundary, its cost is the
 // elapsed-time share blend of the peak and off-peak costs. This assumes tokens

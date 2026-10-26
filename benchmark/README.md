@@ -28,8 +28,8 @@ is frozen), `--model`
 (default `deepseek-flash`), `--keep`, `--json <path>`, `--replay-dir
 <path>` (tc side only: write one replay bundle per run to `<path>/<task>-tc-
 rep<n>.json`; off by default), `--token-budget <n>` (tc side only: abort a run
-once accumulated **cache-excluded** tokens exceed n; default 120000, see "Run
-budget" below), `--effort <none|low|high|max>` (tc side only: force this reasoning_effort
+once accumulated **cache-excluded** loop tokens exceed n; the final termination
+summary call is not budgeted; default 120000, see "Run budget" below), `--effort <none|low|high|max>` (tc side only: force this reasoning_effort
 on every Edit-loop call, overriding the default described below),
 `--protocol-format edit-dsl` (the only allowed value; `json` is frozen and
 `compact` is a deprecated alias for `edit-dsl`), `--agent-mode
@@ -133,10 +133,15 @@ reported in each row's `Notes` and never as a tuned column.
   OpenAI side, a separate counter on the oc side).
 - `tokens.total`: reported total when available, otherwise the sum of reported
   input + output + reasoning; cache counters are not added in.
-- `tokens.billable`: the cache-excluded, like-for-like triple (#89) used by the
-  report — `in` = cache-miss input, `out` = output (reasoning included), and
-  `total = in + out`; cache-hit input is excluded. Computed from the raw buckets
-  through `normalizeBuckets` in `src/benchmark-pricing.ts`.
+- `tokens.billable`: the cache-excluded, like-for-like view (#89). `in` =
+  cache-miss input, `out` = output (reasoning included), and `total = in + out`;
+  cache-hit input is excluded. `total` sums every provider call — for tc that
+  includes the final termination summary the loop makes after a budget or
+  exhaustion stop. `loop` (#47) is the scalar version of the same
+  cache-excluded total over tc loop calls only and is the `--token-budget`
+  basis; it is null on the oc side. Raw buckets go through `normalizeBuckets`
+  in `src/benchmark-pricing.ts`; the loop split is `cacheExcludedTokens` in
+  `src/loop.ts`.
 - `usageSource`: `chat-completions` (tc) or `session-export` / `stats-project`
   (oc); `rawUsage` keeps the verbatim payload and null fields mean the
   side did not report them.
@@ -232,11 +237,14 @@ points, so a cold-cache run is not mistaken for a prompt regression.
 The report's token totals are **cache-excluded and like-for-like** (#89):
 `total = cache-miss input + output` (reasoning counted as output), normalized
 for both sides through the same `normalizeBuckets` rule above; cache-hit input
-is excluded. Each report states the token multiplier between the sides, overall
-and per task. USD remains computed and recorded — in the result JSON and
-`consumption.md` — for decisions, but is marked decision-only and is not the
-headline comparison metric. Historical result files and ledger rows predate this
-change and are **not rewritten**; the new accounting applies to new runs.
+is excluded. `tokens.billable.total` includes every provider call (for tc, the
+final termination summary too), while `tokens.billable.loop` covers tc loop
+calls only and is the `--token-budget` basis (#47). Each report states the token
+multiplier between the sides, overall and per task. USD remains computed and
+recorded — in the result JSON and `consumption.md` — for decisions, but is
+marked decision-only and is not the headline comparison metric. Historical
+result files and ledger rows predate this change and are **not rewritten**; the
+new accounting applies to new runs.
 
 ## Edit protocol (tc side)
 
@@ -306,15 +314,19 @@ exchange) and is recorded in `terminationReason` + `loopDiagnostics`, with a
 `failures/` artifact written by the benchmark runner.
 
 `--token-budget <n>` (default 120,000) aborts a tc-side run as soon as
-accumulated **cache-excluded** tokens strictly exceed `<n>` (exactly at the
-budget keeps running). This is the same metric as the report headline; the core
-CLI's `--token-budget` remains a raw provider-token safety cap. The in-flight
-response is neither applied nor verified, the only
-remaining provider call is the summary, and the record carries `ok: false`,
-`terminationReason: "token-budget"`, and the reason in `loopDiagnostics`; the
-judge still runs and its fields are recorded as-is. Budget aborts are run
-failures, not infrastructure errors: provider failures keep their own error path
-and `infraErrors` is untouched. The oc side is unaffected.
+accumulated **cache-excluded** loop tokens strictly exceed `<n>` (exactly at the
+budget keeps running). The budget uses the same cache-excluded bucket formula as
+the report (cache-miss input + output + reasoning), but sums loop calls only:
+compare a stopped run against `billable.loop`, not `billable.total`. The final
+termination summary call is not budgeted, and the core CLI's `--token-budget`
+remains a hard raw provider-token safety cap (provider total, or
+prompt+completion when total is absent). The in-flight response is neither
+applied nor verified, the only remaining provider call is the summary, and the
+record carries `ok: false`, `terminationReason: "token-budget"`, and the reason
+in `loopDiagnostics`; the judge still runs and its fields are recorded as-is.
+Budget aborts are run failures, not infrastructure errors: provider failures
+keep their own error path and `infraErrors` is untouched. The oc side is
+unaffected.
 
 ## Replay runner
 
@@ -351,8 +363,8 @@ The measured metric set supports three readings:
 - **Token readings**: the dated reports keep the cache-excluded token columns
   (`in`, `out`, `total = in + out`) and a token-multiplier summary; the result
   JSONs keep every per-run raw bucket plus the normalized `tokens.billable`
-  triple. USD stays recorded for decisions but is not the headline comparison
-  metric.
+  triple and its `loop` subtotal (the budget basis). USD stays recorded for
+  decisions but is not the headline comparison metric.
 
 Weak spots a reader should not assume away:
 

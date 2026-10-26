@@ -84,7 +84,7 @@ function failedResult(overrides: Partial<LoopResult> = {}): LoopResult {
     explanation: "the symbol cannot satisfy the test",
     messages: [],
     terminationReason: "edit-exhausted",
-    tokens: { input: 0, output: 0, total: 0, cacheRead: 0 },
+    tokens: { input: 0, output: 0, total: 0, cacheRead: 0, reasoning: 0 },
     ...overrides,
   };
 }

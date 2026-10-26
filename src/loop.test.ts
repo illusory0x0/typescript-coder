@@ -22,6 +22,7 @@ import {
   buildSystemPrompt,
   buildUserPrompt,
   budgetTokensFromResponse,
+  cacheExcludedTokens,
   classifyRejection,
   consecutiveLengthFinishes,
   createAttemptDigestState,
@@ -40,6 +41,7 @@ import {
   MAX_RUN_ITERATIONS,
   MAX_STALLED_ROUNDS,
   MAX_CONSECUTIVE_LENGTH,
+  loopTokensFromResponse,
   matcherKindOf,
   matcherKindsOf,
   MULTI_PAYLOAD_KEY,
@@ -5458,6 +5460,67 @@ describe("runLoop", () => {
     expect(budgetTokensFromResponse(response)).toBe(120);
     expect(budgetTokensFromResponse(response, "cache-excluded")).toBe(40);
     expect(budgetTokensFromResponse(response, "raw")).toBe(120);
+    expect(loopTokensFromResponse(response)).toEqual({
+      input: 100,
+      output: 20,
+      total: 120,
+      cacheRead: 80,
+      reasoning: 0,
+    });
+    expect(cacheExcludedTokens(loopTokensFromResponse(response))).toBe(40);
+  });
+
+  test("token budget: cache-excluded basis adds reasoning; raw keeps the reported total", () => {
+    const nested: ChatResponse = {
+      content: null,
+      toolCalls: [],
+      finishReason: "stop",
+      raw: {
+        usage: {
+          prompt_tokens: 100,
+          completion_tokens: 20,
+          total_tokens: 150,
+          prompt_tokens_details: { cached_tokens: 80 },
+          completion_tokens_details: { reasoning_tokens: 30 },
+        },
+      },
+    };
+    // (100 - 80) + 20 + 30 = 70; the raw safety cap keeps the reported total.
+    expect(budgetTokensFromResponse(nested, "cache-excluded")).toBe(70);
+    expect(budgetTokensFromResponse(nested, "raw")).toBe(150);
+    expect(loopTokensFromResponse(nested)).toEqual({
+      input: 100,
+      output: 20,
+      total: 150,
+      cacheRead: 80,
+      reasoning: 30,
+    });
+
+    const topLevel: ChatResponse = {
+      content: null,
+      toolCalls: [],
+      finishReason: "stop",
+      raw: {
+        usage: {
+          prompt_tokens: 100,
+          completion_tokens: 20,
+          total_tokens: 150,
+          prompt_tokens_details: { cached_tokens: 80 },
+          reasoning_tokens: 30,
+        },
+      },
+    };
+    expect(budgetTokensFromResponse(topLevel, "cache-excluded")).toBe(70);
+    expect(loopTokensFromResponse(topLevel).reasoning).toBe(30);
+
+    const unknown: ChatResponse = {
+      content: null,
+      toolCalls: [],
+      finishReason: "stop",
+      raw: { usage: { prompt_tokens: 10, completion_tokens: 5, total_tokens: 15 } },
+    };
+    expect(loopTokensFromResponse(unknown).reasoning).toBe(0);
+    expect(budgetTokensFromResponse(unknown, "cache-excluded")).toBe(15);
   });
 
   test("token budget: terminates with exactly one summary call on a pick", async () => {
@@ -5490,6 +5553,51 @@ describe("runLoop", () => {
     expectStructuredSummaryPrompt(summaryPrompt);
     expect(result.explanation).toBe("the budget ran out");
     expect(helperSource(dir)).toContain("return 1;");
+  }, 30000);
+
+  test("token budget: the termination summary stays out of result.tokens", async () => {
+    const dir = fixtureDir();
+    const provider = new UsageProvider(
+      ['{"path":"src/helper.ts","symbol":"answer","kind":"function"}', "the budget ran out"],
+      [
+        {
+          prompt_tokens: 100,
+          completion_tokens: 20,
+          total_tokens: 150,
+          prompt_tokens_details: { cached_tokens: 80 },
+          completion_tokens_details: { reasoning_tokens: 30 },
+        },
+        // The summary call's usage must not be folded into the loop tally.
+        { prompt_tokens: 1000, completion_tokens: 100, total_tokens: 1100 },
+      ],
+    );
+    const result = await runLoop({
+      cwd: dir,
+      issue: "make the answer test pass",
+      provider,
+      tokenBudget: 50,
+      tokenBudgetBasis: "cache-excluded",
+      checkCommand: TSC,
+      testCommand: ["bun", "test"],
+    });
+    expect(result.ok).toBe(false);
+    expect(result.terminationReason).toBe("token-budget");
+    expect(result.diagnostics).toBe(
+      "token-budget: accumulated 70 cache-excluded tokens exceeded the 50 token budget",
+    );
+    // Exactly one summary call after the over-budget response.
+    expect(provider.calls).toHaveLength(2);
+    expect(provider.calls[1]?.at(-1)?.content).toContain("The run is over");
+    // Loop calls only: the over-budget response's buckets and reasoning, none
+    // of the summary's 1000 prompt + 100 completion tokens.
+    expect(result.tokens).toEqual({
+      input: 100,
+      output: 20,
+      total: 150,
+      cacheRead: 80,
+      reasoning: 30,
+    });
+    expect(cacheExcludedTokens(result.tokens)).toBe(70);
   }, 30000);
 
   test("token budget: terminates mid-edit without applying the in-flight replacement", async () => {

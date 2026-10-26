@@ -29,7 +29,7 @@ export interface RunMainOptions {
   targets?: Locator[];
   /** stdout format (#80); default "text". */
   format?: "text" | "json";
-  /** Hard per-call token budget (#80); defaults to the loop's own default. */
+  /** Hard raw provider-token budget (#80); defaults to the loop's own default. */
   tokenBudget?: number;
   /** Verify command run after an edit (#80). */
   checkCommand?: string[];
@@ -97,7 +97,14 @@ function emitJsonResult(io: MainIo, cwd: string, result: LoopResult, targets?: L
     serializeSubagentResult(
       buildSubagentResult({
         result,
-        tokens: result.tokens,
+        // `typescript-coder-result@2` keeps its four-field token shape (#47):
+        // the loop's internal `reasoning` counter is not part of the contract.
+        tokens: {
+          input: result.tokens.input,
+          output: result.tokens.output,
+          total: result.tokens.total,
+          cacheRead: result.tokens.cacheRead,
+        },
         targets: targets?.map((target) => ({
           path: target.path,
           symbol: target.name,

@@ -1422,8 +1422,8 @@ export interface LoopOptions {
   tokenBudget?: number;
   /**
    * Budget accounting basis. The core CLI keeps the historical raw provider
-   * total; benchmarks may request the cache-excluded headline total so their
-   * hard cap uses the same metric as the report.
+   * total; benchmarks may request the cache-excluded loop total, which uses the
+   * same bucket formula as the report but sums loop calls only (#47).
    */
   tokenBudgetBasis?: TokenBudgetBasis;
   temperature?: number;
@@ -2222,11 +2222,18 @@ export interface LoopTokens {
   output: number;
   total: number;
   cacheRead: number;
+  /**
+   * Reasoning tokens when reported (#47), otherwise 0. Read from
+   * `completion_tokens_details.reasoning_tokens` or a top-level
+   * `reasoning_tokens`; the cache-excluded basis adds it to output, matching
+   * the benchmark report's bucket formula.
+   */
+  reasoning: number;
 }
 
 /** A fresh all-zero token tally (#80); safe to return and never mutate. */
 export function zeroLoopTokens(): LoopTokens {
-  return { input: 0, output: 0, total: 0, cacheRead: 0 };
+  return { input: 0, output: 0, total: 0, cacheRead: 0, reasoning: 0 };
 }
 
 /**
@@ -2255,6 +2262,7 @@ export function addLoopTokens(target: LoopTokens, delta: LoopTokens): void {
   target.output += delta.output;
   target.total += delta.total;
   target.cacheRead += delta.cacheRead;
+  target.reasoning += delta.reasoning;
 }
 
 /** Sum the three buckets; this is the run total that drives the token budget. */
@@ -2371,9 +2379,10 @@ function finiteTokenCount(value: unknown): number {
  * same shape `tokensFromResponse` consumes: `input`/`output` prefer
  * `prompt_tokens`/`completion_tokens` and fall back to
  * `input_tokens`/`output_tokens`; `cacheRead` reads
- * `prompt_tokens_details.cached_tokens` or `cache_read_input_tokens`; `total`
- * prefers `total_tokens` and falls back to input+output. Unknown shapes count
- * as zero.
+ * `prompt_tokens_details.cached_tokens` or `cache_read_input_tokens`;
+ * `reasoning` reads `completion_tokens_details.reasoning_tokens` or a top-level
+ * `reasoning_tokens` (#47); `total` prefers `total_tokens` and falls back to
+ * input+output. Unknown shapes count as zero.
  */
 export function loopTokensFromResponse(response: ChatResponse): LoopTokens {
   const usage = usageFromRaw(response.raw);
@@ -2391,19 +2400,40 @@ export function loopTokensFromResponse(response: ChatResponse): LoopTokens {
   if (cacheRead === 0) {
     cacheRead = finiteTokenCount(record["cache_read_input_tokens"]);
   }
+  let reasoning = 0;
+  const completionDetails = record["completion_tokens_details"];
+  if (typeof completionDetails === "object" && completionDetails !== null) {
+    reasoning = finiteTokenCount(
+      (completionDetails as Record<string, unknown>)["reasoning_tokens"],
+    );
+  }
+  if (reasoning === 0) {
+    reasoning = finiteTokenCount(record["reasoning_tokens"]);
+  }
   const reportedTotal = finiteTokenCount(record["total_tokens"]);
   return {
     input,
     output,
     total: reportedTotal !== 0 ? reportedTotal : input + output,
     cacheRead,
+    reasoning,
   };
 }
 
 /**
+ * Cache-excluded token total of a component tally (#47): cache-miss input
+ * (`input - cacheRead`, clamped at zero) plus output and reasoning. This is the
+ * benchmark/report bucket formula and the `cache-excluded` budget basis; it is
+ * shared so the budget stop and the report cannot drift.
+ */
+export function cacheExcludedTokens(tokens: LoopTokens): number {
+  return Math.max(0, tokens.input - tokens.cacheRead) + tokens.output + tokens.reasoning;
+}
+
+/**
  * Provider tokens charged against the hard budget. `raw` preserves the
- * historical total; `cache-excluded` mirrors the benchmark headline
- * (cache-miss input + output) and is passed only by the benchmark harness.
+ * historical total; `cache-excluded` uses the benchmark/report bucket formula
+ * (#47, `cacheExcludedTokens`) and is passed only by the benchmark harness.
  */
 export function budgetTokensFromResponse(
   response: ChatResponse,
@@ -2412,8 +2442,7 @@ export function budgetTokensFromResponse(
   if (basis === "raw") {
     return tokensFromResponse(response);
   }
-  const tokens = loopTokensFromResponse(response);
-  return Math.max(0, tokens.input - tokens.cacheRead) + tokens.output;
+  return cacheExcludedTokens(loopTokensFromResponse(response));
 }
 
 export function tokenBudgetDiagnostics(
@@ -4497,10 +4526,7 @@ async function runJsonLoop(options: LoopOptions): Promise<LoopResult> {
   // keeps driving the budget unchanged).
   const tokens: LoopTokens = zeroLoopTokens();
   const addTokens = (delta: LoopTokens): void => {
-    tokens.input += delta.input;
-    tokens.output += delta.output;
-    tokens.total += delta.total;
-    tokens.cacheRead += delta.cacheRead;
+    addLoopTokens(tokens, delta);
   };
 
   // Pinning (#43): the first successful pick fixes {mode, path, symbol, kind}
@@ -6147,10 +6173,7 @@ async function runEditDslLoop(options: LoopOptions): Promise<LoopResult> {
   // keeps driving the budget unchanged).
   const tokens: LoopTokens = zeroLoopTokens();
   const addTokens = (delta: LoopTokens): void => {
-    tokens.input += delta.input;
-    tokens.output += delta.output;
-    tokens.total += delta.total;
-    tokens.cacheRead += delta.cacheRead;
+    addLoopTokens(tokens, delta);
   };
 
   // Pinning (#43): the first successful pick fixes {mode, path, symbol, kind}

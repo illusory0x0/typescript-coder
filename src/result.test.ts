@@ -32,7 +32,7 @@ function resultOf(overrides: Partial<LoopResult> = {}): LoopResult {
     diagnostics: null,
     explanation: null,
     messages: [],
-    tokens: { input: 0, output: 0, total: 0, cacheRead: 0 },
+    tokens: { input: 0, output: 0, total: 0, cacheRead: 0, reasoning: 0 },
     ...overrides,
   };
 }

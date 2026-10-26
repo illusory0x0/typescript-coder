@@ -2,14 +2,6 @@
 # rewrites it; `add` appends; other writes keep it. `check` enforces it.
 # A dep, and every child of an umbrella, must be listed before its dependent.
 
-- id: 47
-  title: "Align benchmark token-budget with cache-excluded report accounting"
-  status: todo
-  priority: medium
-  milestone: null
-  parent: null
-  deps: []
-  file: 0047-align-benchmark-token-budget-with-cache-excluded-report-accounting.md
 - id: 44
   title: "Stabilize plan-exec on mini-spreadsheet after guard and matcher changes"
   status: todo
