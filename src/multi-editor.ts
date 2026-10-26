@@ -1,5 +1,6 @@
 import { claimEditDslTarget, foldSourceLines, resolveEditDslReply } from "./edit-dsl";
 import { resolveCreateDeclaration } from "./create-declaration";
+import { resolveModuleCreate } from "./module-boundary";
 import type {
   EditDslDeps,
   EditDslFailure,
@@ -9,9 +10,10 @@ import type {
 } from "./edit-dsl";
 import type { EditRange } from "./loop";
 import { resolveLocalRename } from "./rename";
-import { END_OF_LINE_COLUMN } from "./selection";
+import { END_OF_LINE_COLUMN, isFileSelection } from "./selection";
 import type {
   CreateDeclarationStatement,
+  CreateModuleStatement,
   EditStatement,
   FileStatement,
   RenameSpec,
@@ -316,6 +318,23 @@ function createDeclarationFailure(
   };
 }
 
+function createModuleFailure(
+  index: number,
+  statement: CreateModuleStatement,
+  stage: EditDslFailure["stage"],
+  diagnostics: string,
+): EditDslFailure {
+  return {
+    index,
+    path: statement.path,
+    locator: { path: statement.path, name: "", kind: statement.kind },
+    stage,
+    cause: null,
+    diagnostics,
+    undeclaredName: null,
+  };
+}
+
 /**
  * Resolve a `multiEditor` reply. Editors go through the existing cascade; file
  * commands are validated against the pre-reply snapshot (a `read` always sees
@@ -354,6 +373,15 @@ export function resolveMultiEditor(
   const deletes: MultiEditorFileMutation[] = [];
   const reads: MultiEditorRead[] = [];
   const readFailures: EditDslFailure[] = [];
+  // #54: a module-boundary create is a file-level insert, so it conflicts with
+  // any file-level select on the same path whatever the statement order. A
+  // declaration edit in the same file is still allowed (different regions).
+  const fileLevelPaths = new Set(
+    editors
+      .filter((selection) => isFileSelection(selection))
+      .map((selection) => selection.locator.path),
+  );
+  const moduleSignatures = new Map<string, number>();
 
   // Renames are semantic, not matcher edits: resolve each against its file's
   // current source with the local-scope engine. A rename never produces a
@@ -441,6 +469,7 @@ export function resolveMultiEditor(
   const deletePaths = new Map<string, number>();
   const emptyCreatePaths = new Map<string, number>();
   const declarationPaths = new Map<string, number>();
+  const moduleCreatePaths = new Map<string, number>();
   const memberClaims = new Map<string, number>();
   for (let index = 0; index < statements.length; index += 1) {
     const statement = statements[index];
@@ -459,6 +488,9 @@ export function resolveMultiEditor(
         break;
       case "create-declaration":
         declarationPaths.set(statement.statement.path, index);
+        break;
+      case "create-module":
+        moduleCreatePaths.set(statement.statement.path, index);
         break;
       default:
         break;
@@ -505,6 +537,7 @@ export function resolveMultiEditor(
         if (
           touched.has(fs.path) ||
           declarationPaths.has(fs.path) ||
+          moduleCreatePaths.has(fs.path) ||
           writePaths.has(fs.path) ||
           deletePaths.has(fs.path)
         ) {
@@ -624,6 +657,93 @@ export function resolveMultiEditor(
         touched.set(fs.path, index);
         continue;
       }
+      case "create-module": {
+        if (!deps.isSafePath(fs.path)) {
+          failures.push(
+            createModuleFailure(
+              index,
+              fs,
+              "address",
+              `stage: address\ncannot create ${fs.kind} in ${JSON.stringify(fs.path)}: the path is outside the editable workspace`,
+            ),
+          );
+          continue;
+        }
+        if (emptyCreatePaths.has(fs.path)) {
+          failures.push(
+            conflictFailure(
+              index,
+              fs.path,
+              `create ${JSON.stringify(fs.path)} conflicts with an empty-file create of the same path in this reply`,
+            ),
+          );
+          continue;
+        }
+        if (writePaths.has(fs.path)) {
+          failures.push(
+            conflictFailure(
+              index,
+              fs.path,
+              `create ${fs.kind} conflicts with a whole-file write of ${JSON.stringify(fs.path)} in this reply`,
+            ),
+          );
+          continue;
+        }
+        if (deletePaths.has(fs.path)) {
+          failures.push(
+            conflictFailure(
+              index,
+              fs.path,
+              `create ${fs.kind} conflicts with a delete of ${JSON.stringify(fs.path)} in this reply`,
+            ),
+          );
+          continue;
+        }
+        if (fileLevelPaths.has(fs.path)) {
+          failures.push(
+            conflictFailure(
+              index,
+              fs.path,
+              `create ${fs.kind} conflicts with a file-level select on ${JSON.stringify(fs.path)} in this reply; split the module-boundary edit across replies`,
+            ),
+          );
+          continue;
+        }
+        const source = deps.sourceFor(fs.path);
+        const createdModule = resolveModuleCreate(fs, source);
+        if (!createdModule.ok) {
+          failures.push(
+            createModuleFailure(index, fs, createdModule.stage, createdModule.diagnostics),
+          );
+          continue;
+        }
+        const signatureKey = `${fs.path}\u0000${createdModule.signature}`;
+        const earlierSignature = moduleSignatures.get(signatureKey);
+        if (earlierSignature !== undefined) {
+          failures.push(
+            conflictFailure(
+              index,
+              fs.path,
+              `statements ${earlierSignature + 1} and ${index + 1} both add the same ${fs.kind} statement to ${JSON.stringify(fs.path)}; add each module-boundary statement once per reply`,
+            ),
+          );
+          continue;
+        }
+        moduleSignatures.set(signatureKey, index);
+        regions.push({
+          index,
+          path: fs.path,
+          locator: { path: fs.path, name: "", kind: fs.kind },
+          start: createdModule.start,
+          end: createdModule.end,
+          text: createdModule.text,
+          stage: "whole-symbol",
+          matcherKind: null,
+          create: true,
+        });
+        touched.set(fs.path, index);
+        continue;
+      }
       case "delete": {
         const problem = checkMutation(index, fs.path, "delete");
         if (problem !== null) {
@@ -645,6 +765,7 @@ export function resolveMultiEditor(
           touched.has(fs.path) ||
           emptyCreatePaths.has(fs.path) ||
           declarationPaths.has(fs.path) ||
+          moduleCreatePaths.has(fs.path) ||
           writePaths.has(fs.path)
         ) {
           failures.push(
@@ -704,7 +825,12 @@ export function resolveMultiEditor(
           );
           continue;
         }
-        if (destructive.has(fs.path) || created.has(fs.path) || declarationPaths.has(fs.path)) {
+        if (
+          destructive.has(fs.path) ||
+          created.has(fs.path) ||
+          declarationPaths.has(fs.path) ||
+          moduleCreatePaths.has(fs.path)
+        ) {
           failures.push(
             conflictFailure(
               index,

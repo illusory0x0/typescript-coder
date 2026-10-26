@@ -5,7 +5,7 @@ status: todo
 priority: medium
 milestone: null
 parent: 51
-deps: []
+deps: [54]
 labels: [agent-loop, edit-protocol]
 created: 2026-10-26
 ---
@@ -46,3 +46,4 @@ git diff --check
 - The corpus is the proof of declaration-level completeness; do not add syntax forms to the matrix without a test.
 - Do not turn structural matching into a hard requirement: regex and `pick` are first-class.
 - JSX/`.tsx` is out of scope unless separately requested.
+- Dependency added on #54: the corpus required by this issue must cover module-boundary forms, which #54 implements; #53 follows #54 so the corpus can prove the full declaration/member/module matrix.

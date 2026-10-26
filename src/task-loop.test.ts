@@ -453,6 +453,79 @@ describe("executor autonomy", () => {
     expect(source.indexOf("trim(): string")).toBeLessThan(source.lastIndexOf("}"));
   }, 30000);
 
+  test("creates a source import through a file-level select in plan-exec", async () => {
+    const dir = project();
+    writeFileSync(join(dir, "src", "base.ts"), "export const BASE = 2;\n");
+    writeFileSync(join(dir, "src", "base2.ts"), "export const BASE = 2;\n");
+    writeFileSync(
+      join(dir, "src", "helper.ts"),
+      'import { BASE } from "./base";\nexport function answer(): number {\n  return BASE;\n}\n',
+    );
+    const node = workNode(2, "import", {
+      instruction: "Switch the helper import to ./base2.",
+      hints: [{ path: "src/helper.ts", symbol: "", kind: "file" }],
+    });
+    const reply = [
+      "select file src/helper.ts",
+      'match `import { BASE } from "./base";`',
+      "replace with",
+      "<<<TC_EDIT_BEGIN>>>",
+      'import { BASE } from "./base2";',
+      "<<<TC_EDIT_END>>>",
+      "end",
+    ].join("\n");
+    const provider = new ScriptedProvider([planText([node]), reply, "approve"]);
+    const result = await runTaskLoop(baseOptions(dir, provider));
+    expect(result.ok).toBe(true);
+    expect(readFileSync(join(dir, "src", "helper.ts"), "utf8")).toContain('from "./base2"');
+    const applied = result.records.find((record) => record.outcome === "applied");
+    expect(applied?.appliedLocators?.[0]?.kind).toBe("file");
+  }, 30000);
+
+  test("creates module-boundary imports in a new and an existing file in plan-exec", async () => {
+    const dir = project();
+    writeFileSync(join(dir, "src", "base.ts"), "export const BASE = 2;\n");
+    const node = workNode(2, "modules", {
+      verify: "tsc",
+      instruction: "Add module imports to the helper and a new file.",
+      hints: [
+        { path: "src/helper.ts", symbol: "", kind: "file" },
+        { path: "src/modules.ts", symbol: "", kind: "file" },
+      ],
+    });
+    const final = workNode(3, "answer", {
+      after: [nodeId(2, "modules")],
+      instruction: "Change answer so the test passes.",
+    });
+    const reply = [
+      "create import in src/helper.ts with",
+      "<<<TC_EDIT_BEGIN>>>",
+      'import { BASE } from "./base";',
+      "<<<TC_EDIT_END>>>",
+      "end",
+      "",
+      "create import in src/modules.ts with",
+      "<<<TC_EDIT_BEGIN>>>",
+      'import { BASE as MODULE_BASE } from "./base";',
+      "<<<TC_EDIT_END>>>",
+      "end",
+    ].join("\n");
+    const provider = new ScriptedProvider([
+      planText([node, final]),
+      reply,
+      "approve",
+      GOOD_EDIT,
+      "approve",
+    ]);
+    const result = await runTaskLoop(baseOptions(dir, provider));
+    expect(result.ok).toBe(true);
+    expect(readFileSync(join(dir, "src", "helper.ts"), "utf8").startsWith("import { BASE }")).toBe(
+      true,
+    );
+    expect(readFileSync(join(dir, "src", "modules.ts"), "utf8")).toContain("MODULE_BASE");
+    expect(result.records.filter((record) => record.outcome === "applied")).toHaveLength(2);
+  }, 30000);
+
   test("chooses a whole-file write even when the approach hint prefers targeted edits", async () => {
     const dir = project();
     const node = workNode(2, "answer", {

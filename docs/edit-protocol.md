@@ -100,6 +100,12 @@ where the reply stopped. A partial selection is never returned.
 select [kind] <symbol> in <path> [ resolve (value|type|namespace) ] [ within <selecters> ] [ match (<snippet> | /regex/) ] [ [ pick <selecters> ] replace with <fence> | rename <old> to <new> ] end
 ```
 
+The module-boundary form is the separate file-level editor:
+
+```text
+select file <path> [ match (<snippet> | /regex/) ] [ pick <selecters> ] replace with <fence> end
+```
+
 A select clause is never a file command. A select clause with `replace` or
 `rename` is an **editor**; with neither it is a **viewer**.
 
@@ -213,6 +219,35 @@ inside one binding is supported. A whole-symbol `replace` or empty-fence delete
 on one of those bindings is rejected because it would silently rewrite a
 sibling binding; target a narrower span or a different declaration instead.
 
+### File-level module-boundary select
+
+`select file <path> … replace with <fence> end` gives imports and exports an
+owner without a synthetic declaration name. The owner is the file source; no
+symbol-index entry is resolved. The path must be safe, inside the workspace, and
+an existing regular file.
+
+- `match` (a structural snippet or `/regex/`) or `pick` locates the target. The
+  candidate must lie inside exactly one top-level import/export statement:
+  `import`/`import =`, `export { … }`, `export … from`, `export *`, a default
+  export, an export declaration (`export function …`), or `export =`. A match
+  that lands outside one is an `address` rejection that names its location.
+- Exactly one candidate is required. Multiple candidates are rejected with each
+  `path:line:column` and its statement kind; the harness never picks the first.
+  A `pick` with a `match` filters candidates with the normal point/contained
+  rules; without a `match`, the one resolved pick range is the target. File-level
+  `pick` coordinates are the same 1-based, inclusive, file-absolute coordinates
+  as the numbered source block.
+- `replace with <fence>` rewrites the matched/picked span. An empty fence
+  deletes it: a whole statement deletion removes its line, and deleting a
+  named specifier also removes its `,` separator. The parse gate, formatter,
+  duplicate guard, atomic apply, and task/node gate are unchanged.
+- A file-level select is an **editor only**: it requires `replace`, and
+  `resolve`, `within`, and rename are rejected. Use `read <path> end` to view
+  file lines, or `write <path> with <fence>` for a deliberate whole-file
+  rewrite. A file-level `rename` is not supported because imported bindings and
+  export aliases have no declaration address; edit the statement or specifier
+  text instead rather than silently renaming an import.
+
 ### Rename semantics
 
 A rename is resolved against the whole file before any splice is queued. The
@@ -250,11 +285,12 @@ ISO/IEC 14977 EBNF (originally drafted in `human/edit.md`):
 ```ebnf
 edit-reply   = { statement } ;
 
-statement    = select-clause | file-command ;
+statement    = select-clause | file-select-clause | file-command ;
 
 file-command = 'create', path, 'end'
              | 'create', [ 'static' ], create-kind, create-name, 'in', path,
                [ 'with' ], fence, 'end'
+             | 'create', module-kind, 'in', path, [ 'with' ], fence, 'end'
              | 'delete', path, 'end'
              | 'read', path, [ 'within', selecters ], 'end'
              | 'write', path, [ 'within', selecters ], 'with', fence
@@ -265,6 +301,7 @@ declaration-kind = 'function' | 'class' | 'interface' | 'type' | 'enum'
                  | 'namespace' | 'const' | 'let' | 'var' | 'using' ;
 member-kind  = 'method' | 'property' | 'getter' | 'setter'
              | 'accessor' | 'constructor' | 'enum-member' ;
+module-kind  = 'import' | 'export' ;
 create-name  = symbol | dotted-symbol | owner ;  (* constructor names only its owner *)
 
 select-clause = 'select', [ kind ], symbol, 'in', path,
@@ -273,6 +310,12 @@ select-clause = 'select', [ kind ], symbol, 'in', path,
                 [ 'match', ( snippet | regex ) ],
                 [ replacer | renamer ],
                 'end' ;
+
+file-select-clause = 'select', 'file', path,
+                     [ 'match', ( snippet | regex ) ],
+                     [ 'pick', selecters ],
+                     'replace', 'with', fence, 'end' ;
+                     (* editor only: no viewer, resolve, within, or rename *)
 
 replacer     = [ 'pick', selecters ], 'replace', 'with', fence ;
 renamer      = 'rename', identifier, 'to', identifier ;
@@ -372,6 +415,34 @@ other edit. Several creates for distinct declarations may share a reply;
 same-file creates and edits apply atomically. Anonymous call/construct/index
 signature create and object-literal member create are out of scope.
 
+### Module-boundary create
+
+`create import in <path> with <fence> end` and
+`create export in <path> with <fence> end` add one module statement without a
+synthetic declaration name. The fence must parse as exactly one matching
+statement:
+
+- `import` accepts an `ImportDeclaration` (named, default, namespace, type-only,
+  side-effect, or combined forms the parser supports) and `import =`; an
+  `export` fence is rejected.
+- `export` accepts `ExportNamedDeclaration` (with or without a declaration or a
+  `from` source), `ExportDefaultDeclaration`, `ExportAllDeclaration`, and
+  `ExportAssignment`; an `import` fence is rejected.
+
+The statement is inserted at the module boundary: after a shebang, leading
+string directives, and the contiguous existing import block, and before other
+code. That keeps imports together and puts a new export above executable code.
+The insertion, create file, and parent directories go through the same atomic
+parse/format/write/gate path as every other edit.
+
+A malformed, empty, or multi-statement fence, a wrong-kind fence, an unsafe
+path, and a statement the parser cannot represent are `address` failures.
+An identical existing statement, a repeated import binding name, a second
+default export, or a second `export =` is a `duplicate` failure. A module create
+may share a file with a declaration create or a declaration edit, but not with a
+file-level `select`, a whole-file `write`, a `delete`, or an empty-file `create`
+on the same path in one reply.
+
 ### Tolerant recovery and error codes
 
 Edit-action recovery follows the shared parser discipline in
@@ -406,8 +477,9 @@ a partial destructive result. In particular:
 Shipped `EDIT_*` error codes: `MISSING_END`, `MISSING_FIELD`, `UNKNOWN_FIELD`,
 `UNCLOSED_FENCE`, `WHOLE_REPLY_FENCE`, `MALFORMED_FENCE`, `LEGACY_FENCE`,
 `FENCE_TRAILING_TEXT`, `EMBEDDED_FENCE_END`, `RETIRED_DONE`, `STRAY_END`,
-`MATCHER_MISSING`, `PICK_WITHOUT_REPLACE`, `RENAME_MIXED`, `UNKNOWN_SPACE`,
-`TARGET_MISMATCH`, `TRUNCATED`.
+`MATCHER_MISSING`, `FILE_RENAME_UNSUPPORTED`, `FILE_VIEWER_UNSUPPORTED`,
+`PICK_WITHOUT_REPLACE`, `RENAME_MIXED`, `UNKNOWN_SPACE`, `TARGET_MISMATCH`,
+`TRUNCATED`.
 
 ### Outer wrapper (whole-reply Markdown fence)
 
@@ -447,6 +519,11 @@ create [static] <kind> <name> in <path> with
 <declaration or member>
 <<<TC_EDIT_END>>>
 end
+create import|export in <path> with
+<<<TC_EDIT_BEGIN>>>
+<module-boundary statement>
+<<<TC_EDIT_END>>>
+end
 
 delete <path> end
 read   <path> [ within <selecters> ] end
@@ -458,6 +535,7 @@ write  <path> [ within <selecters> ] with
 
 - **`create <path> end`** creates an empty file. An existing path is an `address` failure; parent directories are created. It does not run the parse/format gate. A path literally named like a create kind (for example `create function end`) remains this empty-file form because it has no `in` header.
 - **`create [static] <kind> <name> in <path> with <fence> end`** adds exactly one named declaration or member (§2.1). The descriptor is authoritative; a fence that declares a different name/kind, an invalid modifier, an unsafe path, or a duplicate name is rejected without writing.
+- **`create import|export in <path> with <fence> end`** adds exactly one module-boundary statement (§2.1). The fence must parse as one matching import/export form; the statement is inserted after the shebang, directives, and existing imports. A wrong-kind, malformed, duplicate, or unsafe path is rejected without writing.
 - **`delete`** removes an existing regular file inside the workspace. A missing
   path is an `address` failure; directories and paths outside the workspace are
   rejected. `human/` is read-only for agents.
@@ -492,9 +570,11 @@ with an edit of a different declaration, but not with a whole-file `write`, a
 **One target per reply.** Every select clause in one reply — viewer, editor, or
 rename — plus every create (implicit or explicit) must resolve to a distinct
 `(path, symbol, kind)`. `resolve`, `match`, and `pick` do not make a new target.
-A repeat fails at `stage: duplicate` before any matcher or write runs, naming
-both statement numbers and the resolved address; the whole reply writes nothing.
-Split edits to one declaration across exchanges.
+A file-level select claims the file's module-boundary owner once per reply; a
+module create is unique by `(path, statement text)`. A repeat fails at
+`stage: duplicate` before any matcher or write runs, naming both statement
+numbers and the resolved address; the whole reply writes nothing. Split edits to
+one declaration across exchanges.
 
 Canonical examples:
 
@@ -565,6 +645,25 @@ create static method Parser.parse in src/parser.ts with
 static parse(text: string): Parser {
   return new Parser(text);
 }
+<<<TC_EDIT_END>>>
+end
+```
+
+A file-level select edits one import/export statement or specifier; a module
+create adds one statement at the module boundary:
+
+```text
+select file src/parser.ts
+match `import { trim } from "./strings";`
+replace with
+<<<TC_EDIT_BEGIN>>>
+import { trimEnd } from "./strings";
+<<<TC_EDIT_END>>>
+end
+
+create import in src/parser.ts with
+<<<TC_EDIT_BEGIN>>>
+import type { ParserOptions } from "./options";
 <<<TC_EDIT_END>>>
 end
 ```

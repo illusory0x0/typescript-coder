@@ -179,7 +179,20 @@ export function parseMatcherFragment(matcher: string): MatcherFragmentResult {
   return runs.length === 0 ? { kind: "parsed", nodes } : { kind: "parsed", nodes, runs };
 }
 
-const STRUCTURAL_IGNORED_KEYS: ReadonlySet<string> = new Set(["start", "end", "raw", "source"]);
+const STRUCTURAL_IGNORED_KEYS: ReadonlySet<string> = new Set(["start", "end", "raw"]);
+
+/**
+ * True when a structural key is trivia rather than syntax. `source` is ignored
+ * only when both values are strings: `Program.source` is the raw file text, but
+ * an `ImportDeclaration`/`ExportNamedDeclaration`'s `source` is the module
+ * specifier node, which must take part in structural equality.
+ */
+function ignoredStructuralKey(key: string, left: unknown, right: unknown): boolean {
+  if (STRUCTURAL_IGNORED_KEYS.has(key)) {
+    return true;
+  }
+  return key === "source" && typeof left === "string" && typeof right === "string";
+}
 
 /** Deep structural AST equality ignoring spans, raw text, and trivia. */
 export function structurallyEqual(left: unknown, right: unknown): boolean {
@@ -204,7 +217,7 @@ export function structurallyEqual(left: unknown, right: unknown): boolean {
   const rightRecord = right as Record<string, unknown>;
   const keys = new Set([...Object.keys(leftRecord), ...Object.keys(rightRecord)]);
   for (const key of keys) {
-    if (STRUCTURAL_IGNORED_KEYS.has(key)) {
+    if (ignoredStructuralKey(key, leftRecord[key], rightRecord[key])) {
       continue;
     }
     if (!structurallyEqual(leftRecord[key], rightRecord[key])) {

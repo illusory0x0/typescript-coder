@@ -8,16 +8,8 @@
   priority: medium
   milestone: null
   parent: 51
-  deps: []
+  deps: [54]
   file: 0053-extend-structural-matcher-contexts-and-add-a-declaration-corpus.md
-- id: 54
-  title: "Support file-level select for import and export statements"
-  status: todo
-  priority: medium
-  milestone: null
-  parent: 51
-  deps: [50]
-  file: 0054-support-file-level-select-for-import-and-export-statements.md
 - id: 51
   title: "Complete edit-action coverage for TypeScript declarations"
   status: todo

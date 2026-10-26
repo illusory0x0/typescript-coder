@@ -13,8 +13,10 @@
  */
 import { resolveCascade, resolveCascadeViewer } from "./cascade";
 import type { CascadeCause, SelectionStage } from "./cascade";
+import { resolveFileSelection } from "./module-boundary";
 import { Parser } from "./parser";
 import type { Node, Program, Statement } from "./parser";
+import { isFileSelection } from "./selection";
 import type { Selection } from "./selection";
 import { Binder } from "./utility";
 import type { IndexEntry, Locator, SymbolSpace } from "./utility";
@@ -31,6 +33,10 @@ export type EditDslFailureStage = "address" | "matcher" | "range" | "no-op" | "d
 export interface EditDslDeps {
   /** The current source of `path` (the pinned file's in-memory source, else disk). */
   sourceFor: (path: string) => string;
+  /** Whether the path is a regular file (a file-level select edits an existing file). */
+  fileExists?: (path: string) => boolean;
+  /** Whether the path is inside the workspace and safe to touch. */
+  isSafePath?: (path: string) => boolean;
   /** Strict-AND address resolution, the loop's `resolveCurrentEntry`. */
   resolveEntry: (
     source: string,
@@ -550,6 +556,75 @@ export function resolveEditDslReply(
     const index = indices?.[position] ?? position;
     const path = selection.locator.path;
     const source = deps.sourceFor(path);
+    if (isFileSelection(selection)) {
+      if (deps.isSafePath !== undefined && !deps.isSafePath(path)) {
+        failures.push({
+          index,
+          path,
+          locator: selection.locator,
+          stage: "address",
+          cause: null,
+          diagnostics: `stage: address\nthe path ${JSON.stringify(path)} is outside the editable workspace`,
+          undeclaredName: null,
+        });
+        continue;
+      }
+      if (deps.fileExists !== undefined && !deps.fileExists(path)) {
+        failures.push({
+          index,
+          path,
+          locator: selection.locator,
+          stage: "address",
+          cause: null,
+          diagnostics: `stage: address\ncannot select file ${JSON.stringify(path)}: the file does not exist`,
+          undeclaredName: null,
+        });
+        continue;
+      }
+      const fileDuplicate = claimEditDslTarget(
+        claims,
+        { path, name: "", kind: "file" },
+        index,
+        false,
+      );
+      if (fileDuplicate !== null) {
+        failures.push({
+          index,
+          path,
+          locator: selection.locator,
+          stage: "duplicate",
+          cause: null,
+          diagnostics: fileDuplicate,
+          undeclaredName: null,
+        });
+        continue;
+      }
+      const fileResolved = resolveFileSelection(source, selection);
+      if (!fileResolved.ok) {
+        failures.push({
+          index,
+          path,
+          locator: selection.locator,
+          stage: fileResolved.stage,
+          cause: null,
+          diagnostics: fileResolved.diagnostics,
+          undeclaredName: null,
+        });
+        continue;
+      }
+      regions.push({
+        index,
+        path,
+        locator: selection.locator,
+        start: fileResolved.start,
+        end: fileResolved.end,
+        text: fileResolved.text,
+        stage: fileResolved.stage,
+        matcherKind: selection.matcher === null ? null : selection.matcher.kind,
+        create: false,
+      });
+      continue;
+    }
     const address = deps.resolveEntry(source, path, selection.locator, selection.space);
     if (!address.ok) {
       // Implicit create (edit-dsl §6): any editor clause (non-empty `replace`)

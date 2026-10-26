@@ -12,6 +12,7 @@ import { applyMatcherSplice, extractJsonObject, findMatcher, stripCodeFences } f
 import type { MatcherResult } from "./matcher";
 import { parseMultiEditor, parseSelection, SelectionSyntaxError } from "./selection";
 import type { EditStatement, FileStatement, Selection as EditDslSelection } from "./selection";
+import { isFileSelection } from "./selection";
 import { renderReadFailureFeedback, renderReadFeedback, resolveMultiEditor } from "./multi-editor";
 import type { MultiEditorDeps, MultiEditorResolution } from "./multi-editor";
 import {
@@ -6658,7 +6659,24 @@ async function runEditDslLoop(options: LoopOptions): Promise<LoopResult> {
             const selected = editorSelection;
             if (selected !== null) {
               candidate = selected.locator;
-              if (selected.rename !== undefined && selected.rename !== null) {
+              if (isFileSelection(selected)) {
+                const safePath = safeMutablePath(cwd, selected.locator.path);
+                const exists =
+                  safePath !== null &&
+                  statSync(join(cwd, safePath), { throwIfNoEntry: false })?.isFile() === true;
+                if (safePath === null) {
+                  diagnostic = `stage: address\nthe path ${JSON.stringify(selected.locator.path)} is outside the editable workspace`;
+                  selectionStage = "address";
+                } else if (!exists) {
+                  diagnostic = `stage: address\ncannot select file ${JSON.stringify(selected.locator.path)}: the file does not exist`;
+                  selectionStage = "address";
+                } else if (selected.replacement === null) {
+                  diagnostic =
+                    "stage: protocol\na file-level select is an editor and requires `replace with <fence>`; use `read <path> end` to view the file";
+                } else {
+                  fsPick = { path: selected.locator.path, mode: "modify" };
+                }
+              } else if (selected.rename !== undefined && selected.rename !== null) {
                 // A first-turn rename has no index-resolvable declaration in
                 // many cases (locals, dotted members); pin the path and let the
                 // content exchange run the rename engine on the same reply.

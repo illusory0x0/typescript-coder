@@ -959,6 +959,232 @@ describe("resolveMultiEditor kind-aware create (#50)", () => {
   });
 });
 
+describe("module-boundary create (#54)", () => {
+  const moduleCreate = (kind: "import" | "export", path: string, body: string): string =>
+    [
+      `create ${kind} in ${path} with`,
+      "<<<TC_EDIT_BEGIN>>>",
+      body,
+      "<<<TC_EDIT_END>>>",
+      "end",
+    ].join("\n");
+
+  test("creates an import in a new file and an existing file", () => {
+    const fresh = resolve(moduleCreate("import", "src/new.ts", 'import { a } from "./a";'), {});
+    expect(fresh.failures).toEqual([]);
+    expect(fresh.regions[0]?.start).toBe(0);
+    expect(fresh.regions[0]?.text).toBe('import { a } from "./a";\n');
+
+    const source = "export const existing = 1;\n";
+    const existing = resolve(moduleCreate("import", "src/a.ts", 'import { a } from "./a";'), {
+      "src/a.ts": source,
+    });
+    expect(existing.failures).toEqual([]);
+    expect(existing.regions[0]?.start).toBe(0);
+    expect(existing.regions[0]?.text).toBe('import { a } from "./a";\n');
+  });
+
+  test("inserts after the shebang, directives, and existing imports", async () => {
+    const source = [
+      "#!/usr/bin/env bun",
+      '"use strict";',
+      'import { a } from "./a";',
+      "",
+      "export const existing = 1;",
+      "",
+    ].join("\n");
+    const result = resolve(
+      [
+        moduleCreate("import", "src/a.ts", 'import { b } from "./b";'),
+        moduleCreate("export", "src/a.ts", 'export { b } from "./b";'),
+      ].join("\n\n"),
+      { "src/a.ts": source },
+    );
+    expect(result.failures).toEqual([]);
+    const writes = await applyResolvedRegions({
+      regions: result.regions.map((region) => ({ ...region, replacement: region.text })),
+      fileSourceOf: () => source,
+      target: "src/a.ts",
+      prevCheck: parseCheck(source),
+      policy: { sameOffsetInserts: "append" },
+      noteFailure: () => {
+        throw new Error("unexpected apply failure");
+      },
+      noteOverlap: () => {
+        throw new Error("unexpected overlap");
+      },
+    });
+    const applied = writes[0]?.source ?? "";
+    expect(applied.startsWith("#!/usr/bin/env bun\n")).toBe(true);
+    expect(applied.indexOf('"use strict";')).toBeLessThan(applied.indexOf("import { a }"));
+    expect(applied.indexOf("import { a }")).toBeLessThan(applied.indexOf("import { b }"));
+    expect(applied.indexOf("import { b }")).toBeLessThan(applied.indexOf("export { b }"));
+    expect(applied.indexOf("export { b }")).toBeLessThan(applied.indexOf("export const existing"));
+  });
+
+  test("accepts named, default, namespace, type-only, side-effect, and export forms", () => {
+    const cases: Array<["import" | "export", string]> = [
+      ["import", 'import { a, b as c } from "./a";'],
+      ["import", 'import def from "./a";'],
+      ["import", 'import * as ns from "./a";'],
+      ["import", 'import type { T } from "./a";'],
+      ["import", 'import "./side-effect";'],
+      ["export", 'export { a } from "./a";'],
+      ["export", 'export * from "./a";'],
+      ["export", 'export * as ns from "./a";'],
+      ["export", "export default function boot(): void {}"],
+      ["export", "export default 1;"],
+      ["export", "export = value;"],
+    ];
+    for (const [kind, body] of cases) {
+      const result = resolve(moduleCreate(kind, "src/a.ts", body), { "src/a.ts": "" });
+      expect(result.failures).toEqual([]);
+      expect(result.regions[0]?.text).toBe(`${body}\n`);
+    }
+  });
+
+  test("rejects malformed, multi-statement, and wrong-kind fences", () => {
+    const malformed = resolve(moduleCreate("import", "src/a.ts", "import { a"), {
+      "src/a.ts": "",
+    });
+    expect(malformed.regions).toEqual([]);
+    expect(malformed.failures[0]?.diagnostics).toContain("EDIT_CREATE_MODULE_MALFORMED");
+
+    const multi = resolve(moduleCreate("import", "src/a.ts", 'import "a";\nimport "b";'), {
+      "src/a.ts": "",
+    });
+    expect(multi.regions).toEqual([]);
+    expect(multi.failures[0]?.diagnostics).toContain("2 top-level statements");
+
+    const mismatch = resolve(moduleCreate("export", "src/a.ts", 'import "a";'), {
+      "src/a.ts": "",
+    });
+    expect(mismatch.regions).toEqual([]);
+    expect(mismatch.failures[0]?.diagnostics).toContain("EDIT_CREATE_MODULE_KIND_MISMATCH");
+  });
+
+  test("rejects duplicate statements, duplicate import bindings, export names, and a second default export", () => {
+    const source = [
+      'import { a } from "./a";',
+      'export { a } from "./a";',
+      "export default function boot(): void {}",
+      "",
+    ].join("\n");
+    const sameImport = resolve(moduleCreate("import", "src/a.ts", 'import { a } from "./a";'), {
+      "src/a.ts": source,
+    });
+    expect(sameImport.regions).toEqual([]);
+    expect(sameImport.failures[0]?.stage).toBe("duplicate");
+
+    const sameBinding = resolve(moduleCreate("import", "src/a.ts", 'import { a } from "./b";'), {
+      "src/a.ts": source,
+    });
+    expect(sameBinding.regions).toEqual([]);
+    expect(sameBinding.failures[0]?.stage).toBe("duplicate");
+    expect(sameBinding.failures[0]?.diagnostics).toContain("binding");
+
+    const sameExport = resolve(
+      moduleCreate("export", "src/a.ts", 'export { b as a } from "./b";'),
+      { "src/a.ts": source },
+    );
+    expect(sameExport.regions).toEqual([]);
+    expect(sameExport.failures[0]?.stage).toBe("duplicate");
+    expect(sameExport.failures[0]?.diagnostics).toContain('"a"');
+
+    const secondDefault = resolve(
+      moduleCreate("export", "src/a.ts", "export default function other(): void {}"),
+      { "src/a.ts": source },
+    );
+    expect(secondDefault.regions).toEqual([]);
+    expect(secondDefault.failures[0]?.diagnostics).toContain("default export");
+  });
+
+  test("rejects duplicate module creates in one reply", () => {
+    const text = [
+      moduleCreate("import", "src/a.ts", 'import { a } from "./a";'),
+      moduleCreate("import", "src/a.ts", 'import { a } from "./a";'),
+    ].join("\n\n");
+    const result = resolve(text, { "src/a.ts": "" });
+    expect(result.failures).toHaveLength(1);
+    expect(result.failures[0]?.diagnostics).toContain("same import statement");
+  });
+
+  test("rejects an unsafe path", () => {
+    const result = resolve(
+      moduleCreate("import", "../outside.ts", 'import "a";'),
+      {},
+      new Set(["../outside.ts"]),
+    );
+    expect(result.regions).toEqual([]);
+    expect(result.failures[0]?.stage).toBe("address");
+    expect(result.failures[0]?.diagnostics).toContain("outside the editable workspace");
+  });
+
+  test("conflicts with a file-level select, write, delete, or empty-file create on the same path", () => {
+    const source = 'import { a } from "./a";\n';
+    const fileSelect = [
+      "select file src/a.ts",
+      'match `import { a } from "./a";`',
+      "replace with",
+      "<<<TC_EDIT_BEGIN>>>",
+      'import { a } from "./a-v2";',
+      "<<<TC_EDIT_END>>>",
+      "end",
+    ].join("\n");
+    const withSelect = resolve(
+      [moduleCreate("import", "src/a.ts", 'import { b } from "./b";'), fileSelect].join("\n\n"),
+      { "src/a.ts": source },
+    );
+    expect(withSelect.failures[0]?.diagnostics).toContain("file-level select");
+
+    const write = ["write src/a.ts with", "<<<TC_EDIT_BEGIN>>>", source, "<<<TC_EDIT_END>>>"].join(
+      "\n",
+    );
+    const withWrite = resolve(
+      [moduleCreate("import", "src/a.ts", 'import { b } from "./b";'), write].join("\n\n"),
+      { "src/a.ts": source },
+    );
+    expect(withWrite.failures[0]?.diagnostics).toContain("whole-file write");
+
+    const withDelete = resolve(
+      [moduleCreate("import", "src/a.ts", 'import { b } from "./b";'), "delete src/a.ts end"].join(
+        "\n\n",
+      ),
+      { "src/a.ts": source },
+    );
+    expect(withDelete.failures[0]?.diagnostics).toContain("delete");
+
+    const withEmptyCreate = resolve(
+      [moduleCreate("import", "src/a.ts", 'import { b } from "./b";'), "create src/a.ts end"].join(
+        "\n\n",
+      ),
+      { "src/a.ts": "" },
+    );
+    expect(withEmptyCreate.failures[0]?.diagnostics).toContain("empty-file create");
+  });
+
+  test("allows a module create and a declaration edit in the same file", () => {
+    const source = "export const existing = 1;\n";
+    const result = resolve(
+      [
+        moduleCreate("import", "src/a.ts", 'import { b } from "./b";'),
+        [
+          "select existing in src/a.ts",
+          "replace with",
+          "<<<TC_EDIT_BEGIN>>>",
+          "export const existing = 2;",
+          "<<<TC_EDIT_END>>>",
+          "end",
+        ].join("\n"),
+      ].join("\n\n"),
+      { "src/a.ts": source },
+    );
+    expect(result.failures).toEqual([]);
+    expect(result.regions).toHaveLength(2);
+    expect(result.regions.map((region) => region.path)).toEqual(["src/a.ts", "src/a.ts"]);
+  });
+});
+
 describe("nested declaration addresses (#52)", () => {
   test("renames an enum member and its same-enum references", () => {
     const source = ["enum Color { Red, Green }", "const value = Color.Red;", ""].join("\n");

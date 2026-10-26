@@ -1,7 +1,7 @@
 ---
 id: 54
 title: "Support file-level select for import and export statements"
-status: todo
+status: done
 priority: medium
 milestone: null
 parent: 51
@@ -44,3 +44,5 @@ git diff --check
 - Depends on #50 for the kind-aware create descriptor.
 - No dedicated `import-add`/`export-remove` action family: the locator is the file, the selector is matcher/regex/pick.
 - Structural matching inside module statements uses #53’s contexts where possible; regex/pick remain valid fallbacks.
+- Starting: file-level select for import/export statements and specifiers; module-boundary create for new import/export statements; #53 corpus follows this issue.
+- Resolved: added file-level select for import/export statements and specifiers (structural/regex/pick, full-statement or single-specifier deletion, ambiguous-match candidates, module-boundary target validation) and nameless create import/export module statements with duplicate/conflict checks. File-level rename is explicitly rejected and documented. Verification: just typecheck; just test 1543 pass; just accept 9/9; git diff --check. Extra just accept --all self-host hit the loop's 120s command timeout while running the full copied suite (~119s standalone); the copied suite passes standalone, and self-host is not a #54 criterion. No baseline changes.

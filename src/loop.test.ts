@@ -9376,6 +9376,8 @@ describe("edit-dsl protocol (#111/#119)", () => {
     expect(system).toContain("This is the Edit-action DSL.");
     expect(system).toContain("a bare `select <symbol> in <path> end` is a viewer");
     expect(system).toContain("`create [static] <kind> <name> in <path> with <fence> end`");
+    expect(system).toContain("select file <path>");
+    expect(system).toContain("create import|export in <path>");
     expect(system).toContain("a dotted create never creates its owner");
     expect(system).toContain("Edits are small and addressable");
     expect(system).toContain("Editing clauses in one reply apply atomically");
@@ -9418,6 +9420,9 @@ describe("edit-dsl protocol (#111/#119)", () => {
     expect(instruction).toContain("No listed micro-operation fits");
     expect(instruction).toContain("explore autonomously");
     expect(instruction).toContain("do not burn exchanges repeating a read you already made");
+    expect(instruction).toContain("Imports and exports have no declaration address");
+    expect(instruction).toContain("select file <path>");
+    expect(instruction).toContain("create import in <path>");
 
     // The examples pair each trigger with the concrete command form.
     expect(examples).toContain("Folded view");
@@ -9427,6 +9432,10 @@ describe("edit-dsl protocol (#111/#119)", () => {
     expect(examples).toContain("write src/lisp.ts with");
     expect(examples).toContain("Kind-aware create");
     expect(examples).toContain("create method Parser.parseValue in src/parser.ts with");
+    expect(examples).toContain("File-level select");
+    expect(examples).toContain("select file src/parser.ts");
+    expect(examples).toContain("Module-boundary create");
+    expect(examples).toContain("create import in src/parser.ts with");
     expect(instruction).toContain("read src/lisp.ts within 4-335 end");
 
     // The JSON protocol prompts stay byte-identical: no fold guidance leaks in.
@@ -9918,7 +9927,79 @@ describe("edit-dsl protocol (#111/#119)", () => {
     expect(source.indexOf("trim(): string")).toBeLessThan(source.lastIndexOf("}"));
   }, 30000);
 
-  test("under edit-dsl a first-turn editor applies without a second provider call", async () => {
+  test("under edit-dsl a file-level select edits an import statement", async () => {
+    const dir = passingFixtureDir();
+    writeFileSync(join(dir, "src", "base.ts"), "export const BASE = 2;\n");
+    writeFileSync(join(dir, "src", "base2.ts"), "export const BASE = 2;\n");
+    writeFileSync(
+      join(dir, "src", "helper.ts"),
+      'import { BASE } from "./base";\nexport function answer(): number {\n  return BASE;\n}\n',
+    );
+    const reply = editDslReply({
+      locator: { path: "src/helper.ts", name: "", kind: "file" },
+      space: null,
+      matcher: { kind: "snippet", value: 'import { BASE } from "./base";' },
+      pick: null,
+      replacement: 'import { BASE } from "./base2";',
+    });
+    const provider = new ScriptedProvider([reply, "Great! I resolve this problem!"]);
+    const result = await runLoop({
+      cwd: dir,
+      issue: "switch the import source",
+      provider,
+      protocolFormat: "edit-dsl",
+      checkCommand: TSC,
+      testCommand: ["bun", "test"],
+    });
+    expect(result.ok).toBe(true);
+    expect(provider.calls).toHaveLength(2);
+    expect(result.records.map((record) => record.outcome)).toEqual([
+      "selected",
+      "applied",
+      "ok",
+      "confirmed",
+    ]);
+    expect(helperSource(dir)).toContain('from "./base2"');
+    const applied = result.records.find((record) => record.outcome === "applied");
+    expect(applied?.stages).toEqual(["match"]);
+    expect(applied?.matcherKinds).toEqual(["snippet"]);
+  }, 30000);
+
+  test("under edit-dsl module creates add imports to a new and an existing file", async () => {
+    const dir = passingFixtureDir();
+    writeFileSync(join(dir, "src", "base.ts"), "export const BASE = 2;\n");
+    const reply = [
+      "create import in src/helper.ts with",
+      "<<<TC_EDIT_BEGIN>>>",
+      'import { BASE } from "./base";',
+      "<<<TC_EDIT_END>>>",
+      "end",
+      "",
+      "create import in src/new.ts with",
+      "<<<TC_EDIT_BEGIN>>>",
+      'import { BASE as NEW_BASE } from "./base";',
+      "<<<TC_EDIT_END>>>",
+      "end",
+    ].join("\n");
+    const provider = new ScriptedProvider([reply, "Great! I resolve this problem!"]);
+    const result = await runLoop({
+      cwd: dir,
+      issue: "add module imports",
+      provider,
+      protocolFormat: "edit-dsl",
+      checkCommand: TSC,
+      testCommand: ["bun", "test"],
+    });
+    expect(result.ok).toBe(true);
+    expect(helperSource(dir).startsWith('import { BASE } from "./base";\n')).toBe(true);
+    expect(readFileSync(join(dir, "src", "new.ts"), "utf8")).toBe(
+      'import { BASE as NEW_BASE } from "./base";\n',
+    );
+    const applied = result.records.find((record) => record.outcome === "applied");
+    expect(applied?.creates).toBe(2);
+  }, 30000);
+
+  test("under edit-dsl a file-level select applies without a second provider call", async () => {
     const dir = fixtureDir();
     const provider = new ScriptedProvider([
       editDslReply(answerEditor("return 2;", { kind: "snippet", value: "return 1;" })),

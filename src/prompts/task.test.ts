@@ -131,6 +131,8 @@ describe("execution prompts", () => {
     expect(prompt).toContain("create [static] <kind> <name> in <path>");
     expect(prompt).toContain("`enum-member`");
     expect(prompt).toContain("dotted `Owner.name`");
+    expect(prompt).toContain("select file <path>");
+    expect(prompt).toContain("create import in <path>");
     expect(prompt).not.toContain("never create a dotted member");
     expect(prompt).toContain("`delete <path> end`");
     expect(prompt).toContain("`read <path>");
@@ -153,6 +155,8 @@ describe("execution prompts", () => {
     expect(TASK_EDIT_STRATEGY_GUIDE).toContain("advice you may override");
     expect(TASK_EDIT_STRATEGY_GUIDE).toContain("Small requirement on a small file");
     expect(TASK_EDIT_STRATEGY_GUIDE).toContain("large module");
+    expect(TASK_EDIT_STRATEGY_GUIDE).toContain("Add or edit an import/export statement");
+    expect(TASK_EDIT_STRATEGY_GUIDE).toContain("no whole-file write is required");
   });
 
   test("functional style stays the shared plan-exec block", () => {

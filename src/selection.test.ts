@@ -1275,3 +1275,152 @@ describe("create declaration statements (#50)", () => {
     ).toThrow(/UNCLOSED_FENCE|unclosed fence/i);
   });
 });
+
+describe("file-level select statements (#54)", () => {
+  test("parses a file-level matcher editor with a file locator", () => {
+    const text = [
+      "select file src/helper.ts",
+      'match `import { answer } from "./answer";`',
+      "replace with",
+      BEGIN,
+      'import { answer } from "./answer-v2";',
+      END,
+      "end",
+    ].join("\n");
+    expect(first(text)).toEqual({
+      locator: { path: "src/helper.ts", name: "", kind: "file" },
+      space: null,
+      matcher: { kind: "snippet", value: 'import { answer } from "./answer";' },
+      pick: null,
+      replacement: 'import { answer } from "./answer-v2";',
+    });
+  });
+
+  test("a declaration literally named file keeps the symbol form", () => {
+    expect(first("select file in src/a.ts end").locator).toEqual({
+      path: "src/a.ts",
+      name: "file",
+      kind: "",
+    });
+  });
+
+  test("round-trips a file-level select through the serializer", () => {
+    const text = [
+      "select file src/a.ts",
+      'match /from "\\.\\/old";/',
+      "pick 3-3:22",
+      "replace with",
+      BEGIN,
+      'import { value } from "./new";',
+      END,
+      "end",
+    ].join("\n");
+    expect(serializeSelection(first(text))).toBe(text);
+  });
+
+  test("rejects a file-level rename with a documented limitation", () => {
+    const error = expectSyntax(
+      ["select file src/a.ts", 'match `import { a } from "./a";`', "rename a to b", "end"].join(
+        "\n",
+      ),
+      "file-level select cannot rename",
+    );
+    expect(error.issues[0]?.code).toBe("EDIT_FILE_RENAME_UNSUPPORTED");
+  });
+
+  test("rejects a file-level viewer clearly", () => {
+    const error = expectSyntax("select file src/a.ts end", "requires `replace with <fence>`");
+    expect(error.issues[0]?.code).toBe("EDIT_FILE_VIEWER_UNSUPPORTED");
+  });
+
+  test("rejects resolve and within on a file-level select", () => {
+    expectSyntax("select file src/a.ts resolve value end", "no symbol space");
+    expectSyntax("select file src/a.ts within 1-2 end", "file-level select is an editor");
+  });
+
+  test("rejects pick without replace", () => {
+    const error = expectSyntax("select file src/a.ts pick 1 end", "pick` requires a `replace");
+    expect(error.issues[0]?.code).toBe("EDIT_PICK_WITHOUT_REPLACE");
+  });
+});
+
+describe("module-boundary create statements (#54)", () => {
+  test("parses a nameless import create and an export create", () => {
+    expect(
+      parseMultiEditor(
+        ["create import in src/a.ts with", BEGIN, 'import { a } from "./a";', END, "end"].join(
+          "\n",
+        ),
+      ),
+    ).toEqual([
+      {
+        type: "fs",
+        statement: {
+          op: "create-module",
+          path: "src/a.ts",
+          kind: "import",
+          replacement: 'import { a } from "./a";',
+        },
+      },
+    ]);
+    expect(
+      parseMultiEditor(
+        ["create export in src/a.ts with", BEGIN, 'export { a } from "./a";', END, "end"].join(
+          "\n",
+        ),
+      ),
+    ).toEqual([
+      {
+        type: "fs",
+        statement: {
+          op: "create-module",
+          path: "src/a.ts",
+          kind: "export",
+          replacement: 'export { a } from "./a";',
+        },
+      },
+    ]);
+  });
+
+  test("accepts the fence directly after the module header", () => {
+    const [statement] = parseMultiEditor(
+      ["create import in src/a.ts", BEGIN, 'import "side-effect";', END, "end"].join("\n"),
+    );
+    expect(statement?.type).toBe("fs");
+    expect(statement?.type === "fs" ? statement.statement : null).toMatchObject({
+      op: "create-module",
+      kind: "import",
+      path: "src/a.ts",
+    });
+  });
+
+  test("round-trips module creates", () => {
+    const text = [
+      "create import in src/a.ts with",
+      BEGIN,
+      'import type { Config } from "./config";',
+      END,
+      "end",
+      "",
+      "create export in src/a.ts with",
+      BEGIN,
+      'export * from "./b";',
+      END,
+      "end",
+    ].join("\n");
+    expect(serializeMultiEditor(parseMultiEditor(text))).toBe(text);
+  });
+
+  test("rejects static and a named module create", () => {
+    expect(() =>
+      parseMultiEditor(
+        ["create static import in src/a.ts with", BEGIN, 'import "a";', END, "end"].join("\n"),
+      ),
+    ).toThrow(/static|module-boundary/i);
+    expect(() =>
+      parseMultiEditor(
+        ["create import Binding in src/a.ts with", BEGIN, 'import "a";', END, "end"].join("\n"),
+      ),
+    ).toThrow(/in <path>/);
+  });
+});

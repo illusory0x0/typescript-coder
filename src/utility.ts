@@ -1065,7 +1065,11 @@ export function memberDeletionRange(
   const separators =
     kind === "PropertySignature" || kind === "MethodSignature"
       ? ";,"
-      : kind === "EnumMember" || kind === "Property" || kind === "ObjectMethod"
+      : kind === "EnumMember" ||
+          kind === "Property" ||
+          kind === "ObjectMethod" ||
+          kind === "ImportSpecifier" ||
+          kind === "ExportSpecifier"
         ? ","
         : "";
   if (separators === "") {

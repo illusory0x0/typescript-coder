@@ -939,6 +939,180 @@ describe("resolveEditDslReply (#111)", () => {
   });
 });
 
+describe("file-level module-boundary select (#54)", () => {
+  const replace = (body: string): string =>
+    ["replace with", "<<<TC_EDIT_BEGIN>>>", body, "<<<TC_EDIT_END>>>", "end"].join("\n");
+
+  const SOURCE = [
+    'import { alpha, beta } from "./values";',
+    'import type { Config } from "./config";',
+    "",
+    "export { alpha as first };",
+    "export function work(): number {",
+    "  return alpha;",
+    "}",
+    "",
+  ].join("\n");
+
+  function fileDeps(
+    files: Record<string, string>,
+    options: { safe?: boolean; exists?: boolean } = {},
+  ): EditDslDeps {
+    return {
+      sourceFor: (path) => files[path] ?? "",
+      fileExists: (path) => options.exists ?? path in files,
+      isSafePath: () => options.safe ?? true,
+      resolveEntry: resolveEntryIn,
+    };
+  }
+
+  test("edits an import statement through a structural snippet", () => {
+    const result = resolveEditDslReply(
+      parseSelection(
+        [
+          "select file a.ts",
+          'match `import { alpha, beta } from "./values";`',
+          replace('import { alpha, gamma } from "./values";'),
+        ].join("\n"),
+      ),
+      fileDeps({ "a.ts": SOURCE }),
+    );
+    expect(result.failures).toEqual([]);
+    const region = result.regions[0];
+    expect(region?.start).toBe(0);
+    expect(region?.end).toBe('import { alpha, beta } from "./values";'.length);
+    expect(region?.stage).toBe("match");
+    expect(region?.matcherKind).toBe("snippet");
+  });
+
+  test("deletes an import statement with an empty fence", () => {
+    const result = resolveEditDslReply(
+      parseSelection(
+        ["select file a.ts", 'match `import { alpha, beta } from "./values";`', replace("")].join(
+          "\n",
+        ),
+      ),
+      fileDeps({ "a.ts": SOURCE }),
+    );
+    expect(result.failures).toEqual([]);
+    const region = result.regions[0];
+    expect(region?.start).toBe(0);
+    expect(SOURCE.slice(region?.end ?? 0)).toStartWith('import type { Config } from "./config";');
+  });
+
+  test("deletes one named import specifier and its separator", () => {
+    const result = resolveEditDslReply(
+      parseSelection(["select file a.ts", "match `beta`", replace("")].join("\n")),
+      fileDeps({ "a.ts": SOURCE }),
+    );
+    expect(result.failures).toEqual([]);
+    const region = result.regions[0];
+    const start = region?.start ?? -1;
+    const end = region?.end ?? -1;
+    expect(SOURCE.slice(start, end)).toBe(", beta");
+    expect(SOURCE.slice(0, start) + SOURCE.slice(end)).toContain(
+      'import { alpha } from "./values";',
+    );
+  });
+
+  test("edits an export specifier through a regex matcher", () => {
+    const result = resolveEditDslReply(
+      parseSelection(
+        ["select file a.ts", "match /alpha as first/", replace("alpha as primary")].join("\n"),
+      ),
+      fileDeps({ "a.ts": SOURCE }),
+    );
+    expect(result.failures).toEqual([]);
+    const region = result.regions[0];
+    expect(region?.start).toBe(SOURCE.indexOf("alpha as first"));
+    expect(region?.text).toBe("alpha as primary");
+  });
+
+  test("edits a specifier through file-absolute pick coordinates", () => {
+    const result = resolveEditDslReply(
+      parseSelection(["select file a.ts", "pick 1:10-1:14", replace("ALPHA")].join("\n")),
+      fileDeps({ "a.ts": SOURCE }),
+    );
+    expect(result.failures).toEqual([]);
+    const region = result.regions[0];
+    expect(SOURCE.slice(region?.start ?? 0, region?.end ?? 0)).toBe("alpha");
+    expect(region?.stage).toBe("pick");
+  });
+
+  test("structural matching keeps the module specifier significant", () => {
+    const source = [
+      'import { a } from "./a";',
+      'import { a as b } from "./b";',
+      "export const value = a + b;",
+      "",
+    ].join("\n");
+    const result = resolveEditDslReply(
+      parseSelection(
+        [
+          "select file a.ts",
+          'match `import { a } from "./a";`',
+          replace('import { a } from "./a2";'),
+        ].join("\n"),
+      ),
+      fileDeps({ "a.ts": source }),
+    );
+    expect(result.failures).toEqual([]);
+    expect(result.regions[0]?.start).toBe(0);
+    expect(result.regions[0]?.end).toBe('import { a } from "./a";'.length);
+  });
+
+  test("rejects an ambiguous match with each candidate location", () => {
+    const source = 'import "side-effect";\nimport "side-effect";\n';
+    const result = resolveEditDslReply(
+      parseSelection(
+        ["select file a.ts", 'match `import "side-effect";`', replace('import "./other";')].join(
+          "\n",
+        ),
+      ),
+      fileDeps({ "a.ts": source }),
+    );
+    expect(result.regions).toEqual([]);
+    expect(result.failures[0]?.stage).toBe("matcher");
+    expect(result.failures[0]?.diagnostics).toContain("a.ts:1:1");
+    expect(result.failures[0]?.diagnostics).toContain("a.ts:2:1");
+    expect(result.failures[0]?.diagnostics).toContain("exactly one span");
+  });
+
+  test("rejects a match outside a module-boundary statement", () => {
+    const source = ["function work(): number {", "  return 1;", "}", ""].join("\n");
+    const result = resolveEditDslReply(
+      parseSelection(["select file a.ts", "match `return 1;`", replace("return 2;")].join("\n")),
+      fileDeps({ "a.ts": source }),
+    );
+    expect(result.regions).toEqual([]);
+    expect(result.failures[0]?.stage).toBe("address");
+    expect(result.failures[0]?.diagnostics).toContain("outside an import/export statement");
+  });
+
+  test("requires match or pick and rejects an unsafe path", () => {
+    const bare = resolveEditDslReply(
+      parseSelection(["select file a.ts", replace("export {};")].join("\n")),
+      fileDeps({ "a.ts": SOURCE }),
+    );
+    expect(bare.failures[0]?.stage).toBe("address");
+    expect(bare.failures[0]?.diagnostics).toContain("needs `match` or `pick`");
+
+    const unsafe = resolveEditDslReply(
+      parseSelection(["select file ../a.ts", "match `beta`", replace("gamma")].join("\n")),
+      fileDeps({ "../a.ts": SOURCE }, { safe: false }),
+    );
+    expect(unsafe.failures[0]?.stage).toBe("address");
+    expect(unsafe.failures[0]?.diagnostics).toContain("outside the editable workspace");
+
+    const missing = resolveEditDslReply(
+      parseSelection(["select file a.ts", "match `beta`", replace("gamma")].join("\n")),
+      fileDeps({}, { exists: false }),
+    );
+    expect(missing.failures[0]?.stage).toBe("address");
+    expect(missing.failures[0]?.diagnostics).toContain("does not exist");
+  });
+});
+
 describe("nested declaration addresses (#52)", () => {
   const replace = (body: string): string =>
     ["replace with", "<<<TC_EDIT_BEGIN>>>", body, "<<<TC_EDIT_END>>>", "end"].join("\n");

@@ -156,6 +156,10 @@ merely for its size or shape.
   still be clearest as one whole-file write.
 - **Large declaration rewrite:** rewrite only that declaration and leave the
   file's other declarations untouched.
+- **Import/export statement:** use `create import|export in <path> with <fence> end`
+  to add one, or `select file <path> [ match … ] [ pick … ] replace with <fence>
+  end` to edit or delete an existing statement or specifier. No whole-file write
+  is required; a file-level rename is unsupported.
 - **Whole-file rewrite of an existing file:** valid when the change touches most
   of the file or a targeted edit would be riskier than the rewrite; there is no
   hard size or shape rejection.
@@ -855,10 +859,15 @@ The executor owns the concrete actions and granularity. One reply may carry one
 or more edit-dsl clauses and/or file commands:
 
 - `select … end` with `replace`, `rename`, `match`, `pick`, or a viewer slice;
+- `select file <path> [ match … ] [ pick … ] replace with <fence> end` for one
+  existing import/export statement or specifier (a file-level editor, not a
+  viewer or rename);
 - `create <path> end`, `delete <path> end`, `read <path> [within …] end`;
 - `create [static] <kind> <name> in <path> with <fence> end` for one named
   top-level declaration or one member of an existing class/interface/namespace/
   enum (a dotted `Owner.name`; the owner must already exist);
+- `create import|export in <path> with <fence> end` for one module-boundary
+  statement, inserted after the shebang, directives, and existing imports;
 - `write <path> with <fence>` for a whole-file replacement.
 
 Hints and `approach` are advice, not an allowlist. The executor may edit outside
@@ -882,7 +891,10 @@ different declaration `(path, symbol, kind)`. Multiple edits to one declaration
 are split across replies, even with different `match`/`pick` spans. Kind-aware
 creates are separate statements: several creates for distinct declarations may
 share a reply, a member create inserts into an existing owner, and a dotted
-create never creates its owner.
+create never creates its owner. Module-boundary creates are separate statements
+too; several distinct import/export statements may share a reply, but a module
+create cannot share a path with a file-level select, write, delete, or empty-file
+create.
 
 Addresses are declaration-level and may be dotted: namespace and class members
 as before, interface/type-literal members (`Cell.getValue`), enum members
@@ -896,6 +908,12 @@ disambiguates a cross-space merge. A whole-symbol edit on a multi-declarator or
 destructuring binding is rejected because it would rewrite siblings; use a
 per-binding `match`/`pick` span instead.
 
+Imports and exports are the exception: they have no declaration address. A
+`select file` clause owns one existing statement or specifier, and a module
+create adds one new statement. Both use the same parse/format/atomic-apply path;
+a file-level select never falls back to a whole-file write, and a file-level
+rename is rejected.
+
 ### 8.2 Applying a reply
 
 1. Parse the reply with the edit-action parser. A parse failure writes nothing.
@@ -906,8 +924,8 @@ per-binding `match`/`pick` span instead.
 4. Prepare whole-file `write` commands separately: parse and format the
    replacement, then include it in the atomic write set.
 5. Write all changed files, create empty files for `create <path> end`, apply
-   declaration/member insertions, and delete files for `delete` only after every
-   guard passed. Nothing is written on a rejection.
+   declaration/member and module-boundary insertions, and delete files for
+   `delete` only after every guard passed. Nothing is written on a rejection.
 6. A variable edit is addressed at its declarator; a whole-symbol edit on a
    multi-declarator statement or destructuring binding is rejected rather than
    rewriting a sibling. A named-member edit replaces only the member span; an
@@ -1032,6 +1050,13 @@ summaries; the historical `@1` schema used numeric task/edit ids.
   `create` statement; call/construct/index signatures and object-literal members
   are not. New classes remain forbidden by prompt policy, not by create
   validation.
+- **Imports/exports use a file-level owner.** `select file … replace` edits one
+  existing import/export statement or specifier, and `create import|export`
+  inserts one statement after the shebang, directives, and existing imports.
+  A file-level rename is not supported: imported bindings and export aliases
+  have no declaration address, so the statement text must be edited. A module
+  create cannot share a reply with a file-level select, write, delete, or
+  empty-file create on the same path.
 - **Rename is same-file.** It inherits the existing renamer's scope (declaration
   plus same-file references). Cross-file renames need caller edits first, or
   escalation.

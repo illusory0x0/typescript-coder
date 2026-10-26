@@ -27,7 +27,8 @@ export interface RenameSpec {
  * means no `match`; `pick === null` means no `pick`. A parsed `pick` always has
  * a `replace`: `pick` without a `replace` is a syntax error. `rename` is the
  * replacer's alternative (`rename <from> to <to>`), absent when the clause has
- * no renamer.
+ * no renamer. A file-level clause uses `locator.kind === "file"` with an empty
+ * name (`select file <path> …`); its owner is the file, not an index entry.
  */
 export interface Selection {
   locator: Locator;
@@ -81,6 +82,9 @@ export type MemberCreateKind =
 /** Every kind keyword admitted by `create <kind> <name> in <path> with <fence>`. */
 export type CreateDeclarationKind = DeclarationCreateKind | MemberCreateKind;
 
+/** The module-boundary kinds an explicit create can add without a synthetic name. */
+export type ModuleCreateKind = "import" | "export";
+
 export const DECLARATION_CREATE_KINDS: ReadonlySet<string> = new Set<DeclarationCreateKind>([
   "function",
   "class",
@@ -117,6 +121,16 @@ export function isCreateDeclarationKind(token: string): token is CreateDeclarati
   return DECLARATION_CREATE_KINDS.has(token) || MEMBER_CREATE_KINDS.has(token);
 }
 
+/** True for the nameless module-boundary create kinds (`create import|export in …`). */
+export function isModuleCreateKind(token: string): token is ModuleCreateKind {
+  return token === "import" || token === "export";
+}
+
+/** True for a `select file <path> …` clause (a file-level owner, not a declaration). */
+export function isFileSelection(selection: Selection): boolean {
+  return selection.locator.kind === "file" && selection.locator.name === "";
+}
+
 /**
  * A `create [static] <kind> <name> in <path> with <fence> end` declaration or
  * member create. `name` is a top-level identifier, a dotted `Owner.member`, or,
@@ -129,6 +143,18 @@ export interface CreateDeclarationStatement {
   kind: CreateDeclarationKind;
   name: string;
   static: boolean;
+  replacement: string;
+}
+
+/**
+ * A nameless `create import|export in <path> with <fence> end` module-boundary
+ * create. The fence is exactly one import or export statement; the descriptor
+ * carries no synthetic declaration name.
+ */
+export interface CreateModuleStatement {
+  op: "create-module";
+  path: string;
+  kind: ModuleCreateKind;
   replacement: string;
 }
 
@@ -160,6 +186,7 @@ export interface WriteFileStatement {
 export type FileStatement =
   | CreateFileStatement
   | CreateDeclarationStatement
+  | CreateModuleStatement
   | DeleteFileStatement
   | ReadFileStatement
   | WriteFileStatement;
@@ -644,7 +671,7 @@ class SelectionReader {
     return { op: "create", path };
   }
 
-  private parseCreateDeclaration(): CreateDeclarationStatement {
+  private parseCreateDeclaration(): CreateDeclarationStatement | CreateModuleStatement {
     this.skipWhitespace();
     let isStatic = false;
     if (this.matchKeyword("static")) {
@@ -655,6 +682,34 @@ class SelectionReader {
         ? "expected a class member kind after `create static`"
         : "expected a declaration or member kind after `create`",
     );
+    if (isModuleCreateKind(kindToken)) {
+      if (isStatic) {
+        this.syntax(
+          "EDIT_UNKNOWN_FIELD",
+          `\`static\` is not valid on a module-boundary create; \`${kindToken}\` is a file-level statement`,
+          {
+            expected: ["import", "export"],
+            found: `static ${kindToken}`,
+            hint: `drop \`static\`: use \`create ${kindToken} in <path> with <fence> end\``,
+          },
+        );
+      }
+      this.expectKeyword(
+        "in",
+        `expected \`in <path>\` after \`create ${kindToken}\`; a module-boundary create has no name`,
+      );
+      const path = this.readToken("expected a file path after `in`");
+      if (!this.matchKeyword("with")) {
+        this.skipWhitespace();
+        if (!this.text.startsWith(EDIT_FENCE_BEGIN, this.pos)) {
+          this.expectKeyword("with", "expected `with` before the create fence");
+        }
+      }
+      this.lastFenceClosed = false;
+      const replacement = this.parseFence();
+      this.consumeEnd("`create` command");
+      return { op: "create-module", path, kind: kindToken, replacement };
+    }
     if (!isCreateDeclarationKind(kindToken)) {
       this.syntax(
         "EDIT_UNKNOWN_FIELD",
@@ -769,8 +824,137 @@ class SelectionReader {
     return this.parseMultiRange("within");
   }
 
+  /**
+   * True when `select file …` names a file-level owner rather than the
+   * declaration literally named `file`. The symbol form keeps the `in <path>`
+   * header (`select file in src/a.ts`), so only a token after `file` that is not
+   * `in` starts the file-level grammar.
+   */
+  private fileSelectAhead(): boolean {
+    this.skipWhitespace();
+    if (!this.keywordAt("file")) {
+      return false;
+    }
+    let cursor = this.pos + 4;
+    while (cursor < this.length && isWhitespace(this.text[cursor] ?? "")) {
+      cursor += 1;
+    }
+    if (cursor >= this.length) {
+      return true;
+    }
+    if (!this.text.startsWith("in", cursor)) {
+      return true;
+    }
+    const after = cursor + 2;
+    return after < this.length && isWordChar(this.text[after] ?? "");
+  }
+
+  private parseFileEditor(): Selection {
+    this.expectKeyword("file", "expected `file` after `select`");
+    const path = this.readToken("expected a file path after `select file`");
+    if (this.matchKeyword("resolve")) {
+      this.syntax(
+        "EDIT_UNKNOWN_FIELD",
+        "a file-level select has no symbol space; `resolve value|type|namespace` applies only to declaration selects",
+        {
+          expected: ["match", "pick", "replace", "end"],
+          found: "resolve",
+          hint: "drop `resolve`; a file-level select edits import/export statements by matcher, regex, or pick",
+        },
+      );
+    }
+    if (this.matchKeyword("within")) {
+      this.syntax(
+        "EDIT_FILE_VIEWER_UNSUPPORTED",
+        "a file-level select is an editor; `within` is a declaration-viewer slice",
+        {
+          expected: ["match", "pick", "replace"],
+          found: "within",
+          hint: "use `read <path> within <selecters> end` to view file lines",
+        },
+      );
+    }
+
+    let matcher: SelectionMatcher | null = null;
+    if (this.matchKeyword("match")) {
+      matcher = this.parseMatcher();
+    }
+    this.skipWhitespace();
+    if (this.keywordAt("rename")) {
+      this.rejectFileRename();
+    }
+
+    let pick: EditRange[] | null = null;
+    let pickOffset: number | undefined;
+    if (this.matchKeyword("pick")) {
+      pickOffset = this.pos - 4;
+      pick = this.parseMultiRange();
+    }
+    this.skipWhitespace();
+    if (this.keywordAt("rename")) {
+      this.rejectFileRename();
+    }
+    let replacement: string | null = null;
+    if (this.matchKeyword("replace")) {
+      this.expectKeyword("with", "expected `with` after `replace`");
+      this.lastFenceClosed = false;
+      replacement = this.parseFence();
+    }
+    this.skipWhitespace();
+    if (this.keywordAt("rename")) {
+      this.rejectFileRename();
+    }
+    this.consumeEnd();
+
+    if (pick !== null && replacement === null) {
+      this.syntax(
+        "EDIT_PICK_WITHOUT_REPLACE",
+        "`pick` requires a `replace`: a `pick` without `replace` is not a viewer; add `replace with <fence>`",
+        {
+          ...(pickOffset === undefined ? {} : { offset: pickOffset }),
+          expected: ["replace with <fence>", "omit pick"],
+          found: "pick without replace",
+          hint: "add `replace with <fence>` or remove `pick`",
+        },
+      );
+    }
+    if (replacement === null) {
+      this.syntax(
+        "EDIT_FILE_VIEWER_UNSUPPORTED",
+        "a file-level select is an editor and requires `replace with <fence>`; it is not a viewer",
+        {
+          expected: ["match", "pick", "replace with <fence>"],
+          found: "end",
+          hint: "add `replace with <fence>`, or use `read <path> end` to view the file",
+        },
+      );
+    }
+    return {
+      locator: { path, name: "", kind: "file" },
+      space: null,
+      matcher,
+      pick,
+      replacement,
+    };
+  }
+
+  private rejectFileRename(): never {
+    this.syntax(
+      "EDIT_FILE_RENAME_UNSUPPORTED",
+      "a file-level select cannot rename: imported bindings and export aliases have no declaration address, and the harness will not guess one; edit the import/export statement with `replace with <fence>` instead",
+      {
+        expected: ["match", "pick", "replace with <fence>"],
+        found: "rename",
+        hint: "replace the import/export statement or specifier text; a semantic rename requires a declaration address",
+      },
+    );
+  }
+
   private parseEditor(): Selection {
     this.expectKeyword("select", "expected `select` to begin a clause");
+    if (this.fileSelectAhead()) {
+      return this.parseFileEditor();
+    }
 
     // `select [kind] <symbol> in <path> [resolve …]`: read the bare tokens
     // before `in` and disambiguate. One token is the symbol; two are
@@ -1497,10 +1681,15 @@ function renderFence(body: string): string {
 /** Render one selection back to the edit-dsl grammar (one `select … end` clause). */
 export function serializeSelection(selection: Selection): string {
   const { locator } = selection;
-  let head =
-    locator.kind === ""
-      ? `select ${locator.name} in ${locator.path}`
-      : `select ${locator.kind} ${locator.name} in ${locator.path}`;
+  let head: string;
+  if (locator.kind === "file" && locator.name === "") {
+    head = `select file ${locator.path}`;
+  } else {
+    head =
+      locator.kind === ""
+        ? `select ${locator.name} in ${locator.path}`
+        : `select ${locator.kind} ${locator.name} in ${locator.path}`;
+  }
   if (selection.space !== null) {
     head += ` resolve ${selection.space}`;
   }
@@ -1536,6 +1725,8 @@ export function serializeFileStatement(statement: FileStatement): string {
       return `create ${statement.path} end`;
     case "create-declaration":
       return `create ${statement.static ? "static " : ""}${statement.kind} ${statement.name} in ${statement.path} with\n${renderFence(statement.replacement)}\nend`;
+    case "create-module":
+      return `create ${statement.kind} in ${statement.path} with\n${renderFence(statement.replacement)}\nend`;
     case "delete":
       return `delete ${statement.path} end`;
     case "read": {
@@ -1572,6 +1763,9 @@ export function serializeMultiEditor(statements: readonly EditStatement[]): stri
  */
 export function toEditPayload(selection: Selection): EditPayload | null {
   if (selection.replacement === null) {
+    return null;
+  }
+  if (selection.locator.kind === "file" && selection.locator.name === "") {
     return null;
   }
   if (selection.rename !== undefined && selection.rename !== null) {
