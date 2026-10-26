@@ -18,6 +18,14 @@
   parent: 44
   deps: [49]
   file: 0048-make-plan-exec-choose-whole-file-writes-by-context.md
+- id: 50
+  title: "Allow dotted create to insert class and namespace members"
+  status: todo
+  priority: medium
+  milestone: null
+  parent: null
+  deps: [49]
+  file: 0050-allow-dotted-create-to-insert-class-and-namespace-members.md
 - id: 44
   title: "Stabilize plan-exec on mini-spreadsheet after guard and matcher changes"
   status: todo

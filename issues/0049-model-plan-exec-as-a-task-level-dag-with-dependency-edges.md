@@ -34,6 +34,7 @@ Replace the Stage/Task/Edit plan model with a task-level DAG of work nodes where
 - [ ] The planner retains read-only inspection without an arbitrary request count: each viewer consumes the run token budget, a repeated identical view or a no-progress cycle forces the Plan/patch reply, and the viewer never writes.
 - [ ] A node gate runs after each applied executor reply; a passing gate finishes the node, a failing gate returns diagnostics for another attempt, and a repeated fingerprint/no-progress cycle or the token budget ends the node. There is no low arbitrary exchange cap. Review then sees the applied diff and may approve or patch the node, its hints, or its dependencies.
 - [ ] `finish` marks the final `test` node; run success requires that node to pass and every non-repaired node to be terminal.
+- [ ] The existing application guardrail stays hard: each reply resolves at most one clause per declaration `(path, symbol, kind)`; multiple edits to one declaration are split across replies. Dotted member creation is a separate capability tracked by #50.
 - [ ] Existing Stage/Task/Edit tests, prompts, docs, and fixtures are migrated to the new schema; legacy plan text fails with a clear diagnostic (no dual mode). Replay fixtures that carry old plan text are updated or explicitly rejected.
 - [ ] The machine result contract is updated if the task summary shape changes (bump `typescript-coder-result` and update consumers/tests) rather than silently changing `@2`.
 - [ ] `just typecheck && just test` and `just accept` pass; no frozen baseline or historical result JSON is modified.
@@ -55,6 +56,7 @@ A live benchmark is not required for acceptance; any measured comparison needs e
 ## Notes
 
 - Direct replacement is confirmed: do not keep a live legacy Stage/Task/Edit mode. Old replay/plan text may be rejected with a clear error.
+- The old modify-only `related` scope expansion is removed: node hints plus executor-chosen clauses replace it. Dotted member create is tracked by #50; same-declaration multi-clause stays a hard application guardrail.
 - Hints are guidance, not a hard allowlist; out-of-hint edits are allowed when required and must be visible in the review diff.
 - Arbitrary viewer/exchange/round/node-count caps are policy, not safety. Use the token budget, repeated/no-progress fingerprints, and DSL/safety validation instead. Pinned-repair's low caps are a separate follow-up audit, not part of #49.
 - Planner inspection exists to choose files/symbols/dependencies, not to pre-select concrete edits. The executor still owns the action.
