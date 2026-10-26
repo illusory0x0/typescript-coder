@@ -59,3 +59,4 @@ The oc comparison is a reference point, not a target contract: 5/5 at mean
 55,197 cache-excluded. The plan-exec implementation still has different
 retry/protocol costs. The controlled pilot is for stability measurement, not a
 baseline re-freeze.
+- Offline preconditions are complete: #45, #46 and #47 are done; just typecheck and just test (1503 pass), plus fast just accept (9/9), passed after #47. Remaining acceptance item is the human-approved controlled 5-rep mini-spreadsheet plan-exec pilot at 120k cache-excluded tokens; it has not been run and no baseline was changed.
