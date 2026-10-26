@@ -2,9 +2,10 @@ import type { LoopResult, TerminationReason } from "./loop";
 
 /**
  * Versioned contract of the machine-readable sub-agent result (#80, #28).
- * `@2` carries string node ids on the plan/execute task summaries.
+ * `@3` carries WorkNode summaries on plan/execute runs; the removed `@2`
+ * carried per-edit Stage/Task/Edit summaries.
  */
-export const RESULT_FORMAT = "typescript-coder-result@2";
+export const RESULT_FORMAT = "typescript-coder-result@3";
 
 export interface ResultTokens {
   input: number;
@@ -28,10 +29,10 @@ export interface ResultFile {
   outcome: string;
 }
 
-/** Plan/execute per-edit summary; its `id`, `stage`, and `task` are string node ids. */
-export type ResultTask = NonNullable<LoopResult["tasks"]>[number];
+/** Plan/execute per-node summary; its `id` is a string graph node id. */
+export type ResultNode = NonNullable<LoopResult["nodes"]>[number];
 
-/** The `typescript-coder-result@2` object `--format json` prints on stdout (#80, #28). */
+/** The `typescript-coder-result@3` object `--format json` prints on stdout (#80, #28). */
 export interface SubagentResult {
   format: typeof RESULT_FORMAT;
   status: "ok" | "failed";
@@ -42,8 +43,8 @@ export interface SubagentResult {
   tokens: ResultTokens;
   terminationReason: TerminationReason | null;
   diagnostics: string | null;
-  /** Plan/execute runs: one entry per edit, in tree order; absent in edit mode. */
-  tasks?: ResultTask[];
+  /** Plan/execute runs: one entry per WorkNode, in record order; absent in edit mode. */
+  nodes?: ResultNode[];
 }
 
 function zeroResultTokens(): ResultTokens {
@@ -56,8 +57,8 @@ function zeroResultTokens(): ResultTokens {
  * exchange addressed (an explicit-targets batch row may cover several, #81);
  * `records` is the raw record count. `targets` echoes the requested addresses
  * (empty for the default path-independent mode) and `tokens` defaults to zeros.
- * A plan/execute run also carries `tasks`, whose node-id fields are strings in
- * `typescript-coder-result@2` (#28).
+ * A plan/execute run also carries `nodes`, whose ids are string graph node ids
+ * in `typescript-coder-result@3` (#28).
  */
 export function buildSubagentResult(input: {
   result: LoopResult;
@@ -93,7 +94,7 @@ export function buildSubagentResult(input: {
     tokens: input.tokens ?? zeroResultTokens(),
     terminationReason: result.terminationReason ?? null,
     diagnostics: result.diagnostics,
-    ...(result.tasks === undefined ? {} : { tasks: result.tasks }),
+    ...(result.nodes === undefined ? {} : { nodes: result.nodes }),
   };
 }
 

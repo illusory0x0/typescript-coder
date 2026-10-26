@@ -452,9 +452,10 @@ protocol actually measured; `protocolFormat` is null for such a report, while
 legacy scalar reports and `"compact"` values stay readable. A multi-mode report
 (`--agent-mode pinned-repair,plan-exec`) instead carries
 `agentModes: [...]` and a `provenanceByAgentMode` map; the plan-exec block
-hashes the planning+execution prompts and the task caps, while the pinned-repair
-block keeps the historical edit-loop hash. The ledger has no mode column yet, so
-a multi-mode row is not selected by `check` until that column lands.
+hashes the planning+execution prompts and the `planExec: "work-dag"` loop
+protocol marker, while the pinned-repair block keeps the historical edit-loop
+hash. The ledger has no mode column yet, so a multi-mode row is not selected by
+`check` until that column lands.
 
 | Digest         | What it covers                                                                        | Computation point                                                         |
 | -------------- | ------------------------------------------------------------------------------------- | ------------------------------------------------------------------------- |
@@ -462,7 +463,7 @@ a multi-mode row is not selected by `check` until that column lands.
 | `taskIssue`    | the task spec text of every task in the report, keyed by task                         | `TASK_SPECS` (`benchmark/specs/<task>.md`)                                |
 | `fixture`      | the on-disk content of `benchmark/fixtures/<task>/`, keyed by task and relative path  | current tree                                                              |
 | `systemPrompt` | the model-facing system + protocol text (plan-exec hashes planning+execution prompts) | `buildSystemPrompt` / task prompts (`src/loop.ts`, `src/prompts/task.ts`) |
-| `loopConfig`   | token budget, edit/iteration/stall caps, `effort`, `reps`, `multiPayload`             | loop constants + run flags                                                |
+| `loopConfig`   | token budget, pinned-repair edit/iteration/stall caps, `effort`, `reps`, `multiPayload`; plan-exec adds `planExec: "work-dag"` | loop constants + run flags                                                |
 | `pricing`      | the peak/off-peak rate table plus `PRICING_FETCHED_ON`                                | `src/benchmark-pricing.ts`                                                |
 
 `inputHash` is sha256 over the stable JSON of that digest object. A change to

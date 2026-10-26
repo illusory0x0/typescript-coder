@@ -374,7 +374,7 @@ export const scenarios: Scenario[] = [
   {
     id: "plan-exec-fix-answer",
     title:
-      "flat-DSL plan/execute/review plans one task and the executor makes the failing test green",
+      "flat-DSL plan/execute/review plans one WorkNode and the executor makes the failing test green",
     fixture: "fix-answer",
     agentMode: "plan-exec",
     issue: TEST_ISSUE,
@@ -382,16 +382,9 @@ export const scenarios: Scenario[] = [
       `plan "01-main"
 goal: Make the failing answer test pass.
 
-stage "02-stage-fix" plan "01-main"
-goal: Fix the answer behavior.
-end
-
-task "03-task-answer" stage "02-stage-fix" verify test
+node "02-answer" verify test
 instruction: Change answer so it returns 2 instead of 1.
-end
-
-edit "04-edit-answer" task "03-task-answer" modify value answer in src/helper.ts
-instruction: Change answer so it returns 2 instead of 1.
+hint value answer in src/helper.ts
 end
 
 finish`,
@@ -429,24 +422,15 @@ goal:
 Make the failing answer test pass.
 <<<TC_EDIT_END>>>
 
-stage "02-stage-fix" plan "01-main"
-goal:
-<<<TC_EDIT_BEGIN>>>
-Fix the answer behavior.
-<<<TC_EDIT_END>>>
-end
-
-task "03-task-answer" stage "02-stage-fix" verify test
+node "02-answer" verify test
 instruction:
 <<<TC_EDIT_BEGIN>>>
 Replace src/helper.ts so answer returns 2.
 <<<TC_EDIT_END>>>
-end
-
-edit "04-edit-answer" task "03-task-answer" write src/helper.ts
-instruction:
+hint file src/helper.ts
+approach:
 <<<TC_EDIT_BEGIN>>>
-Write the whole helper module.
+The file is small; one whole-file write is often cheapest.
 <<<TC_EDIT_END>>>
 end
 

@@ -288,7 +288,7 @@ describe("helpText", () => {
     expect(text).toContain("`compact` is a");
     expect(text).toContain("deprecated alias for edit-dsl");
     expect(text).toContain("--targets <file>");
-    expect(text).toContain("typescript-coder-result@2");
+    expect(text).toContain("typescript-coder-result@3");
   });
 });
 
@@ -550,7 +550,7 @@ describe("runMain", () => {
     expect(captured.out).toHaveLength(1);
     expect(captured.err).toEqual([]);
     const parsed = JSON.parse(captured.out[0] ?? "");
-    expect(parsed.format).toBe("typescript-coder-result@2");
+    expect(parsed.format).toBe("typescript-coder-result@3");
     expect(parsed.status).toBe("ok");
     expect(parsed.verified).toBe(true);
     expect(parsed.files).toEqual([
@@ -589,7 +589,7 @@ describe("runMain", () => {
     // stdout carries only the single result object.
     expect(captured.out).toHaveLength(1);
     const parsed = JSON.parse(captured.out[0] ?? "");
-    expect(parsed.format).toBe("typescript-coder-result@2");
+    expect(parsed.format).toBe("typescript-coder-result@3");
     expect(parsed.status).toBe("failed");
     expect(parsed.verified).toBe(false);
     expect(parsed.terminationReason).toBe("edit-exhausted");
@@ -604,7 +604,7 @@ describe("runMain", () => {
     // The failure-artifact line is prose, so it goes to stderr too.
     expect(errText).toContain("failure artifact: ");
     // No JSON leaks onto stderr.
-    expect(errText).not.toContain("typescript-coder-result@2");
+    expect(errText).not.toContain("typescript-coder-result@3");
   }, 60000);
 
   test("--format json emits a failed result for an empty issue (#80)", async () => {
@@ -619,7 +619,7 @@ describe("runMain", () => {
     expect(code).toBe(1);
     expect(captured.out).toHaveLength(1);
     const parsed = JSON.parse(captured.out[0] ?? "");
-    expect(parsed.format).toBe("typescript-coder-result@2");
+    expect(parsed.format).toBe("typescript-coder-result@3");
     expect(parsed.status).toBe("failed");
     expect(parsed.verified).toBe(false);
     expect(parsed.diagnostics).toContain("no issue");

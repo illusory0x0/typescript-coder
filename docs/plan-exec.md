@@ -1,15 +1,15 @@
 # Plan → execute → review loop
 
-Status: **implemented, as-built.** This document describes the shipped
-`plan-exec` loop; the code and its tests are the source of truth. It
-describes the V3 soft-guidance design and is kept in step with the
-implementation.
+Status: **implemented.** This document describes the plan-exec loop.
+[`src/tasks.ts`](../src/tasks.ts) and [`src/plan-dsl.ts`](../src/plan-dsl.ts)
+are the source of truth for the core model and wire grammar; the driver and
+prompts are [`src/task-loop.ts`](../src/task-loop.ts) and
+[`src/prompts/task.ts`](../src/prompts/task.ts).
 
-Canonical ownership: this document owns the Plan/Stage/Task/Edit model, the flat
-Plan DSL and patch DSL, planning and review, validation/merge, scheduling,
-plan-exec execution context, the plan-exec target guard and action mapping, task
-gates, plan-exec-specific caps, and the plan-exec CLI, result, limitations,
-implementation, and verification.
+Canonical ownership: this document owns the Plan/WorkNode DAG model, target and
+approach hints, the flat Plan DSL and patch DSL, planning, validation/merge,
+scheduling, plan-exec execution context, gates, plan-exec-specific limits, and the
+plan-exec CLI, result, limitations, implementation, and verification.
 [`feedback-loop.md`](feedback-loop.md) owns the shared loop lifecycle, AgentMode
 routing, round/exchange policy, retry/termination, shared caps, and
 records/result. [`edit-protocol.md`](edit-protocol.md) owns the edit-action reply
@@ -19,129 +19,127 @@ application/gating, and repair feedback. Vocabulary is canonical in
 
 The loop is **additive**. `--mode pinned-repair` (default) keeps the single-target
 Edit → Verify driver byte-identical ([`feedback-loop.md`](feedback-loop.md)).
-`--mode plan-exec` runs the Plan → Execute → Review flow over this hierarchy:
+`--mode plan-exec` runs the Plan → Execute → Review flow over a task-level work
+graph:
 
-- **Plan** — the root: `id`, `goal`, and ordered stages;
-- **Stage** — a coherent phase: `id`, `plan`, `goal`, and ordered tasks;
-- **Task** — the planning and execution unit: `id`, `stage`, `verify`,
-  `instruction`, and ordered edits;
-- **Edit** — one declaration-level action, or one whole-file write: `id`,
-  `task`, loc, action, instruction, optional related targets / rename target.
+- **Plan** — the root: `id`, `goal`, and flat `nodes`;
+- **WorkNode** — the planning and execution unit: `id`, `after` dependency ids,
+  `verify`, `instruction`, target `hints`, and optional `approach` / `phase`
+  guidance.
 
-The harness owns status, scheduling, gates, and verification. The model never
-chooses files or commands; it answers structured prompts. Array/record order is
-execution order: there are no dependency edges, `todo` lists, or planner-owned
-status maps.
+The planner owns the decomposition, dependency edges, verification boundaries,
+instructions, and hints. The executor owns the concrete edit actions and their
+granularity: it sees the current source, may choose `modify` / `create` /
+`delete` / `rename` / `write`, `match` / `pick` / range / whole-declaration, and
+multiple clauses per reply. The harness owns status, scheduling, gates, and
+review. Hints and `approach` are guidance, not hard constraints.
 
-Implementation map (as built):
+Implementation map:
 
-| Concern                                               | File                                                                                             |
-| ----------------------------------------------------- | ------------------------------------------------------------------------------------------------ |
-| Plan contract, tree validator, scheduler              | `src/tasks.ts`                                                                                   |
-| Flat Plan DSL and patch DSL parser/serializer         | `src/plan-dsl.ts`                                                                                |
-| Planning/execution/review prompt text                 | `src/prompts/task.ts`                                                                            |
-| Driver, target guards, apply/verify, incremental loop | `src/task-loop.ts`                                                                               |
-| Dispatch (`--mode`)                                   | `src/loop.ts`                                                                                    |
-| CLI flag                                              | `src/cli.ts`, `src/main.ts`                                                                      |
-| Tests                                                 | `src/tasks.test.ts`, `src/plan-dsl.test.ts`, `src/prompts/task.test.ts`, `src/task-loop.test.ts` |
+| Concern                                       | File                                                                                             |
+| --------------------------------------------- | ------------------------------------------------------------------------------------------------ |
+| Plan/WorkNode contract, validator, scheduler  | `src/tasks.ts`                                                                                   |
+| Flat Plan DSL and patch DSL parser/serializer | `src/plan-dsl.ts`                                                                                |
+| Planning/execution/review prompt text         | `src/prompts/task.ts`                                                                            |
+| Driver, scheduling, apply/verify, review      | `src/task-loop.ts`                                                                               |
+| Dispatch (`--mode`)                           | `src/loop.ts`                                                                                    |
+| CLI flag                                      | `src/cli.ts`, `src/main.ts`                                                                      |
+| Tests                                         | `src/tasks.test.ts`, `src/plan-dsl.test.ts`, `src/prompts/task.test.ts`, `src/task-loop.test.ts` |
 
 ## 1. Core model
 
-The hierarchy is fixed:
+The model is a task-level DAG, not a Stage/Task/Edit hierarchy:
 
 ```text
 Plan
-└── Stage[]
-    └── Task[]
-        └── Edit[]
+└── WorkNode[]   (edges: WorkNode.after)
 ```
-
-The Plan is a living tree. The planner does **not** pre-plan all future tasks:
-the current Task is planned, executed, and reviewed; only then is the next Task
-planned. Stages are also incremental: a new Stage is appended only after the
-current Stage has no pending or `review` Task.
 
 ```ts
 type Plan = {
   id: NodeId; // globally unique string id
   goal: string; // root goal
-  stages: Stage[]; // current + completed stages
+  nodes: WorkNode[]; // record order is the readiness tie-break
 };
 
-type Stage = {
+type WorkNode = {
   id: NodeId;
-  goal: string; // planning context for the executor
-  tasks: Task[]; // planned tasks only; no deferred placeholders
+  after: NodeId[]; // dependency node ids; empty means ready at the start
+  verify: "tsc" | "test"; // the node gate
+  instruction: string; // self-contained local goal for the executor
+  hints: HintLoc[]; // advisory target hints; never a hard allowlist
+  approach?: string; // advisory strategy, e.g. scaffold then fill bodies
+  phase?: string; // optional workflow label; not a scheduling input
 };
 
-type Task = {
-  id: NodeId;
-  verify: "tsc" | "test"; // task gate
-  instruction: string; // local goal for the whole task
-  edits: Edit[]; // one or more, execution order
-};
-
-type Edit = {
-  id: NodeId;
-  loc: Loc;
-  action: "modify" | "create" | "delete" | "rename" | "write";
-  instruction: string; // self-contained; executor sees no requirement text
-  related?: Loc[]; // same-file atomic migration targets (modify only)
-  renameTo?: string; // required iff action === "rename"
-};
-
-type Loc = {
+type HintLoc = {
   path: string; // repo-relative, writable
-  symbol: string; // declared name (or the top-level name a create adds); empty for write
-  kind: "value" | "type" | "namespace" | "file"; // symbol space, or file for write
+  symbol: string; // declared name; empty for a file hint
+  kind: "value" | "type" | "namespace" | "file"; // symbol space, or file
 };
 
-type NodeId = string; // "01-main", "02-stage-parser", ...
+type NodeId = string; // "01-main", "02-scaffold", "03-impl", ...
 ```
 
-All node ids — Plan, Stage, Task, Edit — share one namespace and are globally
-unique. The `NN-` prefix is for readability only; execution order is record
-order, not lexical id order.
+All node ids — Plan and WorkNode — share one namespace and are globally unique.
+The `NN-` prefix is for readability only; readiness is decided by `after` edges,
+with record order as the deterministic tie-break. A node may depend on a node
+declared later in the same reply; validation only requires that the id exists.
 
-The harness tracks edit and task status internally:
+The harness tracks node status internally:
 
 ```ts
-type EditStatus = "todo" | "in-progress" | "done" | "failed";
-type TaskStatus = "pending" | "review" | "passed" | "failed";
+type NodeStatus = "pending" | "in-progress" | "review" | "passed" | "failed";
 ```
 
-`review` means the Task's edits and gate have finished, but the planner's
-post-execution review has not approved the result yet. A Task in `review` is
-not runnable and not terminal; stage closure waits for it. There is no
-`deferred` task status because deferred tasks are not inserted into the tree. A
-future Task exists only in the planner's next patch.
+`review` means the node's gate has finished, but the planner's post-execution
+review has not approved the result yet. `in-progress` means the executor holds
+the node. Neither is terminal. A failed dependency blocks its dependents; blocked
+is **derived** from status and edges, not stored as a sixth status. There is no
+`deferred` status because deferred work is simply not inserted into the graph.
 
-`finalTaskId: NodeId | null` is harness state. It is set by the `finish` control
-and must point at the last task in the Plan. That task must have `verify: "test"`.
-Run success requires `finalTaskId` to be passed and every stage closed.
+`finalNodeId: NodeId | null` is harness state. It is set by the `finish` control
+and must point at the last node in record order. That node must verify `test`.
+Run success requires `finalNodeId` to be passed and every node to be terminal
+(`passed` or `failed`). Earlier failed nodes are allowed when later work
+supersedes them.
 
-`kind` is a **symbol space**, not a declaration keyword. It matches the
-edit-dsl `resolve` vocabulary; the declaration keyword (`function`, `const`, …)
-is discovered from the index.
+`kind` is a **symbol space**, not a declaration keyword. It matches the edit-dsl
+`resolve` vocabulary; the declaration keyword (`function`, `const`, …) is
+discovered from the index.
 
-### 1.1 Create and class-member rule
+### 1.1 Hints are guidance
 
-`create` adds a **top-level declaration** only. A dotted `create` such as
-`Parser.parseValue` is rejected during plan validation:
+A hint names a likely path and symbol. It is not a target guard and not an
+allowlist: the executor may edit outside the hinted paths when the instruction
+requires it, and review sees those edits. A file hint uses `symbol: ""` and
+`kind: "file"`; a symbol hint uses `value`, `type`, or `namespace`:
 
 ```text
-stage: task-tree
-- create adds a top-level declaration; "Parser.parseValue" is a class member.
-  Modify the class with all needed stubs, then modify the member, or use a
-  top-level function.
+hint file src/workbook.ts
+hint value evaluate in src/workbook.ts
+hint type CellResult in src/workbook.ts
 ```
 
-Existing class members may still be targeted by `modify`, `delete`, or `rename`
-when they already exist. New code is functional-first: new classes are
-forbidden; existing classes are extended only when unavoidable, preferably by
-one whole-class `modify` that adds stubs, followed by member `modify` edits.
+`phase` is an optional workflow label such as `scaffold` or `implement`. It is
+planning/review context only; it never changes scheduling.
 
-### 1.2 Functional style
+### 1.2 Approach is advice
+
+`approach` carries the planner's programming experience as an optional strategy
+hint. The executor may override it from the current source. Validation and review
+do not require adherence. Canonical examples:
+
+- a small requirement on a small file may justify one whole-file write;
+- a large greenfield module should scaffold top-level declarations and stub
+  bodies first, then fill bodies with targeted edits;
+- an existing large file usually needs targeted edits, not a rewrite.
+
+The planner recommends a workflow (inspect → contract → scaffold → implement →
+verify) but does not impose it. A single node, a linear chain, and a branching DAG
+are all valid shapes.
+
+### 1.3 Functional style
 
 Planner and executor prefer ML-style functional TypeScript:
 
@@ -153,9 +151,9 @@ Planner and executor prefer ML-style functional TypeScript:
   getters/setters, or class-based state machines;
 - existing classes: minimal `modify` only, never a dotted `create`.
 
-The planner decides helper decomposition. A single-file change does **not**
-need multiple stages or tasks; one Task is valid when its gate can pass. Do not
-split work just to make the tree look more parallel.
+The planner decides helper decomposition. A single-file change does **not** need
+several nodes; one node is valid when its gate can pass. Do not split work just to
+make the graph look more parallel.
 
 The prompt style block is:
 
@@ -166,140 +164,154 @@ Prefer ML-style functional TypeScript:
   plain records.
 - Implement behavior as top-level functions with explicit parameter and return
   types.
-- Extract small helpers when they make the code clearer; do not force a
-  stage/task split.
+- Extract small helpers when they make the code clearer; do not force an extra
+  work node.
 - Do not create new classes, inheritance, `super`, implicit `this`, private
   state, getters/setters, or class-based state machines.
 - If an existing class must change, modify it minimally; never create a dotted
   member with `create`.
 ```
 
+### 1.4 Limits
+
+| Limit                | Value       |
+| -------------------- | ----------- |
+| Plan goal length     | 1,000 chars |
+| Instruction length   | 4,000 chars |
+| Approach length      | 2,000 chars |
+| Phase length         | 200 chars   |
+| Token budget         | 120,000     |
+
+There is no WorkNode count cap in the DSL parser or graph validator, and no
+fixed per-turn node cap. Plan growth is bounded by the model's token budget and
+the driver's repeated/no-progress detection, not by an arbitrary node count. The
+driver has no fixed exchange, viewer, review, or planning-round cap; the token
+budget and repeated fingerprints bound a run.
+
 ## 2. Incremental planning protocol
 
 Planning, review, and execution are separate turns:
 
 ```text
-1. Initial Plan: Plan + current Stage + current Task + its edits.
+1. Initial Plan: Plan + one or more ready WorkNodes (a node may depend on a node
+   declared later in the same reply, as long as the graph stays acyclic).
 2. Structural validation by the harness.
-3. Executor consumes exactly one Task: its edits, then the Task gate. The Task
-   enters `review`.
-4. Planner post-execution review receives the gate result and a concise diff of
-   the applied edits.
+3. The harness picks ready nodes in record order and executes one node. After
+   each applied executor reply, the node gate runs; the node enters review once
+   its gate result is known.
+4. Planner post-execution review runs only after a passing gate and receives the
+   gate result and a concise diff of the applied work.
    -> approve
-   -> or one patch.
-5. If the review returns a patch: validate it, reopen the current Task, execute
-   it again. There is no second review for that Task.
-   If it approves: finalize the Task as `passed` or `failed` from the gate.
-6. If finalTaskId passed and all stages are closed: success.
-7. Otherwise the planner emits a patch for one next unit:
-     - another Task in the current Stage, but only while that Stage is not
-       fully passed; a fully passed Stage requires a new Stage with its first
-       Task;
-     - a new Stage (only after the current Stage has no pending/review Task)
-       followed by its first Task;
-     - a repair Task/Stage after a failure;
-     - a final test Task followed by finish.
+   -> or a patch.
+5. If the review returns a patch: validate it; if it changes the current node,
+   the node reopens and executes again, then passes through review again. The
+   loop stops on approve, the token budget, or a repeated patch/diff
+   fingerprint. If it approves: finalize the node as `passed`.
+6. If finalNodeId passed and every node is terminal: success.
+7. Otherwise the planner emits a patch for the remaining work:
+     - node+ for any number of new ready nodes;
+     - node~ to repair/redefine a pending, failed, or review node;
+     - node- to remove pending/failed work that is no longer wanted;
+     - a final test node followed by finish.
 8. Repeat from step 2.
 ```
 
-Only one new Task is planned per planning turn. The planner may plan a repair
-Task or the first Task of a new Stage, but not a whole future Task list.
+A planning turn may add one or more new nodes. There is no fixed node count or
+per-turn batch cap; the token budget and no-progress detection bound growth. New
+nodes may be ready immediately or depend on existing or newly added nodes. The
+initial Plan may declare the whole DAG or only the work that is ready now; neither
+shape is preferred by the contract.
 
-Before a Plan/patch, the planner may make one read-only edit-protocol viewer
-request: `select ... end` (optionally with `within <selecters>`), or
-`read ... end` (optionally with `within`). A viewer writes nothing; the harness
-returns the indentation-folded source or exact slice in a `# Source view`
-message, then asks for the Plan/patch again. Planner viewer requests are not
-Plan records and do not create, edit, or delete files.
+The planner may make read-only edit-protocol viewer requests before a Plan/patch:
+`select ... end` (optionally with `within <selecters>`), or `read ... end`
+(optionally with `within`). A viewer writes nothing; the harness returns the
+indentation-folded source or exact slice in a `# Source view` message, then asks
+for the Plan/patch again. There is no arbitrary request count: each viewer
+consumes the token budget, and a repeated identical view or no-progress cycle
+forces the Plan/patch reply. Planner viewer requests are not Plan records and do
+not create, edit, or delete files.
 
-A Stage is **closed** when all of its Tasks are terminal (`passed` or `failed`).
-The planner may append the next Stage only when the current Stage is closed. A
-new Task may still be added to a non-fully-passed Stage as a repair.
+The recommended workflow is **inspect → contract → scaffold → implement →
+verify**:
 
-The planner may instead end the run by planning a final Task and emitting
-`finish`. `finish` marks the last Task as `finalTaskId`; that Task must verify
-`test`. When the final test fails, two repairs are allowed:
+- inspect the requirement, index, and source;
+- settle the public contract (types, signatures, data shapes);
+- scaffold declarations and stub bodies for a large module;
+- implement behavior in node-sized work;
+- finish with a `test` node marked by `finish`.
 
-- **in-place repair (default):** reopen/repair the final Task while it remains
-  last; `finish` and `finalTaskId` stay unchanged;
-- **new final:** append a repair Task/Stage and a new final test Task, then
-  emit `finish` again; the previous final Task becomes an earlier failed Task.
+This is guidance. A one-node plan is valid when its gate can pass; a branching
+DAG is valid when two pieces of work are genuinely independent.
 
-Any Task appended after `finalTaskId` requires a new `finish` on the new last
-Task. A passed Task and a done Edit remain immutable in both paths.
+The planner may end the run by planning a final `test` node and emitting
+`finish`. `finish` marks the last node as `finalNodeId`; that node must verify
+`test`. When the final test fails, both in-place repair and a new final node are
+allowed:
+
+- **in-place repair (default):** `node~` the final node while it remains last;
+  `finish` and `finalNodeId` stay unchanged;
+- **new final:** append a repair/final test node and emit `finish` again; the
+  previous final node becomes an earlier failed node.
+
+Any node appended after `finalNodeId` requires a new `finish` on the new last
+node. A passed node remains immutable.
 
 ### 2.1 Post-execution review
 
-After every Task's edits and gate, the Task enters `review` and a separate
+Review runs only after a node's gate passes. The node enters `review` and a
 review turn in the same planner conversation checks the result. It receives:
 
-- the gate result (`tsc` / `test`) and diagnostics;
-- a concise diff of the applied edits, not full files;
-- the current Task instruction and plan segment.
+- the passing gate (`tsc` / `test`) and its diagnostics (normally empty);
+- a concise diff of the applied work, not full files;
+- the current node instruction, hints, approach, and phase;
+- any changed paths outside the hints.
 
 The review checks:
 
-- the diff implements the Task instruction and contains no unrelated edits;
-- a failing gate has an actionable repair;
+- the diff implements the node instruction and contains no unrelated edits;
+- edits outside the hinted paths are justified by the instruction and visible;
 - no dotted `create`, no new class, no heavy OOP;
 - helper decomposition is reasonable and symbols resolve;
-- if `finish` is present, the final Task is last and verifies `test`.
+- if `finish` is present, the final node is last and verifies `test`.
 
 The review reply is either `approve` or a patch. Review uses the same planner
-conversation in its own turn, not a fresh reviewer. A syntactically malformed
-review reply gets one bounded format retry with its diagnostics. A scope or
-merge violation still terminates, except that a patch which tries to mutate a
-done edit gets one correction retry: the planner must approve or use `edit+`
-for a new repair edit, never `edit~` on the done edit. A review patch may only
-repair the current Task (`task~`, `edit+`, `edit~`, `edit-`) and may not add a
-future Stage/Task.
-A done edit is immutable; after a gate failure, append a new repair edit with
-`edit+` rather than changing the landed edit.
-A review patch may carry `finish` for the current final Task, but may not add
-future work. The harness structurally validates the patch; if it returns a
-patch, the current Task reopens and executes again, with no second review for
-that Task. If it approves, the Task is finalized as `passed` or `failed` from
-the gate. Further changes go through the normal repair/replan path. Review
-calls count toward the token budget but are additional to the planning-turn
-cap.
+conversation in its own turn, not a fresh reviewer. There is no fixed review-turn
+or format-retry cap: a malformed reply gets its diagnostics back, and the loop
+stops on approve, the token budget, or a repeated patch/diff fingerprint. A
+review patch may repair the current node, its hints, or its dependencies, add
+follow-up work, or carry `finish` for the current final node. The harness
+structurally validates the patch; if it changes the current node, the node
+reopens and executes again and goes through review again. If the current node is
+unchanged, its passing gate stands. Review calls count toward the token budget
+and are tracked separately from planning turns.
 
 ## 3. Flat Plan DSL
 
-The planner emits a flat block DSL, not JSON. Every record is independent and
-references its parent by id. No nesting, no JSON fallback.
+The planner emits a flat block DSL, not JSON. Every record is independent. No
+nesting, no JSON fallback, and no legacy Stage/Task/Edit mode.
 
 ```bnf
-<plan-reply>  ::= <plan-file> [ "finish" NL ]
-<patch-reply> ::= <patch-file> [ "finish" NL ]
-
-<plan-file>   ::= "plan" <id> NL
+<plan-reply>  ::= "plan" <id> NL
                   "goal:" <text> NL
-                  <stage>*
-                  <task>*
-                  <edit>*
+                  <node>*
+                  [ "finish" NL ]
 
-<stage>       ::= "stage" <id> "plan" <id> NL
-                  "goal:" <text> NL
-                  "end" NL
-
-<task>        ::= "task" <id> "stage" <id> "verify" <verify> NL
+<node>        ::= "node" <id> [ "after" <id>+ ] "verify" <verify> NL
                   "instruction:" <text> NL
+                  <node-field>*
                   "end" NL
 
-<edit>        ::= "edit" <id> "task" <id>
-                  ( <action> <space> <symbol> "in" <path> | "write" <path> ) NL
-                  <related>*
-                  [ "renameTo:" <symbol> NL ]
-                  "instruction:" <text> NL
-                  "end" NL
+<node-field>  ::= <hint>
+                | "after" ( <id>+ )? NL
+                | "approach:" <text> NL
+                | "phase:" <text> NL
 
-<related>     ::= "related" <space> <symbol> "in" <path> NL
+<hint>        ::= "hint file" <path> NL
+                | "hint" <space> <symbol> "in" <path> NL
 
 <id>          ::= '"' DIGIT DIGIT DIGIT* "-" (LOWER | DIGIT)+ ( "-" (LOWER | DIGIT)+ )* '"'
 <verify>      ::= "tsc" | "test"
 <space>       ::= "value" | "type" | "namespace"
-<action>      ::= "modify" | "create" | "delete" | "rename"
-<write>       ::= "write" <path>
 <path>        ::= NONSPACE+
 <symbol>      ::= NONSPACE+
 <line-text>   ::= { any character except newline }+
@@ -307,42 +319,40 @@ references its parent by id. No nesting, no JSON fallback.
 <raw-lines>   ::= ? raw text; each sentinel marker is a whole line with optional
                     leading/trailing whitespace; no raw line may trim to exactly
                     <<<TC_EDIT_END>>>; the first exact close line ends the
-                    fence; the body may be empty for an edit-action delete ?
+                    fence ?
 <text>        ::= <line-text> | NL <fence> | <fence> ? inline opener after the label ?
 ```
 
 Rules:
 
-- The Plan header is a singleton; it has no `end`. `stage`, `task`, and `edit`
-  records each end with `end`.
+- The Plan header is a singleton; it has no `end`. Every `node` record ends with
+  `end`.
 - `NodeId` matches `/^[0-9]{2,}-[a-z0-9]+(?:-[a-z0-9]+)*$/`: two or more digits,
-  a hyphen, then a lowercase kebab slug (`"01-main"`, `"03-task-reader"`). The
-  Plan root, stages, tasks, and edits share one namespace.
-- The initial Plan reply contains exactly one current Stage and one current
-  Task. Later Tasks/Stages are added by patches, one new Task per planning
-  turn. The initial planning prompt asks for one or more edits, all task
-  records before edit records, and no `finish`; later patches add the
-  remaining work. Plan shape is guidance, not a fixed count: a cohesive change
-  may be one Stage, one Task, and one edit.
-- All stage records come before task records; all task records come before edit
-  records. A parent must be declared earlier in the reply or already exist.
-- Stage order is stage-record order; task order within a stage is task-record
-  order; edit order within a task is edit-record order.
-- `goal:` / `instruction:` may be one-line text or a following sentinel fence.
-  The opener may also share the label line when it is the last token; the raw
-  body still starts on the next line. The fence body is raw, so hyphen runs,
-  backtick runs, `done`, and `end` are ordinary lines; it must be non-empty
-  after trimming, and only an exact `<<<TC_EDIT_END>>>` line closes it (there is
-  no escape). The same sentinel
-  `<fence>` production is used by the edit-action reply;
-  [`edit-protocol.md`](edit-protocol.md) §2 owns the canonical fence rules.
-  Legacy hyphen/backtick fences are rejected (`PLAN_LEGACY_FENCE`).
-- `create` is top-level only; dotted create is rejected.
-- `write` targets one whole file: `<path>` only, no space or symbol. Its edit
-  loc is `{path, symbol: "", kind: "file"}`; `related` and `renameTo` are
-  rejected.
-- `related` is allowed only with `modify`; `renameTo` only with `rename`.
-- `finish`, when present, must be the last line and marks the last task final.
+  a hyphen, then a lowercase kebab slug (`"01-main"`, `"03-impl"`). The Plan root
+  and every WorkNode share one namespace.
+- `after` may appear on the node header or as a body field, not both. On the
+  header it takes one or more quoted ids; as a body field it may be empty (no
+  dependencies). Ids may refer to nodes declared later in the same reply, as long
+  as the graph stays acyclic.
+- `verify` is required on a `node` header and is `tsc` or `test`.
+- `instruction:` is required once. `approach:` and `phase:` are optional and may
+  appear at most once. Fields may appear in any order after `instruction:`.
+- `goal:`, `instruction:`, `approach:`, and `phase:` accept one-line text or a
+  following sentinel fence. The opener may also share the label line when it is
+  the last token; the raw body still starts on the next line. The fence body is
+  raw, so hyphen runs, backtick runs, `done`, and `end` are ordinary lines; it
+  must be non-empty after trimming, and only an exact `<<<TC_EDIT_END>>>` line
+  closes it (there is no escape). The same sentinel `<fence>` production is used
+  by the edit-action reply; [`edit-protocol.md`](edit-protocol.md) §2 owns the
+  canonical fence rules. Legacy hyphen/backtick fences are rejected
+  (`PLAN_LEGACY_FENCE`).
+- `hint file <path>` creates `{path, symbol: "", kind: "file"}`;
+  `hint <space> <symbol> in <path>` creates a symbol hint. Duplicate hints are
+  rejected. Hints are advisory.
+- `finish`, when present, must be the last line and marks the last node final;
+  that node must verify `test`.
+- Legacy `stage`, `task`, `edit`, and their `+` / `~` / `-` patch forms are
+  rejected with `PLAN_LEGACY_RECORD`. There is no dual mode.
 
 ### 3.1 Initial Plan example
 
@@ -350,175 +360,169 @@ Rules:
 plan "01-main"
 goal: Make the failing test pass.
 
-stage "02-current" plan "01-main"
-goal: Fix the answer behavior.
-end
-
-task "03-first" stage "02-current" verify test
+node "02-answer" verify test
 instruction: Make the failing test green.
+hint value answer in src/helper.ts
 end
 
-edit "04-change" task "03-first" modify value answer in src/helper.ts
-instruction: Change answer to return 2.
-end
-```
-
-This is the only current Stage and current Task. No future task exists yet.
-
-A greenfield module starts with a compiling skeleton, not one complete-file
-write:
-
-```text
-plan "01-main"
-goal: Implement the JSON parser module.
-
-stage "02-current" plan "01-main"
-goal: Build the parser in verifiable layers.
-end
-
-task "03-scaffold" stage "02-current" verify tsc
-instruction: Create a compiling skeleton for src/json.ts.
-end
-
-edit "04-scaffold" task "03-scaffold" write src/json.ts
-instruction: Write only the exported types, signatures, and stub bodies; do not implement the behavior yet.
-end
-```
-
-The edit loc is `file "src/json.ts"`; the executor replies with
-`write src/json.ts with <fence>`; the sentinel close terminates the statement
-and no `end` follows. Later patches fill the declarations and end with a
-`verify test` Task. A whole-file write remains valid for an atomic file-level
-rewrite, but it is not the default repair path.
-
-### 3.2 Next Task patch
-
-```text
-patch
-task+ "05-next" stage "02-current" verify tsc
-instruction: Add the next helper and wire it in.
-end
-edit+ "06-helper" task "05-next" create value parseLiteral in src/helper.ts
-instruction: Add a small top-level helper; no class.
-end
-```
-
-The patch appends to `"02-current"` only while that Stage is not fully passed
-(it may still have pending or failed work). Once every Task in the current Stage
-has passed, the next unit must be a new Stage with its first Task (§3.3). The
-validator enforces the same merge rule.
-
-### 3.3 Next Stage and final test
-
-```text
-patch
-stage+ "07-next" plan "01-main"
-goal: Finish the remaining behavior.
-end
-task+ "08-final" stage "07-next" verify test
-instruction: Run the full behavior and keep the suite green.
-end
-edit+ "09-final" task "08-final" modify value parseJson in src/helper.ts
-instruction: Wire the final entry point; no new class.
-end
 finish
 ```
 
-The `finish` marks task `"08-final"` as final; it must be last and verify
-`test`.
+A greenfield module can start with a compiling skeleton and a later
+implementation node. The approach hint recommends scaffold-then-fill; the
+executor may follow or override it:
+
+```text
+plan "01-main"
+goal: Implement the workbook module.
+
+node "02-scaffold" verify tsc
+instruction: Create a compiling skeleton for src/workbook.ts with the exported types and stub bodies.
+hint file src/workbook.ts
+approach: Write the top-level declarations and stub bodies first; fill bodies later with targeted edits.
+phase: scaffold
+end
+
+node "03-impl" after "02-scaffold" verify test
+instruction: Implement evaluate and keep the suite green.
+hint value evaluate in src/workbook.ts
+hint type CellResult in src/workbook.ts
+phase: implement
+end
+
+finish
+```
+
+### 3.2 Branching DAG
+
+Independent work may be ready at the same time. Record order is the tie-break:
+
+```text
+plan "01-main"
+goal: Add the parser and its formatter.
+
+node "02-contract" verify tsc
+instruction: Define the parser and formatter types and stub bodies.
+hint file src/parser.ts
+hint file src/format.ts
+end
+
+node "03-parser" after "02-contract" verify tsc
+instruction: Implement the parser functions.
+hint value parseValue in src/parser.ts
+end
+
+node "04-format" after "02-contract" verify tsc
+instruction: Implement the formatter functions.
+hint value formatValue in src/format.ts
+end
+
+node "05-final" after "03-parser" "04-format" verify test
+instruction: Wire the entry point and keep the suite green.
+hint value parseFile in src/parser.ts
+end
+
+finish
+```
 
 ## 4. Patch DSL
 
 A patch is the only re-plan / incremental planning output. It is applied to a
-clone of the current tree, then validated by the same merge rules.
+clone of the current graph, then validated by the same merge rules.
 
 ```bnf
-<patch-file>  ::= "patch" NL <patch-op>*
+<patch-file>   ::= "patch" NL <patch-op>*
+<patch-op>     ::= <node-add> | <node-update> | <node-remove> | "finish" NL
 
-<patch-op>    ::= <plan-update>
-                | <stage-add> | <stage-update> | <stage-remove>
-                | <task-add>  | <task-update>  | <task-remove>
-                | <edit-add>  | <edit-update>  | <edit-remove>
+<node-add>     ::= "node+" <id> [ "after" <id>+ ] "verify" <verify> NL
+                   "instruction:" <text> NL
+                   <node-field>*
+                   "end" NL
 
-<plan-update> ::= "plan~" <id> NL
-                  "goal:" <text> NL
-                  "end" NL
+<node-update>  ::= "node~" <id> NL
+                   <update-field>*
+                   "end" NL
 
-<stage-add>   ::= "stage+" <id> "plan" <id> NL
-                  "goal:" <text> NL
-                  "end" NL
+<update-field> ::= "after" ( <id>+ )? NL
+                 | "verify" <verify> NL
+                 | "instruction:" <text> NL
+                 | <hint>
+                 | "hint clear" NL
+                 | "approach:" <text> NL
+                 | "approach clear" NL
+                 | "phase:" <text> NL
+                 | "phase clear" NL
 
-<stage-update>::= "stage~" <id> NL
-                  [ "goal:" <text> NL ]
-                  "end" NL
-
-<stage-remove>::= "stage-" <id> NL "end" NL
-
-<task-add>    ::= "task+" <id> "stage" <id> "verify" <verify> NL
-                  "instruction:" <text> NL
-                  "end" NL
-
-<task-update> ::= "task~" <id> NL
-                  [ "verify" <verify> NL ]
-                  [ "instruction:" <text> NL ]
-                  "end" NL
-
-<task-remove> ::= "task-" <id> NL "end" NL
-
-<edit-add>    ::= "edit+" <id> "task" <id>
-                  ( <action> <space> <symbol> "in" <path> | "write" <path> ) NL
-                  <related>*
-                  [ "renameTo:" <symbol> NL ]
-                  "instruction:" <text> NL
-                  "end" NL
-
-<edit-update> ::= "edit~" <id> NL
-                  [ ( <action> <space> <symbol> "in" <path> | "write" <path> ) NL ]
-                  <related>*
-                  [ "renameTo:" <symbol> NL ]
-                  [ "instruction:" <text> NL ]
-                  "end" NL
-
-<edit-remove> ::= "edit-" <id> NL "end" NL
+<node-remove>  ::= "node-" <id> NL "end" NL
 ```
 
 Semantics:
 
-- `+` appends to its parent; `~` replaces present fields and preserves omitted
-  fields; `-` removes pending/failed work.
-- `stage-` cascades to its tasks/edits; `task-` cascades to its edits. A
-  done edit or passed task cannot be removed.
-- A task/edit cannot move to a different parent; remove and add with new ids if
-  the merge rules allow it.
-- `edit~` may be instruction-only for a failed-edit retry, or carry a full
-  header to replace its action/loc.
-- `finish` may appear at the end of a patch and updates `finalTaskId` to the
-  last task. If a patch adds work after the old final task, it must emit a new
-  `finish` for the new last task.
-- The result must still satisfy the append-order, immutability, node cap, and
-  final `test` rules.
+- `node+` appends a new node; `after` may be on the header or a body field.
+  `instruction:` is required, `verify` is required, hints/approach/phase are
+  optional. A patch may add any number of nodes; the token budget and run
+  no-progress detection bound growth.
+- `node~` replaces only the fields present and preserves omitted fields.
+  `after` present replaces the whole dependency list; `after` with no ids clears
+  it. One or more `hint` lines replace the whole hint list; `hint clear` clears
+  it. `approach:` / `phase:` replace the text; `approach clear` / `phase clear`
+  clear the optional field. `instruction:` and `verify` replace their values.
+- `node-` removes a node only when its status is `pending` or `failed`. A blocked
+  node is pending and may be removed. A `passed`, `review`, or `in-progress`
+  node cannot be removed.
+- A passed node is immutable. A failed node reopens only when its definition
+  changes; otherwise it stays closed so later work can supersede it. A review
+  node reopens pending when a review patch changes it. An in-progress node is
+  held until it finishes.
+- Existing nodes keep their record order; new nodes are appended. Removing a
+  node that another node still names in `after` leaves a dangling edge and is
+  rejected; update or remove the dependent first.
+- `finish` may appear at the end of a patch and sets `finalNodeId` to the last
+  merged node, which must verify `test`. If a patch adds work after the old final
+  node, it must emit a new `finish` for the new last node.
+- A patch is all-or-nothing: a malformed op rejects the whole patch, and a
+  rejected merge leaves the previous state untouched.
+- Before a patch is applied, the graph must still satisfy id uniqueness,
+  target-hint path rules, and the acyclic `after` rule.
 
 ### 4.1 Repair patch
 
 ```text
 patch
-task~ "03-answer"
-instruction: Keep the final test task; repair only the return expression.
-end
-edit~ "04-change"
-instruction: Replace only the return statement with `return 2;`.
+node~ "03-impl"
+instruction: Keep the final test node; repair only the parser return expression.
+hint value parseValue in src/parser.ts
 end
 ```
 
-### 4.2 Remove pending work
+### 4.2 Add branching work
 
 ```text
 patch
-edit- "07-object"
+node+ "06-formatter" after "02-contract" verify tsc
+instruction: Add the formatter as an independent branch.
+hint value formatValue in src/format.ts
+approach: Reuse the existing formatter helpers; this file is small.
 end
-task- "06-object"
+```
+
+### 4.3 Remove pending work
+
+```text
+patch
+node- "07-unused"
 end
-stage- "05-repair"
+```
+
+### 4.4 Clear advisory fields
+
+```text
+patch
+node~ "03-impl"
+after
+hint clear
+approach clear
+phase clear
 end
 ```
 
@@ -526,30 +530,29 @@ end
 
 ### 5.1 Validation and merge
 
-Both initial Plan replies and patches pass through one validator:
+Both initial Plan replies and patches pass through one graph validator:
 
-- ids are `NN-slug` strings and globally unique across Plan/Stage/Task/Edit;
-- parent refs exist and are declared earlier;
-- record order gives sibling order;
-- the tree has at most 96 task/edit nodes; stage, task, and edit counts are
-  chosen by the planner (no per-stage/task/edit count cap);
-- non-empty goals (≤1,000 chars) and instructions (≤4,000 chars);
-- safe paths (no absolute path, `..`, hidden/build segment, or `human/`);
-- `related` same-file, `modify` only, no duplicates, at most 16;
-- `renameTo` only on rename, valid, and different;
-- `create` is top-level only; dotted create is rejected;
-- `write` uses `kind: "file"`, an empty symbol, a safe path, no `related`, and
-  no `renameTo`; every other action uses a `value|type|namespace` loc;
-- `finish` marks the last task, and that task verifies `test`;
-- done edits and passed tasks are immutable; failed tasks/edits reopen only
-  when changed or given new edits; a Task in `review` may be patched by its one
-  review turn before it is finalized;
-- a new task appends to its stage; a new stage appends after existing stages;
-  a new edit appends to its task; a fully passed stage cannot accept new work;
-- a task/edit cannot move parents.
+- ids are `NN-slug` strings and globally unique across the Plan and WorkNodes;
+- `after` edges are duplicate-free, non-self, non-dangling, and acyclic; cycle
+  diagnostics name every node in the cycle;
+- `verify` is `tsc` or `test`;
+- instructions are non-empty (≤4,000 chars); `approach` (≤2,000) and `phase`
+  (≤200) are non-empty when present;
+- the Plan goal is non-empty (≤1,000 chars);
+- hint paths are safe: no absolute path, `..`, hidden/build segment, or `human/`;
+- hints are duplicate-free; a file hint uses `symbol: ""` and `kind: "file"`;
+  a symbol hint uses `value`, `type`, or `namespace` and a non-empty symbol;
+- `finish`, when present, marks the last node, and that node verifies `test`;
+- passed nodes are immutable; removed nodes must be pending or failed; new nodes
+  append after existing nodes; record order is preserved;
+- a node may not change identity: repair it with `node~` or add a new id.
+
+The graph validator imposes no fixed node-count cap and no per-turn node cap.
+The token budget and the driver's repeated/no-progress detection bound plan
+growth.
 
 Status is harness-owned. The planner never emits `todo`, `pending`, `passed`,
-or a status map.
+`blocked`, or a status map.
 
 ### 5.2 Tolerant parsing contract
 
@@ -564,8 +567,8 @@ type DslIssue = {
     | "syntax"
     | "structure"
     | "protocol"
-    | "task-protocol"
-    | "task-tree"
+    | "plan-protocol"
+    | "plan-graph"
     | "address"
     | "matcher"
     | "range";
@@ -610,10 +613,9 @@ Rules shared by the Plan DSL and the edit-action reply language:
 - Truncation is reported as `truncated`; the reply is rejected.
 - Unknown fields/parameters are reported with the nearest valid alternatives;
   they are not silently ignored.
-- Duplicate ids, missing parents, and unknown parents are reported with the
-  duplicate location or nearest id suggestions.
+- Duplicate ids are reported with the duplicate location.
 - Case/whitespace normalization is limited to unambiguous keywords; never
-  guess a different action, target, path, symbol, or parent.
+  guess a different action, target, path, symbol, or dependency.
 - Invalid view-only statements may still produce feedback; invalid
   editor/write statements reject the whole reply and write nothing. The
   edit-action split is owned by [`edit-protocol.md`](edit-protocol.md) §2 and
@@ -623,7 +625,8 @@ Rules shared by the Plan DSL and the edit-action reply language:
 - An initial Plan reply is all-or-nothing: a malformed record rejects the plan.
   Incremental planning still does not insert a partial plan.
 - A review reply is all-or-nothing: `approve`, or one fully valid patch. A
-  malformed review reply gets one format retry before termination.
+  malformed review reply returns its diagnostics and is retried until the token
+  budget or a repeated patch/diff fingerprint ends the turn.
 
 Plan-specific recovery:
 
@@ -632,11 +635,10 @@ Plan-specific recovery:
 - Accept `plan`/`patch` headers surrounded by the outer wrapper (the rule
   above).
 - A missing `goal:` or `instruction:` is an error; the plan/patch is rejected.
-- A record whose parent is missing gets a nearest-id hint; no partial tree.
-- A `finish` without a last `test` task is an error with the exact last task
-  and its verify value.
-- Dotted `create` gets a dedicated code (`PLAN_CREATE_MEMBER`) and a hint:
-  modify the class with stubs, then modify the member.
+- A `finish` without a last `test` node is an error with the exact last node and
+  its verify value; a line after `finish` is an error.
+- A legacy Stage/Task/Edit record gets `PLAN_LEGACY_RECORD` with a hint to use
+  flat node records; it is never translated.
 
 Edit-action recovery and its `EDIT_*` codes are owned by
 [`edit-protocol.md`](edit-protocol.md) §2 and §5.
@@ -645,7 +647,7 @@ Edit-action recovery and its `EDIT_*` codes are owned by
 
 Every Plan or edit-action diagnostic rendered to the model has:
 
-- a `stage:` header using the parser vocabulary: `task-protocol` or `task-tree`
+- a `stage:` header using the parser vocabulary: `plan-protocol` or `plan-graph`
   for the Plan DSL, and `syntax`, `address`, `matcher`, or `range` for the
   edit-action reply language;
 - a stable `code:` line;
@@ -660,53 +662,45 @@ Every Plan or edit-action diagnostic rendered to the model has:
 Plan recovery warning example (the missing `end` was recovered, not rejected):
 
 ```text
-stage: task-protocol
+stage: plan-protocol
 code: PLAN_MISSING_END
 severity: warning
-message: missing "end" for task "03-answer" before the next record; recovered at the record boundary
+message: missing "end" for node "03-impl" before the next record; recovered at the record boundary
 at line 12:1
-  11 | task "03-answer" stage "02-current" verify test
-  12 | edit "04-change" task "03-answer" modify value answer in src/helper.ts
+  11 | node "03-impl" verify test
+  12 | node "04-final" after "03-impl" verify test
    | ^
 expected: end
-hint: close task "03-answer" with end before starting edit "04-change"
+hint: close node "03-impl" with end before starting node "04-final"
 ```
 
 This warning does not reject the reply: the parser repairs the unambiguous
 record boundary and records the warning on `LoopResult.warnings`. The `message:`
 prose is representative, while the `stage`/`code`/`severity` shape is stable.
 
-Action example:
+Cycle example:
 
 ```text
-stage: syntax
-code: EDIT_MATCHER_MISSING
-message: expected a `snippet` or `/regex/` after `match`
-at line 4:7
-  3 | select answer in src/helper.ts
-  4 | match
-  |       ^
-expected: `snippet` | /regex/
-hint: use `match \`return 1;\`` or omit match to rewrite the whole declaration
+stage: plan-graph
+code: PLAN_CYCLE
+message: after edges form a cycle: #02-a -> #03-b -> #04-c -> #02-a
+at line 4:1
+expected: an acyclic after graph
+hint: break the cycle by removing one after edge and re-planning
 ```
 
-The Plan parser reports syntax/protocol failures as `stage: task-protocol` and
-Plan/tree validator failures as `stage: task-tree`; the edit-action reply
-language reports `stage: syntax` for clause syntax and `address`, `matcher`, or
-`range` for the matching cascade stage. Both use the same `renderDslIssues`
-renderer in `src/dsl-diagnostics.ts`.
+The Plan parser reports syntax/protocol failures as `stage: plan-protocol` and
+graph validator failures as `stage: plan-graph`; the edit-action reply language
+reports `stage: syntax` for clause syntax and `address`, `matcher`, or `range`
+for the matching cascade stage. Both use the same `renderDslIssues` renderer in
+`src/dsl-diagnostics.ts`.
 
 Shipped `PLAN_*` error codes: `MISSING_END`, `MISSING_FIELD`, `UNKNOWN_FIELD`,
-`UNKNOWN_PARENT`, `DUPLICATE_ID`, `CREATE_MEMBER`, `FINISH_NOT_LAST`,
-`STRUCTURE`, `BARE_ID`, `WHOLE_REPLY_FENCE`, `UNCLOSED_FENCE`,
+`UNKNOWN_PARENT`, `DUPLICATE_ID`, `CYCLE`, `FINISH_NOT_LAST`, `STRUCTURE`,
+`LEGACY_RECORD`, `BARE_ID`, `WHOLE_REPLY_FENCE`, `UNCLOSED_FENCE`,
 `MALFORMED_FENCE`, `LEGACY_FENCE`, `FENCE_TRAILING_TEXT`,
 `EMBEDDED_FENCE_END`, `TRUNCATED`. The edit-action `EDIT_*` family is owned by
 [`edit-protocol.md`](edit-protocol.md) §2 and §5.
-
-A repeated resolved target is a `stage: duplicate` rejection from the resolver,
-not a parser error code; the diagnostic names both statement numbers and the
-resolved `(path, symbol, kind)`. The one-target-per-reply rule is owned by
-[`edit-protocol.md`](edit-protocol.md) §2.
 
 The same renderer is used for plan and edit-action diagnostics so the model sees
 one stable shape. Warnings are surfaced on `LoopResult.warnings`; only errors
@@ -714,255 +708,221 @@ block application.
 
 ## 6. Scheduling
 
-The executor consumes exactly one Task at a time. The driver:
+The harness schedules WorkNodes; the model never chooses the next node from a
+status map.
 
-1. If the Plan is empty: ask for the initial Plan + current Stage + current Task.
+1. If the Plan is empty: ask for the initial Plan.
 2. Validate the reply.
-3. Execute the current Task:
-   - run its `todo` edits in order;
-   - a failed edit ends the Task immediately and triggers a repair patch;
-   - otherwise run the Task gate after every edit settles;
-   - the Task enters `review`.
-4. Planner post-execution review receives the gate result and concise diff:
-   - `approve`: finalize the Task as `passed` or `failed` from the gate;
-   - one patch: validate, reopen the current Task, execute it again; no second
-     review for that Task.
-5. If `finalTaskId` is passed and every stage is closed → success.
-6. Otherwise the planner emits one patch:
-   - another Task in the current Stage, but only while that Stage is not fully
-     passed; a fully passed Stage requires a new Stage with its first Task;
-   - a new Stage only when the current Stage has no pending/review Task, plus
-     its first Task;
-   - a repair Task/Stage after a failure;
-   - a final Task + `finish`.
-7. Repeat from step 2.
+3. Compute ready nodes: status `pending`, not blocked, and every `after`
+   dependency `passed`. Record order is the deterministic tie-break. If several
+   nodes are ready, the first in record order runs first.
+4. Execute one node: the executor applies its chosen edits; the node gate runs
+   after every applied reply. A passing gate finishes execution; a failing gate
+   returns diagnostics for another attempt. A repeated fingerprint or the token
+   budget ends the node as `failed`.
+5. Planner post-execution review receives the passing gate and concise diff:
+   - `approve`: finalize the node as `passed`;
+   - a patch: validate it; if it changes the current node, reopen and execute it
+     again, then review again.
+6. If `finalNodeId` passed and every node is terminal → success.
+7. Otherwise the planner emits a patch:
+   - `node+` any number of new ready nodes;
+   - `node~` a repair/redefinition of a pending, failed, or review node;
+   - `node-` pending/failed work that is no longer wanted;
+   - a final test node + `finish`.
+8. Repeat from step 3.
 
-Each planning turn adds at most one new Task; adding a new Stage includes its
-first Task in the same turn. Patches may update or remove multiple existing
-nodes, but never introduce a future Task list.
-
-Stage closure is **implicit**: there is no `stage-end` control. A new Stage can
-only be appended when the current Stage has no pending or `review` Task. A
-failed Task is terminal; it does not block adding a repair Task to the same
-Stage, and it does not block appending a new Stage. A fully passed Stage is
-closed, so later work goes in a new Stage.
-
-Default repair policy: after a failed Task, try a repair Task in the current
-Stage first. Append a new Stage only when the current Stage is fully passed or
-the repair is clearly a new phase.
+A failed dependency blocks its dependents. Blocked is derived, so the scheduler
+reports blocked nodes without inventing a status for them. A blocked dependent
+never runs while the failure stands; the planner either repairs the dependency,
+repoints the edge with `node~`, or removes the dependent or dependency with
+`node-` as the merge rules allow. Cycles are rejected during validation, so the
+scheduler cannot hang on one.
 
 Run success requires:
 
-- `finalTaskId` is set;
-- the final Task verifies `test`;
-- the final Task passed;
-- every stage is closed (all Tasks passed or failed).
+- `finalNodeId` is set;
+- the final node is last in record order and verifies `test`;
+- the final node passed;
+- every node is terminal (`passed` or `failed`).
 
-Earlier failed Tasks are allowed when later work supersedes them and the final
-test passes.
+Earlier failed nodes are allowed when later work supersedes them and the final
+test passes. A node in `review` or `in-progress`, or a still-pending blocked node,
+keeps the run open.
+
+A patch may add any number of nodes. Run growth is bounded by the token budget and
+the driver's repeated/no-progress detection, not by a fixed node count.
+Patches may update or remove multiple existing nodes.
 
 ## 7. Mode contexts
 
 ### 7.1 Planning
 
-1. system: role, flat Plan DSL grammar, functional style, workflow, create/
-   class rules, finish semantics;
+1. system: role, functional style, recommended workflow, read-only viewer
+   grammar, flat Plan/patch DSL, and approach guidance;
 2. user: `# Requirement`, `# Symbol index`, spec files;
-3. incremental turns: current Plan/Stage/Task, latest gate result, failed
-   diagnostics, current symbol index;
-4. the planner emits one new Task or one new Stage + Task, not a future task list.
+3. incremental turns: the current work graph, statuses, failed-node diagnostics,
+   blocked reason, and a fresh symbol index;
+4. the planner emits an initial Plan or one incremental patch. A patch may add
+   any number of nodes, update/remove pending or failed nodes, adjust any node
+   field, and mark the final test node with `finish`.
 
-The planning conversation persists across incremental turns. A re-plan receives
-the current flat tree, statuses, failed edit/task diagnostics, and the symbol
-index.
+The planning conversation persists across incremental turns. A planner may make
+read-only `select`/`read` viewer requests before every Plan/patch. There is no
+arbitrary per-turn viewer count: each view consumes the token budget, and a
+repeated identical view or no-progress cycle forces the Plan/patch reply. Viewers
+never write.
+
+The planner owns the decomposition, `after` edges, `verify`, `instruction`,
+`hints`, and optional `approach`/`phase`. It does not choose a preselected edit;
+the executor owns the concrete actions.
 
 ### 7.2 Review
 
-A separate compact review turn in the same planner conversation receives the
-gate result, the concise applied diff, and the current Task checklist. It
-returns `approve` or a patch. Review is per executed Task and counts toward the
-token budget but not the planning-turn cap. There is one review turn per
-executed Task, with at most one format retry for a malformed reply; its patch
-may only repair the current Task (no future Stage/Task). The review prompt must
-be short; it should not repeat the full requirement, full source, or full Plan
-grammar.
+A review turn runs in the same planner conversation after a node's gate passes.
+It receives the passing gate, the current node instruction/hints/approach/phase,
+the paths changed outside the hints, and the concise applied diff. It returns
+`approve` or a patch.
+
+There is no fixed review-turn or format-retry cap. A malformed review reply gets
+its diagnostics back; the loop stops on approve, the token budget, or a repeated
+patch/diff fingerprint. A review patch may repair the current node, its hints, or
+its dependencies, add follow-up work, or carry `finish` for the current final
+node. If it changes the current node, the node reopens, executes again, and goes
+through review again. If the current node is unchanged, its passing gate stands.
+The review prompt stays short: it does not repeat the full requirement, full
+source, or full Plan grammar.
 
 Call usage is recorded in three `LoopTokens` buckets — `planning`, `review`, and
 `execution` — and exposed as `LoopResult.usage`. Their sum is
 `LoopResult.tokens`, and all three count toward the run token budget. The
-`typescript-coder-result@2` subagent result keeps its single `tokens` object and
+`typescript-coder-result@3` subagent result keeps its single `tokens` object and
 does not expose the per-bucket split or recovered warnings.
 
 ### 7.3 Execution
 
-1. system: role + functional style + edit-action grammar (stable per Task);
-2. user: current Stage/Task plan in flat DSL (no future tasks);
-3. per edit turn: `# Micro edit`, optional `# Context`, `# Diagnostics`,
-   `# Format help`, then `# Content view` (numbered), then the reply
-   instruction.
+1. system: role, functional style, the advisory editing-technique knowledge
+   base, and the edit-action grammar (stable for the node);
+2. user: `# Work node` with the instruction, hints, optional approach/phase,
+   prior diagnostics, and the current source views;
+3. per attempt: the same node prompt is re-issued with the latest gate or
+   rejection diagnostics, read/viewer feedback, and refreshed source views.
 
-Every edit turn is seeded from the stable system + current Task prefix; stage/
-task/edit context, diagnostics, and content view are the volatile tail. A new
-Task starts a fresh execution context.
-
-Execution deliberately does not receive the requirement or test files
-(knowledge isolation); the planner's instructions must be self-contained.
+Each node starts a fresh execution conversation. Source views show the hinted
+files and declarations, numbered by file-absolute lines. The executor may use
+`read` to inspect more source. Execution deliberately does not receive the
+requirement or test files (knowledge isolation); the node instruction must be
+self-contained.
 
 ## 8. Execution details
 
-### 8.1 Target guard
+### 8.1 Execution reply surface
 
-An edit owns one main address plus an optional same-file `related` list. The
-edit-action grammar itself is owned by
-[`edit-protocol.md`](edit-protocol.md) §2; this guard is plan-exec-specific.
-Before the reply is applied:
+The executor owns the concrete actions and granularity. One reply may carry one
+or more edit-dsl clauses and/or file commands:
 
-- the path must be safe and writable (`human/` and ignored directories are
-  rejected);
-- an existing target must parse (`prev-broken` otherwise);
-- `modify`, `delete`, `rename` need the declaration to resolve in the edit's
-  symbol space;
-- `create` needs the symbol absent in that space and must be top-level;
-- a `write` edit needs one safe file path; its previous parse is irrelevant
-  because the reply replaces the whole file;
-- every editor select clause that writes must name the edit's target or a
-  related loc; off-target writes reject the whole reply. A `write` action
-  accepts exactly one whole-file `write <path> with <fence>` and no other
-  statement; the sentinel close terminates it and no `end` follows;
-- other writing file commands (`create`/`delete`/`write`) are rejected;
-  `read` and viewer clauses are allowed and only produce feedback.
+- `select … end` with `replace`, `rename`, `match`, `pick`, or a viewer slice;
+- `create <path> end`, `delete <path> end`, `read <path> [within …] end`;
+- `write <path> with <fence>` for a whole-file replacement.
 
-### 8.2 Action forms
+Hints and `approach` are advice, not an allowlist. The executor may edit outside
+the hinted paths when the instruction requires it, may choose a whole-file write
+or a targeted declaration edit, and may override the approach. Review receives
+the full changed-path diff and an explicit out-of-hint list.
 
-The reply grammar and select clause/file command forms are owned by
-[`edit-protocol.md`](edit-protocol.md) §2. This table maps a Plan action to the
-reply shape plan-exec accepts.
+The hard application guardrail stays: each clause in one reply must resolve to a
+different declaration `(path, symbol, kind)`. Multiple edits to one declaration
+are split across replies, even with different `match`/`pick` spans. Dotted member
+creation remains a separate capability tracked by #50 and is not added here.
 
-| Action   | Required reply                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                               |
-| -------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| `modify` | At least one `replace with <fence>` clause on the target or a related loc (a viewer alone is rejected). A whole-declaration `modify` (no `match`/`pick`) must leave one top-level declaration with the same name and exact declaration kind; `export` modifier differences are tolerated. A bare `match (` is `EDIT_MATCHER_MISSING`; use a backtick snippet, `/regex/`, or omit `match`. A snippet must be a complete statement or expression, or a contiguous run of complete statements; an unbalanced partial function body is rejected. |
-| `create` | A whole-declaration `replace with <fence>` with no `match`/`pick`; the fence must contain exactly one top-level declaration, the target. Any other body is wrapped by the edit's space (`value` → `let`, `type` → `type`, `namespace` → `namespace`); the created name/space must match.                                                                                                                                                                                                                                                     |
-| `delete` | A whole-declaration empty fence, no `match`/`pick`.                                                                                                                                                                                                                                                                                                                                                                                                                                                                                          |
-| `rename` | `rename <current> to <renameTo>`, no `replace`; the new name must equal `renameTo`.                                                                                                                                                                                                                                                                                                                                                                                                                                                          |
-| `write`  | Exactly one `write <path> with <fence>`, no `within`; the sentinel close terminates it, no `end` follows, and the fence carries the complete file.                                                                                                                                                                                                                                                                                                                                                                                           |
+### 8.2 Applying a reply
 
-A caller update is its own edit. The one exception is a `modify` edit's
-`related` list, which exists for atomic type/representation migrations.
+1. Parse the reply with the edit-action parser. A parse failure writes nothing.
+2. Resolve every clause against the pre-reply source snapshot with
+   `resolveMultiEditor`; any resolution failure rejects the whole reply.
+3. Apply editor regions with `applyResolvedRegions` (overlap, prev-broken, parse
+   gate, duplicate-declaration guard, formatter, no-op guard).
+4. Prepare whole-file `write` commands separately: parse and format the
+   replacement, then include it in the atomic write set.
+5. Write all changed files, create empty files for `create`, and delete files for
+   `delete` only after every guard passed. Nothing is written on a rejection.
+6. A whole-symbol variable edit expands to the enclosing `VariableStatement`
+   (including `export`); a multi-declarator statement is rejected. A rename keeps
+   its binding span. `export` modifier differences are tolerated in both
+   directions.
 
-Variable entries point at their `VariableDeclarator`, so a whole-symbol rewrite
-or delete is expanded to the enclosing `VariableStatement` (including an
-`export` wrapper) before the splice. A multi-declarator statement is rejected:
-split it into one binding per statement first. A rename keeps the binding span
-and does not expand.
+A reply that carries only viewers or reads writes nothing; its feedback becomes
+the next attempt's prompt. A reply that produces no source change is a no-op
+rejection, not an applied exchange.
 
-The driver tolerates a leading `export` the source omitted or the reply re-added,
-matching the edit-dsl #48 rule.
+### 8.3 Node gates
 
-### 8.3 Apply and verify
-
-Plan-exec applies the edit-action parser and application pipeline owned by
-[`edit-protocol.md`](edit-protocol.md) §2 and §6. The plan-exec-specific rules
-are:
-
-1. A `write` edit accepts exactly one `write <path> with <fence>` statement
-   with no `within`; the sentinel close terminates it and no `end` follows. The
-   new source runs through the parse gate and formatter, then replaces the
-   file. The previous parse is irrelevant because the reply replaces the whole
-   file.
-2. Other edits resolve with `resolveMultiEditor` against the current sources;
-   the one-target-per-reply rule is owned by
-   [`edit-protocol.md`](edit-protocol.md) §2.
-3. Apply with `applyResolvedRegions`; the shared guard and gate order is owned
-   by [`edit-protocol.md`](edit-protocol.md) §6. Write only after every guard
-   passes; nothing is written on a rejection.
-4. An applied edit marks the edit `done` immediately; there is no per-edit type
-   check.
-5. After every edit in the task is `done` or `failed`, run the task gate.
-
-When a `write` or whole-declaration `modify` lands and another edit remains in
-the same Task, the harness may run `tsc --noEmit` immediately as an **advisory**
-check. Its raw diagnostics (with `path(line,col)` locations) are shown in the
-next edit prompt under `# Post-edit type diagnostics`, labeled as **not a task
-gate failure**, together with an explicit repair-first constraint: repair the
-errors with a targeted `match`/`pick` change, a `create` for a missing
-declaration, or a whole-declaration/file replacement that is itself the repair,
-before unrelated work, and do not repeat the large edit that caused them while
-the advisory is unresolved. Advisory diagnostics never reopen or fail the edit:
-the edit stays `done` and the harness does not roll back the applied work. The
-final Task gate remains the only hard boundary and fails if the errors remain.
-This catches a corrupted large edit earlier without rejecting the intermediate
-type-broken states that a multi-edit Task legitimately needs.
-
-A rejected reply or a read-only viewer costs one exchange. Per edit: at most 3
-exchanges. A malformed matcher (`EDIT_MATCHER_MISSING` or a snippet that does
-not parse) gets one dedicated format correction; a second consecutive malformed
-matcher requires omitting `match`/`pick` and replacing the whole declaration.
-Both recoveries consume the same exchange budget. Two consecutive
-`EDIT_TARGET_MISMATCH` replies end the edit with `ADDRESS_RETRY_LIMIT` and
-trigger a repair patch instead of retrying the same address. Exhaustion marks
-the edit and task `failed` and triggers a patch re-plan.
-
-The executor may make **one** bounded self-check per edit:
-`{"request":"read"}` returns the numbered target source; any other request is
-refused.
-
-### 8.4 Task gates and tests
-
-Every task has a gate that runs **once**, after every edit in that task settles:
+Every node has a gate that runs after **every applied reply**:
 
 - `verify: "tsc"` runs the check command (default `bunx tsc --noEmit`);
 - `verify: "test"` runs the check command and then the test suite.
 
-A gate failure records its diagnostics and marks the task `failed`; the planner
-gets `# Failed task gates and diagnostics` and adds a repair edit or later task.
-The Task marked by `finish` must verify `test`, so a successful run ends with
-the suite green; a work-in-progress tree may end in a `tsc` Task. There is no
-implicit whole-Plan test outside the task gates.
+A passing gate finishes node execution and enters review. A failing gate returns
+its formatted diagnostics to the next execution attempt; the node stays
+`in-progress`. The gate is the only place a type/test failure becomes executor
+diagnostics. There is no separate advisory check and no implicit whole-graph test
+outside node gates.
 
-Edits inside one task may leave the file temporarily type-broken, but the task
-gate sees the completed small batch. Tasks are sized so that failures surface
-early instead of after a whole intermediate program has been written.
+### 8.4 Progress and termination
+
+There is no fixed exchange, read, review, viewer, planning-round, or per-turn
+node cap. A node stops in one of these ways:
+
+- its gate passes;
+- a repeated reply/source/diagnostics fingerprint shows no progress;
+- the run token budget is exceeded;
+- the provider errors.
+
+Repeated read-only replies are exempt from the no-progress fingerprint: `read`
+is an inspection tool and may be repeated until the budget runs out. Rejected and
+applied replies participate in the fingerprint. A failed node's dependents are
+blocked; independent ready nodes may still run before the planner is asked for a
+repair.
+
+### 8.5 Applied diff
+
+The harness snapshots the workspace source files when a node starts. Review
+receives only changed files and changed hunks with a few lines of context, capped
+so a large rewrite cannot flood the prompt. Deleted and newly created files are
+visible. Out-of-hint changed paths are named explicitly so review can confirm the
+instruction required them.
 
 ## 9. Termination and caps
 
 The planner is re-invoked when:
 
-- an edit fails after its exchange budget;
-- a task gate fails;
-- no task is runnable but the final task has not passed;
-- a patch or review is structurally rejected;
-- a new Stage is requested while the current Stage has pending or `review`
-  tasks.
+- a node cannot progress (repeated fingerprint);
+- a node gate fails and no independent work remains;
+- no node is runnable but the final node has not passed;
+- a patch or review is structurally rejected and cannot be corrected;
+- the graph needs final work or `finish`.
 
 Caps:
 
-| Cap                              | Value              |
-| -------------------------------- | ------------------ |
-| Task/edit nodes per Plan         | 96                 |
-| Instruction length               | 4,000 chars        |
-| Stage/Plan goal length           | 1,000 chars        |
-| Related locs per edit            | 16                 |
-| Exchanges per edit               | 3                  |
-| Planning attempts per turn       | 3                  |
-| Planning turns per run           | 32                 |
-| Review turns per executed Task   | 1                  |
-| Review patches per executed Task | 1                  |
-| Consecutive length finishes      | 3 (`output-limit`) |
-| Token budget                     | 120,000 default    |
+| Limit                      | Value                    |
+| -------------------------- | ------------------------ |
+| Plan goal length           | 1,000 chars              |
+| Instruction length         | 4,000 chars              |
+| Approach length            | 2,000 chars              |
+| Phase length               | 200 chars                |
+| Token budget               | 120,000 default          |
+| Node/exchange/review caps  | none (budget + progress) |
 
-The 32-turn cap counts planning replies, including initial planning, next
-Task/Stage planning, and repair planning. Review turns are additional and are
-bounded by one per executed Task. Stage, task, and edit counts are not capped
-individually; the 96-node limit and token budget bound runaway plans. The token
-budget and the three-consecutive-output-limit path are shared with pinned-repair
-and defined in [`feedback-loop.md`](feedback-loop.md) under "Failure handling";
-plan-exec adds `task-exhausted` to the termination matrix.
+Growth is bounded by the token budget, repeated/no-progress fingerprints, and the
+DSL/safety validation. There is no 3-exchange, 1-viewer, 1-review, 32-round, or
+3-consecutive-length cap in plan-exec.
 
-Failure paths use the existing termination matrix plus `task-exhausted`; the
-run still makes one summary call. `task-exhausted` covers a planning or review
-turn that cannot produce valid work within its caps (including a no-progress
-patch), or a review reply that is neither `approve` nor one valid repair patch.
-Provider errors keep their own path.
+Failure paths use the existing termination matrix plus `task-exhausted`; the run
+still makes one summary call. `task-exhausted` covers a node that stops making
+progress, a planning turn whose repeated reply cannot produce a valid Plan/patch,
+and a review that cannot approve or produce a new patch. Provider errors keep
+their own path. Plan-exec does not use the pinned-repair output-limit cap; a
+truncated reply is handled by the parser and retried with diagnostics.
 
 ## 10. CLI and result
 
@@ -979,20 +939,20 @@ tc --agent-mode plan-exec < issue.txt
   are accepted.
 - `--multi-payload` is irrelevant in `plan-exec` (execution replies are
   edit-dsl statements).
-- Text stdout names the completed edit/file summary; `--format json` prints
-  `typescript-coder-result@2`.
-- `LoopResult.tasks` carries one entry per edit (`id`, `stage`, `task`,
-  `verify`, `action`, `path`, `symbol`, `kind`, `status`). All three node-id
-  fields are strings (`"01-main"` etc.). `terminationReason` can be
-  `task-exhausted`.
+- Text stdout names the work-node summary and applied files; `--format json`
+  prints `typescript-coder-result@3`.
+- `LoopResult.nodes` carries one `NodeSummary` per node in record order:
+  `id`, `verify`, `status`, and optional `phase`/`approach`. `status` is
+  `pending`, `in-progress`, `review`, `passed`, or `failed`.
+  `terminationReason` can be `task-exhausted`.
 - `LoopResult.usage` splits a `plan-exec` run's spend into `planning`,
   `review`, and `execution` `LoopTokens` buckets; their sum is
   `LoopResult.tokens`, and all three count toward the budget.
   `LoopResult.warnings` carries recovered parser warnings.
 
-The string-id change is a breaking result-schema change;
-`typescript-coder-result@2` is shipped. The historical `@1` schema used numeric
-task/edit ids.
+The node-summary change is a breaking result-schema change;
+`typescript-coder-result@3` is shipped. `@2` carried per-edit Stage/Task/Edit
+summaries; the historical `@1` schema used numeric task/edit ids.
 
 ## 11. Limitations
 
@@ -1001,69 +961,69 @@ task/edit ids.
   none are currently in the repo, but historical bundles need this caveat. v1
   does **not** ship a JSON-to-DSL migration tool; manual offline conversion is
   possible but out of scope.
-- **Result schema @2.** `LoopResult.tasks[].id`, `.stage`, and `.task` are
-  strings. Consumers of the old numeric `@1` fields must migrate.
+- **Result schema @3.** `LoopResult.nodes` replaces `LoopResult.tasks`. Consumers
+  of `@2` task/edit summaries must migrate.
 - **Class members are not first-class creates.** New classes are forbidden;
   existing classes are extended with a whole-class `modify` (optionally with
   stubs) and then member `modify` edits. Dotted `create` is rejected.
-- **One file per edit.** An edit's main target plus `related` must share a file;
-  cross-file changes are separate edits in the same task.
 - **Rename is same-file.** It inherits the existing renamer's scope (declaration
   plus same-file references). Cross-file renames need caller edits first, or
   escalation.
-- **One bounded planner viewer.** The planner sees the signature index and spec
-  files, and may make one read-only `select`/`read` viewer request per planning
-  or review turn. It does not have write tools or arbitrary command execution.
-  A viewer slice returns code; it never changes the Plan or the workspace.
-- **Passed tasks are immutable.** A failed task reopens for repair; a passed
-  task cannot be extended, so later work goes in a new Stage (a fully passed
-  Stage cannot accept a new Task).
-- **Intermediate type errors are expected inside a task.** An edit boundary may
-  leave the file type-broken; the enclosing task gate is the type-correct
-  boundary.
+- **Planner inspection is budget-bounded.** The planner sees the signature index
+  and spec files, and may make read-only `select`/`read` viewer requests. It does
+  not have write tools or arbitrary command execution. Repeated identical views
+  force the Plan/patch reply.
+- **Passed nodes are immutable.** A failed node reopens only when its definition
+  changes; a passed node cannot be extended, so later work goes in a new node.
+- **Intermediate type errors are expected between replies.** An applied reply may
+  leave the file type-broken; the node gate is the type-correct boundary, and the
+  next attempt receives its diagnostics.
 - **Test-file edits are allowed but discouraged.** The planner prompt treats
   `*.test.ts` as specification; a requirement that asks for test changes still
   needs them.
-- **Incremental planning is not free.** Each Task has a planning turn and a
-  review turn; the per-task overhead must be weighed against the reduced
-  full-tree output and better recovery.
+- **Incremental planning is not free.** Each node has planning/review overhead;
+  the per-node cost must be weighed against the reduced full-tree output and
+  better recovery.
+- **Hints are advisory.** The executor may edit outside them; review sees the
+  diff and the explicit out-of-hint list instead of a hard target guard.
 
 ## 12. As-built implementation notes
 
 Shipped design decisions:
 
-1. **Planning turn cap:** 32 planning replies per run, with one review turn per
-   executed Task outside that cap.
-2. **Review model:** post-execution review in the same planner conversation;
-   gate result + concise diff; one format retry for a malformed reply; one
-   review patch per executed Task, no second review; a review patch may only
-   repair the current Task and may carry `finish` for the current final Task.
-3. **Stage closure:** implicit; append a new Stage only when the current Stage
-   has no pending or `review` Task. No `stage-end` control.
-4. **Final test repair:** both in-place repair and a new final Task are allowed;
-   in-place repair is the default. Any work appended after the old final task
-   requires a new `finish` on the new last task.
-5. **Result schema:** string IDs plus `typescript-coder-result@2`.
-6. **Plan root:** required `plan.id` and `plan.goal`.
-7. **One-unit rule:** at most one new Task per planning turn; a new Stage
-   includes its first Task in the same turn.
-8. **JSON compatibility:** no runtime JSON fallback and no migration tool in
+1. **No fixed driver caps:** node execution, review, planner viewers, and
+   planning rounds are bounded by the token budget and repeated/no-progress
+   fingerprints.
+2. **Review model:** post-execution review only after a passing gate, in the same
+   planner conversation; gate result + concise diff + out-of-hint paths; approve
+   or a patch; a changed node reopens and goes through review again.
+3. **Final test repair:** both in-place repair and a new final node are allowed;
+   in-place repair is the default. Any work appended after the old final node
+   requires a new `finish` on the new last test node.
+4. **Result schema:** `typescript-coder-result@3`, with `nodes` summaries.
+5. **Plan root:** required `plan.id` and `plan.goal`.
+6. **Multi-node patches:** a patch may add any number of nodes and update/remove
+   pending or failed nodes; passed nodes are immutable.
+7. **JSON compatibility:** no runtime JSON fallback and no migration tool in
    v1; old plan-exec replay bundles with JSON plan replies are incompatible and
    need manual conversion if retained.
-9. **Functional policy:** hard prompt ban on new classes; dotted `create` is
+8. **Functional policy:** hard prompt ban on new classes; dotted `create` is
    rejected by validation; existing classes are minimal `modify` only.
-10. **Stage repair default:** after a failed Task, prefer a repair Task in the
-    current Stage; append a new Stage only when the current Stage is fully
-    passed or the repair is clearly a new phase.
-11. **Review token tracking:** record `planning`, `review`, and `execution`
+9. **Execution application:** edit-dsl clauses and file commands apply
+   atomically through the shared resolver/commit pipeline; the
+   one-declaration-per-reply guardrail is hard.
+10. **Review token tracking:** record `planning`, `review`, and `execution`
     usage buckets; all count toward the run budget.
+11. **Driver modules:** `src/task-loop.ts` owns scheduling, node execution,
+    gates, review, and the final result; `src/prompts/task.ts` owns all
+    planner/executor/review prompt text.
 
 Implementation notes:
 
-- **Review prompt:** `buildTaskReviewPrompt` in `src/prompts/task.ts` sends only
-  the gate verdict, current Task, and concise applied diff; the review prompt
-  shape and its current-Task-only patch scope are pinned by
-  `src/prompts/task.test.ts` and `src/task-loop.test.ts`.
+- **Review prompt:** `buildTaskReviewPrompt` in `src/prompts/task.ts` sends the
+  gate verdict, node instruction/hints/approach, out-of-hint paths, and concise
+  applied diff; the shape is pinned by `src/prompts/task.test.ts` and
+  `src/task-loop.test.ts`.
 - **Usage accounting:** `LoopUsage` and `totalLoopTokens` in `src/loop.ts`
   record `planning`, `review`, and `execution`; the sum drives the budget and is
   returned as `LoopResult.tokens`, with the split on `LoopResult.usage`.
@@ -1076,24 +1036,24 @@ Implementation notes:
 
 ## 13. Verification
 
-- `bun test src/tasks.test.ts` — contract, ids, refs, write loc validation,
-  node cap, merge rules.
-- `bun test src/plan-dsl.test.ts` — BNF, fences, plan/patch/review replies,
-  whole-file write records, `finish`/`finalTaskId` cases, tolerant recovery,
-  issue codes, all-or-nothing patch/plan behavior.
-- `bun test src/prompts/task.test.ts` — planning, review, execution prompt shape,
-  workflow guidance, one-stage/task/write example, functional-style and
-  dotted-create rules.
+- `bun test src/tasks.test.ts` — contract, ids, refs, edges, hint paths, finish
+  validation, scheduling, and merge rules.
+- `bun test src/plan-dsl.test.ts` — BNF, fences, plan/patch replies, node
+  operators, `finish`/`finalNodeId` cases, tolerant recovery, issue codes, and
+  all-or-nothing patch/plan behavior.
+- `bun test src/prompts/task.test.ts` — planning, execution, and review prompt
+  shape; workflow and editing-technique guidance; WorkNode examples; no fixed
+  caps.
 - `bun test src/edit-dsl.test.ts` / `src/selection.test.ts` — tolerant statement
   boundaries, unclosed fences, matcher/pick/rename diagnostics, per-statement
   issues, no partial writes.
-- `bun test src/task-loop.test.ts` — incremental Task loop, one-unit planning,
-  whole-file write execution, address-failure escalation, post-execution review
-  approve/patch (scope limited to the current Task), review status,
-  gate+concise-diff context, implicit stage closure, final-test in-place vs
-  new-final repair, 32-turn cap, repair patches, dotted-create rejection.
-- `bun test src/result.test.ts` — `typescript-coder-result@2` string ids.
+- `bun test src/task-loop.test.ts` — initial/patched DAG scheduling, ready order,
+  blocked dependents, executor autonomy (multiple clauses/actions, write vs
+  targeted, out-of-hint diff), gate retries, repeated/no-progress, token budget,
+  planner inspection, multi-node patches, review reopen, and final test/finish.
+- `bun test src/result.test.ts src/main.test.ts src/cli.test.ts` —
+  `typescript-coder-result@3` node summaries and text/JSON output.
 - `just typecheck && just test`.
-- `just accept` (offline), including a `plan-exec-fix-answer` scenario
-  driven by the flat Plan DSL.
+- `just accept` (offline), including the `plan-exec-fix-answer` and
+  `plan-exec-write-fix-answer` scenarios driven by the WorkNode Plan DSL.
 - This verification is offline; it makes no benchmark or live-model claim.

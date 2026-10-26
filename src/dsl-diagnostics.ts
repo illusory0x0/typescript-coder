@@ -17,8 +17,8 @@ export type DslStage =
   | "matcher"
   | "range"
   | "protocol"
-  | "task-protocol"
-  | "task-tree";
+  | "plan-protocol"
+  | "plan-graph";
 
 /** One recovered parse problem. `recovered` is true for warnings. */
 export interface DslIssue {

@@ -1,138 +1,120 @@
 /**
- * The plan/execute tree contract (`docs/plan-exec.md`). The planning model
- * emits a flat Plan DSL (`src/plan-dsl.ts`); this module owns the
- * Plan/Stage/Task/Edit types, validates the tree, and owns the scheduling state
- * the harness (never the model) advances.
+ * The plan/execute work-graph contract (`docs/plan-exec.md`). The planning model
+ * emits a flat Plan DSL (`src/plan-dsl.ts`); this module owns the Plan/WorkNode
+ * types, validates the DAG, and owns the scheduling state the harness (never the
+ * model) advances.
  *
- * A stage is planning context. A task is the verification boundary: its gate
- * runs after every edit in the task is settled. An edit is one declaration
- * action (or one whole-file write), the unit the executor answers. Record order
- * is execution order; there are no dependency edges and the planner does not
- * own status.
+ * A WorkNode is one unit of work with a verification boundary: its gate runs
+ * after the executor has applied the node's edits. The planner owns the
+ * decomposition, dependencies, verification boundary, instruction, target hints,
+ * and an optional advisory approach; the executor owns the concrete edit actions
+ * and their granularity. `after` edges define readiness; record order is the
+ * deterministic tie-break among ready nodes. There are no Stage/Task/Edit
+ * records in this contract.
  *
- * `Loc.kind` is the TypeScript symbol space (`value` | `type` | `namespace`),
- * matching the edit-dsl `resolve` vocabulary, or `file` for a whole-file
- * `write`; the declaration kind is looked up from the index by address
- * resolution.
+ * `HintLoc.kind` is the TypeScript symbol space (`value` | `type` | `namespace`),
+ * matching the edit-dsl `resolve` vocabulary, or `file` for a whole-file target.
+ * A file hint uses `symbol: ""`. Hints are guidance, not a hard allowlist.
  */
 import type { SymbolSpace } from "./utility";
 
 /**
  * A globally unique node id: two or more digits, a hyphen, then a lowercase
- * kebab-case slug (`"01-main"`, `"02-stage-parser"`, `"03-task-reader"`).
- * Plan, stage, task, and edit ids share one namespace.
+ * kebab-case slug (`"01-main"`, `"02-scaffold"`, `"03-impl"`).
+ * Plan and work-node ids share one namespace.
  */
 export type NodeId = string;
-/** Stage ids are node ids (kept as a named alias for the summary contract). */
-export type StageId = NodeId;
 
 /** The wire form of a node id. */
 export const NODE_ID_PATTERN = /^[0-9]{2,}-[a-z0-9]+(?:-[a-z0-9]+)*$/;
 
-/** The one edit action an edit asks for. */
-export const TASK_ACTIONS = ["modify", "create", "delete", "rename", "write"] as const;
-export type TaskAction = (typeof TASK_ACTIONS)[number];
+/** The verification gate a work node runs after its edits settle. */
+export const WORK_VERIFIES = ["tsc", "test"] as const;
+export type WorkVerify = (typeof WORK_VERIFIES)[number];
 
-/** Run state owned by the harness for one edit. */
-export const EDIT_STATUSES = ["todo", "in-progress", "done", "failed"] as const;
-export type EditStatus = (typeof EDIT_STATUSES)[number];
-
-/** The verification gate a task runs after all of its edits settle. */
-export const TASK_VERIFIES = ["tsc", "test"] as const;
-export type TaskVerify = (typeof TASK_VERIFIES)[number];
-
-/** The TypeScript symbol spaces an edit can target (edit-dsl `resolve`). */
-export const TASK_SPACES: readonly SymbolSpace[] = ["value", "type", "namespace"];
+/** The TypeScript symbol spaces a hint can target (edit-dsl `resolve`). */
+export const HINT_SPACES: readonly SymbolSpace[] = ["value", "type", "namespace"];
 
 /**
- * Harness-owned run state for one task. `review` is transient: the gate passed
- * or failed, and the planner may still repair the Task before it settles.
+ * Harness-owned run state for one work node. `in-progress` means the executor
+ * holds the node; `review` means its gate has finished but the planner's
+ * post-execution review has not approved it yet.
  */
-export const TASK_STATUSES = ["pending", "review", "passed", "failed"] as const;
-export type TaskStatus = (typeof TASK_STATUSES)[number];
+export const NODE_STATUSES = ["pending", "in-progress", "review", "passed", "failed"] as const;
+export type NodeStatus = (typeof NODE_STATUSES)[number];
 
-/** True only for a settled task; a `review` task is neither runnable nor done. */
-export function isTerminalTaskStatus(status: TaskStatus | undefined): boolean {
+/** True only for a settled node; `review` and `in-progress` are neither runnable nor done. */
+export function isTerminalNodeStatus(status: NodeStatus | undefined): boolean {
   return status === "passed" || status === "failed";
 }
 
-export interface TaskLoc {
+/**
+ * One target hint: a repo-relative path plus a symbol space and symbol. A file
+ * hint uses `kind: "file"` and an empty symbol. The executor may edit outside
+ * the hinted paths when the instruction requires it; that is surfaced in review.
+ */
+export interface HintLoc {
   /** Repo-relative path, inside the workspace. */
   path: string;
-  /** Declared identifier (or the name a `create` adds); empty for `write`. */
+  /** Declared identifier; empty for a file hint. */
   symbol: string;
-  /** TypeScript symbol space, or `file` for a whole-file write. */
+  /** TypeScript symbol space, or `file` for a whole-file target. */
   kind: SymbolSpace | "file";
 }
 
 /**
- * One declaration-level operation inside a task, or one whole-file write. The
- * executor receives one edit at a time; the task's gate covers the whole
- * sequence.
+ * One task-level unit of work. The planner chooses the decomposition, its
+ * dependency edges, its verification boundary, its instruction, its target
+ * hints, and an optional approach hint. The executor chooses the concrete edit
+ * actions from the current source and may override the approach hint.
  */
-export interface EditNode {
+export interface WorkNode {
   id: NodeId;
-  loc: TaskLoc;
-  /**
-   * Additional same-file declarations a migration edit may change atomically.
-   * Allowed only with action `modify`.
-   */
-  related?: TaskLoc[];
-  action: TaskAction;
+  /** Dependency node ids; empty means ready at the start. */
+  after: NodeId[];
+  /** The node's verification gate. */
+  verify: WorkVerify;
   /** Self-contained imperative: the executor does not see the requirement. */
   instruction: string;
-  /** Required exactly when `action` is `rename`. */
-  renameTo?: string;
-}
-
-/**
- * A verification boundary. Plan it so its gate passes; choose the edits and
- * their granularity from the work, not from a fixed count.
- */
-export interface TaskNode {
-  id: NodeId;
-  verify: TaskVerify;
-  /** The task-level goal the executor should satisfy across its edits. */
-  instruction: string;
-  edits: EditNode[];
-}
-
-/** A coherent planning phase. Stages run in record order. */
-export interface Stage {
-  id: StageId;
-  goal: string;
-  tasks: TaskNode[];
+  /** Advisory target hints (paths/symbols/kind); never a hard allowlist. */
+  hints: HintLoc[];
+  /**
+   * Advisory strategy, e.g. "small file -> whole write" or "large module ->
+   * scaffold declarations, then fill bodies". The executor may override it.
+   */
+  approach?: string;
+  /** Optional workflow label (for example "scaffold"); not a scheduling input. */
+  phase?: string;
 }
 
 /** One parsed planning reply. Status is harness-owned and never echoed. */
 export interface Plan {
-  /** Root node id, unique in the same namespace as every stage/task/edit. */
+  /** Root node id, unique in the same namespace as every work node. */
   id: NodeId;
   /** The whole-requirement goal; planning context for the executor. */
   goal: string;
-  stages: Stage[];
+  /** Work nodes in record order (the deterministic readiness tie-break). */
+  nodes: WorkNode[];
 }
 
-/** The run state: the tree plus harness-owned task/edit status. */
-export interface TaskRunState {
-  /** The Plan root; `stages` mirrors `plan.stages`. */
+/** The run state: the DAG plus harness-owned node status. */
+export interface PlanRunState {
+  /** The Plan root; `nodes` mirrors `plan.nodes`. */
   plan: Plan;
-  stages: Stage[];
-  editStatus: Map<NodeId, EditStatus>;
-  taskStatus: Map<NodeId, TaskStatus>;
-  /** The last task marked by `finish`; `null` until the planner ends the run. */
-  finalTaskId: NodeId | null;
+  nodes: WorkNode[];
+  nodeStatus: Map<NodeId, NodeStatus>;
+  /** The node marked by `finish`; `null` until the planner ends the run. */
+  finalNodeId: NodeId | null;
 }
 
 /** Caps the contract enforces before a plan can drive a run. */
-export const MAX_NODES = 96;
-export const MAX_STAGE_GOAL_LENGTH = 1_000;
-/** The Plan root goal gets the same bound as a stage goal. */
-export const MAX_PLAN_GOAL_LENGTH = MAX_STAGE_GOAL_LENGTH;
+export const MAX_PLAN_GOAL_LENGTH = 1_000;
 export const MAX_INSTRUCTION_LENGTH = 4_000;
-export const MAX_RELATED_LOCS = 16;
+export const MAX_APPROACH_LENGTH = 2_000;
+export const MAX_PHASE_LENGTH = 200;
 
-const VERIFY_SET: ReadonlySet<string> = new Set(TASK_VERIFIES);
+const VERIFY_SET: ReadonlySet<string> = new Set(WORK_VERIFIES);
+const SPACE_SET: ReadonlySet<string> = new Set(HINT_SPACES);
 
 /**
  * Directories the harness never edits (`src/loop.ts` `SKIPPED_DIRECTORIES`),
@@ -146,13 +128,13 @@ const SKIPPED_SEGMENTS: ReadonlySet<string> = new Set([
   "human",
 ]);
 
-/** A plan rejection: `stage: task-protocol` or `stage: task-tree`. */
+/** A plan rejection: `stage: plan-protocol` or `stage: plan-graph`. */
 export type PlanParse =
-  | { ok: true; plan: Plan; finalTaskId: NodeId | null }
-  | { ok: false; stage: "task-protocol" | "task-tree"; diagnostics: string };
+  | { ok: true; plan: Plan; finalNodeId: NodeId | null }
+  | { ok: false; stage: "plan-protocol" | "plan-graph"; diagnostics: string };
 
-/** A re-plan merge rejection; always a tree amendment violation. */
-export type PlanMerge = { ok: true; state: TaskRunState } | { ok: false; diagnostics: string };
+/** A re-plan merge rejection; always a graph amendment violation. */
+export type PlanMerge = { ok: true; state: PlanRunState } | { ok: false; diagnostics: string };
 
 function quote(value: string): string {
   return JSON.stringify(value);
@@ -161,9 +143,9 @@ function quote(value: string): string {
 /**
  * True for a repo-relative, writable edit path: no absolute path, no `..`, no
  * empty or hidden/build segment, and inside the workspace. Existence is not
- * checked because `create` targets a path that may not exist yet.
+ * checked because a hint may target a path that does not exist yet.
  */
-export function isSafeTaskPath(path: string): boolean {
+export function isSafeHintPath(path: string): boolean {
   if (path === "" || path.startsWith("/") || path.startsWith("\\") || /^[A-Za-z]:/.test(path)) {
     return false;
   }
@@ -178,232 +160,158 @@ export function isSafeTaskPath(path: string): boolean {
   return true;
 }
 
-/** Every task in stage order. */
-export function allTasks(stages: readonly Stage[]): TaskNode[] {
-  return stages.flatMap((stage) => stage.tasks);
+/** Every work node in record order. Accepts a Plan or the run state. */
+export function allNodes(source: { nodes: readonly WorkNode[] }): WorkNode[] {
+  return [...source.nodes];
 }
 
-/** Every edit in stage -> task -> edit order. */
-export function allEdits(stages: readonly Stage[]): EditNode[] {
-  return allTasks(stages).flatMap((task) => task.edits);
+/** The work node with this id, or `undefined`. */
+export function nodeById(source: { nodes: readonly WorkNode[] }, id: NodeId): WorkNode | undefined {
+  return source.nodes.find((node) => node.id === id);
 }
 
-/** A task always has at least one edit; fail loudly if a malformed tree slips in. */
-export function firstEdit(task: TaskNode): EditNode {
-  const edit = task.edits[0];
-  if (edit === undefined) {
-    throw new Error(`task #${task.id} has no edits`);
-  }
-  return edit;
+/** The last node in record order; `undefined` for an empty plan. */
+export function finalNode(source: { nodes: readonly WorkNode[] }): WorkNode | undefined {
+  return source.nodes[source.nodes.length - 1];
 }
 
-/** The final task in the final stage; `undefined` for an empty tree. */
-export function finalTask(stages: readonly Stage[]): TaskNode | undefined {
-  const stage = stages[stages.length - 1];
-  if (stage === undefined) {
-    return undefined;
-  }
-  return stage.tasks[stage.tasks.length - 1];
-}
-
-/** The stage that owns a task. */
-export function stageOfTask(state: TaskRunState, taskId: NodeId): Stage | undefined {
-  return state.stages.find((stage) => stage.tasks.some((task) => task.id === taskId));
-}
-
-/** The task that owns an edit. */
-export function taskOfEdit(state: TaskRunState, editId: NodeId): TaskNode | undefined {
-  return allTasks(state.stages).find((task) => task.edits.some((edit) => edit.id === editId));
-}
-
-/** The stage that owns an edit. */
-export function stageOfEdit(state: TaskRunState, editId: NodeId): Stage | undefined {
-  return state.stages.find((stage) =>
-    stage.tasks.some((task) => task.edits.some((edit) => edit.id === editId)),
-  );
-}
-
-/** Every edit which is `todo`, in tree order. */
-export function todoEdits(state: TaskRunState): EditNode[] {
-  return allEdits(state.stages).filter((edit) => state.editStatus.get(edit.id) === "todo");
-}
-
-/** True when every edit in a task is done or failed (the gate may run). */
-export function taskEditsSettled(state: TaskRunState, task: TaskNode): boolean {
-  return task.edits.every((edit) => {
-    const status = state.editStatus.get(edit.id);
-    return status === "done" || status === "failed";
-  });
-}
-
-/** True when at least one edit in the task actually landed. */
-export function taskHasDoneEdit(state: TaskRunState, task: TaskNode): boolean {
-  return task.edits.some((edit) => state.editStatus.get(edit.id) === "done");
-}
-
-/** The next runnable edit in a task, or `undefined` when its gate is next. */
-export function nextEdit(state: TaskRunState, task: TaskNode): EditNode | undefined {
-  return task.edits.find((edit) => state.editStatus.get(edit.id) === "todo");
+/** Direct dependents of a node, in record order. */
+export function dependentsOf(source: { nodes: readonly WorkNode[] }, id: NodeId): WorkNode[] {
+  return source.nodes.filter((node) => node.after.includes(id));
 }
 
 /**
- * The first stage that still has a pending task. A stage with only passed or
- * failed tasks is closed; a stage with a pending task after a failed one stays
- * active so later planned work can still repair the stage.
+ * True when a non-terminal node cannot run because a dependency failed (directly
+ * or through another blocked dependency). Blocked is derived from status, not
+ * stored. A cycle cannot reach here because validation rejects it first; the
+ * visited set keeps this helper total even on a malformed graph.
  */
-export function activeStage(state: TaskRunState): Stage | undefined {
-  return state.stages.find((stage) =>
-    stage.tasks.some(
-      (task) =>
-        state.taskStatus.get(task.id) === "pending" ||
-        task.edits.some((edit) => state.editStatus.get(edit.id) === "todo"),
-    ),
-  );
-}
-
-/** The first pending task in the active stage. */
-export function activeTask(state: TaskRunState): TaskNode | undefined {
-  const stage = activeStage(state);
-  return stage?.tasks.find((task) => state.taskStatus.get(task.id) === "pending");
-}
-
-/** True when a later task in the same stage is still pending. */
-export function hasLaterPendingTaskInStage(state: TaskRunState, task: TaskNode): boolean {
-  const stage = stageOfTask(state, task.id);
-  if (stage === undefined) {
+export function isNodeBlocked(state: PlanRunState, node: WorkNode): boolean {
+  const status = state.nodeStatus.get(node.id);
+  if (status === "passed" || status === "failed") {
     return false;
   }
-  const index = stage.tasks.findIndex((candidate) => candidate.id === task.id);
-  return stage.tasks
-    .slice(index + 1)
-    .some((candidate) => state.taskStatus.get(candidate.id) === "pending");
+  const visiting = new Set<NodeId>();
+  const blocked = (id: NodeId): boolean => {
+    if (visiting.has(id)) {
+      return false;
+    }
+    visiting.add(id);
+    const candidate = state.nodeStatus.get(id);
+    if (candidate === "failed") {
+      return true;
+    }
+    if (candidate === "passed") {
+      return false;
+    }
+    const dependency = nodeById(state, id);
+    if (dependency === undefined) {
+      return true;
+    }
+    return dependency.after.some(blocked);
+  };
+  return node.after.some(blocked);
+}
+
+/** Every blocked non-terminal node, in record order. */
+export function blockedNodes(state: PlanRunState): WorkNode[] {
+  return state.nodes.filter((node) => isNodeBlocked(state, node));
 }
 
 /**
- * True when every task and edit has reached a terminal state. A task in
- * `review` is still open, so its stage is not closed.
+ * Nodes that may run now: pending, not blocked, and with every `after`
+ * dependency passed. Record order is the deterministic tie-break.
  */
-export function allStagesClosed(state: TaskRunState): boolean {
-  for (const task of allTasks(state.stages)) {
-    const status = state.taskStatus.get(task.id);
-    if (!isTerminalTaskStatus(status)) {
+export function readyNodes(state: PlanRunState): WorkNode[] {
+  return state.nodes.filter((node) => {
+    if (state.nodeStatus.get(node.id) !== "pending") {
       return false;
     }
-    if (
-      status === "passed" &&
-      !task.edits.every((edit) => state.editStatus.get(edit.id) === "done")
-    ) {
+    if (isNodeBlocked(state, node)) {
       return false;
     }
-  }
-  return allEdits(state.stages).every((edit) => {
-    const status = state.editStatus.get(edit.id);
-    return status === "done" || status === "failed";
+    return node.after.every((id) => state.nodeStatus.get(id) === "passed");
   });
 }
 
+/** The first ready node in record order; `undefined` when nothing is runnable. */
+export function nextReadyNode(state: PlanRunState): WorkNode | undefined {
+  return readyNodes(state)[0];
+}
+
+/** True when every node is `passed` or `failed`. */
+export function allNodesTerminal(state: PlanRunState): boolean {
+  return state.nodes.every((node) => isTerminalNodeStatus(state.nodeStatus.get(node.id)));
+}
+
 /**
- * The `finish` task is the run's final test gate. It must still be the last
- * task in the Plan and it must verify `test`.
+ * The `finish` node is the run's final test gate. It must still be the last
+ * node in record order and it must verify `test`.
  */
-export function finalTaskPassed(state: TaskRunState): boolean {
-  const finalId = state.finalTaskId;
+export function finalNodePassed(state: PlanRunState): boolean {
+  const finalId = state.finalNodeId;
   if (finalId === null) {
     return false;
   }
-  const task = finalTask(state.stages);
+  const last = finalNode(state);
   return (
-    task !== undefined &&
-    task.id === finalId &&
-    task.verify === "test" &&
-    state.taskStatus.get(finalId) === "passed"
+    last !== undefined &&
+    last.id === finalId &&
+    last.verify === "test" &&
+    state.nodeStatus.get(finalId) === "passed"
   );
 }
 
 /**
- * The run is done only when every stage is closed and the `finish` task's gate
- * passed. Earlier failed tasks are allowed: a later repair task/test can
- * supersede them, exactly like a failed phase followed by a green suite.
+ * The run is done only when every node is terminal and the `finish` node's gate
+ * passed. Earlier failed nodes are allowed when later work supersedes them,
+ * exactly like a failed phase followed by a green suite.
  */
-export function runComplete(state: TaskRunState): boolean {
-  return finalTaskPassed(state) && allStagesClosed(state);
+export function runComplete(state: PlanRunState): boolean {
+  return finalNodePassed(state) && allNodesTerminal(state);
 }
 
 /**
- * Render the stable tree structure: stages, tasks, and edits in execution
- * order. Status is deliberately absent so this block can stay in the
- * cache-stable prefix.
+ * Render the stable graph structure: nodes in record order with their dependency
+ * edges, hints, and advisory approach. Status is deliberately absent so this
+ * block can stay in the cache-stable prefix.
  */
-export function renderTaskTree(stages: readonly Stage[]): string {
+export function renderNodeTree(source: { nodes: readonly WorkNode[] }): string {
   const lines: string[] = [];
-  for (const stage of stages) {
-    lines.push(`@stage #${stage.id} goal=${quote(stage.goal)}`);
-    for (const task of stage.tasks) {
-      lines.push(`  @task #${task.id} verify=${task.verify}`);
-      lines.push(`    task: ${task.instruction.replace(/\s*\n\s*/g, " ").trim()}`);
-      for (const edit of task.edits) {
-        const related =
-          edit.related === undefined || edit.related.length === 0
-            ? ""
-            : ` related=[${edit.related
-                .map((loc) => `${loc.kind} ${quote(loc.symbol)}`)
-                .join(", ")}]`;
-        const rename = edit.renameTo === undefined ? "" : ` renameTo=${quote(edit.renameTo)}`;
-        lines.push(
-          `    - #${edit.id} ${edit.action} ${formatTaskLoc(edit.loc)}${rename}${related}`,
-        );
-        lines.push(`      edit: ${edit.instruction.replace(/\s*\n\s*/g, " ").trim()}`);
-      }
+  for (const node of source.nodes) {
+    const after = node.after.length === 0 ? "" : ` after=[${node.after.join(", ")}]`;
+    const phase = node.phase === undefined ? "" : ` phase=${quote(node.phase)}`;
+    lines.push(`@node #${node.id} verify=${node.verify}${after}${phase}`);
+    lines.push(`  node: ${node.instruction.replace(/\s*\n\s*/g, " ").trim()}`);
+    for (const hint of node.hints) {
+      lines.push(`  hint: ${formatHint(hint)}`);
+    }
+    if (node.approach !== undefined) {
+      lines.push(`  approach: ${node.approach.replace(/\s*\n\s*/g, " ").trim()}`);
     }
   }
   return lines.join("\n");
 }
 
-/** Render task and edit statuses in tree order. */
-export function renderTaskStatus(state: TaskRunState): string {
-  const lines: string[] = [];
-  for (const stage of state.stages) {
-    lines.push(`@stage #${stage.id}`);
-    for (const task of stage.tasks) {
-      lines.push(`  @task #${task.id} ${state.taskStatus.get(task.id) ?? "pending"}`);
-      const edits = task.edits.map(
-        (edit) => `#${edit.id} ${state.editStatus.get(edit.id) ?? "todo"}`,
-      );
-      lines.push(`    ${edits.join("  ")}`);
-    }
-  }
-  return lines.join("\n");
+/** Render node statuses in record order. */
+export function renderNodeStatus(state: PlanRunState): string {
+  return state.nodes
+    .map((node) => `@node #${node.id} ${state.nodeStatus.get(node.id) ?? "pending"}`)
+    .join("\n");
 }
 
-/** Render failed edits with their diagnostics. */
-export function renderFailedEdits(
-  state: TaskRunState,
+/** Render failed nodes with their diagnostics. */
+export function renderFailedNodes(
+  state: PlanRunState,
   failures: ReadonlyMap<NodeId, string>,
 ): string {
   const lines: string[] = [];
-  for (const edit of allEdits(state.stages)) {
-    if (state.editStatus.get(edit.id) !== "failed") {
+  for (const node of state.nodes) {
+    if (state.nodeStatus.get(node.id) !== "failed") {
       continue;
     }
-    lines.push(`#${edit.id} ${edit.action} ${formatTaskLoc(edit.loc)} failed:`);
-    const diagnostics = failures.get(edit.id);
-    lines.push(diagnostics === undefined ? "  (no diagnostics recorded)" : indent(diagnostics));
-  }
-  return lines.join("\n");
-}
-
-/** Render failed task gates with their diagnostics. */
-export function renderFailedTaskGates(
-  state: TaskRunState,
-  failures: ReadonlyMap<NodeId, string>,
-): string {
-  const lines: string[] = [];
-  for (const task of allTasks(state.stages)) {
-    if (state.taskStatus.get(task.id) !== "failed") {
-      continue;
-    }
-    lines.push(`@task #${task.id} (${task.verify} gate) failed after its edits:`);
-    const diagnostics = failures.get(task.id);
+    lines.push(`@node #${node.id} (${node.verify} gate) failed:`);
+    const diagnostics = failures.get(node.id);
     lines.push(diagnostics === undefined ? "  (no diagnostics recorded)" : indent(diagnostics));
   }
   return lines.join("\n");
@@ -417,73 +325,10 @@ function indent(text: string): string {
 }
 
 /** Describe one loc the way diagnostics expect. */
-export function formatTaskLoc(loc: TaskLoc): string {
+export function formatHint(loc: HintLoc): string {
   return loc.kind === "file"
     ? `file ${quote(loc.path)}`
     : `${loc.kind} ${quote(loc.symbol)} in ${quote(loc.path)}`;
-}
-
-function locProblems(edit: EditNode): string | null {
-  if (!isSafeTaskPath(edit.loc.path)) {
-    return `#${edit.id} targets ${quote(edit.loc.path)}, which is not a writable repo-relative path (no absolute path, "..", hidden/build segment, or human/)`;
-  }
-  if (edit.action === "write") {
-    if (edit.loc.kind !== "file") {
-      return `#${edit.id} is a write but its loc kind is ${quote(String(edit.loc.kind))}; a whole-file write uses kind "file"`;
-    }
-    if (edit.loc.symbol !== "") {
-      return `#${edit.id} is a whole-file write but carries a symbol; drop the symbol and target the path`;
-    }
-    if (edit.related !== undefined && edit.related.length > 0) {
-      return `#${edit.id} is a whole-file write and cannot carry related targets`;
-    }
-    if (edit.renameTo !== undefined) {
-      return `#${edit.id} is a whole-file write and cannot carry renameTo`;
-    }
-    return null;
-  }
-  if (edit.loc.kind === "file") {
-    return `#${edit.id} targets kind "file" but its action is ${quote(edit.action)}; only action "write" targets a whole file`;
-  }
-  if (edit.action === "create" && edit.loc.symbol.includes(".")) {
-    return `#${edit.id} PLAN_CREATE_MEMBER: create adds a top-level declaration; ${quote(edit.loc.symbol)} is a class member. Modify the class with all needed stubs, then modify the member, or use a top-level function.`;
-  }
-  if (edit.action === "rename") {
-    if (edit.renameTo === undefined) {
-      return `#${edit.id} is a rename but carries no renameTo`;
-    }
-    if (edit.renameTo === edit.loc.symbol) {
-      return `#${edit.id} renames ${quote(edit.loc.symbol)} to itself; a rename must change the name`;
-    }
-    if (!/^[A-Za-z_$][\w$]*(\.[A-Za-z_$][\w$]*)*$/.test(edit.renameTo)) {
-      return `#${edit.id} renameTo ${quote(edit.renameTo)} is not a TypeScript identifier or dotted path`;
-    }
-  } else if (edit.renameTo !== undefined) {
-    return `#${edit.id} carries renameTo but its action is ${quote(edit.action)}; renameTo is allowed only with action "rename"`;
-  }
-  if (edit.related !== undefined) {
-    if (edit.action !== "modify") {
-      return `#${edit.id} carries related; only a modify edit may migrate several declarations atomically`;
-    }
-    if (edit.related.length > MAX_RELATED_LOCS) {
-      return `#${edit.id} lists ${edit.related.length} related targets; keep it at most ${MAX_RELATED_LOCS}`;
-    }
-    const seen = new Set<string>([`${edit.loc.kind}\u0000${edit.loc.symbol}`]);
-    for (const loc of edit.related) {
-      if (loc.path !== edit.loc.path) {
-        return `#${edit.id} related target ${formatTaskLoc(loc)} is not in the edit's file ${quote(edit.loc.path)}; split cross-file work into separate edits`;
-      }
-      if (!isSafeTaskPath(loc.path)) {
-        return `#${edit.id} related target ${formatTaskLoc(loc)} is not a writable repo-relative path`;
-      }
-      const key = `${loc.kind}\u0000${loc.symbol}`;
-      if (seen.has(key)) {
-        return `#${edit.id} lists ${formatTaskLoc(loc)} more than once as a target or related target`;
-      }
-      seen.add(key);
-    }
-  }
-  return null;
 }
 
 function claimId(id: unknown, where: string, nodeIds: Set<NodeId>, problems: string[]): void {
@@ -495,385 +340,329 @@ function claimId(id: unknown, where: string, nodeIds: Set<NodeId>, problems: str
   }
   if (nodeIds.has(id)) {
     problems.push(
-      `${where} reuses node id ${quote(id)}; Plan, stage, task, and edit ids must be globally unique`,
+      `${where} reuses node id ${quote(id)}; Plan and work-node ids must be globally unique`,
     );
     return;
   }
   nodeIds.add(id);
 }
 
-function goalProblems(goal: unknown, where: string, maxLength: number, problems: string[]): void {
-  if (typeof goal !== "string" || goal.trim() === "") {
+function textProblems(value: unknown, where: string, maxLength: number, problems: string[]): void {
+  if (typeof value !== "string" || value.trim() === "") {
     problems.push(`${where} must be a non-empty string`);
     return;
   }
-  if (goal.length > maxLength) {
-    problems.push(`${where} is ${goal.length} characters; keep it at most ${maxLength}`);
+  if (value.length > maxLength) {
+    problems.push(`${where} is ${value.length} characters; keep it at most ${maxLength}`);
   }
 }
 
-function instructionProblems(instruction: unknown, where: string, problems: string[]): void {
-  if (typeof instruction !== "string" || instruction.trim() === "") {
-    problems.push(`${where} must be a non-empty string`);
-    return;
-  }
-  if (instruction.length > MAX_INSTRUCTION_LENGTH) {
-    problems.push(
-      `${where} is ${instruction.length} characters; keep it at most ${MAX_INSTRUCTION_LENGTH}`,
-    );
-  }
-}
-
-/**
- * Validate the complete tree, including the Plan root. Each returned string is
- * one problem; `validatePlanTree` renders them as a diagnostic list.
- */
-function treeProblems(plan: Plan): string[] {
+function hintProblems(node: WorkNode): string[] {
   const problems: string[] = [];
-  // One set for the Plan root, every stage, task, and edit: the whole tree
-  // shares a single node-id namespace.
-  const nodeIds = new Set<NodeId>();
-  claimId(plan.id, "plan.id", nodeIds, problems);
-  goalProblems(plan.goal, "plan.goal", MAX_PLAN_GOAL_LENGTH, problems);
-
-  if (plan.stages.length === 0) {
-    problems.push("the plan must contain at least one stage");
+  if (!Array.isArray(node.hints)) {
+    return [`node #${node.id}.hints must be an array of target hints`];
   }
-
-  let nodeCount = 0;
-  for (const stage of plan.stages) {
-    claimId(stage.id, `stage #${stage.id}.id`, nodeIds, problems);
-    goalProblems(stage.goal, `stage #${stage.id}.goal`, MAX_STAGE_GOAL_LENGTH, problems);
-    if (stage.tasks.length === 0) {
-      problems.push(`stage #${stage.id} must contain at least one task`);
+  const seen = new Set<string>();
+  for (const hint of node.hints) {
+    if (typeof hint.path !== "string" || !isSafeHintPath(hint.path)) {
+      problems.push(
+        `node #${node.id} hint targets ${quote(String(hint.path))}, which is not a writable repo-relative path (no absolute path, "..", hidden/build segment, or human/)`,
+      );
+      continue;
     }
-    for (const task of stage.tasks) {
-      nodeCount += 1;
-      claimId(task.id, `task #${task.id}.id`, nodeIds, problems);
-      if (!VERIFY_SET.has(task.verify)) {
+    if (!SPACE_SET.has(hint.kind) && hint.kind !== "file") {
+      problems.push(
+        `node #${node.id} hint ${formatHint(hint)} must use kind value, type, namespace, or file`,
+      );
+      continue;
+    }
+    if (hint.kind === "file") {
+      if (hint.symbol !== "") {
         problems.push(
-          `task #${task.id}.verify must be "tsc" or "test" (got ${quote(String(task.verify))})`,
+          `node #${node.id} hint ${formatHint(hint)} is a file hint but carries symbol ${quote(hint.symbol)}; a file hint uses symbol ""`,
         );
+        continue;
       }
-      instructionProblems(task.instruction, `task #${task.id}.instruction`, problems);
-      if (task.edits.length === 0) {
-        problems.push(`task #${task.id} must contain at least one edit`);
-      }
-      for (const edit of task.edits) {
-        nodeCount += 1;
-        claimId(edit.id, `edit #${edit.id}.id`, nodeIds, problems);
-        instructionProblems(edit.instruction, `edit #${edit.id}.instruction`, problems);
-        const problem = locProblems(edit);
-        if (problem !== null) {
-          problems.push(problem);
-        }
-      }
+    } else if (typeof hint.symbol !== "string" || hint.symbol.trim() === "") {
+      problems.push(
+        `node #${node.id} hint in ${quote(hint.path)} has an empty symbol; use kind "file" for a whole-file hint`,
+      );
+      continue;
     }
+    const key = `${hint.kind}\u0000${hint.symbol}\u0000${hint.path}`;
+    if (seen.has(key)) {
+      problems.push(`node #${node.id} lists hint ${formatHint(hint)} more than once`);
+      continue;
+    }
+    seen.add(key);
   }
-  if (nodeCount > MAX_NODES) {
-    problems.push(
-      `the tree carries ${nodeCount} task/edit nodes; at most ${MAX_NODES} are allowed (split the requirement)`,
-    );
-  }
-  // A work-in-progress tree may end in a `tsc` task; only the task marked by
-  // `finish` (validated by the parser/patch layer) must verify `test`.
   return problems;
 }
 
-/** Validate a Plan tree; `null` when it is valid, else a bullet diagnostic list. */
-export function validatePlanTree(plan: Plan): string | null {
-  const problems = treeProblems(plan);
+/**
+ * Every cycle among `after` edges, each reported once with the node ids in the
+ * cycle so the diagnostic can name them.
+ */
+function cycleProblems(nodes: readonly WorkNode[]): string[] {
+  const byId = new Map<NodeId, WorkNode>(nodes.map((node) => [node.id, node]));
+  const state = new Map<NodeId, 0 | 1 | 2>();
+  const stack: NodeId[] = [];
+  const problems: string[] = [];
+
+  const visit = (id: NodeId): void => {
+    const color = state.get(id) ?? 0;
+    if (color === 2) {
+      return;
+    }
+    if (color === 1) {
+      const start = stack.indexOf(id);
+      const cycle = [...stack.slice(start), id];
+      problems.push(`after edges form a cycle: ${cycle.map((entry) => `#${entry}`).join(" -> ")}`);
+      return;
+    }
+    state.set(id, 1);
+    stack.push(id);
+    for (const dependency of byId.get(id)?.after ?? []) {
+      if (dependency !== id && byId.has(dependency)) {
+        visit(dependency);
+      }
+    }
+    stack.pop();
+    state.set(id, 2);
+  };
+
+  for (const node of nodes) {
+    if ((state.get(node.id) ?? 0) === 0) {
+      visit(node.id);
+    }
+  }
+  return problems;
+}
+
+/**
+ * Validate the complete graph, including the Plan root. Each returned string is
+ * one problem; `validatePlan` renders them as a diagnostic list.
+ */
+function graphProblems(plan: Plan): string[] {
+  const problems: string[] = [];
+  const nodeIds = new Set<NodeId>();
+  claimId(plan.id, "plan.id", nodeIds, problems);
+  textProblems(plan.goal, "plan.goal", MAX_PLAN_GOAL_LENGTH, problems);
+
+  if (plan.nodes.length === 0) {
+    problems.push("the plan must contain at least one work node");
+  }
+
+  for (const node of plan.nodes) {
+    claimId(node.id, `node #${String(node.id)}.id`, nodeIds, problems);
+    if (!VERIFY_SET.has(node.verify)) {
+      problems.push(
+        `node #${node.id}.verify must be "tsc" or "test" (got ${quote(String(node.verify))})`,
+      );
+    }
+    textProblems(
+      node.instruction,
+      `node #${node.id}.instruction`,
+      MAX_INSTRUCTION_LENGTH,
+      problems,
+    );
+    if (node.approach !== undefined) {
+      textProblems(node.approach, `node #${node.id}.approach`, MAX_APPROACH_LENGTH, problems);
+    }
+    if (node.phase !== undefined) {
+      textProblems(node.phase, `node #${node.id}.phase`, MAX_PHASE_LENGTH, problems);
+    }
+    if (!Array.isArray(node.after)) {
+      problems.push(`node #${node.id}.after must be an array of node ids`);
+    } else {
+      const seen = new Set<NodeId>();
+      for (const dependency of node.after) {
+        if (typeof dependency !== "string" || !NODE_ID_PATTERN.test(dependency)) {
+          problems.push(
+            `node #${node.id} after entry ${JSON.stringify(dependency)} is not a node id "NN-slug"`,
+          );
+          continue;
+        }
+        if (dependency === node.id) {
+          problems.push(
+            `node #${node.id} lists itself in after; a dependency edge must point at another node`,
+          );
+          continue;
+        }
+        if (seen.has(dependency)) {
+          problems.push(`node #${node.id} lists dependency #${dependency} more than once in after`);
+          continue;
+        }
+        seen.add(dependency);
+      }
+    }
+    problems.push(...hintProblems(node));
+  }
+
+  const known = new Set(plan.nodes.map((node) => node.id));
+  for (const node of plan.nodes) {
+    if (!Array.isArray(node.after)) {
+      continue;
+    }
+    for (const dependency of node.after) {
+      if (typeof dependency === "string" && !known.has(dependency)) {
+        problems.push(`node #${node.id} depends on #${dependency}, which is not in the plan`);
+      }
+    }
+  }
+
+  problems.push(...cycleProblems(plan.nodes));
+  return problems;
+}
+
+/** Validate a Plan graph; `null` when it is valid, else a bullet diagnostic list. */
+export function validatePlan(plan: Plan): string | null {
+  const problems = graphProblems(plan);
   return problems.length === 0 ? null : problems.map((problem) => `- ${problem}`).join("\n");
 }
 
-/** Build the run state from a freshly parsed plan (every task pending, every edit todo). */
-export function initialState(plan: Plan, finalTaskId: NodeId | null = null): TaskRunState {
+/**
+ * Validate a `finish` marker against the graph: the final id must exist, be the
+ * last node in record order, and verify `test`. `null` when valid.
+ */
+export function validateFinalNode(plan: Plan, finalNodeId: NodeId): string | null {
+  const last = finalNode(plan);
+  if (last === undefined) {
+    return `finish needs at least one work node; the plan has none`;
+  }
+  if (last.id !== finalNodeId) {
+    return `finish marks #${finalNodeId}, but the last work node is #${last.id}; finish must mark the last node in record order`;
+  }
+  if (last.verify !== "test") {
+    return `finish marks #${last.id}, which verifies "${last.verify}"; the final node must verify "test"`;
+  }
+  return null;
+}
+
+/** Build the run state from a freshly parsed plan (every node pending). */
+export function initialState(plan: Plan, finalNodeId: NodeId | null = null): PlanRunState {
   return {
     plan,
-    stages: plan.stages,
-    editStatus: new Map(allEdits(plan.stages).map((edit) => [edit.id, "todo" as EditStatus])),
-    taskStatus: new Map(allTasks(plan.stages).map((task) => [task.id, "pending" as TaskStatus])),
-    finalTaskId,
+    nodes: plan.nodes,
+    nodeStatus: new Map(plan.nodes.map((node) => [node.id, "pending" as NodeStatus])),
+    finalNodeId,
   };
 }
 
-function sameLoc(a: TaskLoc, b: TaskLoc): boolean {
+function sameLoc(a: HintLoc, b: HintLoc): boolean {
   return a.path === b.path && a.symbol === b.symbol && a.kind === b.kind;
 }
 
-function sameEdit(a: EditNode, b: EditNode): boolean {
-  const relatedA = a.related ?? [];
-  const relatedB = b.related ?? [];
+function sameHints(a: readonly HintLoc[], b: readonly HintLoc[]): boolean {
   return (
-    a.action === b.action &&
-    a.instruction === b.instruction &&
-    a.renameTo === b.renameTo &&
-    sameLoc(a.loc, b.loc) &&
-    relatedA.length === relatedB.length &&
-    relatedA.every((loc, index) => {
-      const other = relatedB[index];
+    a.length === b.length &&
+    a.every((loc, index) => {
+      const other = b[index];
       return other !== undefined && sameLoc(loc, other);
     })
   );
 }
 
-function sameTaskDefinition(a: TaskNode, b: TaskNode): boolean {
-  return a.verify === b.verify && a.instruction === b.instruction;
-}
-
-interface PreviousTask {
-  task: TaskNode;
-  stage: Stage;
-}
-
-interface PreviousEdit {
-  edit: EditNode;
-  task: TaskNode;
-  stage: Stage;
+function sameWorkNode(a: WorkNode, b: WorkNode): boolean {
+  return (
+    a.verify === b.verify &&
+    a.instruction === b.instruction &&
+    a.approach === b.approach &&
+    a.phase === b.phase &&
+    a.after.length === b.after.length &&
+    a.after.every((id, index) => id === b.after[index]) &&
+    sameHints(a.hints, b.hints)
+  );
 }
 
 /**
- * Merge a re-planning reply into the harness state. The reply re-emits the
- * full tree; ids are stable and record order is execution order.
+ * Merge a re-planning reply into the harness state. The reply re-emits the full
+ * graph; ids are stable and record order is the readiness tie-break.
  *
- * - a done edit and a passed task are immutable and cannot be removed;
- * - a failed edit retries only with a changed definition;
- * - a failed task reopens when its definition changes or it gains edits;
- * - a review task reopens pending, so a review patch executes it once more;
- * - a new task starts pending and is appended to its stage; a fully passed
- *   stage is closed, so later work goes in a new stage;
- * - new edits are appended to their task;
- * - the `finish` marker is preserved; patch application migrates it.
+ * - a passed node is immutable and cannot be removed;
+ * - an in-progress node is held until it finishes;
+ * - a failed node reopens when its definition changes, otherwise stays failed;
+ * - a review node reopens pending when a review patch changes it;
+ * - a new node starts pending and is appended after existing nodes;
+ * - removed nodes must be pending or failed;
+ * - the existing node order is preserved.
  */
-export function mergeReplan(previous: TaskRunState, plan: Plan): PlanMerge {
+export function mergeReplan(previous: PlanRunState, plan: Plan): PlanMerge {
   const problems: string[] = [];
 
-  const previousStages = new Map<StageId, Stage>(previous.stages.map((stage) => [stage.id, stage]));
-  const previousTasks = new Map<NodeId, PreviousTask>();
-  const previousEdits = new Map<NodeId, PreviousEdit>();
-  for (const stage of previous.stages) {
-    for (const task of stage.tasks) {
-      previousTasks.set(task.id, { task, stage });
-      for (const edit of task.edits) {
-        previousEdits.set(edit.id, { edit, task, stage });
-      }
-    }
+  const previousNodes = new Map<NodeId, WorkNode>(previous.nodes.map((node) => [node.id, node]));
+
+  const nextIds = plan.nodes.map((node) => node.id);
+  const nextSet = new Set(nextIds);
+  const keptPrevious = previous.nodes.map((node) => node.id).filter((id) => nextSet.has(id));
+  const keptNext = nextIds.filter((id) => previousNodes.has(id));
+  if (keptPrevious.join(",") !== keptNext.join(",")) {
+    problems.push("existing nodes must keep their plan order");
+  }
+  const firstNew = nextIds.findIndex((id) => !previousNodes.has(id));
+  if (firstNew !== -1 && nextIds.slice(firstNew).some((id) => previousNodes.has(id))) {
+    problems.push("new nodes must be appended after existing nodes");
   }
 
-  const nextStageIds = plan.stages.map((stage) => stage.id);
-  const nextStageSet = new Set(nextStageIds);
-  const nextTasks = new Map<NodeId, TaskNode>();
-  const nextEdits = new Map<NodeId, EditNode>();
-  for (const stage of plan.stages) {
-    for (const task of stage.tasks) {
-      nextTasks.set(task.id, task);
-      for (const edit of task.edits) {
-        nextEdits.set(edit.id, edit);
-      }
-    }
-  }
-
-  // Existing stages keep their order; new stages are appended.
-  const keptPreviousStages = [...previousStages.keys()].filter((id) => nextStageSet.has(id));
-  const keptNextStages = nextStageIds.filter((id) => previousStages.has(id));
-  if (keptPreviousStages.join(",") !== keptNextStages.join(",")) {
-    problems.push("existing stages must keep their plan order");
-  }
-  const firstNewStage = nextStageIds.findIndex((id) => !previousStages.has(id));
-  if (
-    firstNewStage !== -1 &&
-    nextStageIds.slice(firstNewStage).some((id) => previousStages.has(id))
-  ) {
-    problems.push("new stages must be appended after existing stages");
-  }
-
-  // A stage that already passed is closed; a stage with failed work may be
-  // repaired, but done edits may not disappear.
-  for (const [stageId, stage] of previousStages) {
-    if (nextStageSet.has(stageId)) {
+  for (const node of previous.nodes) {
+    if (nextSet.has(node.id)) {
       continue;
     }
-    const hasPassedTask = stage.tasks.some((task) => previous.taskStatus.get(task.id) === "passed");
-    const hasDoneEdit = stage.tasks.some((task) =>
-      task.edits.some((edit) => previous.editStatus.get(edit.id) === "done"),
-    );
-    if (hasPassedTask || hasDoneEdit) {
-      problems.push(`stage #${stageId} contains passed tasks or done edits and cannot be removed`);
-    }
-  }
-
-  // Existing tasks keep their order inside a stage; new tasks are appended.
-  for (const stage of plan.stages) {
-    const beforeStage = previousStages.get(stage.id);
-    if (beforeStage === undefined) {
-      continue;
-    }
-    const previousTaskIds = beforeStage.tasks.map((task) => task.id);
-    const nextTaskSet = new Set(stage.tasks.map((task) => task.id));
-    const keptPreviousTasks = previousTaskIds.filter((id) => nextTaskSet.has(id));
-    const keptNextTasks = stage.tasks.map((task) => task.id).filter((id) => previousTasks.has(id));
-    if (keptPreviousTasks.join(",") !== keptNextTasks.join(",")) {
-      problems.push(`tasks in stage #${stage.id} must keep their plan order`);
-    }
-    const firstNewTask = stage.tasks.findIndex((task) => !previousTasks.has(task.id));
-    if (
-      firstNewTask !== -1 &&
-      stage.tasks.slice(firstNewTask).some((task) => previousTasks.has(task.id))
-    ) {
-      problems.push(`new tasks in stage #${stage.id} must be appended after existing tasks`);
-    }
-    const stagePassed =
-      beforeStage.tasks.length > 0 &&
-      beforeStage.tasks.every((task) => previous.taskStatus.get(task.id) === "passed");
-    if (stagePassed && stage.tasks.some((task) => !previousTasks.has(task.id))) {
+    const status = previous.nodeStatus.get(node.id) ?? "pending";
+    if (status === "passed") {
+      problems.push(`passed node #${node.id} cannot be removed by a re-plan`);
+    } else if (status === "review") {
+      problems.push(`node #${node.id} is in review and cannot be removed by a re-plan`);
+    } else if (status === "in-progress") {
       problems.push(
-        `stage #${stage.id} already passed; add repair work in a new stage instead of extending it`,
+        `node #${node.id} is in progress; the harness holds it until the node finishes`,
       );
     }
   }
 
-  // A task may not move to another stage.
-  for (const stage of plan.stages) {
-    for (const task of stage.tasks) {
-      const before = previousTasks.get(task.id);
-      if (before !== undefined && before.stage.id !== stage.id) {
+  const nodeStatus = new Map<NodeId, NodeStatus>();
+  for (const node of plan.nodes) {
+    const before = previousNodes.get(node.id);
+    if (before === undefined) {
+      nodeStatus.set(node.id, "pending");
+      continue;
+    }
+    const beforeStatus = previous.nodeStatus.get(node.id) ?? "pending";
+    const changed = !sameWorkNode(before, node);
+    if (beforeStatus === "passed") {
+      if (changed) {
         problems.push(
-          `task #${task.id} moved from stage #${before.stage.id} to stage #${stage.id}; keep tasks in their stage`,
+          `passed node #${node.id} is immutable; add repair work in a new node or reopen it explicitly`,
         );
       }
-    }
-  }
-
-  // Removed tasks may not carry passed work or done edits.
-  for (const [taskId, before] of previousTasks) {
-    if (nextTasks.has(taskId)) {
-      continue;
-    }
-    if (previous.taskStatus.get(taskId) === "passed") {
-      problems.push(`passed task #${taskId} cannot be removed by a re-plan`);
-      continue;
-    }
-    const done = before.task.edits.some((edit) => previous.editStatus.get(edit.id) === "done");
-    if (done) {
-      problems.push(`task #${taskId} contains done edits and cannot be removed by a re-plan`);
-    }
-  }
-
-  const editStatus = new Map<NodeId, EditStatus>();
-  const taskStatus = new Map<NodeId, TaskStatus>();
-
-  for (const stage of plan.stages) {
-    for (const task of stage.tasks) {
-      const beforeTask = previousTasks.get(task.id);
-      if (beforeTask === undefined) {
-        taskStatus.set(task.id, "pending");
-        for (const edit of task.edits) {
-          editStatus.set(edit.id, "todo");
-        }
-        continue;
+      nodeStatus.set(node.id, "passed");
+    } else if (beforeStatus === "in-progress") {
+      if (changed) {
+        problems.push(
+          `node #${node.id} is in progress; the harness holds it until the node finishes`,
+        );
       }
-
-      const beforeGate = previous.taskStatus.get(task.id) ?? "pending";
-      let changed = !sameTaskDefinition(beforeTask.task, task);
-      const nextEditIds = new Set(task.edits.map((edit) => edit.id));
-
-      // Existing edits keep their order; new edits are appended.
-      const previousEditIds = beforeTask.task.edits.map((edit) => edit.id);
-      const keptPreviousEdits = previousEditIds.filter((id) => nextEditIds.has(id));
-      const keptNextEdits = task.edits.map((edit) => edit.id).filter((id) => previousEdits.has(id));
-      if (keptPreviousEdits.join(",") !== keptNextEdits.join(",")) {
-        problems.push(`edits in task #${task.id} must keep their plan order`);
-      }
-      const firstNewEdit = task.edits.findIndex((edit) => !previousEdits.has(edit.id));
-      if (
-        firstNewEdit !== -1 &&
-        task.edits.slice(firstNewEdit).some((edit) => previousEdits.has(edit.id))
-      ) {
-        problems.push(`new edits in task #${task.id} must be appended after existing edits`);
-      }
-
-      for (const edit of task.edits) {
-        const beforeEdit = previousEdits.get(edit.id);
-        if (beforeEdit === undefined) {
-          editStatus.set(edit.id, "todo");
-          changed = true;
-          continue;
-        }
-        if (beforeEdit.task.id !== task.id) {
-          problems.push(
-            `edit #${edit.id} moved from task #${beforeEdit.task.id} to task #${task.id}; keep edits in their task`,
-          );
-          continue;
-        }
-        const beforeStatus = previous.editStatus.get(edit.id) ?? "todo";
-        if (beforeStatus === "done") {
-          if (!sameEdit(beforeEdit.edit, edit)) {
-            problems.push(`done edit #${edit.id} is immutable`);
-          }
-          editStatus.set(edit.id, "done");
-          continue;
-        }
-        if (beforeStatus === "in-progress") {
-          problems.push(
-            `edit #${edit.id} is in progress; the harness holds it until the edit finishes`,
-          );
-          continue;
-        }
-        if (beforeStatus === "failed") {
-          if (sameEdit(beforeEdit.edit, edit)) {
-            editStatus.set(edit.id, "failed");
-          } else {
-            editStatus.set(edit.id, "todo");
-            changed = true;
-          }
-          continue;
-        }
-        // todo
-        if (!sameEdit(beforeEdit.edit, edit)) {
-          changed = true;
-        }
-        editStatus.set(edit.id, "todo");
-      }
-
-      for (const beforeEdit of beforeTask.task.edits) {
-        if (nextEditIds.has(beforeEdit.id)) {
-          continue;
-        }
-        if (previous.editStatus.get(beforeEdit.id) === "done") {
-          problems.push(`done edit #${beforeEdit.id} cannot be removed by a re-plan`);
-        } else {
-          changed = true;
-        }
-      }
-
-      if (beforeGate === "passed") {
-        if (changed) {
-          problems.push(
-            `passed task #${task.id} is immutable; add repair work in a new task or stage`,
-          );
-        }
-        taskStatus.set(task.id, "passed");
-      } else if (beforeGate === "failed") {
-        // A changed failed task is a repair: reopen it. An unchanged failed
-        // task stays closed so a later task can supersede it.
-        taskStatus.set(task.id, changed ? "pending" : "failed");
-      } else {
-        taskStatus.set(task.id, "pending");
-      }
+      nodeStatus.set(node.id, "in-progress");
+    } else if (beforeStatus === "review") {
+      nodeStatus.set(node.id, changed ? "pending" : "review");
+    } else if (beforeStatus === "failed") {
+      nodeStatus.set(node.id, changed ? "pending" : "failed");
+    } else {
+      nodeStatus.set(node.id, "pending");
     }
   }
 
   if (problems.length > 0) {
     return {
       ok: false,
-      diagnostics: `stage: task-tree\n${problems.map((problem) => `- ${problem}`).join("\n")}`,
+      diagnostics: `stage: plan-graph\n${problems.map((problem) => `- ${problem}`).join("\n")}`,
     };
   }
-  const treeIssues = validatePlanTree(plan);
-  if (treeIssues !== null) {
+  const graphIssues = validatePlan(plan);
+  if (graphIssues !== null) {
     return {
       ok: false,
-      diagnostics: `stage: task-tree\n${treeIssues}`,
+      diagnostics: `stage: plan-graph\n${graphIssues}`,
     };
   }
 
@@ -881,48 +670,29 @@ export function mergeReplan(previous: TaskRunState, plan: Plan): PlanMerge {
     ok: true,
     state: {
       plan,
-      stages: plan.stages,
-      editStatus,
-      taskStatus,
-      // A full-tree re-plan keeps the current finish marker; patches validate
-      // and migrate it (the driver's patch flow lands with #31).
-      finalTaskId: previous.finalTaskId,
+      nodes: plan.nodes,
+      nodeStatus,
+      finalNodeId: previous.finalNodeId,
     },
   };
 }
 
-/** The per-edit result summary a plan/execute run reports (string node ids, result @2). */
-export interface TaskSummary {
+/** The per-node result summary a plan/execute run reports (string node ids). */
+export interface NodeSummary {
   id: NodeId;
-  stage: StageId;
-  task: NodeId;
-  verify: TaskVerify;
-  action: TaskAction;
-  path: string;
-  symbol: string;
-  kind: string;
-  status: EditStatus;
+  verify: WorkVerify;
+  status: NodeStatus;
+  phase?: string;
+  approach?: string;
 }
 
-/** Snapshot the run state as the result's per-edit summary. */
-export function summaryOf(state: TaskRunState): TaskSummary[] {
-  const summaries: TaskSummary[] = [];
-  for (const stage of state.stages) {
-    for (const task of stage.tasks) {
-      for (const edit of task.edits) {
-        summaries.push({
-          id: edit.id,
-          stage: stage.id,
-          task: task.id,
-          verify: task.verify,
-          action: edit.action,
-          path: edit.loc.path,
-          symbol: edit.loc.symbol,
-          kind: edit.loc.kind,
-          status: state.editStatus.get(edit.id) ?? "todo",
-        });
-      }
-    }
-  }
-  return summaries;
+/** Snapshot the run state as the result's per-node summary, in record order. */
+export function summaryOf(state: PlanRunState): NodeSummary[] {
+  return state.nodes.map((node) => ({
+    id: node.id,
+    verify: node.verify,
+    status: state.nodeStatus.get(node.id) ?? "pending",
+    ...(node.phase === undefined ? {} : { phase: node.phase }),
+    ...(node.approach === undefined ? {} : { approach: node.approach }),
+  }));
 }

@@ -84,12 +84,12 @@ if that environment changes.
 
 - `src/main.ts` — CLI entry (`#!/usr/bin/env bun`, piped-stdin contract `tc < task.txt`; a TTY stdin prints help).
 - `src/loop.ts` — `runLoop` dispatcher (default pinned-repair; plan-exec route) + `buildSystemPrompt` (the model-facing prompt is a literal in this file; prompt text is benchmark-sensitive).
-- `src/tasks.ts` / `src/task-loop.ts` — Plan → Stage → Task → edit tree contract and the `--mode plan-exec` driver: incremental one-Task execution, post-execution review, usage buckets; spec in `docs/plan-exec.md`.
+- `src/tasks.ts` / `src/task-loop.ts` — Plan/WorkNode DAG contract and the `--mode plan-exec` driver: ready-node scheduling, gates, post-execution review, usage buckets; spec in `docs/plan-exec.md`.
 - `src/plan-dsl.ts` — flat Plan and patch DSL parser/serializer; `src/dsl-diagnostics.ts` — shared tolerant diagnostics renderer.
 - `src/prompts/task.ts` — planning/execution/review prompt text for plan-exec.
 - `src/tools.ts` — check/test tools; default verify commands are `bunx tsc --noEmit` and `bun test`.
 - `src/editor.ts` — splice + oxfmt + parse gate. `src/utility.ts` — symbol index (path×symbol×kind).
-- `src/openai.ts` — provider config from env, retries/timeouts. `src/result.ts` — the `typescript-coder-result@2` sub-agent result contract.
+- `src/openai.ts` — provider config from env, retries/timeouts. `src/result.ts` — the `typescript-coder-result@3` sub-agent result contract.
 - `src/index.ts` — leftover scaffold (`greet`) kept as the self-host fixture target; don't "clean it up".
 - `human/` — human-authored specs; read-only (see Boundaries).
 - `acceptance/`, `benchmark/` — harnesses, read their READMEs before changing.

@@ -191,6 +191,37 @@ categories:
       - term: LIVE_TIMEOUT_MS
         definition: 90-second timeout wrapping each live request; live loop runs at temperature 0.
 
+  - id: plan-exec-model
+    title: Plan-exec WorkNode model
+    terms:
+      - term: WorkNode
+        definition: >-
+          One task-level unit of work in plan-exec: `id`, `after` dependency
+          ids, `verify` (`tsc` or `test`), `instruction`, advisory `hints`, and
+          optional advisory `approach`/`phase`. The planner owns it; the
+          executor owns the concrete edit actions. See `docs/plan-exec.md` §1.
+      - term: HintLoc
+        definition: >-
+          `{path, symbol, kind}` target hint. `kind` is a symbol space
+          (`value`, `type`, `namespace`) or `file`; a file hint uses
+          `symbol: ""`. Hints are guidance, not an allowlist.
+      - term: NodeStatus
+        definition: >-
+          Harness-owned node status: `pending`, `in-progress`, `review`,
+          `passed`, or `failed`. `review` means the gate passed but the planner
+          has not approved the result yet. Blocked is derived from failed
+          dependencies, not stored.
+      - term: approach
+        definition: >-
+          Optional advisory strategy on a WorkNode, e.g. whole-file write for a
+          small change, scaffold-then-fill for a large module, or a parallel
+          `xxV1` implementation for a risky refactor. The executor may override
+          it; it is never a gate.
+      - term: out-of-hint edit
+        definition: >-
+          A changed path not named by the node's hints. It is allowed when the
+          instruction requires it and is surfaced explicitly in the review diff.
+
   - id: outcomes
     title: Outcomes, rejection causes, and termination
     terms:
@@ -245,8 +276,9 @@ categories:
         definition: The run cannot produce a valid edit within the round/iteration caps.
       - term: task-exhausted
         definition: >-
-          The plan-exec driver cannot plan, patch, or review valid work within
-          its caps; see `docs/plan-exec.md` §9.
+          The plan-exec driver cannot make progress: a node repeated the same
+          fingerprint, or a planning/review turn could not produce usable work.
+          See `docs/plan-exec.md` §9.
       - term: delete-verification-failed
         definition: A deletion fails verification.
       - term: prev-broken
@@ -270,15 +302,16 @@ categories:
           `messages`, `skipped`, `terminationReason`, `tokens`,
           `appliedTargets`, and, in plan-exec, `usage`
           (planning/review/execution buckets), `warnings` (recovered parser
-          warnings), and `tasks`, one per edit with string `id`, `stage`, and
-          `task` node ids. See `docs/feedback-loop.md` "Records and result" and
+          warnings), and `nodes`, one per WorkNode with `id`, `verify`,
+          `status`, and optional `phase`/`approach`. See
+          `docs/feedback-loop.md` "Records and result" and
           `docs/plan-exec.md` §10.
       - term: subagent result
         definition: >-
-          `typescript-coder-result@2`, printed by `--format json`: format,
+          `typescript-coder-result@3`, printed by `--format json`: format,
           status, verified, files, targets, records, tokens,
-          terminationReason, diagnostics, and (plan-exec only) tasks
-          whose `id`, `stage`, and `task` fields are string node ids. It keeps
+          terminationReason, diagnostics, and (plan-exec only) nodes
+          whose `id` is a string graph node id. It keeps
           the single `tokens` object; `LoopResult.usage` and
           `LoopResult.warnings` are not exposed here. See
           `docs/plan-exec.md` §10.

@@ -1,26 +1,30 @@
 /**
- * The plan/execute driver (`docs/plan-exec.md`): a planner starts with one
- * current Stage and Task, then patches one new Task (or one new Stage with its
- * first Task) per planning turn. An executor carries out one Task's edits at a
- * time with edit-dsl clauses (or one whole-file write). The harness owns status,
- * scheduling, and verification.
+ * The plan/execute driver (`docs/plan-exec.md`): a planner owns a task-level
+ * WorkNode DAG, then executes ready nodes in record order. An executor carries
+ * out one node at a time with edit-dsl clauses or file commands; the harness
+ * owns scheduling, gates, review, and the final result.
  *
  * This module orchestrates. It reuses the edit-dsl machinery rather than
- * re-implementing it: `parseMultiEditor`/`resolveMultiEditor` for the reply,
- * `applyResolvedRegions` for the gates and the write, and `formatDiagnostics`
- * for the type-check feedback. `src/tasks.ts` owns the contract, and
- * `src/prompts/task.ts` owns the prompt text.
+ * re-implementing it: `parseMultiEditorDetailed`/`resolveMultiEditor` for the
+ * reply, `applyResolvedRegions` for the application gates, and
+ * `formatDiagnostics` for the type-check feedback. `src/tasks.ts` owns the
+ * contract, and `src/prompts/task.ts` owns the prompt text.
+ *
+ * There are no fixed exchange, viewer, review, or planning-round caps here.
+ * The run is bounded by the token budget, repeated/no-progress fingerprints,
+ * and the DSL safety validation.
  */
+import { createHash } from "node:crypto";
+import { rmSync } from "node:fs";
 import { join } from "node:path";
-import { buildIndexTolerant, Binder, declarationSpaces } from "./utility";
+import { buildIndexTolerant } from "./utility";
 import type { IndexEntry, Locator, SourceFile, SymbolIndex, SymbolSpace } from "./utility";
 import { Parser } from "./parser";
 import type { Node, Program } from "./parser";
 import { stripCodeFences } from "./matcher";
 import { parseMultiEditorDetailed } from "./selection";
-import type { EditStatement, Selection as EditDslSelection, WriteFileStatement } from "./selection";
+import type { EditStatement, Selection as EditDslSelection } from "./selection";
 import { renderReadFailureFeedback, renderReadFeedback, resolveMultiEditor } from "./multi-editor";
-import { stripLeadingExport } from "./loop";
 import type { MultiEditorDeps, MultiEditorResolution } from "./multi-editor";
 import { declarationKindOf, renderViewerFeedback } from "./edit-dsl";
 import type { EditDslRegion } from "./edit-dsl";
@@ -36,7 +40,6 @@ import { formatSource } from "./editor";
 import { buildContextYaml } from "./loop";
 import {
   DEFAULT_TOKEN_BUDGET,
-  MAX_CONSECUTIVE_LENGTH,
   addLoopTokens,
   budgetTokensFromResponse,
   cloneLoopUsage,
@@ -45,7 +48,6 @@ import {
   explain,
   formatDiagnostics,
   loopTokensFromResponse,
-  parseSelfCheckRequest,
   providerErrorDiagnostics,
   readFileIfExists,
   recordRow,
@@ -76,32 +78,21 @@ import {
   buildTaskPlanningSystemPrompt,
   buildTaskPlanningUserPrompt,
   buildTaskReplanPrompt,
-  buildTaskReviewDoneEditRetryPrompt,
   buildTaskReviewPrompt,
   buildTaskReviewRetryPrompt,
   buildTaskTurnPrompt,
-  MAX_TASK_EXCHANGES,
-  MAX_TASK_PLAN_ROUNDS,
   renderTaskContentView,
-  replanDelta,
 } from "./prompts/task";
-import type { TaskMatcherFailure } from "./prompts/task";
+import type { TaskSourceView } from "./prompts/task";
 import {
-  activeStage,
-  activeTask,
-  allTasks,
-  finalTask,
-  firstEdit,
-  formatTaskLoc,
-  hasLaterPendingTaskInStage,
+  blockedNodes,
+  finalNode,
   initialState,
-  isSafeTaskPath,
-  nextEdit,
+  nextReadyNode,
   runComplete,
   summaryOf,
-  taskEditsSettled,
-  taskHasDoneEdit,
 } from "./tasks";
+import type { NodeId, PlanRunState, WorkNode } from "./tasks";
 import {
   applyPlanPatch,
   parsePlanDslDetailed,
@@ -109,7 +100,6 @@ import {
   serializePlanDsl,
 } from "./plan-dsl";
 import type { PlanPatch } from "./plan-dsl";
-import type { EditNode, NodeId, Stage, TaskNode, Plan, TaskRunState } from "./tasks";
 import { renderDslIssues } from "./dsl-diagnostics";
 import type { DslParseResult } from "./dsl-diagnostics";
 
@@ -118,17 +108,18 @@ import type { DslParseResult } from "./dsl-diagnostics";
  * value is a run state or a terminated result.
  */
 type PlanningOutcome =
-  | { kind: "planned"; state: TaskRunState }
+  | { kind: "planned"; state: PlanRunState }
   | { kind: "failed"; result: LoopResult };
-/** One post-execution review turn: approve, one repair patch, or terminate. */
+/** One review round: approve, a patched state, or a terminated run. */
 type ReviewOutcome =
   | { kind: "approve" }
-  | { kind: "patched"; state: TaskRunState }
+  | { kind: "patched"; state: PlanRunState }
   | { kind: "failed"; result: LoopResult };
-/** Model attempts per planning turn (a rejected reply is retried with its diagnostics). */
-const MAX_PLAN_ATTEMPTS = 3;
-/** Review reply attempts: one initial reply plus one format-only retry. */
-const MAX_REVIEW_ATTEMPTS = 2;
+/** One work-node execution: its gate passed, it stopped making progress, or the run ended. */
+type ExecutionOutcome =
+  | { kind: "passed"; gateDiagnostics: null }
+  | { kind: "failed"; diagnostics: string }
+  | { kind: "terminated"; result: LoopResult };
 
 interface Workspace {
   cwd: string;
@@ -206,71 +197,17 @@ function stageOf(diagnostics: string): string {
   return match?.[1] ?? "protocol";
 }
 
-/**
- * Only the two malformed-matcher classes get the bounded correction (#45):
- * a missing matcher value and a snippet that does not parse. Matcher-not-found,
- * matcher-ambiguous, and invalid-regex replies keep the general matcher help;
- * they are selector problems, not malformed syntax.
- */
-function isMalformedMatcher(diagnostics: string): boolean {
-  if (diagnostics.includes("EDIT_MATCHER_MISSING")) {
-    return true;
-  }
-  return (
-    stageOf(diagnostics) === "matcher" &&
-    diagnostics.includes("the matcher could not be parsed as TypeScript")
-  );
+function hashText(text: string): string {
+  return createHash("sha256").update(text, "utf8").digest("hex");
 }
 
-/**
- * The index address of a task. `kind` is the empty wildcard because the task's
- * `loc.kind` is a *symbol space*, which `resolveCurrentEntry`/`lookup` filter
- * separately; a declaration keyword here would exclude every entry.
- */
-function locatorOf(task: EditNode): Locator {
-  return { path: task.loc.path, name: task.loc.symbol, kind: "" };
-}
-
-function symbolSpaceOf(loc: EditNode["loc"]): SymbolSpace {
-  if (loc.kind === "file") {
-    throw new Error(`the whole-file target ${loc.path} has no symbol space`);
+/** The record locator for a node: its first hint, or an empty locator. */
+function locatorOfNode(node: WorkNode): Locator {
+  const hint = node.hints[0];
+  if (hint === undefined) {
+    return { path: "", name: "", kind: "" };
   }
-  return loc.kind;
-}
-
-function readTarget(cwd: string, path: string): string {
-  return readFileIfExists(join(cwd, path)) ?? "";
-}
-
-/** True when a planner turn is asking for a read-only edit-protocol viewer. */
-function isPlannerViewerReply(content: string): boolean {
-  const trimmed = stripCodeFences(content).trim();
-  return /^select\b/.test(trimmed) || /^read\b/.test(trimmed);
-}
-
-/**
- * A planner viewer is exactly one existing edit-protocol viewer statement.
- * Editors, writes, creates, deletes, and multi-statement replies are rejected:
- * the planner may inspect code, never change it.
- */
-function plannerViewerProblem(statements: readonly EditStatement[]): string | null {
-  if (statements.length !== 1) {
-    return "a planner view must be exactly one read-only `select … end` or `read … end` statement";
-  }
-  const statement = statements[0];
-  if (statement === undefined) {
-    return "a planner view must be exactly one read-only `select … end` or `read … end` statement";
-  }
-  if (statement.type === "fs") {
-    return statement.statement.op === "read"
-      ? null
-      : `a planner view is read-only; \`${statement.statement.op}\` is not allowed`;
-  }
-  const selection = statement.selection;
-  if (selection.replacement !== null || selection.rename !== undefined) {
-    return "a planner view is read-only; use a viewer (`select … end`) without `replace` or `rename`";
-  }
-  return null;
+  return { path: hint.path, name: hint.kind === "file" ? "" : hint.symbol, kind: "" };
 }
 
 function writeRecord(
@@ -279,7 +216,7 @@ function writeRecord(
     iteration: number;
     kind: "exchange" | "verification";
     exchange: number | null;
-    edit: EditNode;
+    node: WorkNode;
     outcome: ExchangeOutcome | "ok" | "tsc" | "tests";
     replacement: string | null;
     diagnostics: string | null;
@@ -294,7 +231,7 @@ function writeRecord(
       iteration: input.iteration,
       kind: input.kind,
       exchange: input.exchange,
-      locator: locatorOf(input.edit),
+      locator: locatorOfNode(input.node),
       replacement: input.replacement,
       diagnostics: input.diagnostics,
       outcome: input.outcome,
@@ -305,146 +242,106 @@ function writeRecord(
   );
 }
 
-// ---------------------------------------------------------------------------
-// Target guards: the plan declares one action per task; the reply must carry it.
-
-type TargetGuard =
-  | { ok: true; entry: IndexEntry | null; related: IndexEntry[] }
-  | { ok: false; diagnostics: string };
-
-function editLabel(task: EditNode): string {
-  return `task #${task.id} (${task.action}) targets ${formatTaskLoc(task.loc)}`;
+function readTarget(cwd: string, path: string): string {
+  return readFileIfExists(join(cwd, path)) ?? "";
 }
 
-/** The addresses a migration task may edit: its target plus related locs. */
-function editLocs(
-  task: EditNode,
-): readonly { path: string; symbol: string; kind: EditNode["loc"]["kind"] }[] {
-  return [task.loc, ...(task.related ?? [])];
+/** True when a planner turn is asking for a read-only edit-protocol viewer. */
+function isPlannerViewerReply(content: string): boolean {
+  const trimmed = stripCodeFences(content).trim();
+  return /^(select|read|create|delete|write)\b/.test(trimmed);
 }
 
-function locatorOfLoc(loc: EditNode["loc"]): Locator {
-  return { path: loc.path, name: loc.symbol, kind: "" };
-}
-
-/** The current workspace files (paths and sources) for address resolution. */
-function workspaceIndex(workspace: Workspace): SymbolIndex {
-  const files = discoverSourceFiles(workspace.cwd);
-  return buildIndexTolerant(files).index;
-}
-
-function guardTarget(workspace: Workspace, task: EditNode): TargetGuard {
-  const cwd = workspace.cwd;
-  for (const loc of editLocs(task)) {
-    if (!isSafeTaskPath(loc.path) || safeMutablePath(cwd, loc.path) === null) {
-      return {
-        ok: false,
-        diagnostics: `stage: address\ntask #${task.id}: ${formatTaskLoc(loc)} is not a writable repo-relative path (no absolute path, "..", hidden/build segment, or human/)`,
-      };
-    }
+/**
+ * A planner viewer is one or more existing read-only viewer statements.
+ * Editors, writes, creates, and deletes are rejected: the planner may inspect
+ * code, never change it.
+ */
+function plannerViewerProblem(statements: readonly EditStatement[]): string | null {
+  if (statements.length === 0) {
+    return "the reply carried no viewer statement";
   }
-  const source = readTarget(cwd, task.loc.path);
-  if (task.action === "write") {
-    return { ok: true, entry: null, related: [] };
-  }
-  if (readFileIfExists(join(cwd, task.loc.path)) !== null) {
-    const parsed = parseCheck(source);
-    if (!parsed.ok) {
-      return { ok: false, diagnostics: prevBrokenDiagnostics(task.loc.path, parsed.failure) };
-    }
-  }
-  const visible = workspaceIndex(workspace);
-  const entry = visible.lookup(locatorOf(task), symbolSpaceOf(task.loc));
-  if (task.action === "create") {
-    if (entry.length > 0) {
-      return {
-        ok: false,
-        diagnostics: `stage: address\n${editLabel(task)}: the declaration already exists, so a create task cannot add it (use modify)`,
-      };
-    }
-    // A name declared only in another symbol space is a legal create in this
-    // one; only an entry in the requested space blocks the task.
-    return { ok: true, entry: null, related: [] };
-  }
-  const existing = resolveCurrentEntry(
-    source,
-    task.loc.path,
-    locatorOf(task),
-    symbolSpaceOf(task.loc),
-  );
-  if (!existing.ok) {
-    return { ok: false, diagnostics: `${existing.diagnostics}\n${editLabel(task)}` };
-  }
-  const related: IndexEntry[] = [];
-  for (const loc of task.related ?? []) {
-    const resolved = resolveCurrentEntry(source, loc.path, locatorOfLoc(loc), symbolSpaceOf(loc));
-    if (!resolved.ok) {
-      return {
-        ok: false,
-        diagnostics: `stage: address\ntask #${task.id} related target ${formatTaskLoc(loc)}: ${resolved.diagnostics}`,
-      };
-    }
-    related.push(resolved.entry);
-  }
-  return { ok: true, entry: existing.entry, related };
-}
-
-/** Statement indices allowed for the task's target and its related locs. */
-function ownStatementIndices(task: EditNode, statements: readonly EditStatement[]): Set<number> {
-  const keys = new Set(editLocs(task).map((loc) => `${loc.path}\u0000${loc.symbol}`));
-  const allowed = new Set<number>();
-  for (let index = 0; index < statements.length; index += 1) {
-    const statement = statements[index];
-    if (statement?.type !== "editor") {
+  for (const statement of statements) {
+    if (statement.type === "fs") {
+      if (statement.statement.op !== "read") {
+        return `a planner view is read-only; \`${statement.statement.op}\` is not allowed`;
+      }
       continue;
     }
-    const locator = statement.selection.locator;
-    if (keys.has(`${locator.path}\u0000${locator.name}`)) {
-      allowed.add(index);
+    const selection = statement.selection;
+    if (selection.replacement !== null || selection.rename !== undefined) {
+      return "a planner view is read-only; use a viewer (`select … end`) without `replace` or `rename`";
     }
   }
-  return allowed;
-}
-
-function targetMismatch(task: EditNode): string {
-  const related =
-    task.related === undefined || task.related.length === 0
-      ? ""
-      : ` or one of its related targets (${task.related.map((loc) => formatTaskLoc(loc)).join(", ")})`;
-  return `stage: address\ncode: EDIT_TARGET_MISMATCH\n${editLabel(task)}: the reply must edit only that declared target${related}; re-address the task's own symbols`;
-}
-
-/** True when the create fence declares exactly the task's symbol in its space. */
-function createBodyCheck(task: EditNode, body: string): string | null {
-  let program: Program;
-  try {
-    program = new Parser(body).parseProgram();
-  } catch {
-    // Not a declaration list: the harness wraps the body in the task's space.
-    return null;
-  }
-  if (program.body.length !== 1) {
-    return `stage: address\ncode: EDIT_TARGET_MISMATCH\na create fence must contain exactly one top-level declaration (the task target); it carried ${program.body.length}. Put helper declarations in their own create edits.`;
-  }
-  const binder = new Binder(program);
-  const symbols = binder.rootScope.resolveLocal(task.loc.symbol);
-  const declarations = new Set(symbols.flatMap((symbol) => symbol.declarations));
-  if (declarations.size === 0) {
-    return `stage: address\ncode: EDIT_TARGET_MISMATCH\nthe create fence declares no top-level ${JSON.stringify(task.loc.symbol)}; declare exactly that name, or send only its body to wrap it as ${task.loc.kind}`;
-  }
-  if (declarations.size > 1) {
-    return `stage: address\ncode: EDIT_TARGET_MISMATCH\nthe create fence declares ${declarations.size} top-level declarations named ${JSON.stringify(task.loc.symbol)}; a create fence must contain exactly one`;
-  }
-  const node: Node | undefined = declarations.values().next().value;
-  const symbol = symbols[0];
-  if (node === undefined || symbol === undefined) {
-    return null;
-  }
-  const spaces = declarationSpaces({ locator: locatorOf(task), node, symbol });
-  if (!spaces.includes(symbolSpaceOf(task.loc))) {
-    return `stage: address\ncode: EDIT_TARGET_MISMATCH\nthe created ${JSON.stringify(task.loc.symbol)} occupies the ${spaces.join(", ")} space, but the task asks for ${task.loc.kind}`;
-  }
   return null;
+}
+
+/** The workspace files (paths and sources) for address resolution. */
+function locatorOfHint(hint: WorkNode["hints"][number]): Locator {
+  return { path: hint.path, name: hint.symbol, kind: "" };
+}
+
+// ---------------------------------------------------------------------------
+// Applying one execution reply
+
+interface ReplyOutcome {
+  ok: boolean;
+  /** A read-only reply wrote nothing; its feedback becomes the next prompt. */
+  viewerOnly: boolean;
+  diagnostics: string | null;
+  feedback: string | null;
+  appliedLocators: Locator[];
+  /** Files the reply wrote, created, or deleted (repository-relative). */
+  paths: string[];
+}
+
+interface ExecutionContext {
+  cwd: string;
+  workspace: Workspace;
+  options: LoopOptions;
+  records: LoopRecord[];
+  /** Warnings recovered by a tolerant parser; recorded on the run result. */
+  warnings: string[];
+  node: WorkNode;
+  iteration: number;
+}
+
+function editDslDeps(context: ExecutionContext): MultiEditorDeps {
+  const cache = new Map<string, string>();
+  const sourceFor = (path: string): string => {
+    const cached = cache.get(path);
+    if (cached !== undefined) {
+      return cached;
+    }
+    const source = readTarget(context.cwd, path);
+    cache.set(path, source);
+    return source;
+  };
+  return {
+    sourceFor,
+    fileExists: (path) => readFileIfExists(join(context.cwd, path)) !== null,
+    isSafePath: (path) => safeMutablePath(context.cwd, path) !== null,
+    resolveEntry: (source, path, locator, space) =>
+      resolveCurrentEntry(source, path, locator, space),
+  };
+}
+
+function feedbackOf(resolution: MultiEditorResolution): string | null {
+  const blocks = [
+    resolution.viewers.length === 0 ? null : renderViewerFeedback(resolution.viewers),
+    resolution.reads.length === 0 ? null : renderReadFeedback(resolution.reads),
+    renderReadFailureFeedback(resolution.readFailures),
+  ].filter((block): block is string => block !== null && block !== "");
+  return blocks.length === 0 ? null : blocks.join("\n\n");
+}
+
+function rejectionText(resolution: MultiEditorResolution, totalClauses: number): string {
+  return resolution.failures
+    .map(
+      (failure) =>
+        `clause ${failure.index + 1} of ${totalClauses} (${failure.path}):\n${failure.diagnostics}`,
+    )
+    .join("\n\n");
 }
 
 interface DeclarationShape {
@@ -562,96 +459,6 @@ function declarationShapeProblem(
   return null;
 }
 
-// ---------------------------------------------------------------------------
-// Applying one execution reply
-
-interface ReplyOutcome {
-  ok: boolean;
-  diagnostics: string | null;
-  viewerOnly: boolean;
-  appliedLocators: Locator[];
-  /** A whole-file write or a whole-declaration modify; used for advisory tsc. */
-  wholeDeclaration?: boolean;
-}
-
-interface ExecutionContext {
-  cwd: string;
-  workspace: Workspace;
-  options: LoopOptions;
-  records: LoopRecord[];
-  /** Warnings recovered by a tolerant parser; recorded on the run result. */
-  warnings: string[];
-  runState: TaskRunState;
-  iteration: number;
-}
-
-function editDslDeps(
-  context: ExecutionContext,
-  target: string,
-  sourceOverride: string,
-): MultiEditorDeps {
-  const cache = new Map<string, string>();
-  const sourceFor = (path: string): string => {
-    if (path === target) {
-      return sourceOverride;
-    }
-    const cached = cache.get(path);
-    if (cached !== undefined) {
-      return cached;
-    }
-    const source = readTarget(context.cwd, path);
-    cache.set(path, source);
-    return source;
-  };
-  return {
-    sourceFor,
-    fileExists: (path) => readFileIfExists(join(context.cwd, path)) !== null,
-    isSafePath: (path) => safeMutablePath(context.cwd, path) !== null,
-    resolveEntry: (source, path, locator, space) =>
-      resolveCurrentEntry(source, path, locator, space),
-  };
-}
-
-const EXPORT_MODIFIER = /^\s*(export\s+(?:default\s+)?)?/;
-
-/**
- * The edit-dsl cascade strips a leading `export` from a whole-declaration
- * replacement when the declaration carries one (the #48 tolerance). A planner's
- * instruction names the declaration by its exported shape, so the task driver
- * passes the reply through unchanged when the source declares it exported and
- * only tolerates a repeated modifier otherwise: the splice keeps the modifier.
- */
-function withExportModifier(
-  selection: EditDslSelection,
-  source: string,
-  entry: IndexEntry | null,
-): EditDslSelection {
-  const replacement = selection.replacement;
-  if (
-    replacement === null ||
-    replacement.trim() === "" ||
-    selection.rename !== undefined ||
-    entry === null ||
-    selection.matcher !== null ||
-    selection.pick !== null
-  ) {
-    return selection;
-  }
-  const before = source.slice(0, entry.node.start);
-  const exported = /(export\s+(?:default\s+)?)$/.test(before);
-  const replierExported = EXPORT_MODIFIER.exec(replacement)?.[1] !== undefined;
-  if (exported && !replierExported) {
-    // The source declared it exported; keep that modifier on the rewrite. Only
-    // the declaration's own start inherits it.
-    return { ...selection, replacement: `export ${replacement}` };
-  }
-  if (!exported && replierExported) {
-    // The reply re-adds `export` the declaration omitted; tolerate it.
-    return { ...selection, replacement: stripLeadingExport(replacement, "export") };
-  }
-  return selection;
-}
-
 /**
  * A variable index entry points at its `VariableDeclarator`, not the enclosing
  * statement, so a whole-symbol rewrite would leave `const`/`export` behind.
@@ -685,7 +492,7 @@ function expandVariableRegion(
     }
     if (declaration.declarations.length !== 1) {
       return {
-        error: `stage: address\nthe task targets ${JSON.stringify(entry.locator.name)} in a statement that declares several variables; replacing the whole statement would remove its siblings. Split the declaration first, or use a \`match\` on the one binding`,
+        error: `stage: address\nthe reply targets ${JSON.stringify(entry.locator.name)} in a statement that declares several variables; replacing the whole statement would remove its siblings. Split the declaration first, or use a \`match\` on the one binding`,
       };
     }
     const text = region.text;
@@ -704,131 +511,53 @@ function expandVariableRegion(
   return region;
 }
 
-function rejectionText(resolution: MultiEditorResolution, totalClauses: number): string {
-  return resolution.failures
-    .map(
-      (failure) =>
-        `clause ${failure.index + 1} of ${totalClauses} (${failure.path}):\n${failure.diagnostics}`,
-    )
-    .join("\n\n");
-}
-
-function writeTargetFromReply(
-  task: EditNode,
-  statements: readonly EditStatement[],
-):
-  | {
-      ok: true;
-      write: WriteFileStatement;
-    }
-  | { ok: false; diagnostics: string } {
-  if (statements.length !== 1) {
-    return {
-      ok: false,
-      diagnostics: `stage: protocol\n${editLabel(task)}: a whole-file write reply carries exactly one write statement`,
-    };
+/** Keep a whole-declaration rewrite's `export` modifier in step with the source. */
+function withExportText(
+  source: string,
+  entry: IndexEntry,
+  selection: EditDslSelection,
+): EditDslSelection {
+  const replacement = selection.replacement;
+  if (
+    replacement === null ||
+    replacement.trim() === "" ||
+    selection.rename !== undefined ||
+    selection.matcher !== null ||
+    selection.pick !== null
+  ) {
+    return selection;
   }
-  const statement = statements[0];
-  if (statement?.type !== "fs" || statement.statement.op !== "write") {
-    return {
-      ok: false,
-      diagnostics: `stage: protocol\n${editLabel(task)}: reply with \`write ${task.loc.path} with <fence>\``,
-    };
+  const before = source.slice(0, entry.node.start);
+  const exported = /(export\s+(?:default\s+)?)$/.test(before);
+  const replierExported = /^\s*export\s+(?:default\s+)?/.test(replacement);
+  if (exported && !replierExported) {
+    return { ...selection, replacement: `export ${replacement}` };
   }
-  const write = statement.statement;
-  if (write.path !== task.loc.path) {
-    return {
-      ok: false,
-      diagnostics: `stage: address\n${editLabel(task)}: the reply writes ${JSON.stringify(write.path)}, not the declared path`,
-    };
+  if (!exported && replierExported) {
+    return { ...selection, replacement: replacement.replace(/^\s*export\s+(?:default\s+)?/, "") };
   }
-  if (write.ranges !== null) {
-    return {
-      ok: false,
-      diagnostics: `stage: address\n${editLabel(task)}: a whole-file write omits \`within\`; send the complete file`,
-    };
-  }
-  return { ok: true, write };
+  return selection;
 }
 
 /**
- * Apply one whole-file write. The previous parse is irrelevant because the
- * reply replaces the file; the new source still passes the parse gate and
- * formatter before it lands.
- */
-async function applyWholeFileWrite(
-  context: ExecutionContext,
-  task: EditNode,
-  write: WriteFileStatement,
-): Promise<ReplyOutcome> {
-  if (safeMutablePath(context.cwd, task.loc.path) === null) {
-    return {
-      ok: false,
-      diagnostics: `stage: address\n${editLabel(task)}: the path is outside the editable workspace`,
-      viewerOnly: false,
-      appliedLocators: [],
-    };
-  }
-  const parsed = parseCheck(write.replacement);
-  if (!parsed.ok) {
-    return {
-      ok: false,
-      diagnostics: gateDiagnostics(0, write.replacement, parsed.failure),
-      viewerOnly: false,
-      appliedLocators: [],
-    };
-  }
-  let formatted: string;
-  try {
-    formatted = await formatSource(task.loc.path, write.replacement);
-  } catch (error) {
-    return {
-      ok: false,
-      diagnostics: `stage: format\nthe whole-file write could not be formatted: ${error instanceof Error ? error.message : String(error)}`,
-      viewerOnly: false,
-      appliedLocators: [],
-    };
-  }
-  const formattedCheck = parseCheck(formatted);
-  if (!formattedCheck.ok) {
-    return {
-      ok: false,
-      diagnostics: gateDiagnostics(0, formatted, formattedCheck.failure),
-      viewerOnly: false,
-      appliedLocators: [],
-    };
-  }
-  if (formatted === readTarget(context.cwd, task.loc.path)) {
-    return { ok: false, diagnostics: NOOP_DIAGNOSTICS, viewerOnly: false, appliedLocators: [] };
-  }
-  writeTarget(context.cwd, task.loc.path, formatted);
-  return {
-    ok: true,
-    diagnostics: null,
-    viewerOnly: false,
-    appliedLocators: [locatorOf(task)],
-    wholeDeclaration: true,
-  };
-}
-
-/**
- * Parse one execution reply and, if it carries editors, apply them atomically.
- * A read-only reply (viewers, `read`) writes nothing and its feedback becomes
- * the next turn's diagnostics. A `write` task accepts exactly one whole-file
- * `write` command; other tasks reject file commands that write.
+ * Apply one execution reply. Every clause is resolved against the pre-reply
+ * snapshot; a failure rejects the whole reply and writes nothing. The
+ * one-declaration-per-reply claim set stays hard in `resolveMultiEditor`.
  */
 async function applyEditReply(
   context: ExecutionContext,
-  task: EditNode,
   content: string,
+  bases: Map<string, string>,
 ): Promise<ReplyOutcome> {
   const parsed = parseMultiEditorDetailed(content);
   if (!parsed.ok) {
     return {
       ok: false,
-      diagnostics: renderDslIssues(parsed.issues),
       viewerOnly: false,
+      diagnostics: renderDslIssues(parsed.issues),
+      feedback: null,
       appliedLocators: [],
+      paths: [],
     };
   }
   for (const warning of parsed.issues.filter((issue) => issue.severity === "warning")) {
@@ -838,369 +567,378 @@ async function applyEditReply(
   if (statements.length === 0) {
     return {
       ok: false,
+      viewerOnly: false,
       diagnostics:
-        "stage: protocol\nthe reply carried no edit statement; reply with the edit clauses for this task",
-      viewerOnly: false,
+        "stage: protocol\nthe reply carried no edit statement; reply with the edit clauses or file commands for this work node",
+      feedback: null,
       appliedLocators: [],
+      paths: [],
     };
   }
-  if (task.action === "write") {
-    const replied = writeTargetFromReply(task, statements);
-    if (!replied.ok) {
-      return {
-        ok: false,
-        diagnostics: replied.diagnostics,
-        viewerOnly: false,
-        appliedLocators: [],
-      };
-    }
-    return applyWholeFileWrite(context, task, replied.write);
-  }
-  for (const statement of statements) {
-    if (statement.type === "editor") {
-      continue;
-    }
-    if (statement.statement.op === "read") {
-      continue;
-    }
-    return {
-      ok: false,
-      diagnostics: `stage: protocol\n${editLabel(task)}: the file command "${statement.statement.op}" is not accepted; one task edits one declared declaration`,
-      viewerOnly: false,
-      appliedLocators: [],
-    };
-  }
-  const own = ownStatementIndices(task, statements);
-  const guarded = guardTarget(context.workspace, task);
-  if (!guarded.ok) {
-    return { ok: false, diagnostics: guarded.diagnostics, viewerOnly: false, appliedLocators: [] };
-  }
-  const sourceBefore = readTarget(context.cwd, task.loc.path);
-  const normalized = new Map<number, EditDslSelection>();
-  const entryByIndex = new Map<number, IndexEntry | null>();
-  const locs = editLocs(task);
-  for (let index = 0; index < statements.length; index += 1) {
-    const statement = statements[index];
-    if (statement?.type !== "editor") {
-      continue;
-    }
-    const selection = statement.selection;
-    if (!own.has(index)) {
-      continue;
-    }
-    const matching = locs.filter(
-      (loc) =>
-        loc.path === selection.locator.path &&
-        loc.symbol === selection.locator.name &&
-        (selection.space === null || selection.space === loc.kind),
-    );
-    const loc = matching[0];
-    if (loc === undefined || matching.length !== 1) {
-      const sameName = locs.filter(
-        (candidate) =>
-          candidate.path === selection.locator.path && candidate.symbol === selection.locator.name,
-      );
-      return {
-        ok: false,
-        diagnostics:
-          sameName.length > 0
-            ? `stage: address\ncode: EDIT_TARGET_MISMATCH\n${editLabel(task)}: the clause resolves ${JSON.stringify(
-                selection.space,
-              )} but the task target is ${JSON.stringify(sameName[0]?.kind)}; use the matching symbol space or omit resolve`
-            : `stage: address\ncode: EDIT_TARGET_MISMATCH\n${editLabel(task)}: the clause resolves an address that is neither the target nor one of its related declarations`,
-        viewerOnly: false,
-        appliedLocators: [],
-      };
-    }
-    const entry =
-      loc === task.loc
-        ? guarded.entry
-        : (guarded.related[task.related?.indexOf(loc) ?? -1] ?? null);
-    entryByIndex.set(index, entry);
-    normalized.set(
-      index,
-      withExportModifier({ ...selection, space: symbolSpaceOf(loc) }, sourceBefore, entry),
-    );
-  }
-  if (task.action === "modify") {
-    for (const [index, selection] of normalized) {
-      if (
-        selection.replacement === null ||
-        selection.replacement.trim() === "" ||
-        selection.matcher !== null ||
-        selection.pick !== null
-      ) {
-        continue;
-      }
-      const entry = entryByIndex.get(index);
-      if (entry === undefined || entry === null) {
-        continue;
-      }
-      const problem = declarationShapeProblem(sourceBefore, entry, selection.replacement);
-      if (problem !== null) {
-        return {
-          ok: false,
-          diagnostics: problem,
-          viewerOnly: false,
-          appliedLocators: [],
-        };
-      }
-    }
-  }
-  const resolution = resolveMultiEditor(
-    statements.map((statement, index) => {
-      const replacement = normalized.get(index);
-      return replacement === undefined || statement.type !== "editor"
-        ? statement
-        : { ...statement, selection: replacement };
-    }),
-    editDslDeps(context, task.loc.path, sourceBefore),
-  );
-  if (resolution.regions.some((region) => !own.has(region.index))) {
-    return { ok: false, diagnostics: targetMismatch(task), viewerOnly: false, appliedLocators: [] };
-  }
 
-  const ownSelections = statements.flatMap((statement, index) =>
-    statement.type === "editor" && own.has(index) ? [statement.selection] : [],
-  );
-  const renames = ownSelections.filter(
-    (selection) => selection.rename !== undefined && selection.rename !== null,
-  );
-  const replacements = ownSelections.filter((selection) => selection.replacement !== null);
-  const actionFailure = (detail: string): ReplyOutcome => ({
-    ok: false,
-    diagnostics: `stage: address\n${editLabel(task)}: ${detail}`,
-    viewerOnly: false,
-    appliedLocators: [],
-  });
-  if (task.action === "rename") {
-    if (renames.length === 0 || renames.length !== ownSelections.length) {
-      return actionFailure(
-        `a rename task replies with exactly the rename clause(s) to ${JSON.stringify(task.renameTo)}; every clause must be \`rename <current> to <new>\`, never \`replace\``,
-      );
-    }
-    for (const selection of renames) {
-      if (selection.rename?.to !== task.renameTo) {
-        return actionFailure(
-          `the rename target must be ${JSON.stringify(task.renameTo)} (got ${JSON.stringify(selection.rename?.to)})`,
-        );
-      }
-    }
-  } else if (task.action === "delete") {
-    if (replacements.length === 0) {
-      return actionFailure(
-        "a delete task replies with a whole-declaration clause and an empty fence; a viewer writes nothing",
-      );
-    }
-    for (const selection of replacements) {
-      if (selection.replacement?.trim() !== "") {
-        return actionFailure(
-          "a delete task uses an empty fence; use modify to rewrite a declaration",
-        );
-      }
-      if (selection.matcher !== null || selection.pick !== null) {
-        return actionFailure(
-          "a delete task removes the whole declaration: omit `match` and `pick`, and use an empty fence",
-        );
-      }
-    }
-  } else {
-    if (renames.length > 0) {
-      return actionFailure(
-        `a ${task.action} task must not rename; a rename is its own task with action "rename"`,
-      );
-    }
-    if (task.action === "modify" && replacements.length === 0) {
-      return actionFailure(
-        "a modify task must change the declaration; a viewer writes nothing, so add `replace with <fence>`",
-      );
-    }
-    if (task.action === "modify") {
-      for (const selection of ownSelections) {
-        if (
-          selection.rename === undefined &&
-          selection.replacement?.trim() === "" &&
-          selection.matcher === null &&
-          selection.pick === null
-        ) {
-          return actionFailure(
-            'a whole-declaration empty fence deletes the declaration; express that intent with action "delete"',
-          );
-        }
-      }
-    }
-    if (task.action === "create") {
-      const ownRegions = resolution.regions.filter((region) => own.has(region.index));
-      const created = ownRegions.filter((region) => region.create);
-      if (ownRegions.length > 0 && (created.length === 0 || created.length !== ownRegions.length)) {
-        return actionFailure(
-          "a create task adds the absent declaration with a whole-declaration clause (no `match`, no `pick`)",
-        );
-      }
-      for (const region of created) {
-        const problem = createBodyCheck(task, region.text.trim());
-        if (problem !== null) {
-          return { ok: false, diagnostics: problem, viewerOnly: false, appliedLocators: [] };
-        }
-      }
-    }
-  }
-
+  const resolution = resolveMultiEditor(statements, editDslDeps(context));
+  const feedback = feedbackOf(resolution);
   if (resolution.failures.length > 0) {
     return {
       ok: false,
-      diagnostics: rejectionText(resolution, statements.length),
       viewerOnly: false,
+      diagnostics: rejectionText(resolution, statements.length),
+      feedback,
       appliedLocators: [],
+      paths: [],
     };
   }
+
+  const commandWrites: { index: number; path: string; replacement: string }[] = [];
+  const commandWriteIndices = new Set<number>();
+  const commandWritePaths = new Set<string>();
+  for (let index = 0; index < statements.length; index += 1) {
+    const statement = statements[index];
+    if (statement?.type !== "fs" || statement.statement.op !== "write") {
+      continue;
+    }
+    if (commandWritePaths.has(statement.statement.path)) {
+      return {
+        ok: false,
+        viewerOnly: false,
+        diagnostics: `stage: protocol\nthe reply writes ${JSON.stringify(statement.statement.path)} more than once; write a file once per reply`,
+        feedback,
+        appliedLocators: [],
+        paths: [],
+      };
+    }
+    commandWritePaths.add(statement.statement.path);
+    commandWrites.push({
+      index,
+      path: statement.statement.path,
+      replacement: statement.statement.replacement,
+    });
+    commandWriteIndices.add(index);
+  }
+  const renameIndices = new Set<number>();
+  for (let index = 0; index < statements.length; index += 1) {
+    const statement = statements[index];
+    if (
+      statement?.type === "editor" &&
+      statement.selection.rename !== undefined &&
+      statement.selection.rename !== null
+    ) {
+      renameIndices.add(index);
+    }
+  }
+
+  const editorRegions = resolution.regions.filter(
+    (region) => !commandWriteIndices.has(region.index),
+  );
+  const sources = new Map<string, string>();
+  const sourceOf = (path: string): string => {
+    const cached = sources.get(path);
+    if (cached !== undefined) {
+      return cached;
+    }
+    const source = readTarget(context.cwd, path);
+    sources.set(path, source);
+    return source;
+  };
+
   const expandedRegions: EditDslRegion[] = [];
-  for (const region of resolution.regions) {
-    // A rename region carries the new identifier, not a replacement statement;
-    // expanding it to the whole variable statement would destroy the body.
-    if (task.action === "rename") {
+  for (const region of editorRegions) {
+    const source = sourceOf(region.path);
+    const isRename = renameIndices.has(region.index);
+    if (region.create || isRename || region.matcherKind !== null) {
       expandedRegions.push(region);
       continue;
     }
-    const entry = entryByIndex.get(region.index) ?? null;
-    const expanded = entry === null ? region : expandVariableRegion(sourceBefore, entry, region);
+    const existing = resolveCurrentEntry(
+      source,
+      region.path,
+      locatorOfHint({ path: region.path, symbol: region.locator.name, kind: "value" }),
+      null,
+    );
+    if (!existing.ok) {
+      expandedRegions.push(region);
+      continue;
+    }
+    if (region.stage === "whole-symbol" && region.text.trim() !== "") {
+      const shape = declarationShapeProblem(source, existing.entry, region.text);
+      if (shape !== null) {
+        return {
+          ok: false,
+          viewerOnly: false,
+          diagnostics: shape,
+          feedback,
+          appliedLocators: [],
+          paths: [],
+        };
+      }
+    }
+    const expanded = expandVariableRegion(source, existing.entry, region);
     if ("error" in expanded) {
-      return { ok: false, diagnostics: expanded.error, viewerOnly: false, appliedLocators: [] };
+      return {
+        ok: false,
+        viewerOnly: false,
+        diagnostics: expanded.error,
+        feedback,
+        appliedLocators: [],
+        paths: [],
+      };
     }
-    expandedRegions.push(expanded);
-  }
-  const feedback = [
-    resolution.viewers.length === 0 ? null : renderViewerFeedback(resolution.viewers),
-    resolution.reads.length === 0 ? null : renderReadFeedback(resolution.reads),
-    renderReadFailureFeedback(resolution.readFailures),
-  ]
-    .filter((block): block is string => block !== null && block !== "")
-    .join("\n\n");
-
-  if (resolution.regions.length === 0) {
-    if (resolution.creates.length > 0 || resolution.deletes.length > 0) {
-      return actionFailure(
-        "the reply only created or deleted files; edit the declared declaration instead",
-      );
+    if (expanded === region && region.stage === "whole-symbol" && region.text.trim() !== "") {
+      const selection = withExportText(source, existing.entry, {
+        locator: region.locator,
+        space: null,
+        matcher: null,
+        pick: null,
+        replacement: region.text,
+        within: null,
+        rename: null,
+      });
+      expandedRegions.push({ ...region, text: selection.replacement ?? region.text });
+    } else {
+      expandedRegions.push(expanded);
     }
-    return {
-      ok: false,
-      diagnostics:
-        feedback === ""
-          ? "stage: protocol\nthe reply carried a viewer but resolved no occurrence; reply with an edit clause"
-          : `stage: protocol\nthe reply only located source and wrote nothing; add the \`replace with\` or \`rename\` clause for this task.\n\n${feedback}`,
-      viewerOnly: true,
-      appliedLocators: [],
-    };
   }
 
-  const prevCheck = parseCheck(sourceBefore);
-  if (!prevCheck.ok) {
-    return {
-      ok: false,
-      diagnostics: prevBrokenDiagnostics(task.loc.path, prevCheck.failure),
-      viewerOnly: false,
-      appliedLocators: [],
-    };
+  if (editorRegions.length === 0 && commandWrites.length === 0) {
+    const creates = resolution.creates.length;
+    const deletes = resolution.deletes.length;
+    if (creates === 0 && deletes === 0) {
+      return {
+        ok: false,
+        viewerOnly: true,
+        diagnostics:
+          feedback === null
+            ? "stage: protocol\nthe reply carried a viewer but resolved no occurrence; reply with an edit clause"
+            : `stage: protocol\nthe reply only located source and wrote nothing; add the edit clauses or file commands for this work node.\n\n${feedback}`,
+        feedback,
+        appliedLocators: [],
+        paths: [],
+      };
+    }
   }
+
+  const commandPaths = new Set(commandWrites.map((write) => write.path));
+  for (const region of expandedRegions) {
+    if (commandPaths.has(region.path)) {
+      return {
+        ok: false,
+        viewerOnly: false,
+        diagnostics: `stage: protocol\nthe reply both edits and whole-file-writes ${JSON.stringify(region.path)}; split those actions across replies`,
+        feedback,
+        appliedLocators: [],
+        paths: [],
+      };
+    }
+  }
+
   let failure: string | null = null;
-  const writes = await applyResolvedRegions({
-    regions: expandedRegions.map(editDslRegionToResolved),
-    fileSourceOf: (path) => (path === task.loc.path ? sourceBefore : readTarget(context.cwd, path)),
-    target: task.loc.path,
-    prevCheck,
-    policy: { sameOffsetInserts: "append" },
-    noteFailure: (note) => {
-      failure = failure ?? note.diagnostics;
-    },
-    noteOverlap: (path, earlier, later) => {
-      failure =
-        failure ??
-        `stage: protocol\nthe reply's regions overlap in ${path} (clauses ${earlier.index + 1} and ${later.index + 1}); send non-overlapping clauses`;
-    },
-  });
+  const target = expandedRegions[0]?.path ?? "";
+  const prevCheck = target === "" ? parseCheck("") : parseCheck(sourceOf(target));
+  const writes =
+    expandedRegions.length === 0
+      ? []
+      : await applyResolvedRegions({
+          regions: expandedRegions.map(editDslRegionToResolved),
+          fileSourceOf: (path) => sourceOf(path),
+          target,
+          prevCheck,
+          policy: { sameOffsetInserts: "append" },
+          noteFailure: (note) => {
+            failure = failure ?? note.diagnostics;
+          },
+          noteOverlap: (path, earlier, later) => {
+            failure =
+              failure ??
+              `stage: protocol\nthe reply's regions overlap in ${path} (clauses ${earlier.index + 1} and ${later.index + 1}); send non-overlapping clauses`;
+          },
+        });
   if (failure !== null) {
     return {
       ok: false,
-      diagnostics: feedback === "" ? failure : `${failure}\n\n${feedback}`,
       viewerOnly: false,
+      diagnostics: feedback === null ? failure : `${failure}\n\n${feedback}`,
+      feedback,
       appliedLocators: [],
+      paths: [],
     };
   }
-  for (const write of writes) {
-    writeTarget(context.cwd, write.path, write.source);
+
+  const preparedWrites: { path: string; source: string }[] = [...writes];
+  for (const write of commandWrites) {
+    const parsedWrite = parseCheck(write.replacement);
+    if (!parsedWrite.ok) {
+      return {
+        ok: false,
+        viewerOnly: false,
+        diagnostics: gateDiagnostics(0, write.replacement, parsedWrite.failure),
+        feedback,
+        appliedLocators: [],
+        paths: [],
+      };
+    }
+    let formatted: string;
+    try {
+      formatted = await formatSource(write.path, write.replacement);
+    } catch (error) {
+      return {
+        ok: false,
+        viewerOnly: false,
+        diagnostics: `stage: format\nthe whole-file write could not be formatted: ${error instanceof Error ? error.message : String(error)}`,
+        feedback,
+        appliedLocators: [],
+        paths: [],
+      };
+    }
+    const formattedCheck = parseCheck(formatted);
+    if (!formattedCheck.ok) {
+      return {
+        ok: false,
+        viewerOnly: false,
+        diagnostics: gateDiagnostics(0, formatted, formattedCheck.failure),
+        feedback,
+        appliedLocators: [],
+        paths: [],
+      };
+    }
+    preparedWrites.push({ path: write.path, source: formatted });
   }
-  const appliedLocators = expandedRegions.map((region) =>
-    region.create ? locatorOf(task) : region.locator,
+
+  const creates = resolution.creates.map((create) => ({ path: create.path, source: "" }));
+  const uniqueWrites = new Map<string, string>();
+  for (const write of [...preparedWrites, ...creates]) {
+    uniqueWrites.set(write.path, write.source);
+  }
+  const changes = [...uniqueWrites].filter(
+    ([path, source]) => source !== readTarget(context.cwd, path),
   );
+  if (changes.length === 0 && resolution.deletes.length === 0 && resolution.creates.length === 0) {
+    return {
+      ok: false,
+      viewerOnly: false,
+      diagnostics: NOOP_DIAGNOSTICS,
+      feedback,
+      appliedLocators: [],
+      paths: [],
+    };
+  }
+
+  for (const [path, source] of uniqueWrites) {
+    if (!bases.has(path)) {
+      bases.set(path, readTarget(context.cwd, path));
+    }
+    writeTarget(context.cwd, path, source);
+  }
+  for (const deletion of resolution.deletes) {
+    if (!bases.has(deletion.path)) {
+      bases.set(deletion.path, readTarget(context.cwd, deletion.path));
+    }
+    rmSync(join(context.cwd, deletion.path), { force: true });
+  }
+
+  const appliedLocators: Locator[] = [];
+  for (const region of expandedRegions) {
+    appliedLocators.push(region.create ? locatorOfNode(context.node) : region.locator);
+  }
+  for (const write of commandWrites) {
+    appliedLocators.push({ path: write.path, name: "", kind: "" });
+  }
+  for (const create of resolution.creates) {
+    appliedLocators.push({ path: create.path, name: "", kind: "" });
+  }
+  for (const deletion of resolution.deletes) {
+    appliedLocators.push({ path: deletion.path, name: "", kind: "" });
+  }
   return {
     ok: true,
-    diagnostics: feedback === "" ? null : feedback,
     viewerOnly: false,
+    diagnostics: feedback,
+    feedback,
     appliedLocators,
-    wholeDeclaration:
-      task.action === "modify" && expandedRegions.some((region) => region.stage === "whole-symbol"),
+    paths: [
+      ...new Set([...uniqueWrites.keys(), ...resolution.deletes.map((deletion) => deletion.path)]),
+    ],
   };
 }
 
-/** The declaration (or whole file for create) and its 1-based start line. */
-function declarationView(cwd: string, task: EditNode): { view: string; startLine: number } {
-  const source = readTarget(cwd, task.loc.path);
-  if (task.loc.kind === "file" || (task.related !== undefined && task.related.length > 0)) {
-    // A whole-file write or a migration task needs the whole file because the
-    // edit can span declarations; the numbered view keeps file-absolute lines.
-    const lines = source.split("\n");
-    if (lines.length > 0 && lines[lines.length - 1] === "") {
-      lines.pop();
-    }
-    return { view: lines.join("\n"), startLine: 1 };
+// ---------------------------------------------------------------------------
+// Node views, gates, and the applied diff
+
+function declarationView(cwd: string, hint: WorkNode["hints"][number]): TaskSourceView {
+  const source = readTarget(cwd, hint.path);
+  if (hint.kind === "file") {
+    return {
+      label: `file ${JSON.stringify(hint.path)}`,
+      source: renderTaskContentView(source, 1),
+      startLine: 1,
+    };
   }
   const entry = resolveCurrentEntry(
     source,
-    task.loc.path,
-    locatorOf(task),
-    symbolSpaceOf(task.loc),
+    hint.path,
+    locatorOfHint(hint),
+    hint.kind as SymbolSpace,
   );
-  const startOffset = entry.ok ? entry.entry.node.start : 0;
-  const endOffset = entry.ok ? entry.entry.node.end : source.length;
+  if (!entry.ok) {
+    return {
+      label: `${hint.kind} ${JSON.stringify(hint.symbol)} in ${JSON.stringify(hint.path)}`,
+      source: renderTaskContentView(source, 1),
+      startLine: 1,
+      note: `The hint did not resolve (${entry.diagnostics.split("\n")[0] ?? "not found"}); showing the whole file.`,
+    };
+  }
+  const startOffset = entry.entry.node.start;
+  const endOffset = entry.entry.node.end;
   const body = source.slice(startOffset, endOffset);
   const startLine = source.slice(0, startOffset).split("\n").length;
-  const lines = body.split("\n");
-  if (lines.length > 0 && lines[lines.length - 1] === "") {
-    lines.pop();
-  }
-  if (lines.length === 0) {
-    return { view: "", startLine };
-  }
-  return { view: lines.join("\n"), startLine };
+  return {
+    label: `${hint.kind} ${JSON.stringify(hint.symbol)} in ${JSON.stringify(hint.path)} (lines ${startLine}-${startLine + body.split("\n").length - 1})`,
+    source: renderTaskContentView(body, startLine),
+    startLine,
+  };
 }
 
-interface EditExecution {
+function sourceViews(cwd: string, node: WorkNode): TaskSourceView[] {
+  const views: TaskSourceView[] = [];
+  const seen = new Set<string>();
+  for (const hint of node.hints) {
+    const key = `${hint.path}\u0000${hint.symbol}\u0000${hint.kind}`;
+    if (seen.has(key)) {
+      continue;
+    }
+    seen.add(key);
+    views.push(declarationView(cwd, hint));
+  }
+  return views;
+}
+
+interface GateResult {
   ok: boolean;
   diagnostics: string | null;
-  messages: ChatMessage[];
-  /** Raw advisory tsc diagnostics after a large edit; never a gate failure. */
-  advisoryDiagnostics?: string | null;
 }
 
 /**
- * Run one task gate after every edit in that task has settled. A `tsc` gate
- * runs the type check; a `test` gate also runs the test suite. The gate is the
- * only place a type/test failure is turned into planner diagnostics.
+ * Run the node gate after one applied reply. `verify: "tsc"` runs the check;
+ * `verify: "test"` runs the check and the test suite. A gate is the only place
+ * a type/test failure becomes executor diagnostics.
  */
-async function verifyTask(
+async function verifyNode(
   context: ExecutionContext,
-  task: TaskNode,
-  baseSource: string,
-): Promise<{ ok: boolean; diagnostics: string | null }> {
-  const anchor = firstEdit(task);
+  bases: ReadonlyMap<string, string>,
+  paths: readonly string[],
+): Promise<GateResult> {
+  const anchor =
+    paths[0] ??
+    context.node.hints[0]?.path ??
+    discoverSourceFiles(context.cwd)[0]?.path ??
+    "src/unknown.ts";
+  const baseSource = bases.get(anchor) ?? "";
   const check = await checkTool(
     context.cwd,
     context.options.checkCommand,
     context.options.commandTimeoutMs,
   );
   const test =
-    check.ok && task.verify === "test"
+    check.ok && context.node.verify === "test"
       ? await testTool(context.cwd, context.options.testCommand, context.options.commandTimeoutMs)
       : { ok: true, exitCode: 0, output: "" };
   const diagnostics =
@@ -1209,16 +947,16 @@ async function verifyTask(
       : formatDiagnostics({
           check,
           test,
-          targetPath: anchor.loc.path,
+          targetPath: anchor,
           baseSource,
-          newSource: readTarget(context.cwd, anchor.loc.path),
+          newSource: readTarget(context.cwd, anchor),
           sourceFor: (path) => readTarget(context.cwd, path),
         });
   writeRecord(context.records, {
     iteration: context.iteration,
     kind: "verification",
     exchange: null,
-    edit: anchor,
+    node: context.node,
     outcome: check.ok ? (test.ok ? "ok" : "tests") : "tsc",
     replacement: null,
     diagnostics,
@@ -1227,210 +965,22 @@ async function verifyTask(
   return { ok: check.ok && test.ok, diagnostics };
 }
 
-/**
- * Carry out one micro edit. The executor lands the edit and stops; the task
- * gate runs only after every edit in the task has settled. Protocol/address
- * failures still consume one of the bounded exchanges.
- */
-async function executeEdit(
-  context: ExecutionContext,
-  chat: ChatState,
-  usage: UsageState,
-  stage: Stage,
-  task: TaskNode,
-  edit: EditNode,
-  priorGateDiagnostics: string | undefined,
-  postEditDiagnostics: string | undefined,
-): Promise<EditExecution> {
-  let diagnostics: string | undefined;
-  let consecutiveLength = 0;
-  let selfCheckUsed = false;
-  let formatHelp = false;
-  let addressMismatches = 0;
-  let malformedMatchers = 0;
-
-  for (let exchange = 1; exchange <= MAX_TASK_EXCHANGES; exchange += 1) {
-    const matcherFailure: TaskMatcherFailure | undefined =
-      malformedMatchers === 0 ? undefined : malformedMatchers === 1 ? "malformed" : "repeated";
-    const view = declarationView(context.cwd, edit);
-    const contextText = [
-      `This is micro edit #${edit.id} in task #${task.id}, stage #${stage.id}. Do not change declarations outside this edit's target and related list.`,
-      priorGateDiagnostics === undefined
-        ? null
-        : `A previous task gate in this stage failed; later edits may need to fix it:\n\n${priorGateDiagnostics}`,
-    ]
-      .filter((block): block is string => block !== null && block.trim() !== "")
-      .join("\n\n");
-    const prompt = buildTaskTurnPrompt({
-      state: context.runState,
-      stage,
-      task,
-      edit,
-      contentView: renderTaskContentView(view.view, view.startLine),
-      startLine: view.startLine,
-      diagnostics,
-      help: formatHelp,
-      matcherFailure,
-      context: contextText,
-      postEditDiagnostics,
-    });
-    const last = chat.messages[chat.messages.length - 1];
-    if (last?.role === "user" && (last.content ?? "").startsWith("# Stage")) {
-      chat.messages[chat.messages.length - 1] = { role: "user", content: prompt };
-    } else {
-      chat.messages.push({ role: "user", content: prompt });
-    }
-    let response: ChatResponse;
-    try {
-      response = await callModel(
-        chat.messages,
-        usage.usage.execution,
-        usage,
-        context.options.provider,
-        context.options,
-      );
-    } catch (error) {
-      return { ok: false, diagnostics: providerErrorDiagnostics(error), messages: chat.messages };
-    }
-    const budget = context.options.tokenBudget ?? DEFAULT_TOKEN_BUDGET;
-    if (overBudget(usage, budget)) {
-      return {
-        ok: false,
-        diagnostics: tokenBudgetDiagnostics(
-          usage.consumed,
-          budget,
-          context.options.tokenBudgetBasis ?? "raw",
-        ),
-        messages: chat.messages,
-      };
-    }
-    const content = response.content ?? "";
-    chat.messages.push({ role: "assistant", content });
-    if (response.finishReason === "length") {
-      consecutiveLength += 1;
-      if (consecutiveLength >= MAX_CONSECUTIVE_LENGTH) {
-        return {
-          ok: false,
-          diagnostics: `output-limit: the completion hit the output limit ${MAX_CONSECUTIVE_LENGTH} times in a row`,
-          messages: chat.messages,
-        };
-      }
-    } else {
-      consecutiveLength = 0;
-    }
-    const request = parseSelfCheckRequest(content);
-    if (request.kind === "error") {
-      diagnostics = request.diagnostics;
-      formatHelp = true;
-      malformedMatchers = 0;
-      continue;
-    }
-    if (request.kind === "ok") {
-      malformedMatchers = 0;
-      if (selfCheckUsed) {
-        diagnostics =
-          "stage: protocol\nthe edit already used its one read; return the edit clauses now";
-        formatHelp = true;
-      } else {
-        selfCheckUsed = true;
-        diagnostics =
-          request.request === "read"
-            ? `Self-check (read): current source of ${formatTaskLoc(edit.loc)}.\n\n${renderTaskContentView(view.view, view.startLine)}`
-            : `Self-check (${request.request}): an edit turn edits code; \`read\` is the only self-check accepted here.`;
-        formatHelp = request.request !== "read";
-      }
-      continue;
-    }
-    const doneWord = /^TASK[ _-]?DONE\b/i.test(
-      stripCodeFences(content)
-        .replace(/[.!]+$/, "")
-        .trim(),
-    );
-    if (doneWord) {
-      diagnostics = `stage: protocol\nTASK_DONE ends an edit that applied a change; this edit has not changed ${formatTaskLoc(edit.loc)} yet, so reply with the edit clauses`;
-      formatHelp = true;
-      malformedMatchers = 0;
-      writeRecord(context.records, {
-        iteration: context.iteration,
-        kind: "exchange",
-        exchange,
-        edit,
-        outcome: "protocol",
-        replacement: content,
-        diagnostics,
-        finishReason: response.finishReason,
-      });
-      continue;
-    }
-    const outcome = await applyEditReply(context, edit, content);
-    if (!outcome.ok) {
-      diagnostics = outcome.diagnostics ?? "stage: protocol\nthe edit was rejected";
-      const addressMismatch =
-        stageOf(diagnostics) === "address" && /EDIT_TARGET_MISMATCH/.test(diagnostics);
-      addressMismatches = addressMismatch ? addressMismatches + 1 : 0;
-      malformedMatchers = isMalformedMatcher(diagnostics) ? malformedMatchers + 1 : 0;
-      formatHelp =
-        outcome.viewerOnly ||
-        /^stage: (protocol|syntax|address|matcher|range|no-op)/.test(diagnostics);
-      writeRecord(context.records, {
-        iteration: context.iteration,
-        kind: "exchange",
-        exchange,
-        edit,
-        outcome: outcome.viewerOnly ? "viewer" : outcomeOf(stageOf(diagnostics)),
-        replacement: content,
-        diagnostics,
-        finishReason: response.finishReason,
-      });
-      if (addressMismatches >= 2) {
-        return {
-          ok: false,
-          diagnostics: `${diagnostics}\n\nstage: address\ncode: ADDRESS_RETRY_LIMIT\n${editLabel(edit)}: the same target mismatch repeated ${addressMismatches} times; stop retrying this address. Replace this edit with a whole-file \`write\` or split it into smaller edits.`,
-          messages: chat.messages,
-        };
-      }
-      continue;
-    }
-    formatHelp = false;
-    malformedMatchers = 0;
-    writeRecord(context.records, {
-      iteration: context.iteration,
-      kind: "exchange",
-      exchange,
-      edit,
-      outcome: "applied",
-      replacement: content,
-      diagnostics: outcome.diagnostics,
-      finishReason: response.finishReason,
-      payloads: 1,
-      appliedLocators: outcome.appliedLocators,
-    });
-    const editIndex = task.edits.findIndex((candidate) => candidate.id === edit.id);
-    const hasLaterEdit = editIndex >= 0 && editIndex < task.edits.length - 1;
-    let advisoryDiagnostics: string | null = null;
-    if (hasLaterEdit && (edit.action === "write" || outcome.wholeDeclaration === true)) {
-      const check = await checkTool(
-        context.cwd,
-        context.options.checkCommand,
-        context.options.commandTimeoutMs,
-      );
-      if (!check.ok) {
-        const output = check.output.trim();
-        advisoryDiagnostics = output === "" ? "(tsc produced no output)" : output.slice(0, 6000);
-      }
-    }
-    return {
-      ok: true,
-      diagnostics: null,
-      messages: chat.messages,
-      advisoryDiagnostics,
-    };
+function snapshotSources(cwd: string): Map<string, string> {
+  const bases = new Map<string, string>();
+  for (const file of discoverSourceFiles(cwd)) {
+    bases.set(file.path, file.source);
   }
-  return {
-    ok: false,
-    diagnostics: `stage: edit-failed\n${editLabel(edit)} did not land an edit within ${MAX_TASK_EXCHANGES} exchanges\n\n${diagnostics ?? "the edit ran out of exchanges without a write"}`,
-    messages: chat.messages,
-  };
+  return bases;
+}
+
+/**
+ * Fingerprint the files a node can have touched: the source snapshot plus every
+ * path an applied reply wrote, created, or deleted. Non-TypeScript command
+ * writes are included because `applyEditReply` adds their paths to `bases`.
+ */
+function workspaceFingerprint(cwd: string, bases: ReadonlyMap<string, string>): string {
+  const entries = [...bases.keys()].sort().map((path) => `${path}\u0000${readTarget(cwd, path)}`);
+  return hashText(entries.join("\u0001"));
 }
 
 // ---------------------------------------------------------------------------
@@ -1580,7 +1130,7 @@ function diffFile(
     : { lines, truncated: false };
 }
 
-/** The applied diff for a Task: only changed files, only changed hunks. */
+/** The applied diff for a node: only changed files, only changed hunks. */
 function appliedDiff(cwd: string, bases: ReadonlyMap<string, string>): string {
   const output: string[] = [];
   for (const [path, before] of bases) {
@@ -1610,240 +1160,75 @@ function appliedDiff(cwd: string, bases: ReadonlyMap<string, string>): string {
   return output.join("\n");
 }
 
-// ---------------------------------------------------------------------------
-// Review patch scope (#32)
-
-/** A review patch tried to mutate a done edit or a passed task. */
-function immutableReviewError(diagnostics: string | null): boolean {
-  return (
-    diagnostics !== null &&
-    /(done edit #\S+ is immutable|passed task #\S+ is immutable)/.test(diagnostics)
-  );
-}
-
-/**
- * A review patch may repair only the current Task. Check the wire ops before
- * applying so a future Stage/Task or a foreign edit is rejected by name; the
- * post-apply structural check catches anything the merge would otherwise allow.
- */
-function reviewPatchProblems(state: TaskRunState, task: TaskNode, patch: PlanPatch): string | null {
-  const editIds = new Set(task.edits.map((edit) => edit.id));
-  const problems: string[] = [];
-  for (const op of patch.ops) {
-    switch (op.kind) {
-      case "plan-update":
-        problems.push("plan~ is not allowed; a review may not change the Plan goal");
-        break;
-      case "stage-add":
-        problems.push(`stage+ #${op.id} would add future work; a review may not add a Stage`);
-        break;
-      case "stage-update":
-        problems.push(`stage~ #${op.id} is not allowed; a review may not change a Stage`);
-        break;
-      case "stage-remove":
-        problems.push(`stage- #${op.id} is not allowed; a review may not remove a Stage`);
-        break;
-      case "task-add":
-        problems.push(
-          `task+ #${op.id} would add future work; a review may only repair the current task #${task.id}`,
-        );
-        break;
-      case "task-remove":
-        problems.push(`task- #${op.id} cannot repair the current task #${task.id}`);
-        break;
-      case "task-update":
-        if (op.id !== task.id) {
-          problems.push(
-            `task~ #${op.id} targets another task; a review may only repair the current task #${task.id}`,
-          );
-        }
-        break;
-      case "edit-add":
-        if (op.task !== task.id) {
-          problems.push(
-            `edit+ #${op.id} targets task #${op.task}, not the current task #${task.id}`,
-          );
-        }
-        break;
-      case "edit-update":
-      case "edit-remove":
-        if (!editIds.has(op.id)) {
-          problems.push(
-            `${op.kind === "edit-update" ? "edit~" : "edit-"} #${op.id} is not an edit of the current task #${task.id}`,
-          );
-        }
-        break;
+function changedPaths(cwd: string, bases: ReadonlyMap<string, string>): string[] {
+  const changed: string[] = [];
+  for (const [path, before] of bases) {
+    if (readTarget(cwd, path) !== before) {
+      changed.push(path);
     }
   }
-  if (patch.finish) {
-    const last = finalTask(state.stages);
-    if (last === undefined || last.id !== task.id || task.verify !== "test") {
-      problems.push(
-        "finish is allowed only when the current task is the last task and verifies test",
-      );
-    }
-  }
-  if (patch.ops.length === 0 && !patch.finish) {
-    problems.push("the patch is empty; reply with approve or a repair patch");
-  }
-  return problems.length === 0
-    ? null
-    : `stage: task-scope\n- ${[...new Set(problems)].join("\n- ")}`;
+  return changed.sort();
 }
 
-/** Everything except the current Task definition: stages, goals, other Tasks. */
-function structureFingerprint(state: TaskRunState, taskId: NodeId): string {
-  const stages = state.stages.map((stage) => ({
-    id: stage.id,
-    goal: stage.goal,
-    tasks: stage.tasks.filter((task) => task.id !== taskId),
-  }));
-  return serializePlanDsl({ id: state.plan.id, goal: state.plan.goal, stages });
-}
-
-/**
- * The post-apply half of review scope. The current Task must still exist,
- * reopen as pending, and be the only definition that changed; finish may only
- * stay on the current Task.
- */
-function reviewMergeProblems(
-  before: TaskRunState,
-  after: TaskRunState,
-  task: TaskNode,
-): string | null {
-  const problems: string[] = [];
-  if (structureFingerprint(before, task.id) !== structureFingerprint(after, task.id)) {
-    problems.push("a review patch must not change the Plan, a Stage, or another Task");
-  }
-  if (allTasks(after.stages).every((candidate) => candidate.id !== task.id)) {
-    problems.push(`the review patch removed the current task #${task.id}`);
-  }
-  if (after.taskStatus.get(task.id) !== "pending") {
-    problems.push(`the review patch did not reopen the current task #${task.id}`);
-  }
-  if (
-    before.finalTaskId !== null &&
-    after.finalTaskId !== before.finalTaskId &&
-    after.finalTaskId !== task.id
-  ) {
-    problems.push("the review patch may not move finalTaskId to another task");
-  }
-  return problems.length === 0
-    ? null
-    : `stage: task-scope\n- ${[...new Set(problems)].join("\n- ")}`;
+function outOfHintPaths(node: WorkNode, changed: readonly string[]): string[] {
+  const hinted = new Set(node.hints.map((hint) => hint.path));
+  return changed.filter((path) => !hinted.has(path));
 }
 
 // ---------------------------------------------------------------------------
 // The driver
 
-/** Compare the Plan wire form plus the finish marker; status is harness state. */
-function fingerprintState(state: TaskRunState): string {
-  return `${serializePlanDsl(state.plan)}\nfinish: ${state.finalTaskId ?? ""}`;
+/** Compare the Plan wire form plus finish marker and harness statuses. */
+function fingerprintState(state: PlanRunState): string {
+  const statuses = state.nodes
+    .map((node) => `${node.id}=${state.nodeStatus.get(node.id) ?? "pending"}`)
+    .join(",");
+  return `${serializePlanDsl(state.plan)}\nfinish: ${state.finalNodeId ?? ""}\nstatus: ${statuses}`;
 }
 
-/** The initial Plan is one current Stage and one current Task; later turns patch. */
-function initialPlanProblems(plan: Plan): string | null {
-  const problems: string[] = [];
-  if (plan.stages.length !== 1) {
-    problems.push(
-      `the initial Plan must contain exactly one current Stage, not ${plan.stages.length}; plan later Stages with patches`,
-    );
+/** Why no node is runnable, with the next graph action the planner can take. */
+function blockedReason(state: PlanRunState): string {
+  const blocked = blockedNodes(state);
+  if (blocked.length > 0) {
+    const failed = state.nodes
+      .filter((node) => state.nodeStatus.get(node.id) === "failed")
+      .map((node) => `#${node.id}`);
+    return `Blocked node(s): ${blocked.map((node) => `#${node.id}`).join(", ")}.${
+      failed.length === 0 ? "" : ` Failed dependency node(s): ${failed.join(", ")}.`
+    } Repair the failed dependency, repoint the edge, remove the dependent, or add independent work.`;
   }
-  const stage = plan.stages[0];
-  if (stage !== undefined && stage.tasks.length !== 1) {
-    problems.push(
-      `the initial Stage #${stage.id} must contain exactly one current Task, not ${stage.tasks.length}; add later Tasks with patches`,
-    );
+  const pending = state.nodes.filter((node) => state.nodeStatus.get(node.id) === "pending");
+  if (pending.length > 0) {
+    return `Pending node(s) ${pending.map((node) => `#${node.id}`).join(", ")} are waiting for dependencies that have not passed. Repair or repoint the dependency, or add ready work.`;
   }
-  return problems.length === 0
-    ? null
-    : `stage: task-tree\n${problems.map((problem) => `- ${problem}`).join("\n")}`;
-}
-
-/**
- * Enforce the one-unit planning rule after a patch applies: one new Task and
- * one new Stage per turn, and a new Stage only after the current work settles.
- */
-function oneUnitProblems(previous: TaskRunState, next: TaskRunState): string | null {
-  const previousStageIds = new Set(previous.stages.map((stage) => stage.id));
-  const previousTaskIds = new Set(allTasks(previous.stages).map((task) => task.id));
-  const newStages = next.stages.filter((stage) => !previousStageIds.has(stage.id));
-  const newTasks = allTasks(next.stages).filter((task) => !previousTaskIds.has(task.id));
-  const problems: string[] = [];
-  if (newStages.length > 1) {
-    problems.push(
-      `this patch adds ${newStages.length} new Stages; add at most one new Stage per planning turn`,
-    );
-  }
-  if (newTasks.length > 1) {
-    problems.push(
-      `this patch adds ${newTasks.length} new Tasks; add at most one new Task per planning turn`,
-    );
-  }
-  const newStage = newStages[0];
-  if (newStage !== undefined) {
-    const pending = allTasks(next.stages.filter((stage) => previousStageIds.has(stage.id))).find(
-      (task) => next.taskStatus.get(task.id) === "pending",
-    );
-    if (pending !== undefined) {
-      problems.push(
-        `stage #${newStage.id} cannot start while task #${pending.id} is still pending; a new Stage is allowed only when the current Stage has no pending Task`,
-      );
-    }
-    if (newTasks.length === 1) {
-      const task = newTasks[0];
-      if (task !== undefined && !newStage.tasks.some((candidate) => candidate.id === task.id)) {
-        problems.push(
-          `a new Stage must include its first Task in the same patch; task #${task.id} is not in stage #${newStage.id}`,
-        );
-      }
-    } else {
-      problems.push(
-        `a new Stage must include its first Task in the same patch; stage #${newStage.id} arrived without one`,
-      );
-    }
-  }
-  return problems.length === 0
-    ? null
-    : `stage: task-tree\n${problems.map((problem) => `- ${problem}`).join("\n")}`;
-}
-
-/** Why no Task is runnable, with the next unit the planner should patch. */
-function blockedReason(state: TaskRunState): string {
-  const pending = allTasks(state.stages).find(
-    (task) => state.taskStatus.get(task.id) === "pending",
-  );
-  if (pending !== undefined) {
-    return `Task #${pending.id} is pending but has no runnable edit; repair it in place or add a repair edit.`;
-  }
-  const last = finalTask(state.stages);
-  const finalId = state.finalTaskId;
+  const last = finalNode(state);
+  const finalId = state.finalNodeId;
   if (finalId === null) {
     if (
       last !== undefined &&
       last.verify === "test" &&
-      state.taskStatus.get(last.id) === "passed"
+      state.nodeStatus.get(last.id) === "passed"
     ) {
-      return `Every Task is terminal and the last Task #${last.id} is a passing test Task, but no final Task is marked. Emit "patch" + "finish" to mark it final, plan one next Task, or plan one new Stage with its first Task.`;
+      return `Every node is terminal and the last node #${last.id} is a passing test node, but no final node is marked. Emit "patch" + "finish" to mark it final, or add more work.`;
     }
-    return `Every Task is terminal but no final test Task is marked. Repair the last test Task in place and emit "finish", or plan one final test Task (or a new Stage with its first Task) and emit "finish".`;
+    return `Every node is terminal but no final test node is marked. Add a final test node and emit finish, or repair the last test node and finish it.`;
   }
   if (last === undefined || last.id !== finalId) {
-    return `The final task #${finalId} is no longer the last Task; append a final test Task and emit "finish" so finalTaskId moves.`;
+    return `The final node #${finalId} is no longer the last node; append a final test node and emit "finish" so finalNodeId moves.`;
   }
-  if (state.taskStatus.get(finalId) !== "passed") {
-    return `The final task #${finalId} has not passed. Repair it in place and keep it last (finalTaskId unchanged), or append a new final test Task/Stage and emit "finish".`;
+  if (state.nodeStatus.get(finalId) !== "passed") {
+    return `The final node #${finalId} has not passed. Repair it in place and keep it last, or append a new final test node and emit "finish".`;
   }
-  return `The final task #${finalId} passed, but the run still has open work; repair it before finishing.`;
+  return `The final node #${finalId} passed, but the run still has open work; repair the remaining nodes before finishing.`;
 }
 
-/** Render the Plan tree for the execution system's first turn. */
-function planWire(state: TaskRunState): string {
-  return serializePlanDsl(state.plan);
-}
-
-function firstEditOfState(state: TaskRunState | null): EditNode | undefined {
-  return state === null ? undefined : allTasks(state.stages).flatMap((task) => task.edits)[0];
+/** The first record locator of the current graph, for failure/result anchors. */
+function anchorLocator(state: PlanRunState | null): Locator | null {
+  if (state === null) {
+    return null;
+  }
+  const node = state.nodes.find((candidate) => candidate.hints.length > 0) ?? state.nodes[0];
+  return node === undefined ? null : locatorOfNode(node);
 }
 
 /**
@@ -1865,7 +1250,6 @@ export async function runTaskLoop(options: LoopOptions): Promise<LoopResult> {
     { role: "system", content: buildTaskPlanningSystemPrompt() },
     { role: "user", content: buildTaskPlanningUserPrompt(options.issue, indexText, specFiles) },
   ];
-  const planningState: ChatState = { messages: planningMessages };
   const usageState: UsageState = { usage: zeroLoopUsage(), consumed: 0 };
   const records: LoopRecord[] = [];
   /** Recovered parser warnings, surfaced on the final result (#33). */
@@ -1877,14 +1261,11 @@ export async function runTaskLoop(options: LoopOptions): Promise<LoopResult> {
       }
     }
   };
-  const editFailures = new Map<NodeId, string>();
-  const taskFailures = new Map<NodeId, string>();
-  /** Advisory tsc output from a large edit, consumed by the next edit turn. */
-  const editAdvisories = new Map<NodeId, string>();
-  /** Tasks already reopened by a review patch; they get no second review. */
-  const reviewPatched = new Set<NodeId>();
+  const nodeFailures = new Map<NodeId, string>();
+  /** Review fingerprints per node, so a repeated patch/diff is detectable. */
+  const reviewSeen = new Map<NodeId, Set<string>>();
   let iteration = 0;
-  let current: TaskRunState | null = null;
+  let current: PlanRunState | null = null;
 
   const terminated = async (
     reason: TerminationReason | "provider-error",
@@ -1897,12 +1278,12 @@ export async function runTaskLoop(options: LoopOptions): Promise<LoopResult> {
       reason,
       diagnostics,
     );
-    const anchor = firstEditOfState(current);
+    const anchor = anchorLocator(current);
     return {
       ok: false,
-      mode: current === null ? undefined : "modify",
-      locator: anchor === undefined ? null : locatorOf(anchor),
-      filePath: anchor?.loc.path ?? null,
+      mode: anchor === null ? undefined : "modify",
+      locator: anchor,
+      filePath: anchor?.path ?? null,
       editedSource: null,
       records,
       diagnostics,
@@ -1913,17 +1294,17 @@ export async function runTaskLoop(options: LoopOptions): Promise<LoopResult> {
       ...(runWarnings.length === 0 ? {} : { warnings: [...runWarnings] }),
       tokens: totalLoopTokens(usageState.usage),
       usage: cloneLoopUsage(usageState.usage),
-      tasks: current === null ? [] : summaryOf(current),
+      nodes: current === null ? [] : summaryOf(current),
     };
   };
 
-  const success = (state: TaskRunState): LoopResult => {
-    const anchor = firstEditOfState(state);
+  const success = (state: PlanRunState): LoopResult => {
+    const anchor = anchorLocator(state);
     return {
       ok: true,
-      mode: "modify",
-      locator: anchor === undefined ? null : locatorOf(anchor),
-      filePath: anchor?.loc.path ?? null,
+      mode: anchor === null ? undefined : "modify",
+      locator: anchor,
+      filePath: anchor?.path ?? null,
       editedSource: null,
       records,
       diagnostics: null,
@@ -1933,7 +1314,7 @@ export async function runTaskLoop(options: LoopOptions): Promise<LoopResult> {
       ...(runWarnings.length === 0 ? {} : { warnings: [...runWarnings] }),
       tokens: totalLoopTokens(usageState.usage),
       usage: cloneLoopUsage(usageState.usage),
-      tasks: summaryOf(state),
+      nodes: summaryOf(state),
     };
   };
 
@@ -1968,9 +1349,9 @@ export async function runTaskLoop(options: LoopOptions): Promise<LoopResult> {
   };
 
   /**
-   * Resolve one planner viewer statement with the edit-protocol resolver and
-   * return a source block, not a Plan/patch. The planner uses the same
-   * `select`/`read` language as the executor; it just cannot write.
+   * Resolve one planner viewer reply with the edit-protocol resolver and return
+   * source blocks, not a Plan/patch. The planner uses the same `select`/`read`
+   * language as the executor; it just cannot write.
    */
   const plannerViewFeedback = (content: string, next: string): string => {
     const parsed = parseMultiEditorDetailed(content);
@@ -2020,90 +1401,92 @@ export async function runTaskLoop(options: LoopOptions): Promise<LoopResult> {
   };
 
   /**
-   * One planning turn: ask, parse, retry a rejection with its diagnostics. An
-   * initial plan becomes the run state; a patch turn applies exactly one patch,
-   * enforces the one-unit rule, and returns the merged state.
+   * One planning turn: ask, parse, and retry a rejection with its diagnostics.
+   * Viewer requests are unlimited except by the token budget and repeated-view
+   * detection; a repeated view forces the Plan/patch reply. An initial plan
+   * becomes the run state; a patch turn applies one patch and returns the merged
+   * state.
    */
   const planningTurn = async (
-    request: { mode: "initial" } | { mode: "patch"; state: TaskRunState },
+    request: { mode: "initial" } | { mode: "patch"; state: PlanRunState },
   ): Promise<PlanningOutcome> => {
-    let lastDiagnostics: string | null = null;
-    let viewerUsed = false;
-    for (let attempt = 1; attempt <= MAX_PLAN_ATTEMPTS; attempt += 1) {
+    const seen = new Set<string>();
+    let forceReply = false;
+    for (;;) {
       const response = await providerCall();
       if ("ok" in response) {
         return { kind: "failed", result: response };
       }
       const content = response.content ?? "";
       planningMessages.push({ role: "assistant", content });
+
       if (isPlannerViewerReply(content)) {
-        if (viewerUsed) {
+        const key = hashText(content.trim());
+        if (forceReply || seen.has(key)) {
+          seen.add(key);
+          forceReply = true;
           planningMessages.push({
             role: "user",
             content:
-              "# Source view\n\nOnly one viewer request is allowed per planning turn. Reply with the Plan/patch now.",
+              "# Source view\n\nThe same or repeated viewer makes no progress. Reply with the Plan/patch now; the viewer request writes nothing.",
           });
           continue;
         }
-        viewerUsed = true;
+        seen.add(key);
         planningMessages.push({
           role: "user",
           content: plannerViewFeedback(
             content,
-            "Reply with the initial Plan or the next patch. The viewer request writes nothing.",
+            "Reply with the initial Plan or the next patch. Each viewer consumes the token budget; repeated views force the Plan/patch.",
           ),
         });
-        attempt -= 1;
         continue;
       }
+
+      let diagnostics: string;
       if (request.mode === "initial") {
         const parsed = parsePlanDslDetailed(content);
         noteWarnings(parsed);
         if (parsed.ok && parsed.value !== undefined) {
-          const problems = initialPlanProblems(parsed.value.plan);
-          if (problems === null) {
-            return {
-              kind: "planned",
-              state: initialState(parsed.value.plan, parsed.value.finalTaskId),
-            };
-          }
-          lastDiagnostics = problems;
-        } else {
-          lastDiagnostics = renderDslIssues(parsed.issues);
+          return {
+            kind: "planned",
+            state: initialState(parsed.value.plan, parsed.value.finalNodeId),
+          };
         }
+        diagnostics = renderDslIssues(parsed.issues);
       } else {
         const parsed = parsePlanPatchDetailed(content);
         noteWarnings(parsed);
         if (!parsed.ok || parsed.value === undefined) {
-          lastDiagnostics = renderDslIssues(parsed.issues);
+          diagnostics = renderDslIssues(parsed.issues);
         } else {
           const merged = applyPlanPatch(request.state, parsed.value);
-          if (!merged.ok) {
-            lastDiagnostics = merged.diagnostics;
-          } else {
-            const problems = oneUnitProblems(request.state, merged.state);
-            if (problems === null) {
-              return { kind: "planned", state: merged.state };
-            }
-            lastDiagnostics = problems;
+          if (merged.ok) {
+            return { kind: "planned", state: merged.state };
           }
+          diagnostics = merged.diagnostics;
         }
       }
+
+      const key = hashText(`${content}\n${diagnostics}`);
+      if (seen.has(key)) {
+        return {
+          kind: "failed",
+          result: await terminated(
+            "task-exhausted",
+            `task-exhausted: the planner repeated the same rejected ${request.mode === "initial" ? "plan" : "patch"} reply; no progress is possible\n\n${diagnostics}`,
+          ),
+        };
+      }
+      seen.add(key);
       planningMessages.push({
         role: "user",
         content:
           request.mode === "initial"
-            ? buildTaskPlanRetryPrompt(lastDiagnostics ?? "the plan was rejected")
-            : buildTaskPatchRetryPrompt(lastDiagnostics ?? "the patch was rejected"),
+            ? buildTaskPlanRetryPrompt(diagnostics)
+            : buildTaskPatchRetryPrompt(diagnostics),
       });
     }
-    return {
-      kind: "failed",
-      result: await terminated(
-        "task-exhausted",
-        `task-exhausted: the planner produced no valid ${request.mode === "initial" ? "plan" : "patch"} after ${MAX_PLAN_ATTEMPTS} attempts\n\n${lastDiagnostics ?? ""}`,
-      ),
-    };
   };
 
   const first = await planningTurn({ mode: "initial" });
@@ -2111,115 +1494,61 @@ export async function runTaskLoop(options: LoopOptions): Promise<LoopResult> {
     return first.result;
   }
   current = first.state;
-  let previousFingerprint = fingerprintState(current);
-  let planningRounds = 1;
 
-  /**
-   * Ask for exactly one patch after the current work settles. The turn cap
-   * counts planning replies, including the initial Plan; a patch that leaves
-   * the Plan and finish marker unchanged is no progress.
-   */
-  const requestPatch = async (
-    gateDiagnostics: string | undefined,
-    blocked: string | undefined,
-  ): Promise<TaskRunState | LoopResult> => {
+  /** Ask for a patch after the graph settles; a patch that changes nothing is no progress. */
+  const requestPatch = async (blocked: string | undefined): Promise<LoopResult | null> => {
     const state = current;
     if (state === null) {
-      return terminated("task-exhausted", "task-exhausted: there is no current Plan to patch");
+      return terminated("task-exhausted", "task-exhausted: there is no current graph to patch");
     }
-    if (planningRounds >= MAX_TASK_PLAN_ROUNDS) {
-      return terminated(
-        "task-exhausted",
-        `task-exhausted: ${planningRounds} planning turns without a passing run (cap ${MAX_TASK_PLAN_ROUNDS})\n\n${blocked ?? ""}`,
-      );
-    }
-    const failedEditIds = state.stages
-      .flatMap((stage) => stage.tasks)
-      .flatMap((task) => task.edits)
-      .filter((edit) => state.editStatus.get(edit.id) === "failed")
-      .map((edit) => edit.id);
-    const failedTaskIds = allTasks(state.stages)
-      .filter((task) => state.taskStatus.get(task.id) === "failed")
-      .map((task) => task.id);
     const currentFiles = discoverSourceFiles(cwd);
     planningMessages.push({
       role: "user",
       content: buildTaskReplanPrompt({
         state,
-        editFailures,
-        taskFailures,
-        gateDiagnostics,
+        nodeFailures,
         blocked,
         symbolIndex: buildContextYaml(currentFiles),
-        delta: replanDelta({
-          failedEditIds,
-          failedTaskIds,
-          blocked: blocked !== undefined,
-        }),
       }),
     });
+    const before = fingerprintState(state);
     const planned = await planningTurn({ mode: "patch", state });
     if (planned.kind === "failed") {
       return planned.result;
     }
     const next = planned.state;
-    const fingerprint = fingerprintState(next);
-    if (fingerprint === previousFingerprint) {
+    if (fingerprintState(next) === before) {
       return terminated(
         "task-exhausted",
-        "task-exhausted: the planner patch left the Plan and finalTaskId unchanged; no progress is possible",
+        "task-exhausted: the planner patch left the work graph and statuses unchanged; no progress is possible",
       );
     }
-    previousFingerprint = fingerprint;
-    planningRounds += 1;
     current = next;
-    return next;
+    return null;
   };
 
-  /**
-   * One post-execution review in the same planner conversation. It sees the
-   * gate verdict and the concise diff, then either approves or returns one
-   * repair patch for the current Task. A syntactically malformed reply gets
-   * one bounded format retry; a scope or merge violation still terminates. A
-   * patch that reopens the Task gets no second review.
-   */
-  const reviewTurn = async (
-    state: TaskRunState,
-    stage: Stage,
-    task: TaskNode,
-    gate: { ok: boolean; diagnostics: string | null },
+  /** One post-gate review round in the planner conversation. */
+  const reviewNode = async (
+    state: PlanRunState,
+    node: WorkNode,
+    gate: GateResult,
     bases: ReadonlyMap<string, string>,
   ): Promise<ReviewOutcome> => {
-    const rejected = async (diagnostics: string): Promise<ReviewOutcome> => ({
-      kind: "failed",
-      result: await terminated(
-        "task-exhausted",
-        `task-exhausted: the review turn produced neither approve nor one valid repair patch\n\n${diagnostics}`,
-      ),
-    });
-    planningMessages.push({
-      role: "user",
-      content: buildTaskReviewPrompt({
-        stage,
-        task,
-        gate: { verify: task.verify, ok: gate.ok, diagnostics: gate.diagnostics },
-        diff: appliedDiff(cwd, bases),
-      }),
-    });
-    let viewerUsed = false;
-    let immutableRetryUsed = false;
-    const retryImmutablePatch = (diagnostics: string | null): boolean => {
-      if (immutableRetryUsed || !immutableReviewError(diagnostics)) {
-        return false;
-      }
-      immutableRetryUsed = true;
+    const diff = appliedDiff(cwd, bases);
+    const changed = changedPaths(cwd, bases);
+    const outOfHint = outOfHintPaths(node, changed);
+    const seen = reviewSeen.get(node.id) ?? new Set<string>();
+    reviewSeen.set(node.id, seen);
+    for (;;) {
       planningMessages.push({
         role: "user",
-        content: buildTaskReviewDoneEditRetryPrompt(diagnostics ?? "a done edit is immutable"),
+        content: buildTaskReviewPrompt({
+          node,
+          gate: { verify: node.verify, ok: gate.ok, diagnostics: gate.diagnostics },
+          diff,
+          outOfHint,
+        }),
       });
-      return true;
-    };
-    for (let attempt = 1; attempt <= MAX_REVIEW_ATTEMPTS; attempt += 1) {
       let response: ChatResponse;
       try {
         response = await callModel(
@@ -2246,16 +1575,21 @@ export async function runTaskLoop(options: LoopOptions): Promise<LoopResult> {
       }
       const content = response.content ?? "";
       planningMessages.push({ role: "assistant", content });
+      if (content.trim().toLowerCase() === "approve") {
+        return { kind: "approve" };
+      }
       if (isPlannerViewerReply(content)) {
-        if (viewerUsed) {
-          planningMessages.push({
-            role: "user",
-            content:
-              "# Source view\n\nOnly one viewer request is allowed per review turn. Reply with `approve` or one repair patch.",
-          });
-          continue;
+        const key = hashText(`view:${content.trim()}`);
+        if (seen.has(key)) {
+          return {
+            kind: "failed",
+            result: await terminated(
+              "task-exhausted",
+              "task-exhausted: the review repeated the same viewer; no progress is possible",
+            ),
+          };
         }
-        viewerUsed = true;
+        seen.add(key);
         planningMessages.push({
           role: "user",
           content: plannerViewFeedback(
@@ -2263,261 +1597,238 @@ export async function runTaskLoop(options: LoopOptions): Promise<LoopResult> {
             "Reply with `approve` or one repair patch. The viewer request writes nothing.",
           ),
         });
-        attempt -= 1;
         continue;
-      }
-      if (content.trim().toLowerCase() === "approve") {
-        return { kind: "approve" };
       }
       const parsed = parsePlanPatchDetailed(content);
       noteWarnings(parsed);
+      let diagnostics: string;
+      let next: PlanRunState | null = null;
       if (!parsed.ok || parsed.value === undefined) {
-        const diagnostics = renderDslIssues(parsed.issues);
-        if (attempt < MAX_REVIEW_ATTEMPTS) {
-          planningMessages.push({
-            role: "user",
-            content: buildTaskReviewRetryPrompt(diagnostics),
-          });
-          continue;
+        diagnostics = renderDslIssues(parsed.issues);
+      } else if (parsed.value.ops.length === 0 && !parsed.value.finish) {
+        diagnostics =
+          "stage: plan-graph\nthe review patch is empty; reply with `approve` or a repair patch that changes the graph";
+      } else {
+        const merged = applyPlanPatch(state, parsed.value);
+        if (!merged.ok) {
+          diagnostics = merged.diagnostics;
+        } else {
+          next = merged.state;
+          diagnostics = "";
         }
-        return rejected(diagnostics);
       }
-      const scope = reviewPatchProblems(state, task, parsed.value);
-      if (scope !== null) {
-        if (retryImmutablePatch(scope)) {
-          attempt -= 1;
-          continue;
-        }
-        return rejected(scope);
+      const key = hashText(`${content}\n${diagnostics}\n${diff}`);
+      if (diagnostics !== "" && seen.has(key)) {
+        return {
+          kind: "failed",
+          result: await terminated(
+            "task-exhausted",
+            `task-exhausted: the review repeated the same rejected reply; no progress is possible\n\n${diagnostics}`,
+          ),
+        };
       }
-      const merged = applyPlanPatch(state, parsed.value);
-      if (!merged.ok) {
-        if (retryImmutablePatch(merged.diagnostics)) {
-          attempt -= 1;
-          continue;
-        }
-        return rejected(merged.diagnostics);
-      }
-      const after = reviewMergeProblems(state, merged.state, task);
-      if (after !== null) {
-        if (retryImmutablePatch(after)) {
-          attempt -= 1;
-          continue;
-        }
-        return rejected(after);
-      }
-      if (fingerprintState(merged.state) === fingerprintState(state)) {
-        return rejected(
-          "the patch left the Plan and finalTaskId unchanged; a review patch must repair the current task or carry finish",
-        );
-      }
-      return { kind: "patched", state: merged.state };
-    }
-    return rejected("the review turn produced no usable reply");
-  };
-
-  // Each Plan tree gets a fresh execution conversation: stable system prompt +
-  // tree, then one edit turn at a time (stage/task/edit context stays volatile).
-  let execution: ChatState | null = null;
-  let executionState: TaskRunState | null = null;
-  let executionBase: ChatMessage[] = [];
-
-  const executionChat = (state: TaskRunState): ChatState => {
-    if (execution !== null && executionState === state) {
-      return execution;
-    }
-    const messages: ChatMessage[] = [
-      { role: "system", content: buildTaskExecutionSystemPrompt() },
-      {
-        role: "user",
-        content: `# Plan tree\n\n${planWire(state)}\n\nYou receive one micro edit at a time. Reply with its edit clauses only.`,
-      },
-    ];
-    const chat: ChatState = { messages };
-    execution = chat;
-    executionState = state;
-    executionBase = messages;
-    return chat;
-  };
-
-  /** Sources when a task became active, for mapping gate diagnostics. */
-  const taskBases = new Map<NodeId, Map<string, string>>();
-  const baseSourcesFor = (state: TaskRunState, task: TaskNode): Map<string, string> => {
-    const existing = taskBases.get(task.id);
-    if (existing !== undefined) {
-      return existing;
-    }
-    const bases = new Map<string, string>();
-    for (const edit of task.edits) {
-      if (!bases.has(edit.loc.path)) {
-        bases.set(edit.loc.path, readTarget(cwd, edit.loc.path));
-      }
-    }
-    taskBases.set(task.id, bases);
-    return bases;
-  };
-
-  const priorGateDiagnostics = (
-    state: TaskRunState,
-    stage: Stage,
-    task: TaskNode,
-  ): string | undefined => {
-    const index = stage.tasks.findIndex((candidate) => candidate.id === task.id);
-    for (let position = index - 1; position >= 0; position -= 1) {
-      const earlier = stage.tasks[position];
-      if (earlier === undefined) {
+      seen.add(key);
+      if (diagnostics !== "" || next === null) {
+        planningMessages.push({
+          role: "user",
+          content: buildTaskReviewRetryPrompt(diagnostics),
+        });
         continue;
       }
-      if (state.taskStatus.get(earlier.id) === "failed" && taskFailures.has(earlier.id)) {
-        return `Task #${earlier.id} gate failed: ${taskFailures.get(earlier.id) ?? ""}`;
+      const stateKey = hashText(`${fingerprintState(next)}\n${diff}`);
+      if (seen.has(stateKey)) {
+        return {
+          kind: "failed",
+          result: await terminated(
+            "task-exhausted",
+            "task-exhausted: the review repeated the same patch and diff; no progress is possible",
+          ),
+        };
       }
+      seen.add(stateKey);
+      return { kind: "patched", state: next };
     }
-    return undefined;
   };
 
-  for (;;) {
-    const state = current as TaskRunState;
-    if (runComplete(state)) {
-      return success(state);
-    }
-    const stage = activeStage(state);
-    const task = stage === undefined ? undefined : activeTask(state);
-    if (stage === undefined || task === undefined) {
-      const patched = await requestPatch(undefined, blockedReason(state));
-      if ("ok" in patched) {
-        return patched;
-      }
-      continue;
-    }
-    const anchor = firstEdit(task);
-    const bases = baseSourcesFor(state, task);
+  /** Execute one work node until its gate passes or progress stops. */
+  const executeNode = async (
+    state: PlanRunState,
+    node: WorkNode,
+    bases: Map<string, string>,
+  ): Promise<ExecutionOutcome> => {
+    const chat: ChatState = {
+      messages: [
+        { role: "system", content: buildTaskExecutionSystemPrompt() },
+        {
+          role: "user",
+          content: buildTaskTurnPrompt({ node, views: sourceViews(cwd, node) }),
+        },
+      ],
+    };
+    const seen = new Set<string>();
+    let priorGate: string | undefined;
+    let priorDiagnostics: string | undefined;
+    let feedback: string | undefined;
 
-    if (taskEditsSettled(state, task)) {
-      if (!taskHasDoneEdit(state, task)) {
-        const patched = await requestPatch(
-          undefined,
-          `Task #${task.id} has no landed edit; add a repair edit rather than re-running the gate on an unchanged file.`,
+    for (;;) {
+      let response: ChatResponse;
+      try {
+        response = await callModel(
+          chat.messages,
+          usageState.usage.execution,
+          usageState,
+          options.provider,
+          options,
         );
-        if ("ok" in patched) {
-          return patched;
-        }
-        continue;
+      } catch (error) {
+        return {
+          kind: "terminated",
+          result: await terminated("provider-error", providerErrorDiagnostics(error)),
+        };
       }
-      iteration += 1;
+      if (overBudget(usageState, tokenBudget)) {
+        return {
+          kind: "terminated",
+          result: await terminated(
+            "token-budget",
+            tokenBudgetDiagnostics(usageState.consumed, tokenBudget, tokenBudgetBasis),
+          ),
+        };
+      }
+      const content = response.content ?? "";
+      chat.messages.push({ role: "assistant", content });
+
       const context: ExecutionContext = {
         cwd,
         workspace,
         options,
         records,
         warnings: runWarnings,
-        runState: state,
+        node,
         iteration,
       };
-      const gate = await verifyTask(
-        context,
-        task,
-        bases.get(anchor.loc.path) ?? readTarget(cwd, anchor.loc.path),
-      );
-      // The gate verdict is final only after the planner's one review turn.
-      state.taskStatus.set(task.id, "review");
-      if (!reviewPatched.has(task.id)) {
-        const reviewed = await reviewTurn(state, stage, task, gate, bases);
-        if (reviewed.kind === "failed") {
-          return reviewed.result;
+      const outcome = await applyEditReply(context, content, bases);
+      let diagnostics: string | null;
+      if (outcome.ok) {
+        writeRecord(records, {
+          iteration,
+          kind: "exchange",
+          exchange: null,
+          node,
+          outcome: "applied",
+          replacement: content,
+          diagnostics: outcome.diagnostics,
+          finishReason: response.finishReason,
+          payloads: 1,
+          appliedLocators: outcome.appliedLocators,
+        });
+        const gate = await verifyNode(context, bases, outcome.paths);
+        if (gate.ok) {
+          return { kind: "passed", gateDiagnostics: null };
         }
-        if (reviewed.kind === "patched") {
-          // The Task reopens and runs again; its re-execution is not reviewed.
-          reviewPatched.add(task.id);
-          taskFailures.delete(task.id);
-          taskBases.delete(task.id);
-          current = reviewed.state;
-          previousFingerprint = fingerprintState(reviewed.state);
-          continue;
+        diagnostics = gate.diagnostics ?? "stage: gate\nthe work node gate failed";
+        priorGate = diagnostics;
+        priorDiagnostics = undefined;
+        feedback = outcome.feedback ?? undefined;
+      } else {
+        diagnostics = outcome.diagnostics ?? "stage: protocol\nthe reply was rejected";
+        writeRecord(records, {
+          iteration,
+          kind: "exchange",
+          exchange: null,
+          node,
+          outcome: outcome.viewerOnly ? "viewer" : outcomeOf(stageOf(diagnostics)),
+          replacement: content,
+          diagnostics,
+          finishReason: response.finishReason,
+          payloads: 0,
+        });
+        priorGate = undefined;
+        priorDiagnostics = outcome.viewerOnly ? undefined : diagnostics;
+        feedback = outcome.feedback ?? undefined;
+      }
+
+      const stateKey = hashText(`${workspaceFingerprint(cwd, bases)}\n${diagnostics ?? ""}`);
+      const replyKey = hashText(`${content}\n${stateKey}`);
+      // Read-only replies are an inspection tool, not progress: a `read` may be
+      // repeated until the token budget runs out. Rejected or applied replies
+      // participate in the repeated fingerprint/no-progress stop.
+      if (!outcome.viewerOnly) {
+        if (seen.has(replyKey) || seen.has(stateKey)) {
+          return {
+            kind: "failed",
+            diagnostics: `stage: no-progress\nthe work node #${node.id} stopped making progress: the same reply/source/diagnostics fingerprint repeated; no fixed exchange cap applies\n\n${diagnostics ?? ""}`,
+          };
         }
+        seen.add(replyKey);
+        seen.add(stateKey);
       }
-      if (gate.ok) {
-        state.taskStatus.set(task.id, "passed");
-        taskFailures.delete(task.id);
-        taskBases.delete(task.id);
-        continue;
-      }
-      state.taskStatus.set(task.id, "failed");
-      taskFailures.set(task.id, gate.diagnostics ?? "stage: task-gate\nthe task gate failed");
-      taskBases.delete(task.id);
-      // Let later planned tasks in the same stage run first; they may repair
-      // the gate failure without paying for a planning round.
-      if (hasLaterPendingTaskInStage(state, task)) {
-        continue;
-      }
-      const patched = await requestPatch(gate.diagnostics ?? undefined, undefined);
-      if ("ok" in patched) {
+
+      chat.messages.push({
+        role: "user",
+        content: buildTaskTurnPrompt({
+          node,
+          views: sourceViews(cwd, node),
+          ...(priorDiagnostics === undefined ? {} : { diagnostics: priorDiagnostics }),
+          ...(priorGate === undefined ? {} : { gateDiagnostics: priorGate }),
+          ...(feedback === undefined ? {} : { feedback }),
+        }),
+      });
+    }
+  };
+
+  for (;;) {
+    const state = current as PlanRunState;
+    if (runComplete(state)) {
+      return success(state);
+    }
+    const node = nextReadyNode(state);
+    if (node === undefined) {
+      const patched = await requestPatch(blockedReason(state));
+      if (patched !== null) {
         return patched;
       }
       continue;
     }
 
-    const edit = nextEdit(state, task);
-    if (edit === undefined) {
-      const patched = await requestPatch(
-        undefined,
-        `Task #${task.id} has no runnable edit; repair it in place so its remaining work is runnable.`,
-      );
-      if ("ok" in patched) {
-        return patched;
-      }
-      continue;
-    }
-
-    const chat = executionChat(state);
     iteration += 1;
-    state.editStatus.set(edit.id, "in-progress");
-    // Every edit starts from the stable system + Plan prefix; turns from the
-    // previous edit must not leak into this one.
-    chat.messages = [...executionBase];
-    const context: ExecutionContext = {
-      cwd,
-      workspace,
-      options,
-      records,
-      warnings: runWarnings,
-      runState: state,
-      iteration,
-    };
-    const postEditDiagnostics = editAdvisories.get(task.id);
-    editAdvisories.delete(task.id);
-    const outcome = await executeEdit(
-      context,
-      chat,
-      usageState,
-      stage,
-      task,
-      edit,
-      priorGateDiagnostics(state, stage, task),
-      postEditDiagnostics,
-    );
-    if (overBudget(usageState, tokenBudget)) {
-      return terminated(
-        "token-budget",
-        tokenBudgetDiagnostics(usageState.consumed, tokenBudget, tokenBudgetBasis),
-      );
+    state.nodeStatus.set(node.id, "in-progress");
+    const bases = snapshotSources(cwd);
+    const executed = await executeNode(state, node, bases);
+    if (executed.kind === "terminated") {
+      return executed.result;
     }
-    if (!outcome.ok) {
-      state.editStatus.set(edit.id, "failed");
-      state.taskStatus.set(task.id, "failed");
-      editFailures.set(edit.id, outcome.diagnostics ?? "the edit failed");
-      taskBases.delete(task.id);
-      const patched = await requestPatch(undefined, undefined);
-      if ("ok" in patched) {
-        return patched;
-      }
+    if (executed.kind === "failed") {
+      state.nodeStatus.set(node.id, "failed");
+      nodeFailures.set(node.id, executed.diagnostics);
       continue;
     }
-    state.editStatus.set(edit.id, "done");
-    editFailures.delete(edit.id);
-    if (outcome.advisoryDiagnostics !== null && outcome.advisoryDiagnostics !== undefined) {
-      editAdvisories.set(task.id, outcome.advisoryDiagnostics);
+
+    state.nodeStatus.set(node.id, "review");
+    let reviewedState: PlanRunState = state;
+    const gate: GateResult = { ok: true, diagnostics: null };
+    for (;;) {
+      const reviewed = await reviewNode(reviewedState, node, gate, bases);
+      if (reviewed.kind === "failed") {
+        return reviewed.result;
+      }
+      if (reviewed.kind === "approve") {
+        reviewedState.nodeStatus.set(node.id, "passed");
+        nodeFailures.delete(node.id);
+        break;
+      }
+      reviewedState = reviewed.state;
+      const status = reviewedState.nodeStatus.get(node.id);
+      if (status === "pending") {
+        // The review patch reopened the node; execute it again.
+        break;
+      }
+      // The patch added or adjusted other work but left this node's definition
+      // alone: the passing gate stands.
+      reviewedState.nodeStatus.set(node.id, "passed");
+      nodeFailures.delete(node.id);
+      break;
     }
+    current = reviewedState;
   }
 }
-
-export { MAX_TASK_EXCHANGES, MAX_TASK_PLAN_ROUNDS };

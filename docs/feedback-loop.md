@@ -46,17 +46,16 @@ message because one CLI process runs one loop.
 
 ## Plan → execute → review mode
 
-`--mode plan-exec` adds a second loop: a planner emits one current Stage and
-current Task in the flat Plan DSL, the executor carries out one Task's edits,
-and the planner reviews the applied result before the Task settles. The Plan is
-a living tree: only the current Task is planned, executed, and reviewed before
-the next unit is planned; a new Stage is appended only after the current Stage
-has no pending or `review` Task.
+`--mode plan-exec` adds a second loop: a work-graph planner emits a task-level
+DAG of WorkNodes in the flat Plan DSL, the executor carries out one node's work
+at a time, and the planner reviews the applied result after its gate passes. The
+plan is a living graph: ready nodes run in record order, a failed node blocks its
+dependents, and the planner may repair, add, or remove pending/failed work between
+execution rounds.
 
-[`plan-exec.md`](plan-exec.md) owns the Plan/Stage/Task/Edit model, the Plan and
-patch DSLs, planning and review, validation/merge, scheduling, execution
-context, the plan-exec target guard, action mapping, task gates, and
-plan-exec-specific caps.
+[`plan-exec.md`](plan-exec.md) owns the Plan/WorkNode model, the Plan and patch
+DSLs, planning and review, validation/merge, scheduling, execution context,
+application and gates, progress termination, and plan-exec-specific limits.
 
 Both modes share tolerant parser diagnostics (`src/dsl-diagnostics.ts`), the
 commit/gate pipeline (`src/commit.ts`), and the result contract
@@ -120,12 +119,12 @@ Each exchange and each verification is recorded as a row (`records`). A
 A `LoopResult` carries `ok`, `mode` (the selection mode, not `AgentMode`),
 `locator`, `filePath`, `editedSource`, `records`, `diagnostics`, `explanation`,
 `messages`, `skipped`, `terminationReason`, `tokens`, and `appliedTargets`.
-Plan-exec adds `usage`, `warnings`, and `tasks`; [`plan-exec.md`](plan-exec.md)
-§10 owns those fields and the string-id result schema.
+Plan-exec adds `usage`, `warnings`, and `nodes`; [`plan-exec.md`](plan-exec.md)
+§10 owns those fields and the string-id WorkNode result schema.
 
 The subagent result printed by `--format json` is
-`typescript-coder-result@2`: format, status, verified, files, targets, records,
-tokens, terminationReason, diagnostics, and (plan-exec only) tasks. It keeps the
+`typescript-coder-result@3`: format, status, verified, files, targets, records,
+tokens, terminationReason, diagnostics, and (plan-exec only) nodes. It keeps the
 single `tokens` object; `LoopResult.usage` and `LoopResult.warnings` are not
 exposed there.
 
@@ -152,15 +151,16 @@ give-up:
   cause or reply `STOP`. From the second such ask (or when the failing set is
   already unchanged/cycling), the turn becomes decision-only: the model states a
   re-approach, which the next edit prompt requires it to follow.
-- **Hard caps** — 32 rounds, 3 consecutive output-length truncations, and a
-  120k default token budget. Any of them ends the run through the termination
-  path: one summary prompt producing Accomplished / Failed and why / Remaining /
-  Next step, plus a `TerminationReason` on the result. The termination matrix
-  emits `token-budget`, `edit-exhausted`, `delete-verification-failed`,
-  `prev-broken`, `harness-fault`, `output-limit`, or (plan-exec)
-  `task-exhausted`. The token budget and output-limit path are shared with
-  plan-exec; its planning and review caps are in
-  [`plan-exec.md`](plan-exec.md) §9.
+- **Hard caps (pinned-repair)** — 32 rounds, 3 consecutive output-length
+  truncations, and a 120k default token budget. Any of them ends the run through
+  the termination path: one summary prompt producing Accomplished / Failed and
+  why / Remaining / Next step, plus a `TerminationReason` on the result. The
+  termination matrix emits `token-budget`, `edit-exhausted`,
+  `delete-verification-failed`, `prev-broken`, `harness-fault`, `output-limit`,
+  or (plan-exec) `task-exhausted`. Plan-exec shares only the token budget; it has
+  no fixed round, exchange, viewer, review, or output-limit cap and is bounded by
+  the token budget and repeated/no-progress fingerprints
+  ([`plan-exec.md`](plan-exec.md) §9).
 
 ## Algorithm core (skeleton)
 

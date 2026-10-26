@@ -56,13 +56,30 @@ function emptyFailureResult(diagnostics: string): SubagentResult {
   };
 }
 
+/** Count the distinct files named by applied exchange rows. */
+function appliedFileCount(result: LoopResult): number {
+  const files = new Set<string>();
+  for (const record of result.records) {
+    if (record.kind !== "exchange" || record.outcome !== "applied") {
+      continue;
+    }
+    for (const locator of record.appliedLocators ?? [record.locator]) {
+      if (locator.path !== "") {
+        files.add(locator.path);
+      }
+    }
+  }
+  return files.size;
+}
+
 function emitTextResult(io: MainIo, cwd: string, result: LoopResult): number {
   if (result.ok) {
-    if (result.tasks !== undefined) {
-      const done = result.tasks.filter((task) => task.status === "done").length;
-      const files = new Set(result.tasks.map((task) => task.path)).size;
+    if (result.nodes !== undefined) {
+      const passed = result.nodes.filter((node) => node.status === "passed").length;
+      const failed = result.nodes.filter((node) => node.status === "failed").length;
+      const failedText = failed === 0 ? "" : `, ${failed} failed`;
       io.out(
-        `applied ${done} edit(s) across ${files} file(s) after ${result.records.length} record(s)`,
+        `applied ${appliedFileCount(result)} file(s); ${passed}/${result.nodes.length} work node(s) passed${failedText} after ${result.records.length} record(s)`,
       );
       return 0;
     }
@@ -97,7 +114,7 @@ function emitJsonResult(io: MainIo, cwd: string, result: LoopResult, targets?: L
     serializeSubagentResult(
       buildSubagentResult({
         result,
-        // `typescript-coder-result@2` keeps its four-field token shape (#47):
+        // `typescript-coder-result@3` keeps its four-field token shape (#47):
         // the loop's internal `reasoning` counter is not part of the contract.
         tokens: {
           input: result.tokens.input,

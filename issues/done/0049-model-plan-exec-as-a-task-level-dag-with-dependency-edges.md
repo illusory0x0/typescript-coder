@@ -1,7 +1,7 @@
 ---
 id: 49
 title: "Replace plan-exec's Stage/Task/Edit tree with a hints-based work DAG"
-status: in-progress
+status: done
 priority: medium
 milestone: null
 parent: null
@@ -66,3 +66,4 @@ A live benchmark is not required for acceptance; any measured comparison needs e
 - This is an architectural change: write the new spec and schema first, then parser/validator/scheduler, then executor/review and prompt text.
 - Benchmark scores may regress during the migration; do not tune against the held-out `csv-parser` fixture.
 - Starting the hints-based DAG replacement: planner emits WorkNodes with deps/verify/instruction/hints/approach; executor chooses concrete actions; direct schema replacement, no legacy mode.
+- Resolved: replaced the Stage/Task/Edit tree with the hints-based WorkNode DAG driver. Planner owns deps/verify/instruction/hints/approach; executor owns concrete actions and granularity; scheduler handles ready/blocked nodes; gates run after each reply; review can patch/reopen; no fixed exchange/viewer/review/round/node-count caps (token budget + repeated/no-progress fingerprints). Machine result is typescript-coder-result@3. Verified: just typecheck, just test (1445 pass), just accept (9/9), benchmark check (5 pass, 2 expected stale ledger rows), git diff --check. Pinned-repair behavior unchanged; no baselines modified.

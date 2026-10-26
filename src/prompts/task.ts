@@ -1,107 +1,44 @@
 /**
- * Planning and execution prompts for the plan/execute loop
+ * Planning, execution, and review prompts for the plan/execute loop
  * (`docs/plan-exec.md`).
  *
  * Planning context (stability-descending): role -> requirement + symbol index
- * -> (re-plan only) tree, status, and diagnostics.
+ * -> (re-plan only) work graph, statuses, and diagnostics.
  *
- * Execution context: role + edit-action grammar (stable for the tree) -> the
- * execution turn (stage, task, current edit, diagnostics, numbered view).
+ * Execution context: role + editing techniques + edit-action grammar (stable
+ * for the node) -> the work-node turn (instruction, hints, approach, gate
+ * diagnostics, source views).
  *
- * The planner emits one current Stage and Task as the flat Plan DSL, then one
- * patch per later planning turn. A task is the verification boundary; an edit
- * is one declaration action or one whole-file write. Record order is execution
- * order, and the harness owns status.
+ * The planner emits a flat work-node DAG as the Plan DSL, then patches it. A
+ * WorkNode is the verification boundary. The executor owns the concrete edit
+ * actions and their granularity; hints and `approach` are advice, never a hard
+ * allowlist. The harness owns scheduling, gates, review, and the final result.
+ * There are no Stage/Task/Edit records and no fixed exchange, viewer, review, or
+ * planning-round caps.
  */
 
-import type { EditNode, NodeId, Stage, TaskNode, TaskRunState, TaskVerify } from "../tasks";
-import {
-  formatTaskLoc,
-  renderFailedEdits,
-  renderFailedTaskGates,
-  renderTaskStatus,
-  renderTaskTree,
-} from "../tasks";
+import type { NodeId, PlanRunState, WorkNode, WorkVerify } from "../tasks";
+import { formatHint, renderFailedNodes, renderNodeStatus, renderNodeTree } from "../tasks";
 import type { SourceFile } from "../utility";
 import { appendSpecSection, splitSourceLines } from "./shared";
 
-/** Caps shared with the planner prompt text and the driver. */
-export const MAX_TASK_EXCHANGES = 3;
-export const MAX_TASK_PLAN_ROUNDS = 32;
-
 export const TASK_PLANNING_ROLE =
-  "You plan a TypeScript change. Build a Plan -> Stage -> Task -> edit tree; a separate coding expert executes one edit at a time. You do not write files or run commands. You may make one read-only viewer request before replying, using the edit-protocol viewer syntax.";
+  "You are a work-graph planner for a TypeScript change. You own the decomposition, dependency edges, verification boundaries, instructions, target hints, and optional approach/phase guidance. A separate coding expert owns the concrete edit actions and their granularity. You do not write files or run commands.";
 
 export const TASK_EXECUTION_ROLE =
-  "You are a TypeScript coding expert. You receive one edit at a time from a Stage -> Task -> edit tree and carry it out with precise edit clauses. The task instruction is the local goal; the planner owns the tree.";
+  "You are a TypeScript coding expert. You receive one work node at a time and carry it out with precise edit clauses or file commands. You own the concrete actions and their granularity: the hints and approach are advice, not a contract.";
 
-export const TASK_PLANNING_WORKFLOW = `Workflow:
-1. Read the requirement and symbol index; request one viewer if you need source.
-2. Choose the smallest tree that keeps each verification meaningful. For a large greenfield module, the first Task is a compiling skeleton, not the complete implementation.
-3. Emit the initial Plan; later turns amend it with one patch.
-Keep one current Task at a time.`;
+export const TASK_PLANNING_WORKFLOW = `Workflow guidance (inspect -> contract -> scaffold -> implement -> verify):
+1. Inspect the requirement, symbol index, and any source you need.
+2. Settle the public contract: types, signatures, and data shapes.
+3. For a large module, scaffold exported declarations and stub bodies first.
+4. Implement behavior in nodes whose gates can pass meaningfully.
+5. End with a final \`test\` node marked by \`finish\`.
 
-export const TASK_EXECUTION_WORKFLOW = `Workflow:
-1. Read the target source and the instruction.
-2. Choose the smallest declaration edit. Use a whole-file write only when the declared target is a file and the instruction explicitly requires a file-level replacement.
-3. Send the clauses and stop; the harness runs the task gate.`;
+The graph shape is yours. A single node, a linear chain, and a branching DAG are all valid; do not force a fixed workflow.`;
 
-/**
- * The functional style shared by the planner and executor prompts
- * (`docs/plan-exec.md` §1.2). Keep this literal identical to the plan-exec block.
- */
-export const TASK_FUNCTIONAL_STYLE = `Prefer ML-style functional TypeScript:
-- Data + functions over classes and prototypes.
-- Model data with type aliases, tagged unions (string-literal tag), tuples, and plain records.
-- Implement behavior as top-level functions with explicit parameter and return types.
-- Extract small helpers when they make the code clearer; do not force a stage/task split.
-- Do not create new classes, inheritance, \`super\`, implicit \`this\`, private state, getters/setters, or class-based state machines.
-- If an existing class must change, modify it minimally; never create a dotted member with \`create\`.`;
-
-/** The canonical minimal plan example, shown to the planner. */
-export const TASK_PLAN_EXAMPLE = `plan "01-main"
-goal: Make the failing test pass.
-
-stage "02-current" plan "01-main"
-goal: Fix the answer behavior.
-end
-
-task "03-first" stage "02-current" verify test
-instruction: Make the failing test green.
-end
-
-edit "04-change" task "03-first" modify value answer in src/helper.ts
-instruction: Change answer to return 2.
-end`;
-
-/**
- * A greenfield module starts with a compiling skeleton. The first whole-file
- * write is deliberately small: types, signatures, and stubs only. Details are
- * filled by later declaration edits, and the skeleton gate is `tsc` so the
- * test suite is not asked to pass an empty implementation.
- */
-export const TASK_SCAFFOLD_PLAN_EXAMPLE = `plan "01-main"
-goal: Implement the JSON parser module.
-
-stage "02-current" plan "01-main"
-goal: Build the parser in verifiable layers.
-end
-
-task "03-scaffold" stage "02-current" verify tsc
-instruction: Create a compiling skeleton for src/json.ts.
-end
-
-edit "04-scaffold" task "03-scaffold" write src/json.ts
-instruction: Write only the exported types, signatures, and stub bodies; do not implement the behavior yet.
-end`;
-
-/**
- * Planner-only inspection. It uses the existing edit-protocol viewer grammar,
- * so the planner and executor share one address language and one fold/slice
- * renderer; no tool call or JSON request is involved.
- */
 export const TASK_PLANNER_VIEW = `Read-only inspection:
-Before a Plan or patch, you may reply with exactly one viewer statement:
+Before a Plan or patch, you may reply with one or more read-only viewer requests:
 
 select [kind] <symbol> in <path> [resolve value|type|namespace] [within <selecters>] end
 read <path> [within <selecters>] end
@@ -109,119 +46,134 @@ read <path> [within <selecters>] end
 A viewer writes nothing. A declaration viewer shows an indentation-folded
 outline; add \`within <start>-<end>\` for an exact slice. \`read\` returns a file
 outline, or an exact slice with \`within\`. Ranges are 1-based, inclusive, and
-file-absolute. The folded marker names the hidden range and the exact \`read\`
-command that expands it. After the source view, reply with the Plan/patch.
-Do not use \`replace\`, \`rename\`, \`write\`, \`create\`, or \`delete\` in a planner viewer.`;
+file-absolute. Each viewer consumes the run token budget; a repeated identical
+view or a no-progress cycle forces the Plan/patch reply. Never use \`replace\`,
+\`rename\`, \`write\`, \`create\`, or \`delete\` in a planner viewer.`;
 
 /**
- * A richer initial Plan example: one current Stage/Task with a same-file
- * related migration and a cross-file follow-up edit. The initial turn never
- * pre-plans future tasks.
+ * The functional style shared by the planner and executor prompts
+ * (`docs/plan-exec.md` §1.3). Keep this literal identical to the plan-exec block.
  */
-export const TASK_PLAN_COMPLEX_EXAMPLE = `plan "01-main"
-goal: Migrate the Formatter shape without breaking its callers.
+export const TASK_FUNCTIONAL_STYLE = `Prefer ML-style functional TypeScript:
+- Data + functions over classes and prototypes.
+- Model data with type aliases, tagged unions (string-literal tag), tuples, and plain records.
+- Implement behavior as top-level functions with explicit parameter and return types.
+- Extract small helpers when they make the code clearer; do not force an extra work node.
+- Do not create new classes, inheritance, \`super\`, implicit \`this\`, private state, getters/setters, or class-based state machines.
+- If an existing class must change, modify it minimally; never create a dotted member with \`create\`.`;
 
-stage "02-current" plan "01-main"
-goal: Migrate the Formatter shape without breaking its callers.
+/**
+ * Advisory editing techniques. The executor may choose, combine, or ignore
+ * these from the current source; they are never a gate.
+ */
+export const TASK_EDITING_TECHNIQUES = `Editing techniques (advice, not rules; compose or ignore them from the source):
+1. Small requirement on a small file -> one whole-file \`write\` is often the cheapest correct change.
+2. Large module -> scaffold the exported types, signatures, and stub bodies first, then fill bodies with targeted edits.
+3. Complex refactor -> introduce a parallel \`xxV1\` implementation, copy the existing behavior, test it, switch the call sites, then remove the old path.
+Later techniques can be added; no technique is a gate.`;
+
+const TASK_PLAN_EXAMPLE = `plan "01-main"
+goal: Make the failing test pass.
+
+node "02-answer" verify test
+instruction: Make the failing test green.
+hint value answer in src/helper.ts
+approach: The file and requirement are small; one whole-file write is often cheapest.
 end
 
-task "03-task-shape" stage "02-current" verify test
-instruction: Make Formatter and its direct formatting helper agree.
+finish`;
+
+const TASK_SCAFFOLD_PLAN_EXAMPLE = `plan "01-main"
+goal: Implement the workbook module.
+
+node "02-contract" verify tsc
+instruction: Create a compiling skeleton for src/workbook.ts with the exported types, signatures, and stub bodies.
+hint file src/workbook.ts
+approach: Scaffold the top-level declarations first; fill bodies with later targeted edits.
+phase: scaffold
 end
 
-edit "04-edit-shape" task "03-task-shape" modify type Formatter in src/format.ts
-related value formatNumber in src/format.ts
-instruction: Change the Formatter shape and update formatNumber atomically.
+node "03-impl" after "02-contract" verify test
+instruction: Implement evaluate and keep the suite green.
+hint value evaluate in src/workbook.ts
+hint type CellResult in src/workbook.ts
+phase: implement
 end
 
-edit "05-edit-print-total" task "03-task-shape" modify value printTotal in src/report.ts
-instruction: Make printTotal use the new Formatter shape.
+finish`;
+
+const TASK_PLAN_BRANCHING_EXAMPLE = `plan "01-main"
+goal: Add the parser and its formatter.
+
+node "02-parser" verify tsc
+instruction: Implement the parser functions and stub the formatter entry point.
+hint value parseValue in src/parser.ts
+end
+
+node "03-format" verify tsc
+instruction: Implement the formatter functions.
+hint value formatValue in src/format.ts
+end
+
+node "04-final" after "02-parser" "03-format" verify test
+instruction: Wire the entry point and keep the suite green.
+hint value parseFile in src/parser.ts
+end
+
+finish`;
+
+const TASK_PATCH_EXAMPLE = `patch
+node+ "05-repair" after "03-impl" verify tsc
+instruction: Repair the return path the last gate reported.
+hint value parseValue in src/parser.ts
 end`;
 
-/**
- * The canonical next-Task patch (`docs/plan-exec.md` §3.2): one new Task and its
- * edits, appended to the current stage.
- */
-export const TASK_PATCH_EXAMPLE = `patch
-task+ "05-next" stage "02-current" verify tsc
-instruction: Add the next helper and wire it in.
-end
-edit+ "06-helper" task "05-next" create value parseLiteral in src/helper.ts
-instruction: Add a small top-level helper; no class.
-end`;
-
-/**
- * A next-Stage patch with the new Stage's first Task and the final test
- * (`docs/plan-exec.md` §3.3).
- */
-export const TASK_PATCH_FINAL_EXAMPLE = `patch
-stage+ "07-next" plan "01-main"
-goal: Finish the remaining behavior.
-end
-task+ "08-final" stage "07-next" verify test
-instruction: Run the full behavior and keep the suite green.
-end
-edit+ "09-final" task "08-final" modify value parseJson in src/helper.ts
-instruction: Wire the final entry point; no new class.
+const TASK_PATCH_FINAL_EXAMPLE = `patch
+node+ "06-final" after "03-impl" verify test
+instruction: Wire the final entry point and keep the suite green.
+hint value parseFile in src/parser.ts
 end
 finish`;
 
-const TASK_INITIAL_PLAN_CONTRACT = `Initial reply:
-- one current Stage and one current Task;
-- one or more edit records;
-- every task record comes before every edit record;
-- no finish; later turns add work with patches.
-
-Invalid shape (rejected):
-task "03-first" ...
-edit "04-change" ...
-task "05-next" ... // a second Task belongs in a later patch
-`;
-
 const TASK_PLAN_FIELDS = `- The initial reply is the flat Plan DSL. Start with the singleton header \`plan "<id>"\`, then a \`goal:\` label. The Plan header has no \`end\`.
-- A stage record is \`stage "<id>" plan "<plan-id>"\`, then \`goal:\` and \`end\`. The initial Plan has one current Stage; later Stages are patches.
-- A task record is \`task "<id>" stage "<stage-id>" verify tsc|test\`, then \`instruction:\` and \`end\`. A task is a verification boundary: its gate runs after every edit in it settles. The initial Plan has one current Task in that Stage; later Tasks are patches.
-- An edit record targets one declaration: \`edit "<id>" task "<task-id>" <modify|create|delete|rename> <value|type|namespace> <symbol> in <path>\`, optional \`related <space> <symbol> in <path>\` lines (modify only), optional \`renameTo: <symbol>\` (rename only), then \`instruction:\` and \`end\`.
-- An edit record can write a whole file: \`edit "<id>" task "<task-id>" write <path>\`, then \`instruction:\` and \`end\`. It has no space or symbol.
-- Every id is a quoted "NN-slug": two or more digits, a hyphen, then lowercase kebab words (for example "01-main"). Ids are globally unique across the Plan, stages, tasks, and edits. Record order is execution order. There are no deps, todo, or status fields; the harness owns status.
-- All stage records come before all task records, and all task records come before all edit records. A parent ref must point at an earlier record: a stage's \`plan\`, a task's \`stage\`, an edit's \`task\`.
-- \`goal:\` and \`instruction:\` carry one-line text after the label, or an empty label followed by \`<<<TC_EDIT_BEGIN>>>\` on its own line, the raw text lines, then \`<<<TC_EDIT_END>>>\` on its own line. The body is raw: hyphen runs, backticks, \`done\`, and \`end\` are ordinary text lines. A stage, task, or edit record ends with \`end\`.
-- A trailing \`finish\` line marks the last task final. It is valid only as the last line, and only when that task verifies \`test\`. Only the task marked by \`finish\` must verify \`test\`; a work-in-progress tree may end in a \`tsc\` task.`;
+- A work node is \`node "<id>" [after "<id>"…] verify tsc|test\`, then \`instruction:\`, optional \`hint\` lines, optional \`approach:\`, optional \`phase:\`, then \`end\`.
+- \`after\` lists dependency node ids; the executor runs only nodes whose dependencies passed. A node may depend on a node declared later in the same reply as long as the graph stays acyclic. Record order is the deterministic readiness tie-break.
+- \`verify\` is the node gate: \`tsc\` runs the type check, \`test\` runs the type check and the test suite after each applied executor reply.
+- \`instruction:\` is a self-contained local goal for the executor; it does not see the requirement. Do not paste a whole file into an instruction.
+- \`hint file <path>\` marks a whole-file target; \`hint <value|type|namespace> <symbol> in <path>\` marks a declaration. Hints are advisory guidance, not an allowlist.
+- \`approach:\` is optional advisory strategy. \`phase:\` is an optional workflow label such as \`scaffold\` or \`implement\`; it never changes scheduling.
+- Every id is a quoted "NN-slug": two or more digits, a hyphen, then lowercase kebab words (for example "01-main"). Plan and node ids share one namespace and are globally unique.
+- \`goal:\`, \`instruction:\`, \`approach:\`, and \`phase:\` carry one-line text after the label, or an empty label followed by \`<<<TC_EDIT_BEGIN>>>\` on its own line, the raw text lines, then \`<<<TC_EDIT_END>>>\` on its own line. The body is raw: hyphen runs, backticks, \`done\`, and \`end\` are ordinary text lines. A node record ends with \`end\`.
+- A trailing \`finish\` line marks the last node final. It is valid only as the last line, and only when that node verifies \`test\`. A plan without \`finish\` may end in a \`tsc\` node, but the run cannot succeed until a final \`test\` node is marked and passes.`;
 
 const TASK_PLAN_RULES = `Rules:
-1. Choose the smallest structure that keeps each gate meaningful. One Stage, one Task, and one edit are valid when the change is cohesive, but a large greenfield module needs a compiling skeleton Task before behavior is filled in.
-2. Split only when a smaller Task improves verification or gives the executor a clearer address. Do not split just to match helper names or a fixed edit count.
+1. Choose the smallest graph that keeps each gate meaningful. One node is valid when its change is cohesive; a large greenfield module needs a compiling scaffold node before behavior is filled in.
+2. Use \`after\` only for a real prerequisite. Independent work may be ready at the same time; do not invent edges to force a favorite order.
 3. Prefer top-level functions with explicit types. Extract a helper when it makes the code easier to read; keep the caller thin.
-4. Use one declaration target per edit. Use \`related\` only for an atomic same-file type/representation migration; cross-file work is separate edits.
-5. A whole-file \`write <path>\` is allowed for a new file's compiling skeleton or an atomic file-wide representation change. For a greenfield module, write only the public types, signatures, and stub bodies first; fill behavior with later \`create\`/\`modify\` edits. Do not deliver the complete module in the first write, and do not use \`write\` as a generic repair.
-6. A create edit adds exactly one top-level declaration. A dotted class member is not a create target; modify the class instead.
-7. Instructions state the behavior and constraints. The executor can inspect the target; do not paste a whole file into an instruction.
-8. Do not target *.test.ts unless the requirement explicitly changes tests; copy required behavior into the instruction.
-9. Record order is execution order: an edit sees earlier edits, tasks see earlier tasks, and stages see earlier stages. Do not rely on later work.
-10. End the run with a \`test\` Task and a trailing \`finish\`; the initial Plan has no finish. If the current last test Task has passed, a bare \`patch\` + \`finish\` is enough.
-11. Do not plan a new class. If an existing class must change, modify it; never plan a dotted \`create\`.
-12. Emit only the Plan DSL records on the initial turn: no JSON, no markdown fence around the whole reply, and no prose. A single read-only viewer statement is the only non-Plan reply accepted before a Plan/patch.`;
+4. Hints identify likely targets, not every file the instruction may touch. The executor may edit outside them when the instruction requires it; review sees those edits.
+5. \`approach\` may recommend a whole-file write for a small change, scaffold-then-fill for a large module, or a parallel implementation for a risky refactor. Never make a technique mandatory.
+6. A \`create\` adds one top-level declaration. A dotted class member is not a create target; modify the class instead.
+7. Do not target *.test.ts unless the requirement explicitly changes tests; copy required behavior into the instruction.
+8. End the run with a \`test\` node and a trailing \`finish\`. If the current last test node has passed, a bare \`patch\` + \`finish\` is enough.
+9. Do not plan a new class. If an existing class must change, modify it; never plan a dotted \`create\`.
+10. Emit only the Plan DSL records on a planning turn: no JSON, no markdown fence around the whole reply, and no prose. A read-only viewer request is the only non-Plan reply accepted before a Plan/patch.
+11. There is no node-count, planning-round, viewer, or exchange cap. Growth is bounded by the token budget and repeated/no-progress detection.`;
 
-const TASK_PATCH_FIELDS = `Patch records (every later planning turn replies with exactly one patch, never a complete Plan):
+const TASK_PATCH_FIELDS = `Patch records (a later planning turn replies with one patch, not a complete Plan):
 - Start with the singleton header \`patch\`. Every operation ends with \`end\`; a trailing \`finish\` may follow the last operation. The patch header has no \`end\`.
-- \`plan~ "<id>"\`, then \`goal:\` and \`end\`, replaces the Plan goal; the id must match the current Plan.
-- \`stage+ "<id>" plan "<plan-id>"\`, then \`goal:\` and \`end\`, appends a Stage. A new Stage must include its first Task in the same patch.
-- \`stage~ "<id>"\`, optional \`goal:\`, then \`end\` updates a Stage; \`stage- "<id>"\` + \`end\` removes a pending/failed Stage.
-- \`task+ "<id>" stage "<stage-id>" verify tsc|test\`, then \`instruction:\` and \`end\`, appends one Task. A patch adds at most one new Task.
-- \`task~ "<id>"\`, optional \`verify\`, optional \`instruction:\`, then \`end\` changes a Task (a changed failed Task reopens); \`task- "<id>"\` + \`end\` removes pending/failed work.
-- \`edit+ "<id>" task "<task-id>" <action> <space> <symbol> in <path>\` or \`edit+ "<id>" task "<task-id>" write <path>\`, optional \`related\` / \`renameTo:\`, then \`instruction:\` and \`end\` appends an Edit. \`edit~ "<id>"\` updates present fields; \`edit- "<id>"\` + \`end\` removes pending/failed work.
-- \`finish\` as the last line marks the current last Task final; it must verify \`test\`. Adding work after the old final Task requires a new \`finish\` on the new last test Task.`;
+- \`node+ "<id>" [after "<id>"…] verify tsc|test\`, then \`instruction:\` and optional fields, appends one node. A patch may add any number of nodes.
+- \`node~ "<id>"\`, optional \`after\`, \`verify\`, \`instruction:\`, \`hint\` lines or \`hint clear\`, \`approach:\` or \`approach clear\`, \`phase:\` or \`phase clear\`, then \`end\` changes a node. A changed failed or review node reopens.
+- \`node- "<id>"\` + \`end\` removes a pending or failed node.
+- \`finish\` as the last line marks the current last node final; it must verify \`test\`. Adding work after the old final node requires a new \`finish\` on the new last test node.`;
 
 const TASK_PATCH_RULES = `Rules for a patch turn:
-1. Reply with exactly one \`patch\`. Do not re-emit the Plan or any unchanged records.
-2. Add at most one new Task. Adding a new Stage includes its first Task in the same turn.
-3. A new Stage is allowed only when the current Stage has no pending Task. A fully passed Stage cannot take a new Task; use a new Stage. A failed Stage may take a repair Task.
-4. Repair a failed Task in place first: change it (\`task~\`) and/or change or append a repair edit (\`edit~\`, \`edit+\`). A failed edit retries only with a changed definition.
-5. If an edit keeps failing on its address, narrow the symbol or split it into smaller edits. Use a whole-file \`write\` only when the task is explicitly a file-level rewrite, not as a generic repair fallback.
-6. Never change a passed Task or a done Edit, and keep the ids of nodes you keep.
-7. If the last Task is a passing test Task and no work remains, emit \`patch\` + \`finish\`. Otherwise plan the next Task, or one new Stage with its first Task. To finish with new work, plan one final \`test\` Task and emit \`finish\`.
-8. A patch may update/remove existing pending or failed work, but it must not introduce a future Task list.
-9. New ids must be unused. Record order is execution order.`;
+1. Reply with exactly one \`patch\`. Do not re-emit the Plan or unchanged records.
+2. Add any number of nodes in one patch when the graph needs them; do not artificially serialize independent work.
+3. Prefer repairing a failed node in place (\`node~\`) or appending a targeted repair node. A passed node is immutable; a node in review reopens only when its definition changes.
+4. If an executor repeatedly cannot land work, narrow the instruction or hints, split the work, or change the approach. Prefer a targeted repair after a failed large write; do not hard-reject a strategy.
+5. Keep the ids of nodes you keep. New ids must be unused. Existing nodes keep their record order; new nodes append.
+6. If the last node is a passing test node and no work remains, emit \`patch\` + \`finish\`. Otherwise plan the remaining work (or one final \`test\` node) and emit \`finish\` when the graph is complete.
+7. There is no per-turn node cap and no planning-round cap. Stop planning and act; the token budget and repeated/no-progress detection bound the run.`;
 
 export function buildTaskPlanningSystemPrompt(): string {
   return [
@@ -233,13 +185,23 @@ export function buildTaskPlanningSystemPrompt(): string {
     "",
     TASK_PLANNER_VIEW,
     "",
-    TASK_INITIAL_PLAN_CONTRACT,
+    "Minimal initial Plan:",
     "",
     TASK_PLAN_EXAMPLE,
     "",
+    "Scaffold-then-implement example:",
+    "",
     TASK_SCAFFOLD_PLAN_EXAMPLE,
     "",
+    "Branching DAG example:",
+    "",
+    TASK_PLAN_BRANCHING_EXAMPLE,
+    "",
+    "Repair patch example:",
+    "",
     TASK_PATCH_EXAMPLE,
+    "",
+    "Final test patch example:",
     "",
     TASK_PATCH_FINAL_EXAMPLE,
     "",
@@ -251,8 +213,6 @@ export function buildTaskPlanningSystemPrompt(): string {
     "",
     TASK_PATCH_RULES,
     "",
-    "Address a symbol-index entry or a safe whole-file path. A symbol that the index does not list is not a target unless the edit creates it.",
-    "",
   ].join("\n");
 }
 
@@ -262,48 +222,41 @@ export function buildTaskPlanningUserPrompt(
   indexText: string,
   specFiles: readonly SourceFile[] = [],
 ): string {
-  const prompt = `# Requirement\n\n${requirement}\n\n# Symbol index\n\n\`\`\`text\n${indexText}\n\`\`\`\n\nReply with the initial Plan DSL: one current Stage and one current Task, with one or more edits. Put every task record before every edit record. Do not add a second Task or finish; later turns add those with patches.\n`;
+  const prompt = `# Requirement\n\n${requirement}\n\n# Symbol index\n\n\`\`\`text\n${indexText}\n\`\`\`\n\nReply with the initial Plan DSL: a \`plan\` header, one or more \`node\` records, and a trailing \`finish\` when the graph is complete. You may inspect with read-only viewers first.\n`;
   return appendSpecSection(prompt, specFiles);
+}
+
+export interface TaskReplanInput {
+  state: PlanRunState;
+  /** Failed node diagnostics, keyed by node id. */
+  nodeFailures: ReadonlyMap<NodeId, string>;
+  /** Why no node is runnable, when the graph is blocked instead of failed. */
+  blocked?: string;
+  /** Fresh symbol index of the current workspace, after edits. */
+  symbolIndex?: string;
 }
 
 /**
  * A re-planning turn: the requirement stays in the cached prefix; this turn
- * carries the current tree, harness status, failed edits, failed task gates,
- * and (after a gate failure) the test output. It also names the delta the
- * planner must apply.
+ * carries the current graph, harness status, failed nodes, and the fresh symbol
+ * index. It may add any number of nodes, update/remove pending or failed work,
+ * or finish the graph.
  */
-export function buildTaskReplanPrompt(input: {
-  state: TaskRunState;
-  editFailures: ReadonlyMap<NodeId, string>;
-  taskFailures: ReadonlyMap<NodeId, string>;
-  /** The gate diagnostics, also rendered as a direct block. */
-  gateDiagnostics?: string;
-  /** Why no task is runnable, when the tree is blocked instead of failed. */
-  blocked?: string;
-  /** Fresh symbol index of the current workspace, after edits. */
-  symbolIndex?: string;
-  /** Explanation of what the planner may change in this reply. */
-  delta: string;
-}): string {
+export function buildTaskReplanPrompt(input: TaskReplanInput): string {
   const blocks = [
-    "# Plan tree",
+    "# Work graph",
     "",
-    renderTaskTree(input.state.stages),
+    renderNodeTree(input.state),
     "",
     "# Status",
     "",
-    renderTaskStatus(input.state),
+    renderNodeStatus(input.state),
   ];
-  const failedEdits = renderFailedEdits(input.state, input.editFailures);
-  if (failedEdits !== "") {
-    blocks.push("", "# Failed edits and diagnostics", "", failedEdits);
-  }
-  const failedTasks = renderFailedTaskGates(input.state, input.taskFailures);
-  if (failedTasks !== "") {
-    blocks.push("", "# Failed task gates and diagnostics", "", failedTasks);
-  }
-  if (input.gateDiagnostics !== undefined && input.gateDiagnostics.trim() !== "") {
-    blocks.push("", "# Gate results", "", "```", input.gateDiagnostics.trim(), "```");
+  const finalId = input.state.finalNodeId;
+  blocks.push("", `Final node: ${finalId === null ? "(not marked)" : `#${finalId}`}`);
+  const failed = renderFailedNodes(input.state, input.nodeFailures);
+  if (failed !== "") {
+    blocks.push("", "# Failed nodes and diagnostics", "", failed);
   }
   if (input.blocked !== undefined && input.blocked.trim() !== "") {
     blocks.push("", "# Blocked", "", input.blocked);
@@ -313,24 +266,19 @@ export function buildTaskReplanPrompt(input: {
   }
   blocks.push(
     "",
-    "# Amend the plan",
+    "# Amend the graph",
     "",
-    input.delta,
-    "",
-    "Reply with exactly one `patch` in the patch DSL, not a complete Plan. Add at most one new Task and at most one new Stage; a new Stage includes its first Task.",
+    "Reply with exactly one `patch`, not a complete Plan. Add any number of ready nodes; update or remove pending/failed nodes; keep passed nodes and their ids unchanged. If the last node is a passing test node, `patch` + `finish` is enough. Use the token budget and progress, not a fixed node count.",
   );
   return blocks.join("\n");
 }
 
 /**
- * The first-plan correction: a protocol/tree error, then the same ask. The
- * illustrative plan is appended only here, when the model has already failed
- * the shape once; the initial prompt stays lean.
+ * The first-plan correction: a protocol/graph error, then the same ask. The
+ * illustrative plan is appended only when the reply shape has already failed.
  */
 export function buildTaskPlanRetryPrompt(diagnostics: string, help = true): string {
-  const example = help
-    ? `\n\nExample of a valid initial Plan DSL (one current Stage and one current Task):\n\n${TASK_PLAN_COMPLEX_EXAMPLE}`
-    : "";
+  const example = help ? `\n\nExample of a valid initial Plan DSL:\n\n${TASK_PLAN_EXAMPLE}` : "";
   return `The previous plan was rejected.
 
 Diagnostics:
@@ -339,20 +287,16 @@ Diagnostics:
 ${diagnostics}
 \`\`\`
 
-Correct the shape:
-- Keep one current Stage and one current Task.
-- If the reply had multiple Tasks, keep only the current Task and its edits; add the rest with later patches.
-- Put every task record before every edit record.
-- Do not emit finish.${example}
+Correct the graph:
+- Keep one \`plan\` header with a \`goal:\`.
+- Emit flat \`node\` records with \`after\`, \`verify\`, \`instruction\`, and optional hints/approach/phase.
+- End each node with \`end\`.
+- Mark the last \`test\` node with a trailing \`finish\` when the graph is complete.${example}
 
-Reply with the complete, corrected initial Plan DSL only: one current Stage and one current Task.`;
+Reply with the complete, corrected initial Plan DSL only.`;
 }
 
-/**
- * The patch correction: a rejected patch keeps the planning turn alive, and
- * the reply must still be one patch rather than a re-emitted Plan. The patch
- * example is appended only when the reply shape has already failed once.
- */
+/** The patch correction: a rejected patch keeps the planning turn alive. */
 export function buildTaskPatchRetryPrompt(diagnostics: string, help = true): string {
   const example = help ? `\n\nExample of a valid patch:\n\n${TASK_PATCH_EXAMPLE}` : "";
   return `The previous patch was rejected.
@@ -361,193 +305,141 @@ Diagnostics:
 
 \`\`\`
 ${diagnostics}
-\`\`\`${example}
+\`\`\`
 
-Reply with exactly one corrected patch only. Do not re-emit the Plan.`;
+Reply with exactly one corrected \`patch\` only. Do not re-emit the Plan. Add any number of nodes; update or remove pending/failed work; keep passed nodes and their ids unchanged.${example}`;
 }
 
-const TASK_ACTION_RULES: Record<string, string> = {
-  modify:
-    "The declaration must already exist. Reply with one or more edit clauses that change it; a reply that writes nothing is rejected. A whole-declaration replace (no `match`/`pick`) must keep the same top-level declaration name and exact kind, such as `const` to `const` or `function` to `function`; an omitted `export` is tolerated.",
-  create:
-    "The declaration must be absent. create adds one top-level declaration; a dotted class member is not a target. Reply with a whole-declaration `select … replace with <fence> end` clause carrying no `match` or `pick`. The fence contains the declaration; a body without a declaration is wrapped by the edit's symbol space (value -> `let`, type -> `type`, namespace -> `namespace`). If several declarations are needed, split them into separate create edits; do not use a whole-file write just to avoid multiple creates.",
-  delete:
-    "Reply with a whole-declaration clause with an empty fence (no `match`, no `pick`) to remove the declaration.",
-  rename:
-    "Reply with `select … rename <current> to <newName> end`; the harness rewrites the declaration name and its same-file references and refuses a colliding name.",
-  write:
-    "The task replaces the whole file. Reply with exactly `write <path> with <fence>`; the sentinel close terminates the statement and the fence carries the complete file. Use this only for a declared file-level replacement or a skeleton; do not use it as a generic repair. Do not send `select`, `match`, `pick`, or `within`.",
-};
-
-/** The bounded self-check offer on an edit turn's repair prompt. */
-export const TASK_SELF_CHECK_OFFER =
-  'You may make at most one bounded self-check read per edit: reply with exactly {"request":"read"} to see the current source again; the harness returns it, then asks again.';
-
-/** Extra guidance after a malformed matcher. */
-export const TASK_MATCHER_FORMAT_HELP = `Matcher format:
-- match \`copied snippet\`
-- match /regex/
-- omit \`match\` for a whole-declaration rewrite
-
-The snippet must be a complete TypeScript statement or expression copied from
-the target, or a contiguous run of complete statements. Do not copy a partial
-function body with an unbalanced brace. If the span is hard to copy, omit
-\`match\` and replace the whole declaration.
-
-Never write \`match (\` or unquoted code after \`match\`; that is a syntax error.`;
-
-/** The first malformed-matcher correction on the next turn (#45). */
-export const TASK_MATCHER_CORRECTION = `Your previous matcher was malformed. Reply with exactly one of:
-- match \`complete snippet\` — a complete statement or expression, or a contiguous run of complete statements, copied from the target;
-- match /regex/ — a valid ECMA-262 pattern with no flags;
-- omit \`match\` and replace the whole declaration.
-
-The snippet must not be an unbalanced partial function body. Repeating \`match (\`,
-unquoted code after \`match\`, or a partial snippet is rejected. Do not substitute
-a whole-file \`write\` for this edit.`;
-
-/** The bounded whole-declaration fallback after a second malformed matcher (#45). */
-export const TASK_MATCHER_FALLBACK = `The matcher was malformed twice in a row. Omit \`match\` and \`pick\` and return
-the complete declaration in one \`select … replace with <fence> end\` clause. Do
-not send \`match\` or a partial snippet in this reply, and do not substitute a
-whole-file \`write\` for this edit.`;
-
-/** A malformed-matcher recovery state: one correction, then the bounded fallback. */
-export type TaskMatcherFailure = "malformed" | "repeated";
-
 /**
- * The repair-first constraint shown with advisory tsc diagnostics after a large
- * edit (#46). The advisory is not a gate: it never fails or reopens the applied
- * edit, and the final Task gate remains the only hard boundary.
- */
-export const TASK_POST_EDIT_ADVISORY_CONSTRAINT =
-  "Repair these errors first with a targeted `match`/`pick` change, a `create` for a missing declaration, or a whole-declaration/file replacement only when that replacement is the repair. Do not start unrelated work or repeat the large edit that caused them while the advisory is unresolved; the final Task gate still fails if they remain.";
-
-/**
- * The execution instruction. It teaches the same clause grammar as the edit
- * driver, but the target is already selected, so it omits the select-first
- * workflow and the raw file commands the executor rejects.
+ * The execution instruction. It teaches the same clause grammar as the
+ * edit-action driver, but the executor owns the target, action, and granularity.
  */
 export function taskEditDslInstruction(): string {
   return [
-    "A declaration edit is one or more `select … end` clauses; a whole-file edit is one `write <path> with <fence>` statement. No prose, no JSON edit payload.",
+    "A declaration edit is one or more `select … end` clauses; file commands are `create`, `delete`, `read`, and `write <path> with <fence>`. No prose, no JSON.",
     "",
-    "Every clause in one reply must resolve to a different declaration `(path, symbol, kind)`; target one declaration at most once per reply, even with different `match` or `pick` spans, and split edits to one declaration across exchanges.",
+    "Every clause in one reply must resolve to a different declaration `(path, symbol, kind)`; target one declaration at most once per reply, even with different `match` or `pick` spans, and split edits to one declaration across replies.",
     "",
     "Clause: `select <symbol> in <path> [ resolve <value|type|namespace> ] [ match (<snippet> | /regex/) ] [ [ pick <range> ] replace with <fence> | rename <old> to <new> ] end`.",
     "`match` accepts only a backtick snippet or `/regex/`; `match (` and unquoted code are rejected. A snippet must be a complete statement or expression, or a contiguous run of complete statements copied from the target, never an unbalanced partial function body; if the span is hard to copy, omit `match` and rewrite the whole declaration. It locates a span inside the declaration; `pick` narrows a match and requires `replace`; omit `match` to rewrite the whole declaration; an empty body deletes it. Open the body with `<<<TC_EDIT_BEGIN>>>` on its own line and close it with `<<<TC_EDIT_END>>>` on its own line; the body is raw text (hyphen runs, backticks, `done`, and `end` are ordinary body lines). `pick` coordinates are the 1-based file-absolute lines of the content view.",
-    "For a whole-file edit, `write <path> with <<<TC_EDIT_BEGIN>>> … <<<TC_EDIT_END>>>` replaces the file with the raw body; no terminator follows the sentinel close.",
+    "For a whole-file edit, `write <path> with <<<TC_EDIT_BEGIN>>> … <<<TC_EDIT_END>>>` replaces the file with the raw body; no terminator follows the sentinel close. `create <path> end` adds an empty file, `delete <path> end` removes one, and `read <path> [within <range>] end` only returns source.",
     "",
-    "You do not run the type check; the harness runs the task gate after every edit in the task settles. An edit may also change the same-file declarations listed in its `related` field.",
+    "You do not run the type check; the harness runs the node gate after every applied reply. Hints and `approach` are advice: edit outside the hinted paths when the instruction requires it, and choose the action and granularity that fit the source.",
   ].join("\n");
 }
 
-/**
- * One action-specific example, injected only after a format rejection. The
- * `wholeDeclaration` form drops the match-bearing modify example so the
- * repeated-matcher fallback cannot re-teach the rejected form (#45).
- */
-export function taskEditDslHelp(action: EditNode["action"], wholeDeclaration = false): string {
-  const examples: Record<EditNode["action"], string> = {
-    modify: wholeDeclaration
-      ? [
-          "select answer in src/a.ts resolve value",
-          "replace with",
-          "<<<TC_EDIT_BEGIN>>>",
-          "export function answer(): number {",
-          "  return 2;",
-          "}",
-          "<<<TC_EDIT_END>>>",
-          "end",
-        ].join("\n")
-      : [
-          "select answer in src/a.ts resolve value",
-          "match `return 1;`",
-          "pick 2",
-          "replace with",
-          "<<<TC_EDIT_BEGIN>>>",
-          "return 2;",
-          "<<<TC_EDIT_END>>>",
-          "end",
-        ].join("\n"),
-    create: [
-      "select double in src/a.ts resolve value",
-      "replace with",
-      "<<<TC_EDIT_BEGIN>>>",
-      "export function double(value: number): number {",
-      "  return value * 2;",
-      "}",
-      "<<<TC_EDIT_END>>>",
-      "end",
-    ].join("\n"),
-    delete: [
-      "select unused in src/a.ts resolve value",
-      "replace with",
-      "<<<TC_EDIT_BEGIN>>>",
-      "<<<TC_EDIT_END>>>",
-      "end",
-    ].join("\n"),
-    rename: ["select answer in src/a.ts resolve value", "rename answer to result", "end"].join(
-      "\n",
-    ),
-    write: [
-      `write src/a.ts with`,
-      "<<<TC_EDIT_BEGIN>>>",
-      "export function answer(): number {",
-      "  return 2;",
-      "}",
-      "<<<TC_EDIT_END>>>",
-    ].join("\n"),
-  };
-  return `Example for this action:\n\n${examples[action]}`;
-}
-
-/** The execution system prompt: the editing grammar, stable for the whole tree. */
+/** The execution system prompt: the editing grammar and techniques, stable per node. */
 export function buildTaskExecutionSystemPrompt(): string {
   return [
     TASK_EXECUTION_ROLE,
     "",
     TASK_FUNCTIONAL_STYLE,
     "",
-    TASK_EXECUTION_WORKFLOW,
-    "",
-    'The current source is included with each edit. Reply with only the clauses that carry the edit out; no prose and no JSON. After a rejected edit, the one JSON exception is the bounded self-check read {"request":"read"}; the harness returns the source, then asks again. Land this edit and stop; the task gate runs after every edit in the task settles.',
-    "",
-    "Use the stage goal and task instruction as the local design. Keep unrelated work out of this edit.",
+    TASK_EDITING_TECHNIQUES,
     "",
     taskEditDslInstruction(),
+    "",
+    "Reply with only the clauses that carry the node out; no prose and no JSON. The harness runs the node gate after every applied reply. There is no fixed attempt limit: a repeated no-progress reply or the token budget ends the node.",
     "",
   ].join("\n");
 }
 
-export interface TaskTurnInput {
-  state: TaskRunState;
-  stage: Stage;
-  task: TaskNode;
-  edit: EditNode;
-  /** Numbered, file-absolute source view for the current target (or the file). */
-  contentView: string;
-  /** First line number of `contentView`'s first line (1 for a whole file). */
-  startLine?: number;
-  /** Diagnostics from the previous rejected/failed exchange, or the opening state. */
-  diagnostics?: string;
-  /** Stage/task coordination context (for example an earlier failed gate). */
-  context?: string;
-  /**
-   * Raw tsc diagnostics from the previous large edit in this Task. Rendered as
-   * an advisory block with a repair-first constraint, never as a gate failure.
-   */
-  postEditDiagnostics?: string;
-  /** Append one action-specific example after a format/address rejection. */
-  help?: boolean;
-  /**
-   * Malformed-matcher recovery for this turn: `malformed` is the first
-   * correction, `repeated` demands a whole-declaration rewrite (#45).
-   */
-  matcherFailure?: TaskMatcherFailure;
+export interface TaskSourceView {
+  /** A short label, e.g. `file "src/a.ts"` or `value "answer" in "src/a.ts"`. */
+  label: string;
+  /** Raw source slice; numbered by the prompt. */
+  source: string;
+  /** 1-based file-absolute line number of the first source line. */
+  startLine: number;
+  /** Optional note when the hint did not resolve. */
+  note?: string;
 }
 
-function numberedView(source: string, startLine = 1): string {
+export interface TaskTurnInput {
+  node: WorkNode;
+  /** Current source views for the node's hints (file or declaration). */
+  views: readonly TaskSourceView[];
+  /** Diagnostics from the previous rejected attempt. */
+  diagnostics?: string;
+  /** Gate diagnostics from the previous applied attempt. */
+  gateDiagnostics?: string;
+  /** Read/viewer feedback from the previous attempt; writes nothing. */
+  feedback?: string;
+}
+
+function renderSourceView(view: TaskSourceView): string[] {
+  const lines = [
+    `## ${view.label}`,
+    "",
+    ...(view.note === undefined ? [] : [view.note, ""]),
+    "```text",
+    view.source.trim() === "" ? "(missing or empty)" : view.source,
+    "```",
+  ];
+  return lines;
+}
+
+/**
+ * One execution turn: the work node, its advice, prior diagnostics, then the
+ * current source views as the volatile tail.
+ */
+export function buildTaskTurnPrompt(input: TaskTurnInput): string {
+  const { node } = input;
+  const blocks = [
+    "# Work node",
+    "",
+    `#${node.id} (verify ${node.verify})`,
+    "",
+    `Instruction: ${node.instruction}`,
+  ];
+  if (node.hints.length > 0) {
+    blocks.push("", "Hints (advice; edit outside them when the instruction requires it):");
+    for (const hint of node.hints) {
+      blocks.push(`- ${formatHint(hint)}`);
+    }
+  } else {
+    blocks.push("", "Hints: none. Inspect the source with `read` if you need more.");
+  }
+  if (node.approach !== undefined) {
+    blocks.push("", `Approach (advice; override it from the source): ${node.approach}`);
+  }
+  if (node.phase !== undefined) {
+    blocks.push("", `Phase: ${node.phase}`);
+  }
+  if (input.diagnostics !== undefined && input.diagnostics.trim() !== "") {
+    blocks.push("", "# Diagnostics", "", "```", input.diagnostics.trim(), "```");
+  }
+  if (input.gateDiagnostics !== undefined && input.gateDiagnostics.trim() !== "") {
+    blocks.push(
+      "",
+      "# Gate diagnostics",
+      "",
+      "The previous applied reply did not pass this node's gate. Repair these errors and try again.",
+      "",
+      "```",
+      input.gateDiagnostics.trim(),
+      "```",
+    );
+  }
+  if (input.feedback !== undefined && input.feedback.trim() !== "") {
+    blocks.push("", "# Source feedback", "", input.feedback.trim());
+  }
+  blocks.push("", "# Source views", "");
+  if (input.views.length === 0) {
+    blocks.push("No hinted source is available; inspect the workspace with `read` first.");
+  } else {
+    for (const view of input.views) {
+      blocks.push(...renderSourceView(view), "");
+    }
+  }
+  blocks.push(
+    "Reply with the edit-dsl clauses or file commands for this work node. You may use multiple clauses and multiple actions in one reply; each declaration may appear at most once.",
+  );
+  return blocks.join("\n");
+}
+
+/** Render a declaration (or file) region for a source view. */
+export function renderTaskContentView(source: string, startLine = 1): string {
   const lines = splitSourceLines(source);
   if (lines.length === 0) {
     return "";
@@ -559,157 +451,57 @@ function numberedView(source: string, startLine = 1): string {
 }
 
 /**
- * One execution turn: stage goal, task goal, the current micro edit, and the
- * content view last (the volatile tail). The tree structure is in the
- * execution system prompt once; repeating it here would invalidate the
- * cache-stable prefix on every turn.
- */
-export function buildTaskTurnPrompt(input: TaskTurnInput): string {
-  const { stage, task, edit } = input;
-  const taskStatus = input.state.taskStatus.get(task.id) ?? "pending";
-  const editStatus = input.state.editStatus.get(edit.id) ?? "todo";
-  const action =
-    edit.action === "rename" ? `rename to ${JSON.stringify(edit.renameTo)}` : edit.action;
-  const blocks = [
-    "# Stage",
-    "",
-    `#${stage.id} — ${stage.goal}`,
-    "",
-    "# Task",
-    "",
-    `#${task.id} (verify ${task.verify}) — ${taskStatus}`,
-    "",
-    `Task goal: ${task.instruction}`,
-    "",
-    "# Micro edit",
-    "",
-    `#${edit.id} (${action}) — ${editStatus}`,
-    "",
-    `Target: ${formatTaskLoc(edit.loc)}`,
-    ...(edit.related === undefined || edit.related.length === 0
-      ? []
-      : [
-          "",
-          `Related targets (same migration): ${edit.related
-            .map((loc) => formatTaskLoc(loc))
-            .join(", ")}`,
-        ]),
-    "",
-    `Instruction: ${edit.instruction}`,
-    "",
-    TASK_ACTION_RULES[edit.action] ?? "",
-  ];
-  if (input.context !== undefined && input.context.trim() !== "") {
-    blocks.push("", "# Context", "", input.context);
-  }
-  if (input.postEditDiagnostics !== undefined && input.postEditDiagnostics.trim() !== "") {
-    blocks.push(
-      "",
-      "# Post-edit type diagnostics",
-      "",
-      "The previous large edit left advisory type diagnostics. This is not a task gate failure: the edit stays applied and `done`, and the final Task gate is still the hard boundary.",
-      "",
-      "```",
-      input.postEditDiagnostics.trim(),
-      "```",
-      "",
-      TASK_POST_EDIT_ADVISORY_CONSTRAINT,
-    );
-  }
-  if (input.diagnostics !== undefined && input.diagnostics.trim() !== "") {
-    blocks.push(
-      "",
-      "# Diagnostics",
-      "",
-      "```",
-      input.diagnostics.trim(),
-      "```",
-      "",
-      TASK_SELF_CHECK_OFFER,
-    );
-    if (
-      input.matcherFailure === undefined &&
-      (input.diagnostics.includes("EDIT_MATCHER_MISSING") ||
-        input.diagnostics.includes("stage: matcher"))
-    ) {
-      blocks.push("", "# Matcher format", "", TASK_MATCHER_FORMAT_HELP);
-    }
-  }
-  if (input.matcherFailure !== undefined) {
-    blocks.push(
-      "",
-      "# Matcher correction",
-      "",
-      input.matcherFailure === "repeated" ? TASK_MATCHER_FALLBACK : TASK_MATCHER_CORRECTION,
-    );
-  }
-  if (input.help === true) {
-    blocks.push(
-      "",
-      "# Format help",
-      "",
-      taskEditDslHelp(edit.action, input.matcherFailure === "repeated"),
-    );
-  }
-  blocks.push(
-    "",
-    "# Content view",
-    "",
-    input.startLine === undefined || input.startLine <= 1
-      ? "Each line below is prefixed with its 1-based line number."
-      : `Each line below is prefixed with its 1-based file-absolute line number; the target declaration starts at line ${input.startLine}.`,
-    "",
-    "```text",
-    input.contentView.trim() === "" ? "(empty)" : input.contentView,
-    "```",
-    "",
-    "Reply with the clauses for this micro edit. The task gate runs after every edit in the task settles.",
-  );
-  return blocks.join("\n");
-}
-
-/** Render a declaration (or file) region for the content view. */
-export function renderTaskContentView(source: string, startLine = 1): string {
-  return numberedView(source, startLine);
-}
-
-/**
- * The post-execution review turn (#32). It is deliberately short: the planner
- * already has the Plan and requirement in the cached prefix, so this turn only
- * adds the gate verdict, the current Task, and the applied diff. Full files are
- * never repeated; the diff carries 2-3 lines of context around each change.
- * A malformed review reply gets one format retry in the same review turn.
+ * The post-execution review turn. The planner already has the requirement and
+ * graph in the cached prefix; this turn adds the gate verdict, the node's
+ * advice, any out-of-hint paths, and the applied diff.
  */
 export interface TaskReviewInput {
-  stage: Stage;
-  task: TaskNode;
+  node: WorkNode;
   gate: {
-    /** Gate kind; defaults to the Task's own verify when omitted. */
-    verify?: TaskVerify;
+    /** Gate kind; defaults to the node's own verify when omitted. */
+    verify?: WorkVerify;
     ok: boolean;
     diagnostics: string | null;
   };
-  /** Concise applied diff from the Task's cached base to the current files. */
+  /** Concise applied diff from the node's cached base to the current files. */
   diff: string;
+  /** Changed paths that the node's hints did not name. */
+  outOfHint?: readonly string[];
 }
 
 export function buildTaskReviewPrompt(input: TaskReviewInput): string {
-  const { stage, task, gate } = input;
-  const verify = gate.verify ?? task.verify;
-  const edits = task.edits.map(
-    (edit) => `- #${edit.id} ${edit.action} ${formatTaskLoc(edit.loc)}: ${edit.instruction}`,
-  );
+  const { node, gate } = input;
+  const verify = gate.verify ?? node.verify;
   const blocks = ["# Review", "", `Gate: ${verify} ${gate.ok ? "passed" : "failed"}.`];
   if (gate.diagnostics !== null && gate.diagnostics.trim() !== "") {
     blocks.push("", "```", gate.diagnostics.trim(), "```");
   }
   blocks.push(
     "",
-    `Stage #${stage.id} goal: ${stage.goal}`,
-    `Task #${task.id} (verify ${task.verify}) — review`,
-    `Instruction: ${task.instruction}`,
-    "Edits:",
-    ...edits,
+    `Work node #${node.id} (verify ${node.verify})`,
+    `Instruction: ${node.instruction}`,
+  );
+  if (node.hints.length > 0) {
+    blocks.push("Hints:");
+    for (const hint of node.hints) {
+      blocks.push(`- ${formatHint(hint)}`);
+    }
+  }
+  if (node.approach !== undefined) {
+    blocks.push(`Approach (advice): ${node.approach}`);
+  }
+  if (node.phase !== undefined) {
+    blocks.push(`Phase: ${node.phase}`);
+  }
+  if (input.outOfHint !== undefined && input.outOfHint.length > 0) {
+    blocks.push(
+      "",
+      "# Out-of-hint edits",
+      "",
+      `These changed paths were not named by the node's hints; confirm the instruction required them: ${input.outOfHint.join(", ")}`,
+    );
+  }
+  blocks.push(
     "",
     "# Applied diff",
     "",
@@ -718,18 +510,15 @@ export function buildTaskReviewPrompt(input: TaskReviewInput): string {
     "```",
     "",
     "Reply with exactly `approve` or one `patch`; no prose and no other format.",
-    "- `approve` when this Task needs no repair: the gate passed and the applied diff matches the instruction; if the gate failed, prefer a repair patch unless the failure lies outside this Task.",
-    `- A patch may only repair this Task #${task.id}. Use \`task~ "${task.id}"\` for the Task, or \`edit+ "<new-id>" task "${task.id}" ...\`, \`edit~ "<edit-id>"\`, and \`edit- "<edit-id>"\` for its edits. It may carry \`finish\` when this is the last \`test\` Task.`,
-    `- \`edit+\` keeps \`task "${task.id}"\`; \`edit~\` and \`edit-\` take only the edit id. Do not repeat \`task\`; the parent is the current Task #${task.id}.`,
-    "- A passed scaffold is approved when its diff matches the instruction; put any semantic correction in a later Task/Stage.",
-    "- A done edit is immutable. Never use `edit~` on a done edit. If the gate failed after an edit landed, append a new repair edit with `edit+`; prefer a targeted `modify`. Use a whole-file `write` only when this Task is explicitly a file-level rewrite.",
-    "- To repair a failed edit that has not landed, `edit~` is allowed; to repair after a done edit, use `edit+`.",
-    "- Do not add a Stage or Task, do not edit another Task, and do not re-emit the Plan.",
+    "- `approve` when the gate passed and the applied diff implements the instruction.",
+    "- A patch may repair this node, its hints, its dependencies, or add follow-up nodes. Prefer a targeted repair after a failed large write, but do not hard-reject a strategy.",
+    `- Use \`node~ "${node.id}"\` to change this node; a changed node reopens and executes again. \`node+\` adds work; \`node-\` removes pending or failed work. Keep passed nodes immutable.`,
+    "- A review patch may carry `finish` when the last node is a `test` node.",
   );
   return blocks.join("\n");
 }
 
-/** One bounded format retry for a malformed review reply (#32). */
+/** A format retry for a malformed review reply. */
 export function buildTaskReviewRetryPrompt(diagnostics: string): string {
   return `# Review retry
 
@@ -741,56 +530,5 @@ Diagnostics:
 ${diagnostics}
 \`\`\`
 
-Reply with exactly \`approve\` or one corrected \`patch\`; no prose. A patch may only repair the current Task. \`edit~\` and \`edit-\` take only the edit id; do not repeat \`task\`.`;
-}
-
-/**
- * One bounded correction after a review patch tries to mutate a done edit. The
- * edit is immutable; the planner either approves the scaffold/current result or
- * appends a fresh repair edit with the next unused id.
- */
-export function buildTaskReviewDoneEditRetryPrompt(diagnostics: string): string {
-  return `# Review retry
-
-The previous review patch tried to change a done edit.
-
-Diagnostics:
-
-\`\`\`
-${diagnostics}
-\`\`\`
-
-Do not use \`edit~\` or \`edit-\` on a done edit. Either:
-- reply \`approve\` when the current result is acceptable and put follow-up work in a later Task; or
-- append a new repair edit with \`edit+ "<new-id>" task "<current-task>" ...\` and its instruction.
-
-Reply with exactly \`approve\` or one corrected \`patch\`; no prose. A done edit is immutable.`;
-}
-
-/** The planner's patch-delta sentence for the common causes. */
-export function replanDelta(input: {
-  failedEditIds: readonly NodeId[];
-  failedTaskIds: readonly NodeId[];
-  blocked: boolean;
-}): string {
-  const rules = [
-    "Reply with one `patch`, not a Plan. Keep every passed task and done edit exactly as it is, and keep the ids of nodes you keep.",
-    "Add at most one new Task. Adding a new Stage includes its first Task in the same turn; a new Stage is allowed only when the current Stage has no pending Task.",
-    "A failed edit may be retried by changing its definition. A failed task reopens when you change it or add repair edits; a passed task is immutable.",
-    "Repair a failed task in the current Stage first: change it or add a small repair edit. A fully passed Stage cannot take a new Task; use a new Stage.",
-    "New tasks append to their stage; new stages append after existing stages; new edits append to their task. New ids must be unused.",
-    "Record order is execution order. There are no deps, todo, or status fields; do not add them.",
-    "Every task must be able to pass its own gate. To end the run, plan a final `test` task and emit `finish`; if the last task is already a passing test task, `patch` + `finish` is enough.",
-    "If an edit keeps failing on its address, stop retrying it: narrow the symbol or split it into smaller edits. Use a whole-file `write` only for a file-level rewrite, not as a generic repair.",
-    "Keep helpers when they make the code easier to read; do not add edits just to mirror helper names.",
-  ];
-  const lead =
-    input.failedEditIds.length > 0
-      ? `The edit(s) ${input.failedEditIds.map((id) => `#${id}`).join(", ")} could not be carried out. Fix the cause with a changed definition or a smaller follow-up edit.`
-      : input.failedTaskIds.length > 0
-        ? `The task gate(s) ${input.failedTaskIds.map((id) => `#${id}`).join(", ")} failed after their edits settled. Repair that task in place, or add a later repair task; a final test task still needs finish.`
-        : input.blocked
-          ? "No task is runnable. Repair the current work, or plan the next Task/Stage (or final test + finish) so the run can continue."
-          : "Continue the plan with one patch.";
-  return [lead, "", ...rules.map((rule) => `- ${rule}`)].join("\n");
+Reply with exactly \`approve\` or one corrected \`patch\`; no prose. A patch may repair the current node, its hints or dependencies, or add follow-up work.`;
 }

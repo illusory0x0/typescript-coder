@@ -42,12 +42,7 @@ import {
   canonicalAgentMode,
 } from "./loop";
 import type { AgentMode, ProtocolFormat } from "./loop";
-import {
-  buildTaskExecutionSystemPrompt,
-  buildTaskPlanningSystemPrompt,
-  MAX_TASK_EXCHANGES,
-  MAX_TASK_PLAN_ROUNDS,
-} from "./prompts/task";
+import { buildTaskExecutionSystemPrompt, buildTaskPlanningSystemPrompt } from "./prompts/task";
 
 /** Frozen task names the benchmark measures. */
 export const TASK_NAMES = ["json-parser", "sexp-parser", "minilisp"] as const;
@@ -94,12 +89,15 @@ export interface LoopConfig {
   readonly multiPayload: boolean;
   /**
    * Hash literal for the plan/execute loop (#34). The canonical `plan-exec`
-   * writes this string, keeping recorded plan-exec provenance byte-identical.
+   * writes this string so recorded plan-exec provenance identifies the driver.
    * Pinned-repair omits the field, preserving the historical edit-loop hashes.
    */
   readonly agentMode?: "plan-exec";
-  readonly taskMaxExchanges?: number;
-  readonly taskMaxPlanRounds?: number;
+  /**
+   * The plan-exec graph protocol. `work-dag` identifies the hints-based
+   * WorkNode driver, which has no fixed exchange/round caps.
+   */
+  readonly planExec?: "work-dag";
 }
 
 export interface CurrentInputOptions {
@@ -183,8 +181,7 @@ export function loopConfigHashInput(options: {
     ? {
         ...base,
         agentMode: "plan-exec",
-        taskMaxExchanges: MAX_TASK_EXCHANGES,
-        taskMaxPlanRounds: MAX_TASK_PLAN_ROUNDS,
+        planExec: "work-dag",
       }
     : base;
 }

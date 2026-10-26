@@ -1,25 +1,26 @@
 /**
  * The flat Plan DSL (`docs/plan-exec.md` §3) and patch DSL (§4): strict parsers
  * and serializers for the planner's initial reply and incremental re-plans.
- * Records are independent and name their parent by id: a `plan` header, then
- * all `stage` records, then all `task` records, then all `edit` records. A
- * patch applies the same records with `+` / `~` / `-` operators to a clone of
- * the current tree. The tree validator lives in `src/tasks.ts`; this module
- * only turns the wire form into that tree and runs the merge.
+ * Records are independent: a `plan` header, then flat `node` records in record
+ * order, then an optional trailing `finish`. A patch applies `node+` / `node~` /
+ * `node-` operators and `finish` to a clone of the current graph. The graph
+ * validator lives in `src/tasks.ts`; this module only turns the wire form into
+ * that graph and runs the merge.
  *
- * The #33 layer makes both parsers tolerant: a whole-reply fence, a bare id,
- * and an unambiguous missing `end` recover with warnings; structure is still
- * rejected all-or-nothing, with shared bounded diagnostics (see
- * `src/dsl-diagnostics.ts`). There is no JSON fallback.
+ * Both parsers are tolerant in the same ways as before: a whole-reply fence, a
+ * bare id, and an unambiguous missing `end` recover with warnings; structure is
+ * still rejected all-or-nothing, with shared bounded diagnostics (see
+ * `src/dsl-diagnostics.ts`). There is no JSON fallback and no legacy
+ * Stage/Task/Edit mode.
  */
 import {
-  finalTask,
+  finalNode,
+  HINT_SPACES,
   mergeReplan,
   NODE_ID_PATTERN,
-  TASK_ACTIONS,
-  TASK_SPACES,
-  TASK_VERIFIES,
-  validatePlanTree,
+  validateFinalNode,
+  validatePlan,
+  WORK_VERIFIES,
 } from "./tasks";
 import { renderDslIssues } from "./dsl-diagnostics";
 import type { DslIssue, DslParseResult, DslStage } from "./dsl-diagnostics";
@@ -30,23 +31,49 @@ import {
   isLegacyEditFence,
 } from "./selection";
 import type {
-  EditNode,
+  HintLoc,
   NodeId,
   Plan,
   PlanMerge,
   PlanParse,
-  Stage,
-  TaskAction,
-  TaskLoc,
-  TaskNode,
-  TaskRunState,
-  TaskVerify,
+  PlanRunState,
+  WorkNode,
+  WorkVerify,
 } from "./tasks";
 import type { SymbolSpace } from "./utility";
 
-const ACTION_SET: ReadonlySet<string> = new Set(TASK_ACTIONS);
-const VERIFY_SET: ReadonlySet<string> = new Set(TASK_VERIFIES);
-const SPACE_SET: ReadonlySet<string> = new Set(TASK_SPACES);
+/**
+ * Plan diagnostics use the shared `stage:` channel with WorkNode vocabulary
+ * (`plan-protocol` and `plan-graph`).
+ */
+type DiagnosticStage = DslStage;
+
+const VERIFY_SET: ReadonlySet<string> = new Set(WORK_VERIFIES);
+const SPACE_SET: ReadonlySet<string> = new Set(HINT_SPACES);
+
+/**
+ * Record headers from the old Stage/Task/Edit hierarchy. They are rejected with
+ * a dedicated diagnostic instead of being guessed as unknown fields.
+ */
+const LEGACY_KEYWORDS: ReadonlySet<string> = new Set([
+  "stage",
+  "task",
+  "edit",
+  "plan~",
+  "stage+",
+  "stage~",
+  "stage-",
+  "task+",
+  "task~",
+  "task-",
+  "edit+",
+  "edit~",
+  "edit-",
+]);
+
+function isLegacyKeyword(keyword: string): boolean {
+  return LEGACY_KEYWORDS.has(keyword);
+}
 
 interface Line {
   text: string;
@@ -76,10 +103,10 @@ class PlanSyntaxError extends Error {
   }
 }
 
-/** A successfully parsed initial Plan; `finalTaskId` is null without `finish`. */
+/** A successfully parsed initial Plan; `finalNodeId` is null without `finish`. */
 export interface ParsedPlan {
   plan: Plan;
-  finalTaskId: NodeId | null;
+  finalNodeId: NodeId | null;
 }
 
 function quote(value: string): string {
@@ -108,7 +135,7 @@ interface IssueOptions {
   found?: string;
   hint?: string;
   recordId?: string;
-  stage?: DslStage;
+  stage?: DiagnosticStage;
   severity?: "error" | "warning";
 }
 
@@ -125,7 +152,7 @@ function issueAt(
   const severity = options.severity ?? "error";
   return {
     severity,
-    stage: options.stage ?? "task-protocol",
+    stage: (options.stage ?? "plan-protocol") as DslIssue["stage"],
     code,
     message,
     line: options.line ?? currentLine(cursor),
@@ -137,6 +164,11 @@ function issueAt(
     recovered: severity === "warning",
     ...(options.recordId === undefined ? {} : { recordId: options.recordId }),
   };
+}
+
+/** Distinguish graph validation failures from protocol failures. */
+function isPlanGraphStage(stage: DslIssue["stage"]): boolean {
+  return stage === "plan-graph";
 }
 
 function report(
@@ -293,25 +325,33 @@ function quotedId(
         column: tokenColumn(line, token),
         found: value,
         recordId,
-        hint: 'use ids like "02-current" or "03-task-answer"',
+        hint: 'use ids like "02-scaffold" or "03-impl"',
       },
     );
   }
   return value;
 }
 
+function isPlanBoundary(trimmed: string): boolean {
+  return trimmed === "finish" || /^(plan|node|stage|task|edit)\b/.test(trimmed);
+}
+
+function isPatchBoundary(trimmed: string): boolean {
+  return (
+    trimmed === "finish" ||
+    /^(patch\b|node[+~-]|plan~|stage[+~-]|task[+~-]|edit[+~-])/.test(trimmed)
+  );
+}
+
 function isRecordBoundary(cursor: Cursor, trimmed: string): boolean {
-  if (trimmed === "finish") {
-    return true;
-  }
-  if (cursor.mode === "plan") {
-    return /^(plan|stage|task|edit)\b/.test(trimmed);
-  }
-  return /^(patch\b|plan~|stage[+~-]|task[+~-]|edit[+~-])/.test(trimmed);
+  return cursor.mode === "plan" ? isPlanBoundary(trimmed) : isPatchBoundary(trimmed);
 }
 
 function looksLikeField(trimmed: string): boolean {
-  return /^[A-Za-z][\w-]*:/.test(trimmed) || /^(verify|related)\b/.test(trimmed);
+  return (
+    /^[A-Za-z][\w-]*:/.test(trimmed) ||
+    /^(verify|related|hint|after|approach|phase)\b/.test(trimmed)
+  );
 }
 
 function warnMissingEnd(
@@ -350,19 +390,16 @@ function warnMissingEnd(
   );
 }
 
+type TextFieldLabel = "goal:" | "instruction:" | "approach:" | "phase:";
+
 /**
- * Read `goal:` / `instruction:` text: the rest of the label line, or an empty
- * label followed by a `<<<TC_EDIT_BEGIN>>>` line and raw body lines closed by an
- * exact `<<<TC_EDIT_END>>>` line. Fenced raw lines are kept exactly as sent. A
- * missing label, empty text, or unclosed fence is an error; legacy hyphen and
- * backtick fences are rejected with a hint to use the sentinel.
+ * Read one text field: the rest of the label line, or an empty label followed by
+ * a `<<<TC_EDIT_BEGIN>>>` line and raw body lines closed by an exact
+ * `<<<TC_EDIT_END>>>` line. Fenced raw lines are kept exactly as sent. A missing
+ * label, empty text, or unclosed fence is an error; legacy hyphen and backtick
+ * fences are rejected with a hint to use the sentinel.
  */
-function readText(
-  cursor: Cursor,
-  label: "goal:" | "instruction:",
-  where: string,
-  recordId?: string,
-): string {
+function readText(cursor: Cursor, label: TextFieldLabel, where: string, recordId?: string): string {
   const line = peekNonBlank(cursor);
   if (line === null) {
     cursor.truncated = true;
@@ -519,7 +556,7 @@ function readText(
       const next = peekNonBlank(cursor);
       if (next !== null) {
         const after = next.text.trim();
-        if (after !== "end" && !isRecordBoundary(cursor, after)) {
+        if (after !== "end" && !isRecordBoundary(cursor, after) && !looksLikeField(after)) {
           fail(
             cursor,
             "PLAN_EMBEDDED_FENCE_END",
@@ -564,7 +601,7 @@ function expectEnd(cursor: Cursor, where: string, recordId?: string): void {
     cursor.position += 1;
     return;
   }
-  if (cursor.mode === "patch" ? isPatchBoundary(trimmed) : isPlanBoundary(trimmed)) {
+  if (isRecordBoundary(cursor, trimmed)) {
     warnMissingEnd(cursor, where, recordId, next);
     return;
   }
@@ -583,139 +620,434 @@ function expectEnd(cursor: Cursor, where: string, recordId?: string): void {
   );
 }
 
-function isPlanBoundary(trimmed: string): boolean {
-  return trimmed === "finish" || /^(plan|stage|task|edit)\b/.test(trimmed);
-}
-
-function isPatchBoundary(trimmed: string): boolean {
-  return trimmed === "finish" || /^(patch\b|plan~|stage[+~-]|task[+~-]|edit[+~-])/.test(trimmed);
-}
-
-interface RecordState {
-  planId: NodeId;
-  stages: Map<NodeId, Stage>;
-  tasks: Map<NodeId, TaskNode>;
-  idLines: Map<NodeId, Line>;
-}
-
-function claimId(cursor: Cursor, state: RecordState, id: NodeId, header: Line, kind: string): void {
-  const first = state.idLines.get(id);
+function claimId(
+  cursor: Cursor,
+  ids: Map<NodeId, Line>,
+  id: NodeId,
+  header: Line,
+  kind: string,
+): void {
+  const first = ids.get(id);
   if (first === undefined) {
-    state.idLines.set(id, header);
+    ids.set(id, header);
     return;
   }
   report(
     cursor,
     "PLAN_DUPLICATE_ID",
-    `${kind} #${id} reuses node id ${quote(id)} on line ${header.number}; it was first declared on line ${first.number}. Plan, stage, task, and edit ids must be globally unique`,
+    `${kind} #${id} reuses node id ${quote(id)} on line ${header.number}; it was first declared on line ${first.number}. Plan and work-node ids must be globally unique`,
     {
       line: header.number,
       found: id,
       recordId: id,
-      hint: "give every record a new NN-slug id",
+      hint: "give every node a new NN-slug id",
     },
   );
 }
 
-function parseStage(cursor: Cursor, header: Line, state: RecordState): Stage {
-  const [keyword, idToken, planKeyword, planToken, ...extra] = tokensOf(header);
-  if (
-    keyword !== "stage" ||
-    planKeyword !== "plan" ||
-    extra.length > 0 ||
-    idToken === undefined ||
-    planToken === undefined
-  ) {
-    const missing = idToken === undefined || planToken === undefined;
+function parseAfterLine(cursor: Cursor, line: Line, nodeId: NodeId): NodeId[] {
+  const [keyword, ...rest] = tokensOf(line);
+  if (keyword !== "after") {
     fail(
       cursor,
-      missing ? "PLAN_MISSING_FIELD" : "PLAN_UNKNOWN_FIELD",
-      `stage record on line ${header.number} must be "stage \\"NN-slug\\" plan \\"NN-slug\\""; got ${quote(header.text.trim())}`,
+      "PLAN_MISSING_FIELD",
+      `after line for node ${nodeId} must be "after <\"NN-slug\">…"`,
       {
-        line: header.number,
-        expected: ['stage "NN-slug" plan "NN-slug"'],
-        found: extra[0] ?? header.text.trim(),
-        hint: 'write stage "02-current" plan "01-main"',
+        line: line.number,
+        expected: ['after "NN-slug"'],
+        found: line.text.trim(),
+        recordId: nodeId,
       },
     );
   }
-  const id = quotedId(cursor, idToken, `stage id on line ${header.number}`, header, idToken);
-  claimId(cursor, state, id, header, "stage");
-  const parent = quotedId(cursor, planToken, `plan ref of stage ${id}`, header, id);
-  if (parent !== state.planId) {
-    fail(
-      cursor,
-      "PLAN_UNKNOWN_PARENT",
-      `stage ${id} names plan ${parent}, but the Plan id is ${state.planId}`,
-      {
-        line: header.number,
-        expected: [state.planId],
-        found: parent,
-        recordId: id,
-        hint: `reference plan ${quote(state.planId)}`,
-      },
-    );
-  }
-  const goal = readText(cursor, "goal:", `stage ${id}`, id);
-  expectEnd(cursor, `stage ${id}`, id);
-  return { id, goal, tasks: [] };
+  return rest.map((token) => quotedId(cursor, token, `after ref of node ${nodeId}`, line, nodeId));
 }
 
-function parseTask(
-  cursor: Cursor,
-  header: Line,
-  state: RecordState,
-): { task: TaskNode; stageId: NodeId } {
-  const [keyword, idToken, stageKeyword, stageToken, verifyKeyword, verifyToken, ...extra] =
-    tokensOf(header);
-  if (
-    keyword !== "task" ||
-    stageKeyword !== "stage" ||
-    verifyKeyword !== "verify" ||
-    extra.length > 0 ||
-    idToken === undefined ||
-    stageToken === undefined ||
-    verifyToken === undefined
-  ) {
-    const missing = idToken === undefined || stageToken === undefined || verifyToken === undefined;
+function parseVerifyLine(cursor: Cursor, line: Line, nodeId: NodeId): WorkVerify {
+  const [keyword, token, ...extra] = tokensOf(line);
+  if (keyword !== "verify" || token === undefined || extra.length > 0) {
     fail(
       cursor,
-      missing ? "PLAN_MISSING_FIELD" : "PLAN_UNKNOWN_FIELD",
-      `task record on line ${header.number} must be "task \\"NN-slug\\" stage \\"NN-slug\\" verify tsc|test"; got ${quote(header.text.trim())}`,
+      "PLAN_MISSING_FIELD",
+      `verify line for node ${nodeId} must be "verify tsc|test"; got ${quote(line.text.trim())}`,
       {
-        line: header.number,
-        expected: ['task "NN-slug" stage "NN-slug" verify tsc|test'],
-        found: extra[0] ?? header.text.trim(),
-        hint: 'write task "03-first" stage "02-current" verify test',
+        line: line.number,
+        expected: ["verify tsc|test"],
+        found: line.text.trim(),
+        recordId: nodeId,
       },
     );
   }
-  const id = quotedId(cursor, idToken, `task id on line ${header.number}`, header, idToken);
-  claimId(cursor, state, id, header, "task");
-  const stageId = quotedId(cursor, stageToken, `stage ref of task ${id}`, header, id);
-  if (!state.stages.has(stageId)) {
-    const near = nearestId(stageId, state.stages.keys());
+  if (!VERIFY_SET.has(token)) {
     fail(
       cursor,
-      "PLAN_UNKNOWN_PARENT",
-      `task ${id} names stage ${stageId}, which is not declared earlier in the Plan`,
+      "PLAN_UNKNOWN_FIELD",
+      `node ${nodeId} verify must be "tsc" or "test" (got ${quote(token)})`,
       {
-        line: header.number,
-        expected: [...state.stages.keys()],
-        found: stageId,
-        recordId: id,
-        hint:
-          near === null
-            ? "declare the stage before the task"
-            : `did you mean stage ${quote(near)}?`,
+        line: line.number,
+        column: tokenColumn(line, token),
+        expected: ["tsc", "test"],
+        found: token,
+        recordId: nodeId,
       },
     );
+  }
+  return token as WorkVerify;
+}
+
+/**
+ * Parse one `hint` line: `hint file <path>`, or
+ * `hint <value|type|namespace> <symbol> in <path>`. A file hint uses symbol "".
+ */
+function parseHintLine(cursor: Cursor, line: Line, nodeId: NodeId): HintLoc {
+  const tokens = tokensOf(line);
+  const [keyword, first, second, third, fourth, ...extra] = tokens;
+  if (keyword !== "hint" || first === undefined) {
+    fail(
+      cursor,
+      "PLAN_MISSING_FIELD",
+      `hint line for node ${nodeId} must be "hint file <path>" or "hint <space> <symbol> in <path>"`,
+      {
+        line: line.number,
+        expected: ["hint file <path>", "hint <space> <symbol> in <path>"],
+        found: line.text.trim(),
+        recordId: nodeId,
+      },
+    );
+  }
+  if (first === "file") {
+    if (second === undefined || third !== undefined || extra.length > 0) {
+      fail(
+        cursor,
+        "PLAN_MISSING_FIELD",
+        `file hint for node ${nodeId} must be "hint file <path>" with no symbol; got ${quote(line.text.trim())}`,
+        {
+          line: line.number,
+          expected: ["hint file <path>"],
+          found: line.text.trim(),
+          recordId: nodeId,
+        },
+      );
+    }
+    return { path: second, symbol: "", kind: "file" };
+  }
+  if (second === undefined || third !== "in" || fourth === undefined || extra.length > 0) {
+    fail(
+      cursor,
+      "PLAN_MISSING_FIELD",
+      `symbol hint for node ${nodeId} must be "hint <space> <symbol> in <path>"; got ${quote(line.text.trim())}`,
+      {
+        line: line.number,
+        expected: ["hint <space> <symbol> in <path>"],
+        found: line.text.trim(),
+        recordId: nodeId,
+      },
+    );
+  }
+  if (!SPACE_SET.has(first)) {
+    fail(
+      cursor,
+      "PLAN_UNKNOWN_FIELD",
+      `hint space for node ${nodeId} must be one of value, type, namespace (got ${quote(first)})`,
+      {
+        line: line.number,
+        column: tokenColumn(line, first),
+        expected: [...HINT_SPACES],
+        found: first,
+        recordId: nodeId,
+      },
+    );
+  }
+  return { path: fourth, symbol: second, kind: first as SymbolSpace };
+}
+
+interface NodeBodyOptions {
+  /** `hint clear`, `approach clear`, and `phase clear` are patch-update only. */
+  allowClear: boolean;
+  requireInstruction: boolean;
+  /** True when the header already carried `after` or `verify`. */
+  afterSeen: boolean;
+  verifySeen: boolean;
+}
+
+interface NodeBody {
+  after?: NodeId[];
+  verify?: WorkVerify;
+  instruction?: string;
+  hints?: HintLoc[];
+  approach?: string | null;
+  phase?: string | null;
+}
+
+/**
+ * Read the fields of a node record before `end`. Fields may come in any order;
+ * `instruction:` is required for `node`/`node+`, optional for `node~`. A
+ * replacement `after` line with no ids clears dependencies. `hint clear`,
+ * `approach clear`, and `phase clear` are allowed only in a patch update.
+ */
+function parseNodeBody(cursor: Cursor, id: NodeId, options: NodeBodyOptions): NodeBody {
+  const body: NodeBody = {};
+  let afterSeen = options.afterSeen;
+  let verifySeen = options.verifySeen;
+  let instructionSeen = false;
+  let hintsSeen = false;
+  let approachSeen = false;
+  let phaseSeen = false;
+
+  for (;;) {
+    const next = peekNonBlank(cursor);
+    if (next === null) {
+      break;
+    }
+    const trimmed = next.text.trim();
+
+    if (trimmed === "after" || trimmed.startsWith("after ")) {
+      if (afterSeen) {
+        fail(cursor, "PLAN_UNKNOWN_FIELD", `node ${id} carries after more than once`, {
+          line: next.number,
+          recordId: id,
+          hint: "keep one after line or one after clause on the node header",
+        });
+      }
+      afterSeen = true;
+      cursor.position += 1;
+      body.after = parseAfterLine(cursor, next, id);
+      continue;
+    }
+
+    if (trimmed === "verify" || trimmed.startsWith("verify ")) {
+      if (verifySeen) {
+        fail(cursor, "PLAN_UNKNOWN_FIELD", `node ${id} carries verify more than once`, {
+          line: next.number,
+          recordId: id,
+          hint: "keep exactly one verify value",
+        });
+      }
+      verifySeen = true;
+      cursor.position += 1;
+      body.verify = parseVerifyLine(cursor, next, id);
+      continue;
+    }
+
+    if (trimmed.startsWith("instruction:")) {
+      if (instructionSeen) {
+        fail(cursor, "PLAN_UNKNOWN_FIELD", `node ${id} carries instruction more than once`, {
+          line: next.number,
+          recordId: id,
+          hint: "keep exactly one instruction field",
+        });
+      }
+      instructionSeen = true;
+      body.instruction = readText(cursor, "instruction:", `node ${id}`, id);
+      continue;
+    }
+
+    if (trimmed === "hint clear") {
+      if (!options.allowClear) {
+        fail(cursor, "PLAN_UNKNOWN_FIELD", `hint clear is allowed only in a node~ patch`, {
+          line: next.number,
+          recordId: id,
+          hint: "drop the hint lines, or use node~ to replace the hint list",
+        });
+      }
+      if (hintsSeen) {
+        fail(cursor, "PLAN_UNKNOWN_FIELD", `node ${id} mixes hint clear with other hint lines`, {
+          line: next.number,
+          recordId: id,
+          hint: "use hint clear on its own, or list replacement hints",
+        });
+      }
+      hintsSeen = true;
+      cursor.position += 1;
+      body.hints = [];
+      continue;
+    }
+
+    if (trimmed === "hint" || trimmed.startsWith("hint ")) {
+      if (hintsSeen && body.hints !== undefined && body.hints.length === 0) {
+        fail(cursor, "PLAN_UNKNOWN_FIELD", `node ${id} mixes hint clear with other hint lines`, {
+          line: next.number,
+          recordId: id,
+          hint: "use hint clear on its own, or list replacement hints",
+        });
+      }
+      hintsSeen = true;
+      cursor.position += 1;
+      const hint = parseHintLine(cursor, next, id);
+      if (body.hints === undefined) {
+        body.hints = [];
+      }
+      body.hints.push(hint);
+      continue;
+    }
+
+    if (trimmed === "approach clear") {
+      if (!options.allowClear) {
+        fail(cursor, "PLAN_UNKNOWN_FIELD", `approach clear is allowed only in a node~ patch`, {
+          line: next.number,
+          recordId: id,
+          hint: "omit the approach field or use node~ to clear it",
+        });
+      }
+      if (approachSeen) {
+        fail(cursor, "PLAN_UNKNOWN_FIELD", `node ${id} carries approach more than once`, {
+          line: next.number,
+          recordId: id,
+          hint: "keep exactly one approach field",
+        });
+      }
+      approachSeen = true;
+      cursor.position += 1;
+      body.approach = null;
+      continue;
+    }
+
+    if (trimmed.startsWith("approach:")) {
+      if (approachSeen) {
+        fail(cursor, "PLAN_UNKNOWN_FIELD", `node ${id} carries approach more than once`, {
+          line: next.number,
+          recordId: id,
+          hint: "keep exactly one approach field",
+        });
+      }
+      approachSeen = true;
+      body.approach = readText(cursor, "approach:", `node ${id}`, id);
+      continue;
+    }
+
+    if (trimmed === "phase clear") {
+      if (!options.allowClear) {
+        fail(cursor, "PLAN_UNKNOWN_FIELD", `phase clear is allowed only in a node~ patch`, {
+          line: next.number,
+          recordId: id,
+          hint: "omit the phase field or use node~ to clear it",
+        });
+      }
+      if (phaseSeen) {
+        fail(cursor, "PLAN_UNKNOWN_FIELD", `node ${id} carries phase more than once`, {
+          line: next.number,
+          recordId: id,
+          hint: "keep exactly one phase field",
+        });
+      }
+      phaseSeen = true;
+      cursor.position += 1;
+      body.phase = null;
+      continue;
+    }
+
+    if (trimmed.startsWith("phase:")) {
+      if (phaseSeen) {
+        fail(cursor, "PLAN_UNKNOWN_FIELD", `node ${id} carries phase more than once`, {
+          line: next.number,
+          recordId: id,
+          hint: "keep exactly one phase field",
+        });
+      }
+      phaseSeen = true;
+      body.phase = readText(cursor, "phase:", `node ${id}`, id);
+      continue;
+    }
+
+    break;
+  }
+
+  if (options.requireInstruction && body.instruction === undefined) {
+    const next = peekNonBlank(cursor);
+    fail(cursor, "PLAN_MISSING_FIELD", `node ${id} needs instruction: before end`, {
+      line: next?.number ?? Math.max(1, cursor.lines.length),
+      expected: ["instruction:"],
+      found: next?.text.trim() ?? "<eof>",
+      recordId: id,
+      hint: "add instruction: before end",
+    });
+  }
+  return body;
+}
+
+interface NodeHeader {
+  id: NodeId;
+  after?: NodeId[];
+  verify: WorkVerify;
+}
+
+/** Parse `node "id" [after "…"] verify tsc|test`, also used for `node+`. */
+function parseNodeHeader(cursor: Cursor, header: Line, keyword: "node" | "node+"): NodeHeader {
+  const tokens = tokensOf(header);
+  const [actual, idToken] = tokens;
+  if (actual !== keyword || idToken === undefined) {
+    fail(
+      cursor,
+      "PLAN_MISSING_FIELD",
+      `${keyword} record on line ${header.number} must be "${keyword} \\"NN-slug\\" [after \\"NN-slug\\"…] verify tsc|test"; got ${quote(header.text.trim())}`,
+      {
+        line: header.number,
+        expected: [`${keyword} "NN-slug" [after "NN-slug"…] verify tsc|test`],
+        found: header.text.trim(),
+        hint: `write ${keyword} "02-scaffold" verify tsc`,
+      },
+    );
+  }
+  const id = quotedId(cursor, idToken, `${keyword} id on line ${header.number}`, header, idToken);
+  let index = 2;
+  let after: NodeId[] | undefined;
+  if (tokens[index] === "after") {
+    index += 1;
+    const ids: NodeId[] = [];
+    while (index < tokens.length && tokens[index] !== "verify") {
+      const token = tokens[index];
+      if (token === undefined) {
+        break;
+      }
+      ids.push(quotedId(cursor, token, `after ref of node ${id}`, header, id));
+      index += 1;
+    }
+    if (ids.length === 0) {
+      fail(
+        cursor,
+        "PLAN_MISSING_FIELD",
+        `after clause on ${keyword} ${id} needs at least one node id`,
+        {
+          line: header.number,
+          expected: ['after "NN-slug"'],
+          found: "after",
+          recordId: id,
+          hint: "list one or more dependency ids, or omit after",
+        },
+      );
+    }
+    after = ids;
+  }
+  if (tokens[index] !== "verify") {
+    fail(
+      cursor,
+      "PLAN_MISSING_FIELD",
+      `${keyword} ${id} needs "verify tsc|test" on its header line; got ${quote(header.text.trim())}`,
+      {
+        line: header.number,
+        expected: ["verify tsc|test"],
+        found: tokens[index] ?? "<eof>",
+        recordId: id,
+        hint: `write ${keyword} "${id}" verify test`,
+      },
+    );
+  }
+  index += 1;
+  const verifyToken = tokens[index];
+  index += 1;
+  if (verifyToken === undefined) {
+    fail(cursor, "PLAN_MISSING_FIELD", `${keyword} ${id} needs a verify value after "verify"`, {
+      line: header.number,
+      expected: ["tsc", "test"],
+      found: "<eof>",
+      recordId: id,
+    });
   }
   if (!VERIFY_SET.has(verifyToken)) {
     fail(
       cursor,
       "PLAN_UNKNOWN_FIELD",
-      `task ${id} verify must be "tsc" or "test" (got ${quote(verifyToken)})`,
+      `node ${id} verify must be "tsc" or "test" (got ${quote(verifyToken)})`,
       {
         line: header.number,
         column: tokenColumn(header, verifyToken),
@@ -725,230 +1057,127 @@ function parseTask(
       },
     );
   }
-  const instruction = readText(cursor, "instruction:", `task ${id}`, id);
-  expectEnd(cursor, `task ${id}`, id);
-  return { task: { id, verify: verifyToken as TaskVerify, instruction, edits: [] }, stageId };
-}
-
-function parseEdit(
-  cursor: Cursor,
-  header: Line,
-  state: RecordState,
-): { edit: EditNode; taskId: NodeId } {
-  const [keyword, idToken, taskKeyword, taskToken, actionToken, ...locTokens] = tokensOf(header);
-  if (
-    keyword !== "edit" ||
-    taskKeyword !== "task" ||
-    idToken === undefined ||
-    taskToken === undefined ||
-    actionToken === undefined
-  ) {
-    fail(
-      cursor,
-      "PLAN_MISSING_FIELD",
-      `edit record on line ${header.number} must be "edit \\"NN-slug\\" task \\"NN-slug\\" <action> <space> <symbol> in <path>" or "edit \\"NN-slug\\" task \\"NN-slug\\" write <path>"; got ${quote(header.text.trim())}`,
-      {
-        line: header.number,
-        expected: [
-          'edit "NN-slug" task "NN-slug" <action> <space> <symbol> in <path>',
-          'edit "NN-slug" task "NN-slug" write <path>',
-        ],
-        found: header.text.trim(),
-        hint: 'write edit "04-change" task "03-first" modify value answer in src/helper.ts',
-      },
-    );
-  }
-  const id = quotedId(cursor, idToken, `edit id on line ${header.number}`, header, idToken);
-  claimId(cursor, state, id, header, "edit");
-  const taskId = quotedId(cursor, taskToken, `task ref of edit ${id}`, header, id);
-  if (!state.tasks.has(taskId)) {
-    const near = nearestId(taskId, state.tasks.keys());
-    fail(
-      cursor,
-      "PLAN_UNKNOWN_PARENT",
-      `edit ${id} names task ${taskId}, which is not declared earlier in the Plan`,
-      {
-        line: header.number,
-        expected: [...state.tasks.keys()],
-        found: taskId,
-        recordId: id,
-        hint:
-          near === null ? "declare the task before the edit" : `did you mean task ${quote(near)}?`,
-      },
-    );
-  }
-  if (!ACTION_SET.has(actionToken)) {
+  if (index !== tokens.length) {
     fail(
       cursor,
       "PLAN_UNKNOWN_FIELD",
-      `edit ${id} action must be one of ${TASK_ACTIONS.map(quote).join(", ")} (got ${quote(actionToken)})`,
+      `unexpected token ${quote(tokens[index] ?? "")} on ${keyword} ${id}'s header`,
       {
         line: header.number,
-        column: tokenColumn(header, actionToken),
-        expected: [...TASK_ACTIONS],
-        found: actionToken,
+        found: tokens[index] ?? "",
         recordId: id,
+        hint: "put after and verify on the header, then instruction and the optional fields inside the record",
       },
     );
   }
-  let loc: TaskLoc;
-  if (actionToken === "write") {
-    if (locTokens.length !== 1 || locTokens[0] === undefined) {
-      fail(
-        cursor,
-        "PLAN_MISSING_FIELD",
-        `write edit ${id} must be "write <path>" with no symbol or space; got ${quote(header.text.trim())}`,
-        {
-          line: header.number,
-          expected: ["write <path>"],
-          found: locTokens.join(" "),
-          recordId: id,
-          hint: `write edit "${id}" task "${taskId}" write src/module.ts`,
-        },
-      );
-    }
-    loc = { path: locTokens[0], symbol: "", kind: "file" };
-  } else {
-    const [spaceToken, symbolToken, inToken, pathToken, ...extra] = locTokens;
-    if (
-      spaceToken === undefined ||
-      symbolToken === undefined ||
-      inToken !== "in" ||
-      pathToken === undefined ||
-      extra.length > 0
-    ) {
-      fail(
-        cursor,
-        "PLAN_MISSING_FIELD",
-        `edit ${id} must be "<action> <space> <symbol> in <path>"; got ${quote(header.text.trim())}`,
-        {
-          line: header.number,
-          expected: ['edit "NN-slug" task "NN-slug" <action> <space> <symbol> in <path>'],
-          found: header.text.trim(),
-          recordId: id,
-          hint: `write edit "${id}" task "${taskId}" modify value answer in src/helper.ts`,
-        },
-      );
-    }
-    if (!SPACE_SET.has(spaceToken)) {
-      fail(
-        cursor,
-        "PLAN_UNKNOWN_FIELD",
-        `edit ${id} space must be one of value, type, namespace (got ${quote(spaceToken)})`,
-        {
-          line: header.number,
-          column: tokenColumn(header, spaceToken),
-          expected: [...TASK_SPACES],
-          found: spaceToken,
-          recordId: id,
-        },
-      );
-    }
-    loc = { path: pathToken, symbol: symbolToken, kind: spaceToken as SymbolSpace };
-  }
+  return { id, after, verify: verifyToken as WorkVerify };
+}
 
-  const related: TaskLoc[] = [];
-  let renameTo: string | undefined;
-  for (;;) {
-    const next = peekNonBlank(cursor);
-    if (next === null) {
-      break;
-    }
-    const trimmed = next.text.trim();
-    if (trimmed === "related" || trimmed.startsWith("related ")) {
-      cursor.position += 1;
-      const [relatedKeyword, relatedSpace, relatedSymbol, relatedIn, relatedPath, ...rest] =
-        tokensOf(next);
-      if (
-        relatedKeyword !== "related" ||
-        relatedIn !== "in" ||
-        rest.length > 0 ||
-        relatedSpace === undefined ||
-        relatedSymbol === undefined ||
-        relatedPath === undefined
-      ) {
-        fail(
-          cursor,
-          "PLAN_MISSING_FIELD",
-          `related line for edit ${id} must be "related <space> <symbol> in <path>"; got ${quote(trimmed)}`,
-          {
-            line: next.number,
-            expected: ["related <space> <symbol> in <path>"],
-            found: trimmed,
-            recordId: id,
-          },
-        );
-      }
-      if (renameTo !== undefined) {
-        fail(
-          cursor,
-          "PLAN_UNKNOWN_FIELD",
-          `related lines for edit ${id} must come before renameTo`,
-          { line: next.number, recordId: id, hint: "move related lines above renameTo" },
-        );
-      }
-      if (!SPACE_SET.has(relatedSpace)) {
-        fail(
-          cursor,
-          "PLAN_UNKNOWN_FIELD",
-          `related space for edit ${id} must be one of value, type, namespace (got ${quote(relatedSpace)})`,
-          {
-            line: next.number,
-            expected: [...TASK_SPACES],
-            found: relatedSpace,
-            recordId: id,
-          },
-        );
-      }
-      related.push({
-        path: relatedPath,
-        symbol: relatedSymbol,
-        kind: relatedSpace as SymbolSpace,
-      });
-      continue;
-    }
-    if (trimmed.startsWith("renameTo")) {
-      cursor.position += 1;
-      const [label, symbol, ...rest] = tokensOf(next);
-      if (label !== "renameTo:" || symbol === undefined || rest.length > 0) {
-        fail(
-          cursor,
-          "PLAN_MISSING_FIELD",
-          `renameTo line for edit ${id} must be "renameTo: <symbol>"; got ${quote(trimmed)}`,
-          {
-            line: next.number,
-            expected: ["renameTo: <symbol>"],
-            found: trimmed,
-            recordId: id,
-          },
-        );
-      }
-      if (renameTo !== undefined) {
-        fail(cursor, "PLAN_UNKNOWN_FIELD", `edit ${id} carries renameTo more than once`, {
-          line: next.number,
-          recordId: id,
-          hint: "keep exactly one renameTo line",
-        });
-      }
-      renameTo = symbol;
-      continue;
-    }
-    break;
-  }
+function optionalText(value: string | null | undefined): { approach?: string } {
+  return typeof value === "string" ? { approach: value } : {};
+}
 
-  const instruction = readText(cursor, "instruction:", `edit ${id}`, id);
-  expectEnd(cursor, `edit ${id}`, id);
+function parseNode(cursor: Cursor, header: Line, ids: Map<NodeId, Line>): WorkNode {
+  const parsed = parseNodeHeader(cursor, header, "node");
+  claimId(cursor, ids, parsed.id, header, "node");
+  const body = parseNodeBody(cursor, parsed.id, {
+    allowClear: false,
+    requireInstruction: true,
+    afterSeen: parsed.after !== undefined,
+    verifySeen: true,
+  });
+  expectEnd(cursor, `node ${parsed.id}`, parsed.id);
+  const instruction = body.instruction;
+  if (instruction === undefined) {
+    throw new Error(`node ${parsed.id} passed validation without an instruction`);
+  }
   return {
-    edit: {
-      id,
-      loc,
-      ...(related.length === 0 ? {} : { related }),
-      action: actionToken as TaskAction,
-      instruction,
-      ...(renameTo === undefined ? {} : { renameTo }),
-    },
-    taskId,
+    id: parsed.id,
+    after: parsed.after ?? body.after ?? [],
+    verify: parsed.verify,
+    instruction,
+    hints: body.hints ?? [],
+    ...optionalText(body.approach),
+    ...(body.phase === undefined || body.phase === null ? {} : { phase: body.phase }),
   };
+}
+
+function finishPlan(
+  cursor: Cursor,
+  line: Line,
+  nodes: readonly WorkNode[],
+): { nodes: WorkNode[]; finalNodeId: NodeId | null } {
+  const last = finalNode({ nodes });
+  if (last === undefined) {
+    report(cursor, "PLAN_FINISH_NOT_LAST", "finish must follow at least one work node", {
+      line: line.number,
+      expected: ["one node before finish"],
+      found: "finish",
+      hint: "plan at least one node and mark the final test node",
+    });
+    return { nodes: [...nodes], finalNodeId: null };
+  }
+  const trailing = peekNonBlank(cursor);
+  if (trailing !== null) {
+    report(
+      cursor,
+      "PLAN_FINISH_NOT_LAST",
+      `finish must be the last line; found ${quote(trailing.text.trim())} after it`,
+      {
+        line: trailing.number,
+        expected: ["end of reply after finish"],
+        found: trailing.text.trim(),
+        recordId: last.id,
+        hint: "put finish on the last line",
+      },
+    );
+    return { nodes: [...nodes], finalNodeId: null };
+  }
+  if (last.verify !== "test") {
+    report(
+      cursor,
+      "PLAN_FINISH_NOT_LAST",
+      `finish marks node ${quote(last.id)}, which verifies ${last.verify}; the last node must verify "test"`,
+      {
+        line: line.number,
+        expected: ["test"],
+        found: last.verify,
+        recordId: last.id,
+        hint: "append a final test node and mark it with finish",
+      },
+    );
+    return { nodes: [...nodes], finalNodeId: null };
+  }
+  return { nodes: [...nodes], finalNodeId: last.id };
+}
+
+function recoverLegacyRecord(cursor: Cursor): void {
+  for (;;) {
+    const line = peekNonBlank(cursor);
+    if (line === null) {
+      return;
+    }
+    const trimmed = line.text.trim();
+    if (trimmed === "finish" || /^(plan|node)\b/.test(trimmed)) {
+      return;
+    }
+    cursor.position += 1;
+  }
+}
+
+function legacyRecord(cursor: Cursor, line: Line, keyword: string): void {
+  report(
+    cursor,
+    "PLAN_LEGACY_RECORD",
+    `legacy Stage/Task/Edit record ${quote(keyword)} on line ${line.number} is not supported; the plan DSL uses flat "node" records with after/verify/instruction/hint/approach/phase fields`,
+    {
+      line: line.number,
+      expected: ["node", "finish"],
+      found: keyword,
+      hint: "replace stage/task/edit records with one node record, or restart the plan with a node DAG",
+    },
+  );
+  recoverLegacyRecord(cursor);
 }
 
 function recoverRecord(cursor: Cursor): void {
@@ -964,68 +1193,11 @@ function recoverRecord(cursor: Cursor): void {
   }
 }
 
-function finishPlan(
-  cursor: Cursor,
-  line: Line,
-  state: RecordState,
-): { stages: Stage[]; finalTaskId: NodeId | null } {
-  const stages = [...state.stages.values()];
-  const final = finalTask(stages);
-  if (final === undefined) {
-    report(cursor, "PLAN_FINISH_NOT_LAST", "finish must follow at least one task", {
-      line: line.number,
-      expected: ["one task before finish"],
-      found: "finish",
-      hint: "plan at least one task and mark the final test task",
-    });
-    return { stages, finalTaskId: null };
-  }
-  const trailing = peekNonBlank(cursor);
-  if (trailing !== null) {
-    report(
-      cursor,
-      "PLAN_FINISH_NOT_LAST",
-      `finish must be the last line; found ${quote(trailing.text.trim())} after it`,
-      {
-        line: trailing.number,
-        expected: ["end of reply after finish"],
-        found: trailing.text.trim(),
-        recordId: final.id,
-        hint: "put finish on the last line",
-      },
-    );
-    return { stages, finalTaskId: null };
-  }
-  if (final.verify !== "test") {
-    report(
-      cursor,
-      "PLAN_FINISH_NOT_LAST",
-      `finish marks task ${quote(final.id)}, which verifies ${final.verify}; the last task must verify "test"`,
-      {
-        line: line.number,
-        expected: ["test"],
-        found: final.verify,
-        recordId: final.id,
-        hint: "append a final test task and mark it with finish",
-      },
-    );
-    return { stages, finalTaskId: null };
-  }
-  return { stages, finalTaskId: final.id };
-}
-
 function parseRecords(
   cursor: Cursor,
-  planId: NodeId,
-  idLines: Map<NodeId, Line>,
-): { stages: Stage[]; finalTaskId: NodeId | null } {
-  const state: RecordState = {
-    planId,
-    stages: new Map(),
-    tasks: new Map(),
-    idLines,
-  };
-  let phase: "stages" | "tasks" | "edits" = "stages";
+  ids: Map<NodeId, Line>,
+): { planNodes: WorkNode[]; finalNodeId: NodeId | null } {
+  const nodes: WorkNode[] = [];
 
   for (;;) {
     const line = peekNonBlank(cursor);
@@ -1036,16 +1208,17 @@ function parseRecords(
     const trimmed = line.text.trim();
 
     if (trimmed === "finish") {
-      return finishPlan(cursor, line, state);
+      const finished = finishPlan(cursor, line, nodes);
+      return { planNodes: finished.nodes, finalNodeId: finished.finalNodeId };
     }
     if (trimmed === "end") {
       report(
         cursor,
         "PLAN_UNKNOWN_FIELD",
-        `unexpected "end" on line ${line.number}; no record is open`,
+        `unexpected "end" on line ${line.number}; no node record is open`,
         {
           line: line.number,
-          expected: ["stage", "task", "edit", "finish"],
+          expected: ["node", "finish"],
           found: "end",
           hint: "remove the stray end",
         },
@@ -1076,7 +1249,7 @@ function parseRecords(
         `the plan header is a singleton and must be the first line; found one on line ${line.number}`,
         {
           line: line.number,
-          expected: ["stage", "task", "edit", "finish"],
+          expected: ["node", "finish"],
           found: keyword,
           hint: "keep exactly one plan header at the top",
         },
@@ -1084,26 +1257,11 @@ function parseRecords(
       recoverRecord(cursor);
       continue;
     }
-    if (keyword === "stage") {
-      if (phase !== "stages") {
-        report(
-          cursor,
-          "PLAN_UNKNOWN_FIELD",
-          `stage records must come before task and edit records; found a stage on line ${line.number} after ${phase === "tasks" ? "a task" : "an edit"}`,
-          {
-            line: line.number,
-            expected: ["task", "edit", "finish"],
-            found: keyword,
-            hint: "reorder the records: stages, then tasks, then edits",
-          },
-        );
-        recoverRecord(cursor);
-        continue;
-      }
+    if (keyword === "node") {
       try {
-        const stage = parseStage(cursor, line, state);
-        if (!state.stages.has(stage.id)) {
-          state.stages.set(stage.id, stage);
+        const node = parseNode(cursor, line, ids);
+        if (!nodes.some((candidate) => candidate.id === node.id)) {
+          nodes.push(node);
         }
       } catch (error) {
         if (!(error instanceof PlanSyntaxError)) {
@@ -1114,70 +1272,24 @@ function parseRecords(
       }
       continue;
     }
-    if (keyword === "task") {
-      if (phase === "edits") {
-        report(
-          cursor,
-          "PLAN_UNKNOWN_FIELD",
-          `task records must come before edit records; found a task on line ${line.number}`,
-          {
-            line: line.number,
-            expected: ["edit", "finish"],
-            found: keyword,
-            hint: "move the task above the edit records",
-          },
-        );
-        recoverRecord(cursor);
-        continue;
-      }
-      phase = "tasks";
-      try {
-        const { task, stageId } = parseTask(cursor, line, state);
-        const stage = state.stages.get(stageId);
-        if (stage !== undefined && !stage.tasks.some((candidate) => candidate.id === task.id)) {
-          stage.tasks.push(task);
-          state.tasks.set(task.id, task);
-        }
-      } catch (error) {
-        if (!(error instanceof PlanSyntaxError)) {
-          throw error;
-        }
-        cursor.issues.push(error.issue);
-        recoverRecord(cursor);
-      }
-      continue;
-    }
-    if (keyword === "edit") {
-      phase = "edits";
-      try {
-        const { edit, taskId } = parseEdit(cursor, line, state);
-        const task = state.tasks.get(taskId);
-        if (task !== undefined && !task.edits.some((candidate) => candidate.id === edit.id)) {
-          task.edits.push(edit);
-        }
-      } catch (error) {
-        if (!(error instanceof PlanSyntaxError)) {
-          throw error;
-        }
-        cursor.issues.push(error.issue);
-        recoverRecord(cursor);
-      }
+    if (isLegacyKeyword(keyword)) {
+      legacyRecord(cursor, line, keyword);
       continue;
     }
     report(
       cursor,
       "PLAN_UNKNOWN_FIELD",
-      `unknown record header ${quote(keyword)} on line ${line.number}; expected "stage", "task", "edit", or a trailing "finish"`,
+      `unknown record header ${quote(keyword)} on line ${line.number}; expected "node" or a trailing "finish"`,
       {
         line: line.number,
-        expected: ["stage", "task", "edit", "finish"],
+        expected: ["node", "finish"],
         found: keyword,
         hint: "use one of the Plan DSL record headers",
       },
     );
     recoverRecord(cursor);
   }
-  return { stages: [...state.stages.values()], finalTaskId: null };
+  return { planNodes: nodes, finalNodeId: null };
 }
 
 /**
@@ -1237,6 +1349,19 @@ function parsePlanHeader(cursor: Cursor): { id: NodeId; goal: string; line: Line
     );
   }
   const [keyword, idToken, ...extra] = tokensOf(line);
+  if (keyword !== "plan" && keyword !== undefined && isLegacyKeyword(keyword)) {
+    fail(
+      cursor,
+      "PLAN_LEGACY_RECORD",
+      `legacy Stage/Task/Edit record ${quote(keyword)} is not supported; start with plan "01-main" and flat node records`,
+      {
+        line: line.number,
+        expected: ['plan "NN-slug"'],
+        found: keyword,
+        hint: "replace the old hierarchy with a node DAG",
+      },
+    );
+  }
   if (keyword !== "plan" || idToken === undefined || extra.length > 0) {
     fail(
       cursor,
@@ -1253,6 +1378,58 @@ function parsePlanHeader(cursor: Cursor): { id: NodeId; goal: string; line: Line
   const id = quotedId(cursor, idToken, "plan.id", line, idToken);
   const goal = readText(cursor, "goal:", `plan ${id}`, id);
   return { id, goal, line };
+}
+
+function codeForProblem(message: string): string {
+  if (message.includes("reuses node id")) {
+    return "PLAN_DUPLICATE_ID";
+  }
+  if (message.includes("cycle")) {
+    return "PLAN_CYCLE";
+  }
+  if (message.includes("not in the plan")) {
+    return "PLAN_UNKNOWN_PARENT";
+  }
+  if (message.includes("verify must be")) {
+    return "PLAN_UNKNOWN_FIELD";
+  }
+  return "PLAN_STRUCTURE";
+}
+
+function reportGraphProblems(
+  cursor: Cursor,
+  plan: Plan,
+  finalNodeId: NodeId | null,
+  idLines: Map<NodeId, Line>,
+): void {
+  const problems = validatePlan(plan);
+  const lines: string[] = [];
+  if (problems !== null) {
+    lines.push(...problems.split("\n").filter((line) => line.startsWith("- ")));
+  }
+  if (finalNodeId !== null) {
+    const finalProblem = validateFinalNode(plan, finalNodeId);
+    if (finalProblem !== null) {
+      lines.push(`- ${finalProblem}`);
+    }
+  }
+  for (const problemLine of lines) {
+    const message = problemLine.slice(2);
+    const idMatch = /#([0-9]{2,}-[a-z0-9]+(?:-[a-z0-9]+)*)/.exec(message);
+    const recordId = idMatch?.[1];
+    const line = recordId === undefined ? 1 : (idLines.get(recordId)?.number ?? 1);
+    const code = codeForProblem(message);
+    cursor.issues.push(
+      issueAt(cursor, code, message, {
+        line,
+        stage: "plan-graph",
+        ...(recordId === undefined ? {} : { recordId }),
+        ...(code === "PLAN_CYCLE"
+          ? { hint: "break the cycle by removing one after edge and re-planning" }
+          : {}),
+      }),
+    );
+  }
 }
 
 function parsePlanDslDetailedUnchecked(content: string): DslParseResult<ParsedPlan> {
@@ -1300,14 +1477,14 @@ function parsePlanDslDetailedUnchecked(content: string): DslParseResult<ParsedPl
     return { ok: false, issues: cursor.issues, truncated: false };
   }
   let plan: Plan;
-  let finalTaskId: NodeId | null = null;
+  let finalNodeId: NodeId | null = null;
   const idLines = new Map<NodeId, Line>();
   try {
     const header = parsePlanHeader(cursor);
     idLines.set(header.id, header.line);
-    const records = parseRecords(cursor, header.id, idLines);
-    plan = { id: header.id, goal: header.goal, stages: records.stages };
-    finalTaskId = records.finalTaskId;
+    const records = parseRecords(cursor, idLines);
+    plan = { id: header.id, goal: header.goal, nodes: records.planNodes };
+    finalNodeId = records.finalNodeId;
   } catch (error) {
     if (!(error instanceof PlanSyntaxError)) {
       throw error;
@@ -1316,52 +1493,11 @@ function parsePlanDslDetailedUnchecked(content: string): DslParseResult<ParsedPl
     return { ok: false, issues: cursor.issues, truncated: cursor.truncated };
   }
 
+  reportGraphProblems(cursor, plan, finalNodeId, idLines);
   const hasErrors = cursor.issues.some((issue) => issue.severity === "error");
-  if (hasErrors) {
-    return {
-      ok: false,
-      value: { plan, finalTaskId },
-      issues: cursor.issues,
-      truncated: cursor.truncated,
-    };
-  }
-  const problems = validatePlanTree(plan);
-  if (problems !== null) {
-    for (const problem of problems.split("\n").filter((line) => line.startsWith("- "))) {
-      const message = problem.slice(2);
-      const idMatch = /#([0-9]{2,}-[a-z0-9]+(?:-[a-z0-9]+)*)/.exec(message);
-      const recordId = idMatch?.[1];
-      const line = recordId === undefined ? 1 : (idLines.get(recordId)?.number ?? 1);
-      const code = message.includes("PLAN_CREATE_MEMBER")
-        ? "PLAN_CREATE_MEMBER"
-        : message.includes("reuses node id")
-          ? "PLAN_DUPLICATE_ID"
-          : message.includes("must be a string node id")
-            ? "PLAN_MISSING_FIELD"
-            : "PLAN_STRUCTURE";
-      cursor.issues.push(
-        issueAt(cursor, code, message, {
-          line,
-          stage: "task-tree",
-          ...(recordId === undefined ? {} : { recordId }),
-          ...(code === "PLAN_CREATE_MEMBER"
-            ? {
-                hint: "modify the class with all needed stubs, then modify the member, or use a top-level function",
-              }
-            : {}),
-        }),
-      );
-    }
-    return {
-      ok: false,
-      value: { plan, finalTaskId },
-      issues: cursor.issues,
-      truncated: cursor.truncated,
-    };
-  }
   return {
-    ok: true,
-    value: { plan, finalTaskId },
+    ok: !hasErrors,
+    value: { plan, finalNodeId },
     issues: cursor.issues,
     truncated: cursor.truncated,
   };
@@ -1379,7 +1515,7 @@ export function parsePlanDsl(content: string): PlanParse {
   if (!result.ok || errors.length > 0) {
     return {
       ok: false,
-      stage: errors.some((issue) => issue.stage === "task-tree") ? "task-tree" : "task-protocol",
+      stage: errors.some((issue) => isPlanGraphStage(issue.stage)) ? "plan-graph" : "plan-protocol",
       diagnostics: renderDslIssues([...result.issues]),
     };
   }
@@ -1387,17 +1523,17 @@ export function parsePlanDsl(content: string): PlanParse {
   if (value === undefined) {
     return {
       ok: false,
-      stage: "task-protocol",
+      stage: "plan-protocol",
       diagnostics:
-        "stage: task-protocol\ncode: PLAN_MISSING_FIELD\nmessage: the reply produced no Plan",
+        "stage: plan-protocol\ncode: PLAN_MISSING_FIELD\nmessage: the reply produced no Plan",
     };
   }
-  return { ok: true, plan: value.plan, finalTaskId: value.finalTaskId };
+  return { ok: true, plan: value.plan, finalNodeId: value.finalNodeId };
 }
 
 /** The initial-plan parser name used by the driver; the DSL is the only form. */
 export const parsePlan = parsePlanDsl;
-/** The full-tree Plan parser, kept for tests; the driver plans patches after the initial turn. */
+/** The full-graph Plan parser, kept for tests; the driver plans patches after the initial turn. */
 export const readPlan = parsePlanDsl;
 
 // ---------------------------------------------------------------------------
@@ -1405,33 +1541,30 @@ export const readPlan = parsePlanDsl;
 
 /** One strict patch operation; `+` appends, `~` replaces present fields, `-` removes. */
 export type PlanPatchOp =
-  | { kind: "plan-update"; id: NodeId; goal: string }
-  | { kind: "stage-add"; id: NodeId; plan: NodeId; goal: string }
-  | { kind: "stage-update"; id: NodeId; goal?: string }
-  | { kind: "stage-remove"; id: NodeId }
-  | { kind: "task-add"; id: NodeId; stage: NodeId; verify: TaskVerify; instruction: string }
-  | { kind: "task-update"; id: NodeId; verify?: TaskVerify; instruction?: string }
-  | { kind: "task-remove"; id: NodeId }
   | {
-      kind: "edit-add";
+      kind: "node-add";
       id: NodeId;
-      task: NodeId;
-      loc: TaskLoc;
-      action: TaskAction;
-      related?: TaskLoc[];
-      renameTo?: string;
+      after: NodeId[];
+      verify: WorkVerify;
       instruction: string;
+      hints: HintLoc[];
+      approach?: string;
+      phase?: string;
     }
   | {
-      kind: "edit-update";
+      kind: "node-update";
       id: NodeId;
-      loc?: TaskLoc;
-      action?: TaskAction;
-      related?: TaskLoc[];
-      renameTo?: string;
+      /** Present replaces the dependency list; an empty list clears it. */
+      after?: NodeId[];
+      verify?: WorkVerify;
       instruction?: string;
+      /** Present replaces the whole hint list; an empty list clears it. */
+      hints?: HintLoc[];
+      /** Present replaces; `null` clears the optional field. */
+      approach?: string | null;
+      phase?: string | null;
     }
-  | { kind: "edit-remove"; id: NodeId };
+  | { kind: "node-remove"; id: NodeId };
 
 /** One parsed patch reply; ops are applied in wire order. */
 export interface PlanPatch {
@@ -1440,646 +1573,86 @@ export interface PlanPatch {
   finish: boolean;
 }
 
-/** A patch rejection; parse failures are `task-protocol`, apply/merge failures are `task-tree`. */
+/** A patch rejection; parse failures are `plan-protocol`, apply/merge failures are `plan-graph`. */
 export type PatchParse =
   | { ok: true; patch: PlanPatch }
-  | { ok: false; stage: "task-protocol" | "task-tree"; diagnostics: string };
+  | { ok: false; stage: "plan-protocol" | "plan-graph"; diagnostics: string };
 
-function parseActionLoc(
-  cursor: Cursor,
-  tokens: readonly string[],
-  where: string,
-  header: Line,
-  recordId?: string,
-): { action: TaskAction; loc: TaskLoc } {
-  const [actionToken, ...rest] = tokens;
-  if (actionToken === undefined) {
-    fail(
-      cursor,
-      "PLAN_MISSING_FIELD",
-      `${where} must be "<action> <space> <symbol> in <path>" or "write <path>"; got ${quote(tokens.join(" "))}`,
-      {
-        line: header.number,
-        expected: ["<action> <space> <symbol> in <path>", "write <path>"],
-        found: tokens.join(" "),
-        recordId,
-      },
-    );
-  }
-  if (!ACTION_SET.has(actionToken)) {
-    fail(
-      cursor,
-      "PLAN_UNKNOWN_FIELD",
-      `${where} action must be one of ${TASK_ACTIONS.map(quote).join(", ")} (got ${quote(actionToken)})`,
-      {
-        line: header.number,
-        column: tokenColumn(header, actionToken),
-        expected: [...TASK_ACTIONS],
-        found: actionToken,
-        recordId,
-      },
-    );
-  }
-  if (actionToken === "write") {
-    if (rest.length !== 1 || rest[0] === undefined) {
-      fail(
-        cursor,
-        "PLAN_MISSING_FIELD",
-        `${where} write must be "write <path>"; got ${quote(tokens.join(" "))}`,
-        {
-          line: header.number,
-          expected: ["write <path>"],
-          found: tokens.join(" "),
-          recordId,
-        },
-      );
-    }
-    return {
-      action: "write",
-      loc: { path: rest[0], symbol: "", kind: "file" },
-    };
-  }
-  const [spaceToken, symbolToken, inToken, pathToken, ...extra] = rest;
-  if (
-    spaceToken === undefined ||
-    symbolToken === undefined ||
-    inToken !== "in" ||
-    pathToken === undefined ||
-    extra.length > 0
-  ) {
-    fail(
-      cursor,
-      "PLAN_MISSING_FIELD",
-      `${where} must be "<action> <space> <symbol> in <path>"; got ${quote(tokens.join(" "))}`,
-      {
-        line: header.number,
-        expected: ["<action> <space> <symbol> in <path>"],
-        found: tokens.join(" "),
-        recordId,
-      },
-    );
-  }
-  if (!SPACE_SET.has(spaceToken)) {
-    fail(
-      cursor,
-      "PLAN_UNKNOWN_FIELD",
-      `${where} space must be one of value, type, namespace (got ${quote(spaceToken)})`,
-      {
-        line: header.number,
-        column: tokenColumn(header, spaceToken),
-        expected: [...TASK_SPACES],
-        found: spaceToken,
-        recordId,
-      },
-    );
-  }
-  return {
-    action: actionToken as TaskAction,
-    loc: { path: pathToken, symbol: symbolToken, kind: spaceToken as SymbolSpace },
-  };
-}
-
-function parseRelated(cursor: Cursor, line: Line, editId: NodeId): TaskLoc {
-  const [keyword, spaceToken, symbolToken, inToken, pathToken, ...extra] = tokensOf(line);
-  if (
-    keyword !== "related" ||
-    inToken !== "in" ||
-    extra.length > 0 ||
-    spaceToken === undefined ||
-    symbolToken === undefined ||
-    pathToken === undefined
-  ) {
-    fail(
-      cursor,
-      "PLAN_MISSING_FIELD",
-      `related line for edit ${editId} must be "related <space> <symbol> in <path>"; got ${quote(line.text.trim())}`,
-      {
-        line: line.number,
-        expected: ["related <space> <symbol> in <path>"],
-        found: line.text.trim(),
-        recordId: editId,
-      },
-    );
-  }
-  if (!SPACE_SET.has(spaceToken)) {
-    fail(
-      cursor,
-      "PLAN_UNKNOWN_FIELD",
-      `related space for edit ${editId} must be one of value, type, namespace (got ${quote(spaceToken)})`,
-      {
-        line: line.number,
-        expected: [...TASK_SPACES],
-        found: spaceToken,
-        recordId: editId,
-      },
-    );
-  }
-  return { path: pathToken, symbol: symbolToken, kind: spaceToken as SymbolSpace };
-}
-
-interface EditTail {
-  related?: TaskLoc[];
-  renameTo?: string;
-  instruction?: string;
-}
-
-/**
- * Read the optional `related` / `renameTo:` / `instruction:` tail of an edit
- * patch. Fields keep BNF order: related lines, then renameTo, then instruction.
- */
-function parseEditTail(cursor: Cursor, id: NodeId, requireInstruction: boolean): EditTail {
-  const related: TaskLoc[] = [];
-  let renameTo: string | undefined;
-  let instruction: string | undefined;
-
-  for (;;) {
-    const next = peekNonBlank(cursor);
-    if (next === null) {
-      break;
-    }
-    const trimmed = next.text.trim();
-    if (trimmed === "related" || trimmed.startsWith("related ")) {
-      if (renameTo !== undefined) {
-        fail(
-          cursor,
-          "PLAN_UNKNOWN_FIELD",
-          `related lines for edit ${id} must come before renameTo`,
-          { line: next.number, recordId: id, hint: "move related lines above renameTo" },
-        );
-      }
-      if (instruction !== undefined) {
-        fail(
-          cursor,
-          "PLAN_UNKNOWN_FIELD",
-          `related lines for edit ${id} must come before instruction`,
-          { line: next.number, recordId: id, hint: "move related lines above instruction" },
-        );
-      }
-      cursor.position += 1;
-      related.push(parseRelated(cursor, next, id));
-      continue;
-    }
-    if (trimmed.startsWith("renameTo")) {
-      if (instruction !== undefined) {
-        fail(
-          cursor,
-          "PLAN_UNKNOWN_FIELD",
-          `renameTo line for edit ${id} must come before instruction`,
-          { line: next.number, recordId: id, hint: "move renameTo above instruction" },
-        );
-      }
-      cursor.position += 1;
-      const [label, symbol, ...rest] = tokensOf(next);
-      if (label !== "renameTo:" || symbol === undefined || rest.length > 0) {
-        fail(
-          cursor,
-          "PLAN_MISSING_FIELD",
-          `renameTo line for edit ${id} must be "renameTo: <symbol>"; got ${quote(trimmed)}`,
-          {
-            line: next.number,
-            expected: ["renameTo: <symbol>"],
-            found: trimmed,
-            recordId: id,
-          },
-        );
-      }
-      if (renameTo !== undefined) {
-        fail(cursor, "PLAN_UNKNOWN_FIELD", `edit ${id} carries renameTo more than once`, {
-          line: next.number,
-          recordId: id,
-          hint: "keep exactly one renameTo line",
-        });
-      }
-      renameTo = symbol;
-      continue;
-    }
-    if (trimmed.startsWith("instruction:")) {
-      if (instruction !== undefined) {
-        fail(cursor, "PLAN_UNKNOWN_FIELD", `edit ${id} carries instruction more than once`, {
-          line: next.number,
-          recordId: id,
-          hint: "keep exactly one instruction field",
-        });
-      }
-      instruction = readText(cursor, "instruction:", `edit ${id}`, id);
-      continue;
-    }
-    break;
-  }
-
-  if (requireInstruction && instruction === undefined) {
-    const next = peekNonBlank(cursor);
-    fail(cursor, "PLAN_MISSING_FIELD", `edit ${id} needs instruction: before end`, {
-      line: next?.number ?? Math.max(1, cursor.lines.length),
-      expected: ["instruction:"],
-      found: next?.text.trim() ?? "<eof>",
-      recordId: id,
-      hint: `add instruction: before end`,
-    });
-  }
-  return {
-    ...(related.length === 0 ? {} : { related }),
-    ...(renameTo === undefined ? {} : { renameTo }),
-    ...(instruction === undefined ? {} : { instruction }),
-  };
-}
-
-function parsePlanUpdate(cursor: Cursor, header: Line): PlanPatchOp {
-  const [keyword, idToken, ...extra] = tokensOf(header);
-  if (keyword !== "plan~" || extra.length > 0 || idToken === undefined) {
+function parseUpdateHeader(cursor: Cursor, header: Line, keyword: "node~" | "node-"): NodeId {
+  const [actual, idToken, ...extra] = tokensOf(header);
+  if (actual !== keyword || extra.length > 0 || idToken === undefined) {
     fail(
       cursor,
       extra.length > 0 ? "PLAN_UNKNOWN_FIELD" : "PLAN_MISSING_FIELD",
-      `plan~ record on line ${header.number} must be "plan~ \\"NN-slug\\""; got ${quote(header.text.trim())}`,
+      `${keyword} record on line ${header.number} must be "${keyword} \\"NN-slug\\""; got ${quote(header.text.trim())}`,
       {
         line: header.number,
-        expected: ['plan~ "NN-slug"'],
+        expected: [`${keyword} "NN-slug"`],
         found: extra[0] ?? header.text.trim(),
-        hint: 'write plan~ "01-main"',
+        hint: `write ${keyword} "03-impl"`,
       },
     );
   }
-  const id = quotedId(cursor, idToken, `plan id on line ${header.number}`, header, idToken);
-  const goal = readText(cursor, "goal:", `plan ${id}`, id);
-  expectEnd(cursor, `plan ${id}`, id);
-  return { kind: "plan-update", id, goal };
+  return quotedId(cursor, idToken, `${keyword} id on line ${header.number}`, header, idToken);
 }
 
-function parseStageAdd(cursor: Cursor, header: Line): PlanPatchOp {
-  const [keyword, idToken, planKeyword, planToken, ...extra] = tokensOf(header);
-  if (
-    keyword !== "stage+" ||
-    planKeyword !== "plan" ||
-    extra.length > 0 ||
-    idToken === undefined ||
-    planToken === undefined
-  ) {
-    const missing = idToken === undefined || planToken === undefined;
-    fail(
-      cursor,
-      missing ? "PLAN_MISSING_FIELD" : "PLAN_UNKNOWN_FIELD",
-      `stage+ record on line ${header.number} must be "stage+ \\"NN-slug\\" plan \\"NN-slug\\""; got ${quote(header.text.trim())}`,
-      {
-        line: header.number,
-        expected: ['stage+ "NN-slug" plan "NN-slug"'],
-        found: extra[0] ?? header.text.trim(),
-        hint: 'write stage+ "07-next" plan "01-main"',
-      },
-    );
-  }
-  const id = quotedId(cursor, idToken, `stage id on line ${header.number}`, header, idToken);
-  const plan = quotedId(cursor, planToken, `plan ref of stage ${id}`, header, id);
-  const goal = readText(cursor, "goal:", `stage ${id}`, id);
-  expectEnd(cursor, `stage ${id}`, id);
-  return { kind: "stage-add", id, plan, goal };
-}
-
-function parseStageUpdate(cursor: Cursor, header: Line): PlanPatchOp {
-  const [keyword, idToken, ...extra] = tokensOf(header);
-  if (keyword !== "stage~" || extra.length > 0 || idToken === undefined) {
-    fail(
-      cursor,
-      extra.length > 0 ? "PLAN_UNKNOWN_FIELD" : "PLAN_MISSING_FIELD",
-      `stage~ record on line ${header.number} must be "stage~ \\"NN-slug\\""; got ${quote(header.text.trim())}`,
-      {
-        line: header.number,
-        expected: ['stage~ "NN-slug"'],
-        found: extra[0] ?? header.text.trim(),
-        hint: 'write stage~ "02-current"',
-      },
-    );
-  }
-  const id = quotedId(cursor, idToken, `stage id on line ${header.number}`, header, idToken);
-  let goal: string | undefined;
-  const next = peekNonBlank(cursor);
-  if (next !== null && next.text.trim().startsWith("goal:")) {
-    goal = readText(cursor, "goal:", `stage ${id}`, id);
-  }
-  expectEnd(cursor, `stage ${id}`, id);
-  return { kind: "stage-update", id, ...(goal === undefined ? {} : { goal }) };
-}
-
-function parseStageRemove(cursor: Cursor, header: Line): PlanPatchOp {
-  const [keyword, idToken, ...extra] = tokensOf(header);
-  if (keyword !== "stage-" || extra.length > 0 || idToken === undefined) {
-    fail(
-      cursor,
-      extra.length > 0 ? "PLAN_UNKNOWN_FIELD" : "PLAN_MISSING_FIELD",
-      `stage- record on line ${header.number} must be "stage- \\"NN-slug\\""; got ${quote(header.text.trim())}`,
-      {
-        line: header.number,
-        expected: ['stage- "NN-slug"'],
-        found: extra[0] ?? header.text.trim(),
-        hint: 'write stage- "05-repair"',
-      },
-    );
-  }
-  const id = quotedId(cursor, idToken, `stage id on line ${header.number}`, header, idToken);
-  expectEnd(cursor, `stage ${id}`, id);
-  return { kind: "stage-remove", id };
-}
-
-function parseTaskAdd(cursor: Cursor, header: Line): PlanPatchOp {
-  const [keyword, idToken, stageKeyword, stageToken, verifyKeyword, verifyToken, ...extra] =
-    tokensOf(header);
-  if (
-    keyword !== "task+" ||
-    stageKeyword !== "stage" ||
-    verifyKeyword !== "verify" ||
-    extra.length > 0 ||
-    idToken === undefined ||
-    stageToken === undefined ||
-    verifyToken === undefined
-  ) {
-    const missing = idToken === undefined || stageToken === undefined || verifyToken === undefined;
-    fail(
-      cursor,
-      missing ? "PLAN_MISSING_FIELD" : "PLAN_UNKNOWN_FIELD",
-      `task+ record on line ${header.number} must be "task+ \\"NN-slug\\" stage \\"NN-slug\\" verify tsc|test"; got ${quote(header.text.trim())}`,
-      {
-        line: header.number,
-        expected: ['task+ "NN-slug" stage "NN-slug" verify tsc|test'],
-        found: extra[0] ?? header.text.trim(),
-        hint: 'write task+ "08-final" stage "07-next" verify test',
-      },
-    );
-  }
-  const id = quotedId(cursor, idToken, `task id on line ${header.number}`, header, idToken);
-  const stage = quotedId(cursor, stageToken, `stage ref of task ${id}`, header, id);
-  if (!VERIFY_SET.has(verifyToken)) {
-    fail(
-      cursor,
-      "PLAN_UNKNOWN_FIELD",
-      `task ${id} verify must be "tsc" or "test" (got ${quote(verifyToken)})`,
-      {
-        line: header.number,
-        column: tokenColumn(header, verifyToken),
-        expected: ["tsc", "test"],
-        found: verifyToken,
-        recordId: id,
-      },
-    );
-  }
-  const instruction = readText(cursor, "instruction:", `task ${id}`, id);
-  expectEnd(cursor, `task ${id}`, id);
-  return { kind: "task-add", id, stage, verify: verifyToken as TaskVerify, instruction };
-}
-
-function parseTaskUpdate(cursor: Cursor, header: Line): PlanPatchOp {
-  const [keyword, idToken, ...extra] = tokensOf(header);
-  if (keyword !== "task~" || extra.length > 0 || idToken === undefined) {
-    fail(
-      cursor,
-      extra.length > 0 ? "PLAN_UNKNOWN_FIELD" : "PLAN_MISSING_FIELD",
-      `task~ record on line ${header.number} must be "task~ \\"NN-slug\\""; got ${quote(header.text.trim())}`,
-      {
-        line: header.number,
-        expected: ['task~ "NN-slug"'],
-        found: extra[0] ?? header.text.trim(),
-        hint: 'write task~ "03-answer"',
-      },
-    );
-  }
-  const id = quotedId(cursor, idToken, `task id on line ${header.number}`, header, idToken);
-  let verify: TaskVerify | undefined;
-  let instruction: string | undefined;
-
-  for (;;) {
-    const next = peekNonBlank(cursor);
-    if (next === null) {
-      break;
-    }
-    const trimmed = next.text.trim();
-    if (trimmed === "verify" || trimmed.startsWith("verify ")) {
-      cursor.position += 1;
-      const [label, token, ...rest] = tokensOf(next);
-      if (label !== "verify" || token === undefined || rest.length > 0) {
-        fail(
-          cursor,
-          "PLAN_MISSING_FIELD",
-          `verify line for task ${id} must be "verify tsc|test"; got ${quote(trimmed)}`,
-          {
-            line: next.number,
-            expected: ["verify tsc|test"],
-            found: trimmed,
-            recordId: id,
-          },
-        );
-      }
-      if (verify !== undefined) {
-        fail(cursor, "PLAN_UNKNOWN_FIELD", `task ${id} carries verify more than once`, {
-          line: next.number,
-          recordId: id,
-          hint: "keep exactly one verify line",
-        });
-      }
-      if (instruction !== undefined) {
-        fail(cursor, "PLAN_UNKNOWN_FIELD", `task ${id} verify must come before instruction`, {
-          line: next.number,
-          recordId: id,
-          hint: "move verify above instruction",
-        });
-      }
-      if (!VERIFY_SET.has(token)) {
-        fail(
-          cursor,
-          "PLAN_UNKNOWN_FIELD",
-          `task ${id} verify must be "tsc" or "test" (got ${quote(token)})`,
-          {
-            line: next.number,
-            column: tokenColumn(next, token),
-            expected: ["tsc", "test"],
-            found: token,
-            recordId: id,
-          },
-        );
-      }
-      verify = token as TaskVerify;
-      continue;
-    }
-    if (trimmed.startsWith("verify")) {
-      fail(
-        cursor,
-        "PLAN_MISSING_FIELD",
-        `verify line for task ${id} must be "verify tsc|test"; got ${quote(trimmed)}`,
-        {
-          line: next.number,
-          expected: ["verify tsc|test"],
-          found: trimmed,
-          recordId: id,
-        },
-      );
-    }
-    if (trimmed.startsWith("instruction:")) {
-      if (instruction !== undefined) {
-        fail(cursor, "PLAN_UNKNOWN_FIELD", `task ${id} carries instruction more than once`, {
-          line: next.number,
-          recordId: id,
-          hint: "keep exactly one instruction field",
-        });
-      }
-      instruction = readText(cursor, "instruction:", `task ${id}`, id);
-      continue;
-    }
-    break;
-  }
-
-  expectEnd(cursor, `task ${id}`, id);
-  return {
-    kind: "task-update",
-    id,
-    ...(verify === undefined ? {} : { verify }),
-    ...(instruction === undefined ? {} : { instruction }),
-  };
-}
-
-function parseTaskRemove(cursor: Cursor, header: Line): PlanPatchOp {
-  const [keyword, idToken, ...extra] = tokensOf(header);
-  if (keyword !== "task-" || extra.length > 0 || idToken === undefined) {
-    fail(
-      cursor,
-      extra.length > 0 ? "PLAN_UNKNOWN_FIELD" : "PLAN_MISSING_FIELD",
-      `task- record on line ${header.number} must be "task- \\"NN-slug\\""; got ${quote(header.text.trim())}`,
-      {
-        line: header.number,
-        expected: ['task- "NN-slug"'],
-        found: extra[0] ?? header.text.trim(),
-        hint: 'write task- "06-object"',
-      },
-    );
-  }
-  const id = quotedId(cursor, idToken, `task id on line ${header.number}`, header, idToken);
-  expectEnd(cursor, `task ${id}`, id);
-  return { kind: "task-remove", id };
-}
-
-function parseEditAdd(cursor: Cursor, header: Line): PlanPatchOp {
-  const [keyword, idToken, taskKeyword, taskToken, ...locTokens] = tokensOf(header);
-  if (
-    keyword !== "edit+" ||
-    taskKeyword !== "task" ||
-    locTokens.length === 0 ||
-    idToken === undefined ||
-    taskToken === undefined
-  ) {
-    fail(
-      cursor,
-      "PLAN_MISSING_FIELD",
-      `edit+ record on line ${header.number} must be "edit+ \\"NN-slug\\" task \\"NN-slug\\" <action> <space> <symbol> in <path>"; got ${quote(header.text.trim())}`,
-      {
-        line: header.number,
-        expected: ['edit+ "NN-slug" task "NN-slug" <action> <space> <symbol> in <path>'],
-        found: header.text.trim(),
-        hint: 'write edit+ "09-final" task "08-final" modify value parseJson in src/helper.ts',
-      },
-    );
-  }
-  const id = quotedId(cursor, idToken, `edit id on line ${header.number}`, header, idToken);
-  const task = quotedId(cursor, taskToken, `task ref of edit ${id}`, header, id);
-  const { action, loc } = parseActionLoc(
-    cursor,
-    locTokens,
-    `edit+ ${id} header on line ${header.number}`,
-    header,
-    id,
-  );
-  const tail = parseEditTail(cursor, id, true);
-  const instruction = tail.instruction;
+function parseNodeAdd(cursor: Cursor, header: Line, ids: Map<NodeId, Line>): PlanPatchOp {
+  const parsed = parseNodeHeader(cursor, header, "node+");
+  claimId(cursor, ids, parsed.id, header, "node+");
+  const body = parseNodeBody(cursor, parsed.id, {
+    allowClear: false,
+    requireInstruction: true,
+    afterSeen: parsed.after !== undefined,
+    verifySeen: true,
+  });
+  expectEnd(cursor, `node ${parsed.id}`, parsed.id);
+  const instruction = body.instruction;
   if (instruction === undefined) {
-    fail(cursor, "PLAN_MISSING_FIELD", `edit ${id} needs instruction: before end`, {
-      line: header.number,
-      expected: ["instruction:"],
-      recordId: id,
-    });
+    throw new Error(`node+ ${parsed.id} passed validation without an instruction`);
   }
-  expectEnd(cursor, `edit ${id}`, id);
   return {
-    kind: "edit-add",
-    id,
-    task,
-    loc,
-    action,
-    ...(tail.related === undefined ? {} : { related: tail.related }),
-    ...(tail.renameTo === undefined ? {} : { renameTo: tail.renameTo }),
+    kind: "node-add",
+    id: parsed.id,
+    after: parsed.after ?? body.after ?? [],
+    verify: parsed.verify,
     instruction,
+    hints: body.hints ?? [],
+    ...optionalText(body.approach),
+    ...(body.phase === undefined || body.phase === null ? {} : { phase: body.phase }),
   };
 }
 
-function parseEditUpdate(cursor: Cursor, header: Line): PlanPatchOp {
-  const [keyword, idToken, ...extra] = tokensOf(header);
-  if (keyword !== "edit~" || extra.length > 0 || idToken === undefined) {
-    fail(
-      cursor,
-      extra.length > 0 ? "PLAN_UNKNOWN_FIELD" : "PLAN_MISSING_FIELD",
-      `edit~ record on line ${header.number} must be "edit~ \\"NN-slug\\""; got ${quote(header.text.trim())}`,
-      {
-        line: header.number,
-        expected: ['edit~ "NN-slug"'],
-        found: extra[0] ?? header.text.trim(),
-        hint: 'write edit~ "04-change"',
-      },
-    );
-  }
-  const id = quotedId(cursor, idToken, `edit id on line ${header.number}`, header, idToken);
-
-  let action: TaskAction | undefined;
-  let loc: TaskLoc | undefined;
-  const next = peekNonBlank(cursor);
-  if (next !== null) {
-    const trimmed = next.text.trim();
-    const tokens = tokensOf(next);
-    const first = tokens[0] ?? "";
-    const tailLine =
-      first === "related" ||
-      trimmed.startsWith("related ") ||
-      trimmed.startsWith("renameTo") ||
-      trimmed.startsWith("instruction:");
-    const locLine =
-      !tailLine && (ACTION_SET.has(first) || (tokens.length === 5 && tokens[3] === "in"));
-    if (locLine) {
-      cursor.position += 1;
-      const parsed = parseActionLoc(cursor, tokens, `edit~ ${id} loc line`, next, id);
-      action = parsed.action;
-      loc = parsed.loc;
-    }
-  }
-
-  const tail = parseEditTail(cursor, id, false);
-  expectEnd(cursor, `edit ${id}`, id);
+function parseNodeUpdate(cursor: Cursor, header: Line): PlanPatchOp {
+  const id = parseUpdateHeader(cursor, header, "node~");
+  const body = parseNodeBody(cursor, id, {
+    allowClear: true,
+    requireInstruction: false,
+    afterSeen: false,
+    verifySeen: false,
+  });
+  expectEnd(cursor, `node ${id}`, id);
   return {
-    kind: "edit-update",
+    kind: "node-update",
     id,
-    ...(action === undefined ? {} : { action }),
-    ...(loc === undefined ? {} : { loc }),
-    ...(tail.related === undefined ? {} : { related: tail.related }),
-    ...(tail.renameTo === undefined ? {} : { renameTo: tail.renameTo }),
-    ...(tail.instruction === undefined ? {} : { instruction: tail.instruction }),
+    ...(body.after === undefined ? {} : { after: body.after }),
+    ...(body.verify === undefined ? {} : { verify: body.verify }),
+    ...(body.instruction === undefined ? {} : { instruction: body.instruction }),
+    ...(body.hints === undefined ? {} : { hints: body.hints }),
+    ...(body.approach === undefined ? {} : { approach: body.approach }),
+    ...(body.phase === undefined ? {} : { phase: body.phase }),
   };
 }
 
-function parseEditRemove(cursor: Cursor, header: Line): PlanPatchOp {
-  const [keyword, idToken, ...extra] = tokensOf(header);
-  if (keyword !== "edit-" || extra.length > 0 || idToken === undefined) {
-    fail(
-      cursor,
-      extra.length > 0 ? "PLAN_UNKNOWN_FIELD" : "PLAN_MISSING_FIELD",
-      `edit- record on line ${header.number} must be "edit- \\"NN-slug\\""; got ${quote(header.text.trim())}`,
-      {
-        line: header.number,
-        expected: ['edit- "NN-slug"'],
-        found: extra[0] ?? header.text.trim(),
-        hint: 'write edit- "07-object"',
-      },
-    );
-  }
-  const id = quotedId(cursor, idToken, `edit id on line ${header.number}`, header, idToken);
-  expectEnd(cursor, `edit ${id}`, id);
-  return { kind: "edit-remove", id };
+function parseNodeRemove(cursor: Cursor, header: Line): PlanPatchOp {
+  const id = parseUpdateHeader(cursor, header, "node-");
+  expectEnd(cursor, `node ${id}`, id);
+  return { kind: "node-remove", id };
 }
 
 function parsePatchOps(cursor: Cursor): { ops: PlanPatchOp[]; finish: boolean } {
   const ops: PlanPatchOp[] = [];
   let finish = false;
+  const ids = new Map<NodeId, Line>();
 
   for (;;) {
     const line = peekNonBlank(cursor);
@@ -2114,7 +1687,7 @@ function parsePatchOps(cursor: Cursor): { ops: PlanPatchOp[]; finish: boolean } 
         `unexpected "end" on line ${line.number}; no patch record is open`,
         {
           line: line.number,
-          expected: ["plan~", "stage+", "task+", "edit+", "finish"],
+          expected: ["node+", "node~", "node-", "finish"],
           found: "end",
           hint: "remove the stray end",
         },
@@ -2145,7 +1718,7 @@ function parsePatchOps(cursor: Cursor): { ops: PlanPatchOp[]; finish: boolean } 
         `the patch header is a singleton and must be the first line; found one on line ${line.number}`,
         {
           line: line.number,
-          expected: ["plan~", "stage+", "task+", "edit+", "finish"],
+          expected: ["node+", "node~", "node-", "finish"],
           found: keyword,
           hint: "keep exactly one patch header at the top",
         },
@@ -2153,58 +1726,29 @@ function parsePatchOps(cursor: Cursor): { ops: PlanPatchOp[]; finish: boolean } 
       recoverRecord(cursor);
       continue;
     }
+    if (isLegacyKeyword(keyword)) {
+      legacyRecord(cursor, line, keyword);
+      continue;
+    }
     try {
       switch (keyword) {
-        case "plan~":
-          ops.push(parsePlanUpdate(cursor, line));
+        case "node+":
+          ops.push(parseNodeAdd(cursor, line, ids));
           continue;
-        case "stage+":
-          ops.push(parseStageAdd(cursor, line));
+        case "node~":
+          ops.push(parseNodeUpdate(cursor, line));
           continue;
-        case "stage~":
-          ops.push(parseStageUpdate(cursor, line));
-          continue;
-        case "stage-":
-          ops.push(parseStageRemove(cursor, line));
-          continue;
-        case "task+":
-          ops.push(parseTaskAdd(cursor, line));
-          continue;
-        case "task~":
-          ops.push(parseTaskUpdate(cursor, line));
-          continue;
-        case "task-":
-          ops.push(parseTaskRemove(cursor, line));
-          continue;
-        case "edit+":
-          ops.push(parseEditAdd(cursor, line));
-          continue;
-        case "edit~":
-          ops.push(parseEditUpdate(cursor, line));
-          continue;
-        case "edit-":
-          ops.push(parseEditRemove(cursor, line));
+        case "node-":
+          ops.push(parseNodeRemove(cursor, line));
           continue;
         default:
           report(
             cursor,
             "PLAN_UNKNOWN_FIELD",
-            `unknown patch record ${quote(keyword)} on line ${line.number}; expected plan~, stage+|~|-, task+|~|-, edit+|~|-, or a trailing finish`,
+            `unknown patch record ${quote(keyword)} on line ${line.number}; expected node+|~|-, or a trailing finish`,
             {
               line: line.number,
-              expected: [
-                "plan~",
-                "stage+",
-                "stage~",
-                "stage-",
-                "task+",
-                "task~",
-                "task-",
-                "edit+",
-                "edit~",
-                "edit-",
-                "finish",
-              ],
+              expected: ["node+", "node~", "node-", "finish"],
               found: keyword,
               hint: "use one of the patch record operators",
             },
@@ -2239,6 +1783,20 @@ function parsePatchHeader(cursor: Cursor): void {
     );
   }
   if (trimmed !== "patch") {
+    const keyword = trimmed.split(/\s+/)[0] ?? "";
+    if (isLegacyKeyword(keyword)) {
+      fail(
+        cursor,
+        "PLAN_LEGACY_RECORD",
+        `legacy Stage/Task/Edit patch record ${quote(keyword)} is not supported; the patch DSL uses node+, node~, and node-`,
+        {
+          line: line.number,
+          expected: ["patch"],
+          found: keyword,
+          hint: "start with patch and replace the old records with node operators",
+        },
+      );
+    }
     fail(
       cursor,
       "PLAN_MISSING_FIELD",
@@ -2329,7 +1887,7 @@ export function parsePlanPatch(content: string): PatchParse {
   if (!result.ok || errors.length > 0) {
     return {
       ok: false,
-      stage: "task-protocol",
+      stage: errors.some((issue) => isPlanGraphStage(issue.stage)) ? "plan-graph" : "plan-protocol",
       diagnostics: renderDslIssues([...result.issues]),
     };
   }
@@ -2337,14 +1895,18 @@ export function parsePlanPatch(content: string): PatchParse {
   if (value === undefined) {
     return {
       ok: false,
-      stage: "task-protocol",
+      stage: "plan-protocol",
       diagnostics:
-        "stage: task-protocol\ncode: PLAN_MISSING_FIELD\nmessage: the reply produced no patch",
+        "stage: plan-protocol\ncode: PLAN_MISSING_FIELD\nmessage: the reply produced no patch",
     };
   }
   return { ok: true, patch: value };
 }
-function pushText(lines: string[], label: string, text: string): void {
+
+// ---------------------------------------------------------------------------
+// Serialization
+
+function pushText(lines: string[], label: TextFieldLabel, text: string): void {
   const normalized = text.replace(/\r\n?/g, "\n");
   if (normalized !== "" && !normalized.includes("\n") && normalized === normalized.trim()) {
     lines.push(`${label} ${normalized}`);
@@ -2358,61 +1920,49 @@ function pushText(lines: string[], label: string, text: string): void {
   lines.push(label, EDIT_FENCE_BEGIN, ...normalized.split("\n"), EDIT_FENCE_END);
 }
 
+function hintWire(hint: HintLoc): string {
+  return hint.kind === "file"
+    ? `hint file ${hint.path}`
+    : `hint ${hint.kind} ${hint.symbol} in ${hint.path}`;
+}
+
+function pushHints(lines: string[], hints: readonly HintLoc[]): void {
+  for (const hint of hints) {
+    lines.push(hintWire(hint));
+  }
+}
+
+function nodeHeaderWire(
+  id: NodeId,
+  after: readonly NodeId[],
+  verify: WorkVerify,
+  keyword: "node" | "node+" = "node",
+): string {
+  const edges = after.length === 0 ? "" : ` after ${after.map(quote).join(" ")}`;
+  return `${keyword} ${quote(id)}${edges} verify ${verify}`;
+}
+
 /**
  * Serialize a Plan into the flat DSL. Text is emitted on the label line when
- * that round-trips exactly, otherwise in the sentinel fence.
+ * that round-trips exactly, otherwise in the sentinel fence. The serializer does
+ * not emit `finish`; the run-state marker is separate from the plan graph.
  */
 export function serializePlanDsl(plan: Plan): string {
   const lines: string[] = [`plan ${quote(plan.id)}`];
   pushText(lines, "goal:", plan.goal);
-
-  for (const stage of plan.stages) {
-    lines.push("", `stage ${quote(stage.id)} plan ${quote(plan.id)}`);
-    pushText(lines, "goal:", stage.goal);
+  for (const node of plan.nodes) {
+    lines.push("", nodeHeaderWire(node.id, node.after, node.verify));
+    pushText(lines, "instruction:", node.instruction);
+    pushHints(lines, node.hints);
+    if (node.approach !== undefined) {
+      pushText(lines, "approach:", node.approach);
+    }
+    if (node.phase !== undefined) {
+      pushText(lines, "phase:", node.phase);
+    }
     lines.push("end");
   }
-  for (const stage of plan.stages) {
-    for (const task of stage.tasks) {
-      lines.push("", `task ${quote(task.id)} stage ${quote(stage.id)} verify ${task.verify}`);
-      pushText(lines, "instruction:", task.instruction);
-      lines.push("end");
-    }
-  }
-  for (const stage of plan.stages) {
-    for (const task of stage.tasks) {
-      for (const edit of task.edits) {
-        lines.push(
-          "",
-          `edit ${quote(edit.id)} task ${quote(task.id)} ${editLocWire(edit.action, edit.loc)}`,
-        );
-        for (const loc of edit.related ?? []) {
-          lines.push(`related ${loc.kind} ${loc.symbol} in ${loc.path}`);
-        }
-        if (edit.renameTo !== undefined) {
-          lines.push(`renameTo: ${edit.renameTo}`);
-        }
-        pushText(lines, "instruction:", edit.instruction);
-        lines.push("end");
-      }
-    }
-  }
   return lines.join("\n");
-}
-
-function editLocWire(action: TaskAction, loc: TaskLoc): string {
-  return action === "write"
-    ? `write ${loc.path}`
-    : `${action} ${loc.kind} ${loc.symbol} in ${loc.path}`;
-}
-
-function pushEditLoc(lines: string[], action: TaskAction, loc: TaskLoc): void {
-  lines.push(editLocWire(action, loc));
-}
-
-function pushRelated(lines: string[], related: readonly TaskLoc[] | undefined): void {
-  for (const loc of related ?? []) {
-    lines.push(`related ${loc.kind} ${loc.symbol} in ${loc.path}`);
-  }
 }
 
 /** Serialize a patch in the strict wire form (`docs/plan-exec.md` §4). */
@@ -2420,73 +1970,57 @@ export function serializePlanPatch(patch: PlanPatch): string {
   const lines: string[] = ["patch"];
   for (const op of patch.ops) {
     switch (op.kind) {
-      case "plan-update":
-        lines.push(`plan~ ${quote(op.id)}`);
-        pushText(lines, "goal:", op.goal);
-        break;
-      case "stage-add":
-        lines.push(`stage+ ${quote(op.id)} plan ${quote(op.plan)}`);
-        pushText(lines, "goal:", op.goal);
-        break;
-      case "stage-update":
-        lines.push(`stage~ ${quote(op.id)}`);
-        if (op.goal !== undefined) {
-          pushText(lines, "goal:", op.goal);
-        }
-        break;
-      case "stage-remove":
-        lines.push(`stage- ${quote(op.id)}`);
-        break;
-      case "task-add":
-        lines.push(`task+ ${quote(op.id)} stage ${quote(op.stage)} verify ${op.verify}`);
+      case "node-add":
+        lines.push(nodeHeaderWire(op.id, op.after, op.verify, "node+"));
         pushText(lines, "instruction:", op.instruction);
+        pushHints(lines, op.hints);
+        if (op.approach !== undefined) {
+          pushText(lines, "approach:", op.approach);
+        }
+        if (op.phase !== undefined) {
+          pushText(lines, "phase:", op.phase);
+        }
+        lines.push("end");
         break;
-      case "task-update":
-        lines.push(`task~ ${quote(op.id)}`);
+      case "node-update":
+        lines.push(`node~ ${quote(op.id)}`);
+        if (op.after !== undefined) {
+          lines.push(op.after.length === 0 ? "after" : `after ${op.after.map(quote).join(" ")}`);
+        }
         if (op.verify !== undefined) {
           lines.push(`verify ${op.verify}`);
         }
         if (op.instruction !== undefined) {
           pushText(lines, "instruction:", op.instruction);
         }
+        if (op.hints !== undefined) {
+          if (op.hints.length === 0) {
+            lines.push("hint clear");
+          } else {
+            pushHints(lines, op.hints);
+          }
+        }
+        if (op.approach !== undefined) {
+          if (op.approach === null) {
+            lines.push("approach clear");
+          } else {
+            pushText(lines, "approach:", op.approach);
+          }
+        }
+        if (op.phase !== undefined) {
+          if (op.phase === null) {
+            lines.push("phase clear");
+          } else {
+            pushText(lines, "phase:", op.phase);
+          }
+        }
+        lines.push("end");
         break;
-      case "task-remove":
-        lines.push(`task- ${quote(op.id)}`);
-        break;
-      case "edit-add":
-        lines.push(
-          `edit+ ${quote(op.id)} task ${quote(op.task)} ${editLocWire(op.action, op.loc)}`,
-        );
-        pushRelated(lines, op.related);
-        if (op.renameTo !== undefined) {
-          lines.push(`renameTo: ${op.renameTo}`);
-        }
-        pushText(lines, "instruction:", op.instruction);
-        break;
-      case "edit-update": {
-        lines.push(`edit~ ${quote(op.id)}`);
-        if ((op.action === undefined) !== (op.loc === undefined)) {
-          throw new Error(
-            `edit~ #${op.id} carries only one of action/loc; the patch DSL requires both in one header`,
-          );
-        }
-        if (op.action !== undefined && op.loc !== undefined) {
-          pushEditLoc(lines, op.action, op.loc);
-        }
-        pushRelated(lines, op.related);
-        if (op.renameTo !== undefined) {
-          lines.push(`renameTo: ${op.renameTo}`);
-        }
-        if (op.instruction !== undefined) {
-          pushText(lines, "instruction:", op.instruction);
-        }
-        break;
-      }
-      case "edit-remove":
-        lines.push(`edit- ${quote(op.id)}`);
+      case "node-remove":
+        lines.push(`node- ${quote(op.id)}`);
+        lines.push("end");
         break;
     }
-    lines.push("end");
   }
   if (patch.finish) {
     lines.push("finish");
@@ -2501,241 +2035,99 @@ function clonePlan(plan: Plan): Plan {
   return {
     id: plan.id,
     goal: plan.goal,
-    stages: plan.stages.map((stage) => ({
-      id: stage.id,
-      goal: stage.goal,
-      tasks: stage.tasks.map((task) => ({
-        id: task.id,
-        verify: task.verify,
-        instruction: task.instruction,
-        edits: task.edits.map((edit) => ({
-          id: edit.id,
-          loc: { ...edit.loc },
-          action: edit.action,
-          instruction: edit.instruction,
-          ...(edit.related === undefined
-            ? {}
-            : { related: edit.related.map((loc) => ({ ...loc })) }),
-          ...(edit.renameTo === undefined ? {} : { renameTo: edit.renameTo }),
-        })),
-      })),
+    nodes: plan.nodes.map((node) => ({
+      id: node.id,
+      after: [...node.after],
+      verify: node.verify,
+      instruction: node.instruction,
+      hints: node.hints.map((hint) => ({ ...hint })),
+      ...(node.approach === undefined ? {} : { approach: node.approach }),
+      ...(node.phase === undefined ? {} : { phase: node.phase }),
     })),
   };
 }
 
-interface FoundTask {
-  stage: Stage;
-  task: TaskNode;
-  index: number;
-}
-
-function findTaskNode(plan: Plan, id: NodeId): FoundTask | undefined {
-  for (const stage of plan.stages) {
-    const index = stage.tasks.findIndex((task) => task.id === id);
-    const task = stage.tasks[index];
-    if (task !== undefined) {
-      return { stage, task, index };
-    }
-  }
-  return undefined;
-}
-
-interface FoundEdit {
-  task: TaskNode;
-  edit: EditNode;
-  index: number;
-}
-
-function findEditNode(plan: Plan, id: NodeId): FoundEdit | undefined {
-  for (const stage of plan.stages) {
-    for (const task of stage.tasks) {
-      const index = task.edits.findIndex((edit) => edit.id === id);
-      const edit = task.edits[index];
-      if (edit !== undefined) {
-        return { task, edit, index };
-      }
-    }
-  }
-  return undefined;
-}
-
-function inProgressEdit(previous: TaskRunState, edits: readonly EditNode[]): EditNode | undefined {
-  return edits.find((edit) => previous.editStatus.get(edit.id) === "in-progress");
+function findNodeIndex(plan: Plan, id: NodeId): number {
+  return plan.nodes.findIndex((node) => node.id === id);
 }
 
 function patchTreeFailure(message: string): PlanMerge {
-  const code = /does not exist|names plan .*current Plan/.test(message)
+  const code = /does not exist|not in the plan/.test(message)
     ? "PLAN_UNKNOWN_PARENT"
-    : /final task|finish/.test(message)
-      ? "PLAN_FINISH_NOT_LAST"
-      : "PLAN_STRUCTURE";
-  return { ok: false, diagnostics: `stage: task-tree\ncode: ${code}\n- ${message}` };
+    : /reuses node id/.test(message)
+      ? "PLAN_DUPLICATE_ID"
+      : /cycle/.test(message)
+        ? "PLAN_CYCLE"
+        : /final node|finish/.test(message)
+          ? "PLAN_FINISH_NOT_LAST"
+          : "PLAN_STRUCTURE";
+  return { ok: false, diagnostics: `stage: plan-graph\ncode: ${code}\n- ${message}` };
 }
 
-function applyPatchOp(
-  previous: TaskRunState,
-  plan: Plan,
-  op: PlanPatchOp,
-): { ok: false; problem: string } | { ok: true } {
+function applyPatchOp(plan: Plan, op: PlanPatchOp): { ok: false; problem: string } | { ok: true } {
   switch (op.kind) {
-    case "plan-update": {
-      if (op.id !== plan.id) {
+    case "node-add": {
+      if (findNodeIndex(plan, op.id) !== -1) {
         return {
           ok: false,
-          problem: `plan~ names plan #${op.id}, but the current Plan is #${plan.id}`,
+          problem: `node+ #${op.id} reuses node id "${op.id}"; ids must be globally unique`,
         };
       }
-      plan.goal = op.goal;
-      return { ok: true };
-    }
-    case "stage-add": {
-      if (op.plan !== plan.id) {
-        return {
-          ok: false,
-          problem: `stage+ #${op.id} names plan #${op.plan}, but the current Plan is #${plan.id}`,
-        };
-      }
-      plan.stages.push({ id: op.id, goal: op.goal, tasks: [] });
-      return { ok: true };
-    }
-    case "stage-update": {
-      const stage = plan.stages.find((candidate) => candidate.id === op.id);
-      if (stage === undefined) {
-        return { ok: false, problem: `stage~ names stage #${op.id}, which does not exist` };
-      }
-      if (op.goal !== undefined) {
-        stage.goal = op.goal;
-      }
-      return { ok: true };
-    }
-    case "stage-remove": {
-      const index = plan.stages.findIndex((stage) => stage.id === op.id);
-      const stage = plan.stages[index];
-      if (stage === undefined) {
-        return { ok: false, problem: `stage- names stage #${op.id}, which does not exist` };
-      }
-      const busy = inProgressEdit(
-        previous,
-        stage.tasks.flatMap((task) => task.edits),
-      );
-      if (busy !== undefined) {
-        return {
-          ok: false,
-          problem: `stage- #${op.id} contains in-progress edit #${busy.id}; wait for it to finish before removing the stage`,
-        };
-      }
-      plan.stages.splice(index, 1);
-      return { ok: true };
-    }
-    case "task-add": {
-      const stage = plan.stages.find((candidate) => candidate.id === op.stage);
-      if (stage === undefined) {
-        return {
-          ok: false,
-          problem: `task+ #${op.id} names stage #${op.stage}, which does not exist`,
-        };
-      }
-      stage.tasks.push({ id: op.id, verify: op.verify, instruction: op.instruction, edits: [] });
-      return { ok: true };
-    }
-    case "task-update": {
-      const found = findTaskNode(plan, op.id);
-      if (found === undefined) {
-        return { ok: false, problem: `task~ names task #${op.id}, which does not exist` };
-      }
-      if (op.verify !== undefined) {
-        found.task.verify = op.verify;
-      }
-      if (op.instruction !== undefined) {
-        found.task.instruction = op.instruction;
-      }
-      return { ok: true };
-    }
-    case "task-remove": {
-      const found = findTaskNode(plan, op.id);
-      if (found === undefined) {
-        return { ok: false, problem: `task- names task #${op.id}, which does not exist` };
-      }
-      const busy = inProgressEdit(previous, found.task.edits);
-      if (busy !== undefined) {
-        return {
-          ok: false,
-          problem: `task- #${op.id} contains in-progress edit #${busy.id}; wait for it to finish before removing the task`,
-        };
-      }
-      found.stage.tasks.splice(found.index, 1);
-      return { ok: true };
-    }
-    case "edit-add": {
-      const found = findTaskNode(plan, op.task);
-      if (found === undefined) {
-        return {
-          ok: false,
-          problem: `edit+ #${op.id} names task #${op.task}, which does not exist`,
-        };
-      }
-      found.task.edits.push({
+      plan.nodes.push({
         id: op.id,
-        loc: { ...op.loc },
-        action: op.action,
+        after: [...op.after],
+        verify: op.verify,
         instruction: op.instruction,
-        ...(op.related === undefined ? {} : { related: op.related.map((loc) => ({ ...loc })) }),
-        ...(op.renameTo === undefined ? {} : { renameTo: op.renameTo }),
+        hints: op.hints.map((hint) => ({ ...hint })),
+        ...(op.approach === undefined ? {} : { approach: op.approach }),
+        ...(op.phase === undefined ? {} : { phase: op.phase }),
       });
       return { ok: true };
     }
-    case "edit-update": {
-      const found = findEditNode(plan, op.id);
-      if (found === undefined) {
-        return { ok: false, problem: `edit~ names edit #${op.id}, which does not exist` };
+    case "node-update": {
+      const index = findNodeIndex(plan, op.id);
+      const node = plan.nodes[index];
+      if (node === undefined) {
+        return { ok: false, problem: `node~ names node #${op.id}, which does not exist` };
       }
-      if (op.loc !== undefined) {
-        found.edit.loc = { ...op.loc };
-      }
-      if (op.action !== undefined) {
-        found.edit.action = op.action;
-      }
-      if (op.related !== undefined) {
-        found.edit.related = op.related.map((loc) => ({ ...loc }));
-      }
-      if (op.renameTo !== undefined) {
-        found.edit.renameTo = op.renameTo;
-      }
-      if (op.instruction !== undefined) {
-        found.edit.instruction = op.instruction;
-      }
+      const approach =
+        op.approach === undefined ? node.approach : op.approach === null ? undefined : op.approach;
+      const phase = op.phase === undefined ? node.phase : op.phase === null ? undefined : op.phase;
+      plan.nodes[index] = {
+        id: node.id,
+        after: op.after === undefined ? node.after : [...op.after],
+        verify: op.verify ?? node.verify,
+        instruction: op.instruction ?? node.instruction,
+        hints: op.hints === undefined ? node.hints : op.hints.map((hint) => ({ ...hint })),
+        ...(approach === undefined ? {} : { approach }),
+        ...(phase === undefined ? {} : { phase }),
+      };
       return { ok: true };
     }
-    case "edit-remove": {
-      const found = findEditNode(plan, op.id);
-      if (found === undefined) {
-        return { ok: false, problem: `edit- names edit #${op.id}, which does not exist` };
+    case "node-remove": {
+      const index = findNodeIndex(plan, op.id);
+      if (index === -1) {
+        return { ok: false, problem: `node- names node #${op.id}, which does not exist` };
       }
-      if (previous.editStatus.get(op.id) === "in-progress") {
-        return {
-          ok: false,
-          problem: `edit- #${op.id} is in-progress; wait for it to finish before removing it`,
-        };
-      }
-      found.task.edits.splice(found.index, 1);
+      plan.nodes.splice(index, 1);
       return { ok: true };
     }
   }
 }
 
 /**
- * Apply a parsed patch to a clone of the current tree, then run the same merge
+ * Apply a parsed patch to a clone of the current graph, then run the same merge
  * validation as a full re-plan. The clone is local, so a rejected op or merge
  * leaves `previous` untouched.
  *
- * `finish` moves `finalTaskId` to the new last task; without `finish` the
- * previous final task must remain last (an in-place repair). Appending work
- * after it therefore needs a new `finish` on the new final test task.
+ * `finish` moves `finalNodeId` to the new last node; without `finish` the
+ * previous final node must remain last (an in-place repair). Appending work
+ * after it therefore needs a new `finish` on the new final test node.
  */
-export function applyPlanPatch(previous: TaskRunState, patch: PlanPatch): PlanMerge {
+export function applyPlanPatch(previous: PlanRunState, patch: PlanPatch): PlanMerge {
   const nextPlan = clonePlan(previous.plan);
   for (const op of patch.ops) {
-    const applied = applyPatchOp(previous, nextPlan, op);
+    const applied = applyPatchOp(nextPlan, op);
     if (!applied.ok) {
       return patchTreeFailure(applied.problem);
     }
@@ -2746,32 +2138,30 @@ export function applyPlanPatch(previous: TaskRunState, patch: PlanPatch): PlanMe
     return merged;
   }
 
-  const last = finalTask(nextPlan.stages);
-  let finalTaskId: NodeId | null;
+  const last = finalNode(nextPlan);
+  let finalNodeId: NodeId | null;
   if (patch.finish) {
     if (last === undefined) {
-      return patchTreeFailure("finish needs at least one task in the merged tree");
+      return patchTreeFailure("finish needs at least one work node in the merged graph");
     }
     if (last.verify !== "test") {
       return patchTreeFailure(
-        `finish marks task #${last.id}, but it verifies "${last.verify}"; the final task must verify "test"`,
+        `finish marks node #${last.id}, but it verifies "${last.verify}"; the final node must verify "test"`,
       );
     }
-    finalTaskId = last.id;
-  } else if (previous.finalTaskId !== null) {
-    if (last === undefined || last.id !== previous.finalTaskId) {
+    finalNodeId = last.id;
+  } else if (previous.finalNodeId !== null) {
+    if (last === undefined || last.id !== previous.finalNodeId) {
       const now =
-        last === undefined
-          ? "the merged tree has no last task"
-          : `the new last task is #${last.id}`;
+        last === undefined ? "the merged graph has no nodes" : `the new last node is #${last.id}`;
       return patchTreeFailure(
-        `the final task #${previous.finalTaskId} is no longer last (${now}); append a final "test" task and emit finish so finalTaskId moves`,
+        `the final node #${previous.finalNodeId} is no longer last (${now}); append a final "test" node and emit finish so finalNodeId moves`,
       );
     }
-    finalTaskId = previous.finalTaskId;
+    finalNodeId = previous.finalNodeId;
   } else {
-    finalTaskId = null;
+    finalNodeId = null;
   }
 
-  return { ok: true, state: { ...merged.state, finalTaskId } };
+  return { ok: true, state: { ...merged.state, finalNodeId } };
 }

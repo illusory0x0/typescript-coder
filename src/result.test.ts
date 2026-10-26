@@ -38,8 +38,8 @@ function resultOf(overrides: Partial<LoopResult> = {}): LoopResult {
 }
 
 describe("RESULT_FORMAT", () => {
-  test("is the @2 string-node-id contract", () => {
-    expect(RESULT_FORMAT).toBe("typescript-coder-result@2");
+  test("is the @3 WorkNode-summary contract", () => {
+    expect(RESULT_FORMAT).toBe("typescript-coder-result@3");
   });
 });
 
@@ -124,32 +124,32 @@ describe("buildSubagentResult", () => {
     expect(result.tokens).toBe(tokens);
   });
 
-  test("carries plan/execute task summaries with string node ids (#28)", () => {
+  test("carries plan/execute WorkNode summaries with string node ids (#49)", () => {
     const result = buildSubagentResult({
       result: resultOf({
-        tasks: [
+        nodes: [
           {
-            id: "03-edit-answer",
-            stage: "01-stage-fix",
-            task: "02-task-answer",
+            id: "02-answer",
             verify: "test",
-            action: "modify",
-            path: "src/helper.ts",
-            symbol: "answer",
-            kind: "value",
-            status: "done",
+            status: "passed",
+            phase: "implement",
+          },
+          {
+            id: "03-final",
+            verify: "test",
+            status: "passed",
           },
         ],
       }),
     });
-    expect(result.tasks?.[0]).toMatchObject({
-      id: "03-edit-answer",
-      stage: "01-stage-fix",
-      task: "02-task-answer",
+    expect(result.nodes?.[0]).toMatchObject({
+      id: "02-answer",
+      verify: "test",
+      status: "passed",
+      phase: "implement",
     });
-    expect(typeof result.tasks?.[0]?.id).toBe("string");
-    expect(typeof result.tasks?.[0]?.stage).toBe("string");
-    expect(typeof result.tasks?.[0]?.task).toBe("string");
+    expect(result.nodes?.[1]?.id).toBe("03-final");
+    expect(typeof result.nodes?.[0]?.id).toBe("string");
   });
 });
 
@@ -168,7 +168,7 @@ describe("serializeSubagentResult", () => {
     const text = serializeSubagentResult(built);
     expect(text).toBe(JSON.stringify(built));
     expect(JSON.parse(text)).toEqual({
-      format: "typescript-coder-result@2",
+      format: "typescript-coder-result@3",
       status: "failed",
       verified: false,
       files: [{ path: "src/helper.ts", symbol: "answer", kind: "function", outcome: "applied" }],

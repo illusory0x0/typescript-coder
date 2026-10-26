@@ -60,7 +60,7 @@ import type {
   SymbolSpace,
   TolerantIndex,
 } from "./utility";
-import type { TaskSummary } from "./tasks";
+import type { NodeSummary } from "./tasks";
 import {
   APPROACH_LIMIT,
   CONTEXT_SYMBOL_LIMIT,
@@ -1325,7 +1325,7 @@ export interface ProviderLike {
 /**
  * The loop shape: `pinned-repair` repairs one pinned selection through
  * Edit -> Verify; `plan-exec` plans, executes, and reviews a
- * Plan -> Execute -> Review edit tree.
+ * task-level WorkNode graph.
  */
 export type AgentMode = "pinned-repair" | "plan-exec";
 
@@ -1451,8 +1451,8 @@ export interface LoopOptions {
    * Loop shape (`--mode`): `pinned-repair` (default) is the single-target
    * Edit → Verify loop; `plan-exec` runs the planning/execution/review
    * loop of `docs/plan-exec.md`, where a planner emits a
-   * Plan -> Execute -> Review edit tree and the harness executes one edit at a
-   * time. The deprecated `edit` spelling is accepted only at input boundaries
+   * task-level WorkNode DAG and the harness schedules one node at a time. The
+   * deprecated `edit` spelling is accepted only at input boundaries
    * and maps to pinned-repair.
    */
   agentMode?: AgentMode;
@@ -2309,11 +2309,10 @@ export interface LoopResult {
    */
   appliedTargets?: Locator[];
   /**
-   * Plan/execute mode: one entry per edit of the final Plan tree, in tree
-   * order; `id`, `stage`, and `task` are string node ids
-   * (`typescript-coder-result@2`). Absent on the single-target drivers.
+   * Plan/execute mode: one entry per WorkNode of the final graph, in record
+   * order (`typescript-coder-result@3`). Absent on the single-target drivers.
    */
-  tasks?: TaskSummary[];
+  nodes?: NodeSummary[];
   /** Recovered parser warnings (#33); absent when the reply was clean. */
   warnings?: string[];
 }
