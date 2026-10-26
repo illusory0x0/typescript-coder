@@ -884,8 +884,13 @@ or `pick`); the JSON payload path records the equivalent `whole-symbol` /
 These guards run before any gate:
 
 - **No-op, per region.** A replacement byte-identical to the text it replaces
-  is a `no-op` failure. Because it is per clause, one inert clause does not
-  reject a whole reply.
+  is a `no-op` failure. A reply whose only failures are `no-op` clauses keeps
+  its other changes: when at least one resolved region, create, delete, or
+  whole-file write still applies, the inert clause(s) are ignored and
+  `ignored N inert edit-dsl clause(s) whose replacement was identical to the
+  selected text; do not resend them` is surfaced as feedback and a run warning.
+  A reply whose changes are all inert is a `no-op` rejection, and any
+  non-`no-op` failure keeps the whole-reply rejection.
 - **Regex bounds.** A pattern over 1024 characters, one that fails to compile,
   or one matching over 1000 times inside the declaration is `regex-invalid`, a
   `matcher`-stage cause. A single catastrophic-backtracking `exec` cannot be
@@ -943,17 +948,20 @@ the vocabulary so metrics compare.
 | `echo` / `address`     | The address does not echo the pinned selection, or does not resolve uniquely.                                                     |
 | `matcher`              | `matcher-unparseable`, `matcher-not-found`, `matcher-ambiguous`, or `regex-invalid`.                                              |
 | `range`                | A `range`/`pick` that is out of bounds, empty, inverted, or outside the declaration.                                              |
-| `no-op`                | The replacement equals the text it replaces.                                                                                      |
+| `no-op`                | The replacement equals the text it replaces; ignored when another clause in the reply applies, otherwise a rejection.             |
 | `repeat` / `duplicate` | A byte-identical resubmission; a repeated resolved target; a duplicate top-level declaration or create.                           |
 | `gate`                 | The file parsed before and does not parse after.                                                                                  |
 | `format`               | oxfmt rejected the result, or the formatted source equals the pre-edit source.                                                    |
 
-When an edit-dsl statement fails, its diagnostic names the statement, its
-position in the reply (`clause N of M`), its locator and path, and states that
-the whole reply was discarded, so the model must resend the full corrected
-reply. The `EDIT_*` parser codes are listed in §2; the Plan DSL's `PLAN_*` codes
-are owned by [`plan-exec.md`](plan-exec.md) §5.3. Retry policy around a
-rejection is owned by [`feedback-loop.md`](feedback-loop.md).
+When an edit-dsl statement fails at any stage other than `no-op`, its
+diagnostic names the statement, its position in the reply (`clause N of M`), its
+locator and path, and states that the whole reply was discarded, so the model
+must resend the full corrected reply. A `no-op` clause is the per-clause
+exception above: it is reported and ignored only when another clause applies;
+an all-inert reply still rejects. The `EDIT_*` parser codes are listed in §2;
+the Plan DSL's `PLAN_*` codes are owned by [`plan-exec.md`](plan-exec.md) §5.3.
+Retry policy around a rejection is owned by
+[`feedback-loop.md`](feedback-loop.md).
 
 ## 6. Application and gating
 
@@ -977,17 +985,21 @@ The formats differ in what a batch means:
   select clause (viewer, editor, or rename) and each implicit create claims its
   resolved target; a repeated `(path, symbol, kind)` is a `stage: duplicate`
   rejection that names both statements and the address and discards the reply.
-  If any editing statement fails resolution, or the apply pipeline reports any
-  guard/overlap failure, the whole reply is discarded and nothing is written —
-  no file, including creates, deletes, and writes. Only a reply with no editing
-  failures writes every resolved region and file command. Multiple creates that
-  append at the same end offset are applied in statement order; duplicate
-  creates of the same declaration still fail at the duplicate guard. A failed
-  `read` is the one exception: it writes nothing by construction, so its error
-  rides the next prompt without discarding the other statements. A mixed
-  viewer+editor reply that fails writes nothing but still carries the viewer
-  feedback. A failing reply is a retry-driving rejection, and the retry must
-  carry the full corrected reply (there is no "already applied" list).
+  If any editing statement fails resolution at a non-`no-op` stage, or the apply
+  pipeline reports any non-`no-op` guard/overlap failure, the whole reply is
+  discarded and nothing is written — no file, including creates, deletes, and
+  writes. A reply whose only failures are `no-op` clauses keeps its other
+  changes: when at least one region, create, delete, or write still applies, the
+  inert clause(s) are ignored (with a warning) and the rest write every resolved
+  region and file command. A reply whose changes are all inert is a `no-op`
+  rejection. Multiple creates that append at the same end offset are applied in
+  statement order; duplicate creates of the same declaration still fail at the
+  duplicate guard. A failed `read` is the one exception: it writes nothing by
+  construction, so its error rides the next prompt without discarding the other
+  statements. A mixed viewer+editor reply that fails writes nothing but still
+  carries the viewer feedback. A failing reply is a retry-driving rejection, and
+  the retry must carry the full corrected reply (there is no "already applied"
+  list).
 
 A reply whose statements all fail writes nothing; one whose statements all apply
 goes to verification. A failed verification does **not** roll back: the attempted

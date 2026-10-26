@@ -17,7 +17,9 @@ import { renderReadFailureFeedback, renderReadFeedback, resolveMultiEditor } fro
 import type { MultiEditorDeps, MultiEditorResolution } from "./multi-editor";
 import {
   duplicateDeclarationNote,
+  ignoredInertClausesWarning,
   markedViewerLines,
+  partitionEditDslFailures,
   renderViewerFeedback,
   resolveEditDslReply,
 } from "./edit-dsl";
@@ -6304,6 +6306,9 @@ async function runEditDslLoop(options: LoopOptions): Promise<LoopResult> {
     diagnostics: string;
   } | null = null;
 
+  /** Run-level warnings, e.g. ignored inert edit-dsl clauses (#44). */
+  const warnings: string[] = [];
+
   const success = (editedSource: string | null): LoopResult => ({
     ok: true,
     mode: pinned?.mode,
@@ -6315,6 +6320,7 @@ async function runEditDslLoop(options: LoopOptions): Promise<LoopResult> {
     explanation: null,
     messages,
     skipped,
+    ...(warnings.length === 0 ? {} : { warnings: [...warnings] }),
     tokens,
   });
   // Termination step (#43): record rows are already pushed; the only remaining
@@ -6336,6 +6342,7 @@ async function runEditDslLoop(options: LoopOptions): Promise<LoopResult> {
       messages,
       skipped,
       terminationReason: reason,
+      ...(warnings.length === 0 ? {} : { warnings: [...warnings] }),
       tokens,
     };
   };
@@ -7378,6 +7385,8 @@ async function runEditDslLoop(options: LoopOptions): Promise<LoopResult> {
       if (failure === null && editDslReply && editDslResolution !== null) {
         const totalClauses = editDslStatements.length;
         const blocks: string[] = [];
+        const blockStages: EditFailureStage[] = [];
+        const ignoredApplyIndices = new Set<number>();
         let firstEditDslStage: EditFailureStage | null = null;
         let firstEditDslCause: MatcherCause | undefined;
         let firstEditDslUndeclared: string | null = null;
@@ -7406,8 +7415,29 @@ async function runEditDslLoop(options: LoopOptions): Promise<LoopResult> {
               diagnostics,
             ),
           );
+          blockStages.push(stage);
         };
+        const regions = editDslResolution.regions.map(editDslRegionToResolved);
+        const fsCreates = editDslResolution.creates;
+        editDslDeletes = editDslResolution.deletes;
+        // #111: count the create clauses the reply resolved, applied or not, so
+        // the stage/metrics instrumentation records create-form adoption.
+        editDslCreates =
+          editDslResolution.regions.filter((region) => region.create).length + fsCreates.length;
+        // Inert no-op clauses (#44) are per clause: ignore them only when
+        // another resolved clause still changes the source. Every other
+        // failure keeps the whole reply atomic.
+        const resolutionPartition = partitionEditDslFailures(editDslResolution.failures);
+        const canApplyOther =
+          regions.length > 0 || fsCreates.length > 0 || editDslDeletes.length > 0;
+        const ignoreInertFailures =
+          resolutionPartition.fatal.length === 0 &&
+          resolutionPartition.inert.length > 0 &&
+          canApplyOther;
         for (const clauseFailure of editDslResolution.failures) {
+          if (ignoreInertFailures && clauseFailure.stage === "no-op") {
+            continue;
+          }
           noteEditDslFailure(
             clauseFailure.index,
             clauseFailure.path,
@@ -7425,19 +7455,12 @@ async function runEditDslLoop(options: LoopOptions): Promise<LoopResult> {
             },
           );
         }
-        const regions = editDslResolution.regions.map(editDslRegionToResolved);
-        const fsCreates = editDslResolution.creates;
-        editDslDeletes = editDslResolution.deletes;
-        // #111: count the create clauses the reply resolved, applied or not, so
-        // the stage/metrics instrumentation records create-form adoption.
-        editDslCreates =
-          editDslResolution.regions.filter((region) => region.create).length + fsCreates.length;
-        // Whole-reply atomicity (§6): resolution failures discard every
-        // resolved region, and any apply failure discards every returned write
-        // (including files that passed). Nothing is written until both sets are
-        // clean.
+        // Whole-reply atomicity (§6): fatal resolution failures discard every
+        // resolved region, and any fatal apply failure discards every returned
+        // write (including files that passed). Nothing is written until both
+        // sets are clean.
         let writes: { path: string; source: string }[] = [];
-        if (editDslResolution.failures.length === 0) {
+        if (resolutionPartition.fatal.length === 0) {
           writes = await applyResolvedRegions({
             regions,
             fileSourceOf: (path) =>
@@ -7449,6 +7472,9 @@ async function runEditDslLoop(options: LoopOptions): Promise<LoopResult> {
             // overlap; real span overlaps still fail below.
             policy: { sameOffsetInserts: "append" },
             noteFailure: (note) => {
+              if (note.stage === "no-op") {
+                ignoredApplyIndices.add(note.region.index);
+              }
               noteEditDslFailure(
                 note.region.index,
                 note.path,
@@ -7464,25 +7490,59 @@ async function runEditDslLoop(options: LoopOptions): Promise<LoopResult> {
                 firstEditDslStage = "protocol";
               }
               blocks.push(editDslOverlapDiagnostics(totalClauses, path, earlier, later));
+              blockStages.push("protocol");
             },
           });
           for (const create of fsCreates) {
             writes.push({ path: create.path, source: "" });
           }
         }
-        if (blocks.length > 0) {
-          // The whole edit-dsl reply is discarded: no file write, no create.
+        const fatalBlocks = blocks.filter((_block, index) => blockStages[index] !== "no-op");
+        const inertBlocks = blocks.filter((_block, index) => blockStages[index] === "no-op");
+        let ignoredInertClauses = ignoreInertFailures ? resolutionPartition.inert.length : 0;
+        if (fatalBlocks.length > 0) {
+          // A non-no-op failure still discards the whole reply; the diagnostic
+          // keeps every failing clause, inert ones included.
           failure = blocks.join("\n\n");
           if (firstEditDslStage !== null) {
             failureStage = firstEditDslStage;
           }
           matcherCause = firstEditDslCause;
           addressUndeclaredName = firstEditDslUndeclared;
-        } else if (regions.length > 0 || fsCreates.length > 0 || editDslDeletes.length > 0) {
+        } else if (inertBlocks.length > 0) {
+          const hasOtherApply =
+            writes.length > 0 || fsCreates.length > 0 || editDslDeletes.length > 0;
+          if (hasOtherApply) {
+            // The other clauses applied; the inert clauses are ignored rather
+            // than rejecting the whole reply.
+            ignoredInertClauses += ignoredApplyIndices.size;
+          } else {
+            // Every clause was inert: keep the existing no-op rejection.
+            failure = inertBlocks.join("\n\n");
+            if (firstEditDslStage !== null) {
+              failureStage = firstEditDslStage;
+            }
+            matcherCause = firstEditDslCause;
+            addressUndeclaredName = firstEditDslUndeclared;
+          }
+        }
+        if (
+          failure === null &&
+          (regions.length > 0 || fsCreates.length > 0 || editDslDeletes.length > 0)
+        ) {
           editDslApplied = true;
-          editDslAppliedRegions = regions;
+          editDslAppliedRegions = regions.filter(
+            (region) => !ignoredApplyIndices.has(region.index),
+          );
           batchWrites.push(...writes);
           newSource = writes.find((write) => write.path === target)?.source ?? sourceBefore;
+        }
+        if (failure === null && ignoredInertClauses > 0) {
+          const warning = ignoredInertClausesWarning(ignoredInertClauses);
+          warnings.push(warning);
+          editDslViewerFeedback = [editDslViewerFeedback, warning]
+            .filter((block): block is string => block !== null && block !== "")
+            .join("\n\n");
         }
         const readFeedback =
           editDslResolution.reads.length === 0 ? null : renderReadFeedback(editDslResolution.reads);
@@ -7512,7 +7572,12 @@ async function runEditDslLoop(options: LoopOptions): Promise<LoopResult> {
             ? null
             : renderViewerFeedback(editDslResolution.viewers);
         if (viewerFeedback !== null || readFeedback !== null || feedbackReadErrors !== "") {
-          editDslViewerFeedback = [viewerFeedback, readFeedback, feedbackReadErrors || null]
+          editDslViewerFeedback = [
+            editDslViewerFeedback,
+            viewerFeedback,
+            readFeedback,
+            feedbackReadErrors || null,
+          ]
             .filter((block): block is string => block !== null && block !== "")
             .join("\n\n");
         }

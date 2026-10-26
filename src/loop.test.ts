@@ -10528,29 +10528,26 @@ describe("edit-dsl protocol (#111/#119)", () => {
     };
   }
 
-  test("an edit-dsl multi-clause reply with one no-op clause writes nothing and the retry resends both", async () => {
+  test("an edit-dsl multi-clause reply applies the valid clause, ignores one no-op clause, and warns", async () => {
     const dir = sameFileFixtureDir();
     const original = pairSource(dir);
-    let afterFailure = "";
+    let afterInert = "";
     const provider = new ScriptedProvider(
       [
         editDslSelect("one", "src/pair.ts"),
         editDslReply(
-          // Clause 1 would apply `one`'s fix.
+          // Clause 1 applies `one`'s fix.
           pairEditor("one", "return 2;", { kind: "snippet", value: "return 1;" }),
           // Clause 2 changes nothing: its replacement equals the matched source.
           pairEditor("two", "return 1;", { kind: "snippet", value: "return 1;" }),
         ),
-        // The whole reply failed, so the retry must carry both edits.
-        editDslReply(
-          pairEditor("one", "return 2;", { kind: "snippet", value: "return 1;" }),
-          pairEditor("two", "return 3;", { kind: "snippet", value: "return 1;" }),
-        ),
+        // `one` already applied; only the remaining real edit is resent.
+        editDslReply(pairEditor("two", "return 3;", { kind: "snippet", value: "return 1;" })),
         "Great! I resolve this problem!",
       ],
       (callIndex) => {
         if (callIndex === 2) {
-          afterFailure = pairSource(dir);
+          afterInert = pairSource(dir);
         }
       },
     );
@@ -10563,21 +10560,123 @@ describe("edit-dsl protocol (#111/#119)", () => {
       testCommand: ["bun", "test"],
     });
     expect(result.ok).toBe(true);
-    // The failed reply wrote nothing: the retry saw the original file.
-    expect(afterFailure).toBe(original);
+    // The valid clause applied; the inert clause did not block the reply.
+    expect(afterInert).not.toBe(original);
+    expect(afterInert).toContain("return 2;");
+    expect(afterInert).toContain("return 1;");
     const source = pairSource(dir);
     expect(source).toContain("return 2;");
     expect(source).toContain("return 3;");
     expect(source).not.toContain("return 1;");
+    expect(result.warnings).toEqual([
+      "ignored 1 inert edit-dsl clause whose replacement was identical to the selected text; do not resend it",
+    ]);
+    const applied = result.records.find(
+      (record) => record.kind === "exchange" && record.outcome === "applied",
+    );
+    expect(applied?.payloads).toBe(2);
+    // The ignored clause is not part of the applied telemetry.
+    expect(applied?.stages).toEqual(["match"]);
+    expect(applied?.selectors).toEqual(["matcher"]);
+    expect(applied?.matcherKinds).toEqual(["snippet"]);
+    expect(result.records.some((record) => record.outcome === "no-op")).toBe(false);
+  }, 30000);
+
+  test("an edit-dsl reply whose clauses are all inert is still a no-op rejection", async () => {
+    const dir = sameFileFixtureDir();
+    const original = pairSource(dir);
+    let afterRejection = "";
+    const provider = new ScriptedProvider(
+      [
+        editDslSelect("one", "src/pair.ts"),
+        editDslReply(
+          pairEditor("one", "return 1;", { kind: "snippet", value: "return 1;" }),
+          pairEditor("two", "return 1;", { kind: "snippet", value: "return 1;" }),
+        ),
+        editDslReply(
+          pairEditor("one", "return 2;", { kind: "snippet", value: "return 1;" }),
+          pairEditor("two", "return 3;", { kind: "snippet", value: "return 1;" }),
+        ),
+        "Great! I resolve this problem!",
+      ],
+      (callIndex) => {
+        if (callIndex === 2) {
+          afterRejection = pairSource(dir);
+        }
+      },
+    );
+    const result = await runLoop({
+      cwd: dir,
+      issue: "make both declarations satisfy the pair test",
+      provider,
+      protocolFormat: "edit-dsl",
+      checkCommand: TSC,
+      testCommand: ["bun", "test"],
+    });
+    expect(result.ok).toBe(true);
+    // All clauses were inert, so nothing was written and the retry saw the original.
+    expect(afterRejection).toBe(original);
     const rejected = result.records.find(
       (record) => record.kind === "exchange" && record.outcome === "no-op",
     );
     expect(rejected).toBeDefined();
+    expect(rejected?.diagnostics).toContain("clause 1 of 2");
     expect(rejected?.diagnostics).toContain("clause 2 of 2");
     expect(rejected?.diagnostics).toContain("stage: no-op");
     expect(rejected?.diagnostics).toContain("the whole edit-dsl reply is discarded");
-    expect(rejected?.diagnostics).not.toContain("already applied (do not resend):");
-    expect(rejected?.stages).toEqual([]);
+    expect(result.warnings).toBeUndefined();
+    const source = pairSource(dir);
+    expect(source).toContain("return 2;");
+    expect(source).toContain("return 3;");
+  }, 30000);
+
+  test("a no-op clause does not salvage a reply with a non-no-op failure", async () => {
+    const dir = sameFileFixtureDir();
+    const original = pairSource(dir);
+    let afterRejection = "";
+    const provider = new ScriptedProvider(
+      [
+        editDslSelect("one", "src/pair.ts"),
+        editDslReply(
+          // Clause 1 fails its matcher, which stays whole-reply atomic.
+          pairEditor("one", "return 2;", { kind: "snippet", value: "return 999;" }),
+          // Clause 2 is inert and must not make clause 1 apply.
+          pairEditor("two", "return 1;", { kind: "snippet", value: "return 1;" }),
+        ),
+        editDslReply(
+          pairEditor("one", "return 2;", { kind: "snippet", value: "return 1;" }),
+          pairEditor("two", "return 3;", { kind: "snippet", value: "return 1;" }),
+        ),
+        "Great! I resolve this problem!",
+      ],
+      (callIndex) => {
+        if (callIndex === 2) {
+          afterRejection = pairSource(dir);
+        }
+      },
+    );
+    const result = await runLoop({
+      cwd: dir,
+      issue: "make both declarations satisfy the pair test",
+      provider,
+      protocolFormat: "edit-dsl",
+      checkCommand: TSC,
+      testCommand: ["bun", "test"],
+    });
+    expect(result.ok).toBe(true);
+    expect(afterRejection).toBe(original);
+    const rejected = result.records.find(
+      (record) => record.kind === "exchange" && record.outcome === "matcher",
+    );
+    expect(rejected).toBeDefined();
+    expect(rejected?.diagnostics).toContain("clause 1 of 2");
+    expect(rejected?.diagnostics).toContain("clause 2 of 2");
+    expect(rejected?.diagnostics).toContain("stage: no-op");
+    expect(rejected?.diagnostics).toContain("the whole edit-dsl reply is discarded");
+    expect(result.warnings).toBeUndefined();
+    const source = pairSource(dir);
+    expect(source).toContain("return 2;");
+    expect(source).toContain("return 3;");
   }, 30000);
 
   test("a failed read does not discard the same reply's edits (#25)", async () => {
@@ -10802,8 +10901,8 @@ describe("edit-dsl protocol (#111/#119)", () => {
       [
         editDslSelect("one", "src/a.ts"),
         editDslReply(
-          // The `a.ts` clause would pass on its own; `b.ts` resolves but is a
-          // no-op, so the apply phase must discard `a.ts`'s returned write too.
+          // The `a.ts` clause would pass on its own; `b.ts` fails its matcher,
+          // so the apply phase must discard `a.ts`'s returned write too.
           {
             locator: { path: "src/a.ts", name: "one", kind: "function" },
             space: null,
@@ -10814,9 +10913,9 @@ describe("edit-dsl protocol (#111/#119)", () => {
           {
             locator: { path: "src/b.ts", name: "two", kind: "function" },
             space: null,
-            matcher: { kind: "snippet", value: "return 1;" },
+            matcher: { kind: "snippet", value: "return 999;" },
             pick: null,
-            replacement: "return 1;",
+            replacement: "return 3;",
           },
         ),
         editDslReply(
@@ -10856,11 +10955,75 @@ describe("edit-dsl protocol (#111/#119)", () => {
     expect(readFileSync(join(dir, "src", "a.ts"), "utf8")).toContain("return 2;");
     expect(readFileSync(join(dir, "src", "b.ts"), "utf8")).toContain("return 3;");
     const rejected = result.records.find(
-      (record) => record.kind === "exchange" && record.outcome === "no-op",
+      (record) => record.kind === "exchange" && record.outcome === "matcher",
     );
     expect(rejected?.diagnostics).toContain("clause 2 of 2");
     expect(rejected?.diagnostics).toContain("the whole edit-dsl reply is discarded");
     expect(rejected?.diagnostics).not.toContain("already applied (do not resend):");
+    expect(result.warnings).toBeUndefined();
+  }, 30000);
+
+  test("a multi-file edit-dsl reply applies the valid file and ignores an inert no-op file", async () => {
+    const dir = multiFixtureDir();
+    const originalB = readFileSync(join(dir, "src", "b.ts"), "utf8");
+    let afterInert = "";
+    const provider = new ScriptedProvider(
+      [
+        editDslSelect("one", "src/a.ts"),
+        editDslReply(
+          {
+            locator: { path: "src/a.ts", name: "one", kind: "function" },
+            space: null,
+            matcher: { kind: "snippet", value: "return 1;" },
+            pick: null,
+            replacement: "return 2;",
+          },
+          {
+            locator: { path: "src/b.ts", name: "two", kind: "function" },
+            space: null,
+            matcher: { kind: "snippet", value: "return 1;" },
+            pick: null,
+            replacement: "return 1;",
+          },
+        ),
+        // `a.ts` already applied; only the remaining real edit is resent.
+        editDslReply({
+          locator: { path: "src/b.ts", name: "two", kind: "function" },
+          space: null,
+          matcher: { kind: "snippet", value: "return 1;" },
+          pick: null,
+          replacement: "return 3;",
+        }),
+        "Great! I resolve this problem!",
+      ],
+      (callIndex) => {
+        if (callIndex === 2) {
+          afterInert = readFileSync(join(dir, "src", "b.ts"), "utf8");
+        }
+      },
+    );
+    const result = await runLoop({
+      cwd: dir,
+      issue: "make both declarations satisfy the pair test",
+      provider,
+      protocolFormat: "edit-dsl",
+      checkCommand: TSC,
+      testCommand: ["bun", "test"],
+    });
+    expect(result.ok).toBe(true);
+    // The inert `b.ts` clause did not discard the applied `a.ts` write.
+    expect(afterInert).toBe(originalB);
+    expect(readFileSync(join(dir, "src", "a.ts"), "utf8")).toContain("return 2;");
+    expect(readFileSync(join(dir, "src", "b.ts"), "utf8")).toContain("return 3;");
+    expect(result.warnings).toEqual([
+      "ignored 1 inert edit-dsl clause whose replacement was identical to the selected text; do not resend it",
+    ]);
+    expect(result.records.some((record) => record.outcome === "no-op")).toBe(false);
+    const applied = result.records.find(
+      (record) => record.kind === "exchange" && record.outcome === "applied",
+    );
+    expect(applied?.payloads).toBe(2);
+    expect(applied?.stages).toEqual(["match"]);
   }, 30000);
 
   test("a mixed viewer+editor reply on one declaration is a duplicate and carries viewer feedback", async () => {

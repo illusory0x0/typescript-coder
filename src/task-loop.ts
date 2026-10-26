@@ -26,7 +26,12 @@ import { parseMultiEditorDetailed } from "./selection";
 import type { EditStatement, Selection as EditDslSelection } from "./selection";
 import { renderReadFailureFeedback, renderReadFeedback, resolveMultiEditor } from "./multi-editor";
 import type { MultiEditorDeps, MultiEditorResolution } from "./multi-editor";
-import { declarationKindOf, renderViewerFeedback } from "./edit-dsl";
+import {
+  declarationKindOf,
+  ignoredInertClausesWarning,
+  partitionEditDslFailures,
+  renderViewerFeedback,
+} from "./edit-dsl";
 import type { EditDslRegion } from "./edit-dsl";
 import {
   applyResolvedRegions,
@@ -343,14 +348,18 @@ interface ReplyOutcome {
 function replyTelemetry(
   payloads: number,
   resolution: MultiEditorResolution,
+  ignoredRegionIndices?: ReadonlySet<number>,
 ): Pick<ReplyOutcome, "payloads" | "selectors" | "stages" | "matcherKinds" | "creates"> {
+  const regions =
+    ignoredRegionIndices === undefined || ignoredRegionIndices.size === 0
+      ? resolution.regions
+      : resolution.regions.filter((region) => !ignoredRegionIndices.has(region.index));
   return {
     payloads,
-    selectors: resolution.regions.map((region) => selectorFromStage(region.stage)),
-    stages: resolution.regions.map((region) => region.stage),
-    matcherKinds: resolution.regions.map((region) => region.matcherKind),
-    creates:
-      resolution.regions.filter((region) => region.create).length + resolution.creates.length,
+    selectors: regions.map((region) => selectorFromStage(region.stage)),
+    stages: regions.map((region) => region.stage),
+    matcherKinds: regions.map((region) => region.matcherKind),
+    creates: regions.filter((region) => region.create).length + resolution.creates.length,
   };
 }
 
@@ -668,6 +677,9 @@ async function applyEditReply(
   const resolution = resolveMultiEditor(statements, editDslDeps(context));
   const telemetry = replyTelemetry(statements.length, resolution);
   const feedback = feedbackOf(resolution);
+  // A no-op failure is per clause (#44): it is ignored when another clause in
+  // the reply can still apply. Every other stage stays whole-reply atomic.
+  const failurePartition = partitionEditDslFailures(resolution.failures);
   const rejected = (
     diagnostics: string,
     feedbackValue: string | null,
@@ -682,7 +694,7 @@ async function applyEditReply(
     ...telemetry,
     ...extra,
   });
-  if (resolution.failures.length > 0) {
+  if (failurePartition.fatal.length > 0) {
     return rejected(rejectionText(resolution, statements.length), feedback);
   }
 
@@ -718,6 +730,17 @@ async function applyEditReply(
     }
     commandWriteIndices.add(index);
   }
+  // Inert no-op clauses (#44) are ignorable only when another clause in the
+  // reply carries a change: a resolved region, a create/delete, or a write.
+  const hasOtherChangeClauses =
+    resolution.regions.length > 0 ||
+    resolution.creates.length > 0 ||
+    resolution.deletes.length > 0 ||
+    commandWrites.length > 0;
+  if (failurePartition.inert.length > 0 && !hasOtherChangeClauses) {
+    return rejected(rejectionText(resolution, statements.length), feedback);
+  }
+  let ignoredInertCount = failurePartition.inert.length;
   const renameIndices = new Set<number>();
   for (let index = 0; index < statements.length; index += 1) {
     const statement = statements[index];
@@ -812,7 +835,7 @@ async function applyEditReply(
     }
   }
 
-  let failure: string | null = null;
+  const applyFailures: { index: number; stage: string; diagnostics: string }[] = [];
   const target = expandedRegions[0]?.path ?? "";
   const prevCheck = target === "" ? parseCheck("") : parseCheck(sourceOf(target));
   const writes =
@@ -825,16 +848,46 @@ async function applyEditReply(
           prevCheck,
           policy: { sameOffsetInserts: "append" },
           noteFailure: (note) => {
-            failure = failure ?? note.diagnostics;
+            applyFailures.push({
+              index: note.region.index,
+              stage: note.stage,
+              diagnostics: note.diagnostics,
+            });
           },
           noteOverlap: (path, earlier, later) => {
-            failure =
-              failure ??
-              `stage: protocol\nthe reply's regions overlap in ${path} (clauses ${earlier.index + 1} and ${later.index + 1}); send non-overlapping clauses`;
+            applyFailures.push({
+              index: earlier.index,
+              stage: "protocol",
+              diagnostics: `stage: protocol\nthe reply's regions overlap in ${path} (clauses ${earlier.index + 1} and ${later.index + 1}); send non-overlapping clauses`,
+            });
           },
         });
-  if (failure !== null) {
-    return rejected(feedback === null ? failure : `${failure}\n\n${feedback}`, feedback);
+  const applyPartition = partitionEditDslFailures(applyFailures);
+  const fatalApplyFailure = applyPartition.fatal[0];
+  if (fatalApplyFailure !== undefined) {
+    return rejected(
+      feedback === null
+        ? fatalApplyFailure.diagnostics
+        : `${fatalApplyFailure.diagnostics}\n\n${feedback}`,
+      feedback,
+    );
+  }
+  const ignoredApplyIndices = new Set(applyPartition.inert.map((failure) => failure.index));
+  if (applyPartition.inert.length > 0) {
+    // Apply-level no-ops (a file whose formatted result equals its original
+    // source) are inert too, but only when another change still applies.
+    const hasOtherApply =
+      writes.length > 0 ||
+      commandWrites.length > 0 ||
+      resolution.creates.length > 0 ||
+      resolution.deletes.length > 0;
+    if (!hasOtherApply) {
+      return rejected(
+        feedback === null ? NOOP_DIAGNOSTICS : `${NOOP_DIAGNOSTICS}\n\n${feedback}`,
+        feedback,
+      );
+    }
+    ignoredInertCount += ignoredApplyIndices.size;
   }
 
   const preparedWrites: { path: string; source: string }[] = [...writes];
@@ -907,16 +960,30 @@ async function applyEditReply(
   for (const deletion of resolution.deletes) {
     appliedLocators.push({ path: deletion.path, name: "", kind: "" });
   }
+  const inertWarning =
+    ignoredInertCount === 0 ? null : ignoredInertClausesWarning(ignoredInertCount);
+  if (inertWarning !== null) {
+    // The run-level warning channel and the applied reply's feedback both carry
+    // it, so a later executor turn does not resend the inert clauses (#44).
+    context.warnings.push(inertWarning);
+  }
+  const appliedFeedback =
+    inertWarning === null
+      ? feedback
+      : feedback === null
+        ? inertWarning
+        : `${feedback}\n\n${inertWarning}`;
+  const appliedTelemetry = replyTelemetry(statements.length, resolution, ignoredApplyIndices);
   return {
     ok: true,
     viewerOnly: false,
-    diagnostics: feedback,
-    feedback,
+    diagnostics: appliedFeedback,
+    feedback: appliedFeedback,
     appliedLocators,
     paths: [
       ...new Set([...uniqueWrites.keys(), ...resolution.deletes.map((deletion) => deletion.path)]),
     ],
-    ...telemetry,
+    ...appliedTelemetry,
     wholeFileWrites,
     targetedEdit,
   };

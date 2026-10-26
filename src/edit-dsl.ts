@@ -124,6 +124,37 @@ export interface EditDslFailure {
   undeclaredName: string | null;
 }
 
+/**
+ * Split a reply's failures into inert no-op clauses and fatal failures (#44).
+ * A no-op is per clause: it can be ignored when another clause in the same
+ * reply still changes the source. Every other stage stays whole-reply atomic.
+ */
+export function partitionEditDslFailures<F extends { stage: string }>(
+  failures: readonly F[],
+): { inert: F[]; fatal: F[] } {
+  const inert: F[] = [];
+  const fatal: F[] = [];
+  for (const failure of failures) {
+    if (failure.stage === "no-op") {
+      inert.push(failure);
+    } else {
+      fatal.push(failure);
+    }
+  }
+  return { inert, fatal };
+}
+
+/**
+ * The feedback/result warning for ignored inert clauses (#44). It is surfaced
+ * so the next executor turn does not resend the no-ops; it is not part of the
+ * applied selectors/stages/matcher telemetry.
+ */
+export function ignoredInertClausesWarning(count: number): string {
+  const clause = count === 1 ? "clause" : "clauses";
+  const pronoun = count === 1 ? "it" : "them";
+  return `ignored ${count} inert edit-dsl ${clause} whose replacement was identical to the selected text; do not resend ${pronoun}`;
+}
+
 export interface EditDslResolution {
   regions: EditDslRegion[];
   viewers: EditDslViewer[];

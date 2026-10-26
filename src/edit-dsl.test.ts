@@ -1,5 +1,11 @@
 import { describe, expect, test } from "bun:test";
-import { foldMarker, renderViewerFeedback, resolveEditDslReply } from "./edit-dsl";
+import {
+  foldMarker,
+  ignoredInertClausesWarning,
+  partitionEditDslFailures,
+  renderViewerFeedback,
+  resolveEditDslReply,
+} from "./edit-dsl";
 import type { EditDslDeps } from "./edit-dsl";
 import { parseSelection } from "./selection";
 import { buildIndexTolerant, declarationSpaces } from "./utility";
@@ -61,6 +67,27 @@ function wholeReplace(path: string, kind: string, name: string, body: string): s
   const head = kind === "" ? `select ${name} in ${path}` : `select ${kind} ${name} in ${path}`;
   return [head, "replace with", "<<<TC_EDIT_BEGIN>>>", body, "<<<TC_EDIT_END>>>", "end"].join("\n");
 }
+
+describe("no-op salvage helpers (#44)", () => {
+  test("partitions inert no-op failures from fatal failures", () => {
+    const failures = [
+      { stage: "no-op" as const, index: 0 },
+      { stage: "address" as const, index: 1 },
+      { stage: "no-op" as const, index: 2 },
+    ];
+    const result = partitionEditDslFailures(failures);
+    expect(result.inert.map((failure) => failure.index)).toEqual([0, 2]);
+    expect(result.fatal.map((failure) => failure.index)).toEqual([1]);
+  });
+
+  test("renders singular and plural ignored-clause warnings", () => {
+    expect(ignoredInertClausesWarning(1)).toBe(
+      "ignored 1 inert edit-dsl clause whose replacement was identical to the selected text; do not resend it",
+    );
+    expect(ignoredInertClausesWarning(2)).toContain("ignored 2 inert edit-dsl clauses");
+    expect(ignoredInertClausesWarning(2)).toContain("do not resend them");
+  });
+});
 
 describe("resolveEditDslReply (#111)", () => {
   test("resolves an editor clause with its cascade stage and matcher kind", () => {

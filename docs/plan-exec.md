@@ -959,7 +959,11 @@ marked **expected failure** are deliberate.
 
 1. Parse the reply with the edit-action parser. A parse failure writes nothing.
 2. Resolve every clause against the pre-reply source snapshot with
-   `resolveMultiEditor`; any resolution failure rejects the whole reply.
+   `resolveMultiEditor`; any non-`no-op` resolution failure rejects the whole
+   reply. A `no-op` clause is inert: when another clause still applies, the
+   reply applies the rest and surfaces an ignored-clause warning in the next
+   prompt's feedback and the run warnings; an all-inert reply is a `no-op`
+   rejection.
 3. Apply editor regions with `applyResolvedRegions` (overlap, prev-broken, parse
    gate, duplicate-declaration guard, formatter, no-op guard).
 4. Prepare whole-file `write` commands separately: parse and format the

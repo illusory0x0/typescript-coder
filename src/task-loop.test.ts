@@ -182,6 +182,19 @@ const READY_EDIT = [
   "end",
 ].join("\n");
 
+/** One matcher-scoped clause, used for inert (no-op) and failing replies. */
+function matchEdit(name: string, path: string, matcher: string, replacement: string): string {
+  return [
+    `select ${name} in ${path} resolve value`,
+    `match ${matcher}`,
+    "replace with",
+    "<<<TC_EDIT_BEGIN>>>",
+    replacement,
+    "<<<TC_EDIT_END>>>",
+    "end",
+  ].join("\n");
+}
+
 function baseOptions(dir: string, provider: ProviderLike) {
   return {
     cwd: dir,
@@ -332,6 +345,90 @@ describe("executor autonomy", () => {
     ]);
     expect(readFileSync(join(dir, "src", "helper.ts"), "utf8")).toContain("return 2;");
     expect(readFileSync(join(dir, "src", "extra.ts"), "utf8")).toContain("extra = 2");
+  }, 30000);
+
+  test("applies the valid clauses of a reply with an inert clause and warns", async () => {
+    const dir = project();
+    const node = workNode(2, "answer", {
+      instruction: "Change answer and extra in one reply.",
+      hints: [
+        { path: "src/helper.ts", symbol: "answer", kind: "value" },
+        { path: "src/extra.ts", symbol: "extra", kind: "value" },
+      ],
+    });
+    const inertExtra = matchEdit("extra", "src/extra.ts", "/extra = 1/", "extra = 1");
+    const provider = new ScriptedProvider([
+      planText([node]),
+      [GOOD_EDIT, inertExtra].join("\n"),
+      "approve",
+    ]);
+    const result = await runTaskLoop(baseOptions(dir, provider));
+    expect(result.ok).toBe(true);
+    expect(readFileSync(join(dir, "src", "helper.ts"), "utf8")).toContain("return 2;");
+    expect(result.warnings).toEqual([
+      "ignored 1 inert edit-dsl clause whose replacement was identical to the selected text; do not resend it",
+    ]);
+    const applied = result.records.find(
+      (record) => record.kind === "exchange" && record.outcome === "applied",
+    );
+    expect(applied?.payloads).toBe(2);
+    // The ignored clause is not part of the applied telemetry.
+    expect(applied?.stages).toEqual(["whole-symbol"]);
+    expect(applied?.selectors).toEqual(["whole-symbol"]);
+    expect(applied?.matcherKinds).toEqual([null]);
+  }, 30000);
+
+  test("rejects a reply whose only clauses are inert no-ops", async () => {
+    const dir = project();
+    const node = workNode(2, "answer");
+    const inertAnswer = matchEdit("answer", "src/helper.ts", "`return 1;`", "return 1;");
+    const inertExtra = matchEdit("extra", "src/extra.ts", "/extra = 1/", "extra = 1");
+    const provider = new ScriptedProvider([
+      planText([node]),
+      [inertAnswer, inertExtra].join("\n"),
+      GOOD_EDIT,
+      "approve",
+    ]);
+    const result = await runTaskLoop(baseOptions(dir, provider));
+    expect(result.ok).toBe(true);
+    const rejected = result.records.find(
+      (record) => record.kind === "exchange" && record.outcome === "no-op",
+    );
+    expect(rejected).toBeDefined();
+    expect(rejected?.diagnostics).toContain("clause 1 of 2");
+    expect(rejected?.diagnostics).toContain("stage: no-op");
+    expect(result.warnings).toBeUndefined();
+    // The inert reply was not an applied exchange; only the retry applied.
+    expect(
+      result.records.filter((record) => record.kind === "exchange" && record.outcome === "applied"),
+    ).toHaveLength(1);
+    expect(readFileSync(join(dir, "src", "helper.ts"), "utf8")).toContain("return 2;");
+  }, 30000);
+
+  test("a non-no-op failure keeps the whole reply rejected despite an inert clause", async () => {
+    const dir = project();
+    const node = workNode(2, "answer");
+    const inertExtra = matchEdit("extra", "src/extra.ts", "/extra = 1/", "extra = 1");
+    const badReady = matchEdit("ready", "src/ready.ts", "/ready = 999/", "ready = 2");
+    const provider = new ScriptedProvider([
+      planText([node]),
+      // The fatal matcher comes first; the inert clause must not salvage the
+      // valid edit that follows it.
+      [badReady, inertExtra, GOOD_EDIT].join("\n"),
+      GOOD_EDIT,
+      "approve",
+    ]);
+    const result = await runTaskLoop(baseOptions(dir, provider));
+    expect(result.ok).toBe(true);
+    const exchanges = result.records.filter((record) => record.kind === "exchange");
+    expect(exchanges.map((record) => record.outcome)).toEqual(["matcher", "applied"]);
+    expect(exchanges[0]?.diagnostics).toContain("clause 1 of 3");
+    expect(exchanges[0]?.diagnostics).toContain("clause 2 of 3");
+    expect(exchanges[0]?.diagnostics).toContain("stage: no-op");
+    expect(result.warnings).toBeUndefined();
+    expect(readFileSync(join(dir, "src", "extra.ts"), "utf8")).toContain("extra = 1");
+    expect(readFileSync(join(dir, "src", "ready.ts"), "utf8")).toContain("ready = 1");
+    expect(readFileSync(join(dir, "src", "helper.ts"), "utf8")).toContain("return 2;");
   }, 30000);
 
   test("applies modify, rename, create, and delete in one atomic reply", async () => {
