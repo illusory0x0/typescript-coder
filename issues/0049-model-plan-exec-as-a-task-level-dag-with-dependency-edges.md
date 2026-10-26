@@ -1,6 +1,6 @@
 ---
 id: 49
-title: "Model plan-exec as a task-level DAG with dependency edges"
+title: "Replace plan-exec's Stage/Task/Edit tree with a hints-based work DAG"
 status: todo
 priority: medium
 milestone: null
@@ -12,25 +12,30 @@ created: 2026-10-26
 
 ## Context
 
-The plan-exec model is a fixed `Plan -> Stage[] -> Task[] -> Edit[]` tree. Record order is execution order, there are no dependency edges, and the planner adds only one new Task per planning turn. A Stage closes before the next Stage can be appended. This makes cross-branch dependencies awkward, forces unrelated work into one linear chain, and hides real prerequisites behind ordering rules.
+The current plan-exec loop is a fixed `Plan -> Stage[] -> Task[] -> Edit[]` tree. The planner chooses each edit's declaration, action, and granularity; the executor only carries out one preselected edit. The planner sees the symbol index and outline but not the current source, while the executor sees the source. That information asymmetry is visible in the mini-spreadsheet pilots: the planner repeatedly chose whole-file writes, and prompt rules could not make that choice reliably.
 
-The agreed direction is a task-level DAG: nodes are independently verifiable work units; edits remain children; each node carries explicit dependencies and optional workflow hints. This issue covers the model/spec and implementation, not the whole-file edit strategy, which is tracked separately.
+The agreed direction is a direct replacement, not a compatibility mode: the planner emits a task-level DAG of work nodes with target hints and optional approach hints; the executor chooses the concrete edit actions and granularity from the source; the harness owns scheduling, gates, and review. The planner's programming experience moves into executor-facing hints, not constraints: for example, a small requirement may justify a whole-file write, while a large module should first scaffold top-level declarations and then fill bodies with finer edits. The planner prompt recommends a workflow but does not impose a fixed Stage/Task shape, so later prompt changes can reshape the workflow without changing the graph model.
+
+This is intentionally a large change and may temporarily regress benchmark scores; that tradeoff is accepted.
 
 ## Goal
 
-Replace the mandatory Stage -> Task hierarchy with a task-level DAG of verifiable work nodes that supports explicit dependencies, optional workflow hints, and a linear-plan compatibility path without changing gate, review, or finish semantics.
+Replace the Stage/Task/Edit plan model with a task-level DAG of work nodes where the planner owns work decomposition, dependencies, verification boundaries, instructions, and file/symbol hints, and the executor owns the concrete edit actions.
 
 ## Acceptance criteria
 
-- [ ] `docs/plan-exec.md` defines the node schema: `id`, `dependsOn`, `verify`, `instruction`, `edits`, and optional `phase`/workflow hint; it states that edits remain children of a node and are not independent graph nodes.
-- [ ] Validation rejects duplicate/dangling/self/cyclic dependencies, unknown nodes, and dependencies on failed nodes at scheduling time; diagnostics name the offending ids.
-- [ ] The parser/serializer accepts a DAG plan and the existing linear Stage/Task plan as a compatible subset; legacy replay bundles and current tests do not require rewriting.
-- [ ] The scheduler executes ready nodes in deterministic order (record order as the tie-break), blocks dependents of a failed/skipped node, and reports blocked nodes without hanging.
-- [ ] The planner may add one or more ready nodes per planning turn, with a documented cap; incremental planning and the 96-node limit still bound the plan. The prompt recommends a workflow (inspect -> contract -> scaffold -> implement -> verify) but explicitly allows a single node, a linear chain, or a branching DAG.
-- [ ] Gate, review, in-place repair, final-task, and `finish` semantics are defined per node; a review patch may repair the current node and adjust its dependents without violating the DAG.
-- [ ] Tests cover parsing and validation (valid DAG, cycles, dangling/self deps), scheduler ready/blocked order, linear compatibility, finish, review repair, and the workflow guidance in prompts.
-- [ ] `docs/plan-exec.md` and CLI help describe the new model; `just typecheck && just test` and `just accept` pass.
-- [ ] No frozen baseline or historical benchmark report is modified.
+- [ ] `docs/plan-exec.md` defines a `WorkNode` schema: `id`, `after` dependency ids, `verify: tsc|test`, `instruction`, `hints: Loc[]`, optional `approach` strategy hint, and optional `phase`/workflow hint. A `Loc` is `{path, symbol, kind}` with `kind: value|type|namespace|file`; a file hint uses `symbol: ""`.
+- [ ] `approach` is advisory: it can suggest a whole-file write for a small requirement or a scaffold-then-fill sequence for a large module, but the executor may override it from the current source; validation and review do not require adherence.
+- [ ] The flat Plan DSL and patch DSL emit and parse graph records (`node`, `node+`, `node~`, `node-`, `after`, `hint`, `finish`); no Stage/Task/Edit records remain in the parser, serializer, prompts, or docs.
+- [ ] Validation rejects duplicate ids, dangling/self/cyclic `after` edges, unknown `verify`, unsafe hint paths, a missing final `test` node, and a `finish` on a non-final node; diagnostics name the offending ids.
+- [ ] The scheduler runs ready nodes in deterministic order (record order as the tie-break), blocks dependents of failed or skipped nodes, reports blocked nodes, and never hangs on a cycle (cycles are rejected earlier).
+- [ ] The planner may add one or more ready nodes per planning turn, with a documented cap; incremental planning and the node cap still bound the plan. The prompt recommends a workflow (inspect -> contract -> scaffold -> implement -> verify) but a single node, a linear chain, and a branching DAG are all valid.
+- [ ] The executor receives the current node's instruction, target hints, and optional approach hint plus the source; it may choose `modify`/`create`/`delete`/`rename`/`write`, `match`/`pick`/range/whole-declaration, and multiple clauses per reply. Hints guide the executor; edits outside the hinted paths are allowed only when the instruction requires them and are surfaced in review. The executor may override the approach hint.
+- [ ] A node gate runs after each applied executor reply; a passing gate finishes the node, a failing gate returns diagnostics for bounded repair, and exhausting the node exchange cap fails the node. Review then sees the applied diff and may approve or patch the node, its hints, or its dependencies.
+- [ ] `finish` marks the final `test` node; run success requires that node to pass and every non-repaired node to be terminal.
+- [ ] Existing Stage/Task/Edit tests, prompts, docs, and fixtures are migrated to the new schema; legacy plan text fails with a clear diagnostic (no dual mode). Replay fixtures that carry old plan text are updated or explicitly rejected.
+- [ ] The machine result contract is updated if the task summary shape changes (bump `typescript-coder-result` and update consumers/tests) rather than silently changing `@2`.
+- [ ] `just typecheck && just test` and `just accept` pass; no frozen baseline or historical result JSON is modified.
 
 ## Verification
 
@@ -44,11 +49,13 @@ just accept
 git diff --check
 ```
 
-No live benchmark is required for acceptance; any measured comparison needs explicit human approval.
+A live benchmark is not required for acceptance; any measured comparison needs explicit human approval.
 
 ## Notes
 
-- Confirmed shape: task-level DAG, not edit-level; edits stay inside a node. Parallel provider calls are out of scope unless a later spec explicitly adds them.
-- Keep the whole-file rewrite strategy separate so prompt effects and DAG effects can be measured independently.
-- The existing Stage/Task DSL should remain a valid linear subset during migration; do not force replay bundles or historical plans to change.
-- This is an architectural change: write the spec first, then parser/validator/scheduler, then prompts and review semantics.
+- Direct replacement is confirmed: do not keep a live legacy Stage/Task/Edit mode. Old replay/plan text may be rejected with a clear error.
+- Hints are guidance, not a hard allowlist; out-of-hint edits are allowed when required and must be visible in the review diff.
+- `approach` carries the planner's programming experience as advice, not a contract. Canonical examples: a small requirement on a small file may be one whole-file write; a large module should scaffold top-level declarations first and then fill bodies with targeted edits; an existing large file usually needs targeted edits.
+- Keep the whole-file strategy itself in #48; this issue provides the node/hints/executor-autonomy foundation. #48 depends on this issue.
+- This is an architectural change: write the new spec and schema first, then parser/validator/scheduler, then executor/review and prompt text.
+- Benchmark scores may regress during the migration; do not tune against the held-out `csv-parser` fixture.
