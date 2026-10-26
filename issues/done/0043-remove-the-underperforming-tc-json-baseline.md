@@ -1,7 +1,7 @@
 ---
 id: 43
 title: "Remove the underperforming tc json baseline"
-status: todo
+status: done
 priority: low
 milestone: null
 parent: null
@@ -69,3 +69,4 @@ The `rg` must report no live references; historical dated reports are excluded.
 Low priority: this is a cleanup of a weak comparison point, not a correctness
 or active-run blocker. The JSON protocol itself remains frozen for old replay
 bundles and flags; deleting historical reports is out of scope.
+- Resolved 2026-10-26: removed the JSON baseline loader and the four-way/vs tc json report path; tc reports now compare against the oc baseline only. Deleted the two baseline artifacts and updated AGENTS.md, benchmark/README.md, and consumption.md; the json protocol guard and replay compatibility are unchanged. Verified: bun test src/benchmark-run.test.ts (28 pass), just typecheck && just test (1490 pass), bun run benchmark/check.ts (5 passed, 0 failed ledger failures), and the live-reference rg is clean.

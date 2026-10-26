@@ -88,22 +88,6 @@ interface RunModule {
   ): Promise<Result[]>;
   parseProtocolFormats(value: string): string[];
   parseAgentModes(value: string): string[];
-  fourWayComparison(
-    currentByTaskSide: readonly AggregateLike[],
-    ocBaselineByTaskSide: readonly AggregateLike[],
-    jsonBaselineByTaskSide: readonly AggregateLike[],
-    tasks: readonly string[],
-  ): {
-    task: string | null;
-    variant: string;
-    label: string;
-    mean: number | null;
-    vsOc: number | null;
-    vsJson: number | null;
-    cacheHitRate: number | null;
-    tasks: number;
-  }[];
-  fourWaySavingsSentence(rows: unknown): string | null;
   cacheBalanceWarning(rows: readonly AggregateLike[]): string | null;
   tokenMultiplierSentence(
     bySide: readonly AggregateLike[],
@@ -629,7 +613,7 @@ describe("edit protocol override (--protocol-format) (#119)", () => {
     expect(parseArgs(["--protocol-format", "compact"]).protocolFormats).toEqual(["edit-dsl"]);
     const { frozenDimensionError } = await loadRunModule();
     expect(frozenDimensionError("tc", ["json"])).toContain(
-      "the json protocol is frozen (benchmark/results/json-format-baseline.json)",
+      "the json protocol is frozen; benchmark only runs --protocol-format edit-dsl",
     );
   });
 
@@ -703,7 +687,7 @@ describe("concurrent protocol variants (#16)", () => {
       expect(parseProtocolFormats("edit-dsl,json")).toEqual(["json", "edit-dsl"]);
       expect(parseProtocolFormats("json,json,compact")).toEqual(["json", "edit-dsl"]);
       expect(frozenDimensionError("tc", ["json", "edit-dsl"])).toContain(
-        "the json protocol is frozen (benchmark/results/json-format-baseline.json)",
+        "the json protocol is frozen; benchmark only runs --protocol-format edit-dsl",
       );
       expect(() => parseProtocolFormats("json,yaml")).toThrow(
         "invalid --protocol-format value: yaml",
@@ -934,63 +918,93 @@ describe("concurrent protocol variants (#16)", () => {
   );
 
   test.skipIf(!runModulePresent)(
-    "renders the four-way factors against both baselines",
+    "renders oc-only savings against a fresh oc baseline",
     async () => {
-      const { computeAggregates, fourWayComparison, fourWaySavingsSentence } =
-        await loadRunModule();
+      const { computeAggregates, writeMarkdownReport } = await loadRunModule();
       const tasks = ["json-parser"];
-      const baseline = (side: string, values: number[]) =>
-        computeAggregates(
-          values.map((value, index) =>
-            side === "oc"
-              ? makeRun(tasks[index] as string, "oc", {
-                  input: Math.round(value * 0.6),
-                  output: Math.round(value * 0.4),
-                })
-              : makeRun(
-                  tasks[index] as string,
-                  "tc",
-                  { input: Math.round(value * 0.6), output: Math.round(value * 0.4) },
-                  null,
-                  "json",
-                ),
-          ),
-          tasks,
-          [side],
-        );
-      const oc = baseline("oc", [1400]);
-      const json = baseline("tc", [700]);
-      const current = computeAggregates(
-        [
-          makeRun("json-parser", "tc", { input: 500, output: 200 }, null, "edit-dsl", "edit"),
-          makeRun("json-parser", "tc", { input: 250, output: 100 }, null, "edit-dsl", "plan-exec"),
-        ],
+      const runs = [
+        makeRun("json-parser", "tc", { input: 500, output: 200 }, null, "edit-dsl", "edit"),
+        makeRun("json-parser", "tc", { input: 250, output: 100 }, null, "edit-dsl", "plan-exec"),
+      ];
+      const report = {
+        generatedAt: "2026-10-20T00:00:00.000Z",
+        date: "2026-10-20",
+        mode: "full",
         tasks,
-        ["tc"],
-        ["edit-dsl"],
-        ["pinned-repair", "plan-exec"],
-      );
-      const rows = fourWayComparison(current.byTaskSide, oc.byTaskSide, json.byTaskSide, tasks);
-      const jsonRow = rows.find((row) => row.task === "json-parser" && row.variant === "tc-edit");
-      expect(jsonRow?.label).toBe("tc pinned-repair");
-      expect(jsonRow?.vsOc?.toFixed(2)).toBe("2.00");
-      expect(jsonRow?.vsJson?.toFixed(2)).toBe("1.00");
-      const planRow = rows.find(
-        (row) => row.task === "json-parser" && row.variant === "tc-plan-exec",
-      );
-      expect(planRow?.label).toBe("tc plan-exec");
-      expect(planRow?.vsOc?.toFixed(2)).toBe("4.00");
-      expect(planRow?.vsJson?.toFixed(2)).toBe("2.00");
-      const overall = rows.find((row) => row.task === null && row.variant === "tc-edit");
-      expect(overall?.vsOc?.toFixed(2)).toBe("2.00");
-      const sentence = fourWaySavingsSentence(rows);
-      expect(sentence).toContain("vs oc — tc pinned-repair 2.00x, tc plan-exec 4.00x");
-      expect(sentence).toContain("vs tc json — tc pinned-repair 1.00x, tc plan-exec 2.00x");
+        sides: ["tc"],
+        reps: 1,
+        concurrency: 1,
+        model: "deepseek-v4.1-flash",
+        ocModel: null,
+        effort: null,
+        multiPayload: false,
+        protocolFormat: "edit-dsl",
+        protocolFormats: ["edit-dsl"],
+        agentModes: ["pinned-repair", "plan-exec"],
+        tokenBudget: null,
+        bunVersion: "1.0.0",
+        opencodeVersion: null,
+        pilotReference: null,
+        infraErrors: [],
+        runs,
+        aggregates: computeAggregates(
+          runs,
+          tasks,
+          ["tc"],
+          ["edit-dsl"],
+          ["pinned-repair", "plan-exec"],
+        ),
+        provenance: null,
+        provenanceByAgentMode: {},
+      };
+      const dir = mkdtempSync(join(tmpdir(), "run-oc-baseline-"));
+      try {
+        // Stage the frozen oc baseline under the writeMarkdownReport baseline
+        // root seam; no JSON baseline participates in the comparison.
+        const baselineDir = join(dir, "benchmark", "results");
+        mkdirSync(baselineDir, { recursive: true });
+        const sourceOc = join(repoRoot, "benchmark", "results", "oc-baseline.json");
+        const baseline = JSON.parse(readFileSync(sourceOc, "utf8")) as {
+          aggregates: {
+            byTaskSide: {
+              side: string;
+              task: string | null;
+              tokens: { total: { mean: number | null } };
+            }[];
+          };
+        };
+        writeFileSync(join(baselineDir, "oc-baseline.json"), readFileSync(sourceOc, "utf8"));
+        const ocMean = baseline.aggregates.byTaskSide.find(
+          (row) => row.side === "oc" && row.task === "json-parser",
+        )?.tokens.total.mean;
+        if (ocMean === undefined || ocMean === null || ocMean <= 0) {
+          throw new Error("expected an oc baseline mean for json-parser");
+        }
+        // Current means: pinned-repair 700, plan-exec 350.
+        const pinnedFactor = (ocMean / 700).toFixed(2);
+        const planFactor = (ocMean / 350).toFixed(2);
+
+        const md = join(dir, "oc-baseline.md");
+        writeMarkdownReport(md, report, dir);
+        const markdown = readFileSync(md, "utf8");
+        expect(markdown).toContain("## Savings vs oc baseline");
+        expect(markdown).toContain("| json-parser | edit-dsl | pinned-repair |");
+        expect(markdown).toContain("| json-parser | edit-dsl | plan-exec |");
+        expect(markdown).toContain(`| 700 | ${pinnedFactor}x |`);
+        expect(markdown).toContain(`| 350 | ${planFactor}x |`);
+        expect(markdown).toContain(`${pinnedFactor}x fewer tokens across 1 task`);
+        expect(markdown).toContain(`${planFactor}x fewer tokens across 1 task`);
+        expect(markdown).not.toContain("## Four-way comparison");
+        expect(markdown).not.toContain("tc json");
+        expect(markdown).not.toContain("## Baseline comparison unavailable");
+      } finally {
+        rmSync(dir, { recursive: true, force: true });
+      }
     },
   );
 
   test.skipIf(!runModulePresent)(
-    "withholds the four-way section when the baseline spec hash is stale",
+    "withholds the oc comparison when the baseline spec hash is stale",
     async () => {
       const { computeAggregates, writeMarkdownReport } = await loadRunModule();
       const tasks = ["json-parser"];
@@ -1037,14 +1051,13 @@ describe("concurrent protocol variants (#16)", () => {
         provenance: null,
         provenanceByAgentMode: {},
       };
-      const dir = mkdtempSync(join(tmpdir(), "run-four-way-"));
+      const dir = mkdtempSync(join(tmpdir(), "run-stale-oc-"));
       try {
-        // Keep the real frozen baselines untouched and stage a stale copy of
-        // one of them under the writeMarkdownReport baseline root seam.
+        // Keep the real frozen baseline untouched and stage a stale copy of it
+        // under the writeMarkdownReport baseline root seam.
         const baselineDir = join(dir, "benchmark", "results");
         mkdirSync(baselineDir, { recursive: true });
         const sourceOc = join(repoRoot, "benchmark", "results", "oc-baseline.json");
-        const sourceJson = join(repoRoot, "benchmark", "results", "json-format-baseline.json");
         const staleOc = JSON.parse(readFileSync(sourceOc, "utf8")) as {
           provenance: { inputs: { taskIssue: string } };
         };
@@ -1053,18 +1066,15 @@ describe("concurrent protocol variants (#16)", () => {
           join(baselineDir, "oc-baseline.json"),
           `${JSON.stringify(staleOc, null, 2)}\n`,
         );
-        writeFileSync(
-          join(baselineDir, "json-format-baseline.json"),
-          readFileSync(sourceJson, "utf8"),
-        );
 
-        const md = join(dir, "four-way.md");
+        const md = join(dir, "stale-oc.md");
         writeMarkdownReport(md, report, dir);
         const markdown = readFileSync(md, "utf8");
         expect(markdown).toContain("- agent modes: pinned-repair, plan-exec");
         expect(markdown).toContain("````\n# Task: JSON parser");
         expect(markdown).toContain("## Baseline comparison unavailable");
         expect(markdown).toContain("different task-spec text");
+        expect(markdown).not.toContain("## Savings vs oc baseline");
         expect(markdown).not.toContain("## Four-way comparison");
       } finally {
         rmSync(dir, { recursive: true, force: true });

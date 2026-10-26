@@ -2,14 +2,6 @@
 # rewrites it; `add` appends; other writes keep it. `check` enforces it.
 # A dep, and every child of an umbrella, must be listed before its dependent.
 
-- id: 43
-  title: "Remove the underperforming tc json baseline"
-  status: todo
-  priority: low
-  milestone: null
-  parent: null
-  deps: []
-  file: 0043-remove-the-underperforming-tc-json-baseline.md
 - id: 45
   title: "Make plan-exec matcher failures recover in one bounded correction"
   status: todo

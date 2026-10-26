@@ -400,10 +400,10 @@ export const TASK_SPECS: Record<TaskName, string> = {
 export const TASK_ISSUES: Record<TaskName, string> = TASK_SPECS;
 
 /**
- * Tasks covered by the frozen 2026-10-25 oc/json baselines. The baseline spec
- * hash must stay pinned to exactly these four tasks: `mini-spreadsheet` was
- * added later and has no baseline run, so including it would falsely mark both
- * frozen baselines stale and withhold every existing four-way comparison.
+ * Tasks covered by the frozen 2026-10-25 oc baseline. The baseline spec hash
+ * must stay pinned to exactly these four tasks: `mini-spreadsheet` was added
+ * later and has no baseline run, so including it would falsely mark the frozen
+ * baseline stale and withhold every existing oc comparison.
  */
 const BASELINE_TASKS: readonly TaskName[] = [
   "json-parser",
@@ -413,9 +413,9 @@ const BASELINE_TASKS: readonly TaskName[] = [
 ];
 
 /**
- * Same text hash the provenance record uses for `taskIssue`. Frozen baselines
- * were measured against the old one-line issues; comparing their token totals
- * to spec-input runs would be apples-to-oranges.
+ * Same text hash the provenance record uses for `taskIssue`. The frozen
+ * baseline was measured against the old one-line issues; comparing its token
+ * totals to spec-input runs would be apples-to-oranges.
  */
 const TASK_SPEC_HASH = createHash("sha256")
   .update(
@@ -448,7 +448,6 @@ const OPENCODE_PROVIDER = "honghong";
 // the official DeepSeek endpoint, then tc-only reports compare their
 // cache-excluded totals against this file instead of re-running oc.
 const OC_BASELINE_RELATIVE_PATH = "benchmark/results/oc-baseline.json";
-const JSON_BASELINE_RELATIVE_PATH = "benchmark/results/json-format-baseline.json";
 const OPENCODE_FALLBACK_BIN = "/home/illu/.opencode/bin/opencode";
 // Parallel runs multiplex one gateway, so the caps get headroom beyond the
 // serial pilot's slowest opencode run (821 s of the previous 900 s cap).
@@ -510,8 +509,7 @@ Options:
                                              edits in one {"payloads": [...]} object
                                              (default: off, one flat payload per exchange)
   --protocol-format edit-dsl                 edit protocol for the tc side (only edit-dsl;
-                                             json is frozen at
-                                             benchmark/results/json-format-baseline.json).
+                                             json is frozen).
                                              compact is a deprecated alias for edit-dsl
   --agent-mode pinned-repair|plan-exec|both
                                              tc loop mode(s); pinned-repair is the default.
@@ -636,11 +634,11 @@ function parseSide(value: string): SideSelection {
 }
 
 /**
- * Frozen dimensions: the oc side and the legacy json protocol were measured
- * once and stored under benchmark/results/. Re-running either would move the
- * reference point, so the benchmark refuses both outright (see AGENTS.md).
- * Returned as a message rather than thrown so tests can cover it without the
- * process-exiting usage path.
+ * Frozen dimensions: the oc side is a stored reference point and the legacy
+ * json protocol is frozen for historical/replay compatibility. Re-running
+ * either would break the frozen reference or replay contract, so the benchmark
+ * refuses both outright (see AGENTS.md). Returned as a message rather than
+ * thrown so tests can cover it without the process-exiting usage path.
  */
 export function frozenDimensionError(
   side: SideSelection,
@@ -650,7 +648,7 @@ export function frozenDimensionError(
     return "the oc side is frozen (benchmark/results/oc-baseline.json); benchmark only runs --side tc";
   }
   if (protocolFormats.includes("json")) {
-    return "the json protocol is frozen (benchmark/results/json-format-baseline.json); benchmark only runs --protocol-format edit-dsl";
+    return "the json protocol is frozen; benchmark only runs --protocol-format edit-dsl";
   }
   return null;
 }
@@ -2338,16 +2336,9 @@ interface FrozenBaseline {
   readonly byTaskSide: AggregateRow[];
 }
 
-/** Name the stale-spec condition once; reports must not compare these totals. */
-function staleBaselineSpec(
-  oc: FrozenBaseline,
-  json: FrozenBaseline,
-): { oc: string | null; json: string | null } | null {
-  const stale = {
-    oc: oc.specHash === TASK_SPEC_HASH ? null : oc.specHash,
-    json: json.specHash === TASK_SPEC_HASH ? null : json.specHash,
-  };
-  return stale.oc === null && stale.json === null ? null : stale;
+/** Return the baseline's stale spec hash, or null when it is comparable. */
+function staleBaselineSpec(baseline: FrozenBaseline): string | null {
+  return baseline.specHash === TASK_SPEC_HASH ? null : baseline.specHash;
 }
 
 /** Read one fixed baseline report, or null when it is missing/unreadable. */
@@ -2392,260 +2383,6 @@ function loadFrozenBaseline(repoRoot: string, relativePath: string): FrozenBasel
 
 function loadOcBaseline(repoRoot: string): FrozenBaseline | null {
   return loadFrozenBaseline(repoRoot, OC_BASELINE_RELATIVE_PATH);
-}
-
-function loadJsonBaseline(repoRoot: string): FrozenBaseline | null {
-  return loadFrozenBaseline(repoRoot, JSON_BASELINE_RELATIVE_PATH);
-}
-
-/** The two frozen reference points the four-way comparison uses. */
-export interface FrozenBaselines {
-  readonly oc: FrozenBaseline;
-  readonly json: FrozenBaseline;
-}
-
-// Four-way comparison: both frozen baselines plus the two tc loop modes.
-export type FourWayVariant = "oc" | "tc-json" | "tc-edit" | "tc-plan-exec";
-
-export interface FourWayRow {
-  readonly task: TaskName | null;
-  readonly variant: FourWayVariant;
-  readonly label: string;
-  readonly mean: number | null;
-  /** Frozen oc mean / this row's mean; >1 means this row used fewer tokens. */
-  readonly vsOc: number | null;
-  /** Frozen tc json mean / this row's mean; >1 means fewer tokens. */
-  readonly vsJson: number | null;
-  /** Mean provider cache-hit share for this variant. */
-  readonly cacheHitRate: number | null;
-  /** Tasks summed into an overall row; 1 for a task row. */
-  readonly tasks: number;
-}
-
-const FOUR_WAY_LABELS: Record<FourWayVariant, string> = {
-  oc: "oc baseline",
-  "tc-json": "tc json baseline",
-  "tc-edit": "tc pinned-repair",
-  "tc-plan-exec": "tc plan-exec",
-};
-
-function meanFor(
-  rows: readonly AggregateRow[],
-  task: TaskName | null,
-  predicate: (row: AggregateRow) => boolean,
-): number | null {
-  for (const row of rows) {
-    if (row.task !== task || !predicate(row)) {
-      continue;
-    }
-    const mean = row.tokens.total.mean;
-    if (mean !== null && mean > 0) {
-      return mean;
-    }
-  }
-  return null;
-}
-
-function cacheHitFor(
-  rows: readonly AggregateRow[],
-  task: TaskName | null,
-  predicate: (row: AggregateRow) => boolean,
-): number | null {
-  for (const row of rows) {
-    if (row.task === task && predicate(row)) {
-      return row.cache?.hitRate ?? null;
-    }
-  }
-  return null;
-}
-
-function ratio(numerator: number | null, denominator: number | null): number | null {
-  if (numerator === null || denominator === null || numerator <= 0 || denominator <= 0) {
-    return null;
-  }
-  return numerator / denominator;
-}
-
-function fourWayFactor(value: number | null, base: number | null): number | null {
-  return ratio(base, value);
-}
-
-/**
- * Build the four-way table from the frozen baselines and the current tc runs.
- * Per task, every variant that reports a token total is included; factors are
- * baseline mean / variant mean. Overall rows are emitted only over tasks where
- * all four variants are present, so the four columns stay like-for-like.
- */
-export function fourWayComparison(
-  currentByTaskSide: readonly AggregateRow[],
-  ocBaselineByTaskSide: readonly AggregateRow[],
-  jsonBaselineByTaskSide: readonly AggregateRow[],
-  tasks: readonly TaskName[],
-): FourWayRow[] {
-  const rows: FourWayRow[] = [];
-  const shared: TaskName[] = [];
-  for (const task of tasks) {
-    const oc = meanFor(ocBaselineByTaskSide, task, (row) => row.side === "oc");
-    const json = meanFor(
-      jsonBaselineByTaskSide,
-      task,
-      (row) => row.side === "tc" && (row.protocol ?? "json") === "json",
-    );
-    const edit = meanFor(
-      currentByTaskSide,
-      task,
-      (row) =>
-        row.side === "tc" &&
-        (row.protocol ?? "edit-dsl") === "edit-dsl" &&
-        modeOf(row.agentMode) === "pinned-repair",
-    );
-    const plan = meanFor(
-      currentByTaskSide,
-      task,
-      (row) =>
-        row.side === "tc" &&
-        (row.protocol ?? "edit-dsl") === "edit-dsl" &&
-        modeOf(row.agentMode) === "plan-exec",
-    );
-    const values: [FourWayVariant, number | null, number | null][] = [
-      ["oc", oc, cacheHitFor(ocBaselineByTaskSide, task, (row) => row.side === "oc")],
-      [
-        "tc-json",
-        json,
-        cacheHitFor(
-          jsonBaselineByTaskSide,
-          task,
-          (row) => row.side === "tc" && (row.protocol ?? "json") === "json",
-        ),
-      ],
-      [
-        "tc-edit",
-        edit,
-        cacheHitFor(
-          currentByTaskSide,
-          task,
-          (row) =>
-            row.side === "tc" &&
-            (row.protocol ?? "edit-dsl") === "edit-dsl" &&
-            modeOf(row.agentMode) === "pinned-repair",
-        ),
-      ],
-      [
-        "tc-plan-exec",
-        plan,
-        cacheHitFor(
-          currentByTaskSide,
-          task,
-          (row) =>
-            row.side === "tc" &&
-            (row.protocol ?? "edit-dsl") === "edit-dsl" &&
-            modeOf(row.agentMode) === "plan-exec",
-        ),
-      ],
-    ];
-    for (const [variant, mean, cacheHitRate] of values) {
-      if (mean === null) {
-        continue;
-      }
-      rows.push({
-        task,
-        variant,
-        label: FOUR_WAY_LABELS[variant],
-        mean,
-        vsOc: variant === "oc" ? 1 : fourWayFactor(mean, oc),
-        vsJson: variant === "tc-json" ? 1 : fourWayFactor(mean, json),
-        cacheHitRate,
-        tasks: 1,
-      });
-    }
-    if (oc !== null && json !== null && edit !== null && plan !== null) {
-      shared.push(task);
-    }
-  }
-  if (shared.length === 0) {
-    return rows;
-  }
-  const sumFor = (predicate: (row: FourWayRow) => boolean): number => {
-    let total = 0;
-    for (const row of rows) {
-      if (row.task !== null && shared.includes(row.task) && predicate(row)) {
-        total += row.mean ?? 0;
-      }
-    }
-    return total;
-  };
-  const ocSum = sumFor((row) => row.variant === "oc");
-  const jsonSum = sumFor((row) => row.variant === "tc-json");
-  const editSum = sumFor((row) => row.variant === "tc-edit");
-  const planSum = sumFor((row) => row.variant === "tc-plan-exec");
-  const cacheAverage = (predicate: (row: FourWayRow) => boolean): number | null => {
-    const values = rows
-      .filter(
-        (row) =>
-          row.task !== null &&
-          shared.includes(row.task) &&
-          predicate(row) &&
-          row.cacheHitRate !== null,
-      )
-      .map((row) => row.cacheHitRate as number);
-    return values.length === 0
-      ? null
-      : values.reduce((left, right) => left + right, 0) / values.length;
-  };
-  const overall: [FourWayVariant, number, number | null, number | null, number | null][] = [
-    ["oc", ocSum, 1, fourWayFactor(ocSum, jsonSum), cacheAverage((row) => row.variant === "oc")],
-    [
-      "tc-json",
-      jsonSum,
-      fourWayFactor(jsonSum, ocSum),
-      1,
-      cacheAverage((row) => row.variant === "tc-json"),
-    ],
-    [
-      "tc-edit",
-      editSum,
-      fourWayFactor(editSum, ocSum),
-      fourWayFactor(editSum, jsonSum),
-      cacheAverage((row) => row.variant === "tc-edit"),
-    ],
-    [
-      "tc-plan-exec",
-      planSum,
-      fourWayFactor(planSum, ocSum),
-      fourWayFactor(planSum, jsonSum),
-      cacheAverage((row) => row.variant === "tc-plan-exec"),
-    ],
-  ];
-  for (const [variant, mean, vsOc, vsJson, cacheHitRate] of overall) {
-    rows.push({
-      task: null,
-      variant,
-      label: FOUR_WAY_LABELS[variant],
-      mean: mean > 0 ? mean : null,
-      vsOc,
-      vsJson,
-      cacheHitRate,
-      tasks: shared.length,
-    });
-  }
-  return rows;
-}
-
-/** One-line summary of the four-way factors, or null when no overall rows. */
-export function fourWaySavingsSentence(rows: readonly FourWayRow[]): string | null {
-  const overall = rows.filter((row) => row.task === null);
-  const edit = overall.find((row) => row.variant === "tc-edit");
-  const plan = overall.find((row) => row.variant === "tc-plan-exec");
-  if (edit === undefined || plan === undefined) {
-    return null;
-  }
-  const factor = (value: number | null): string =>
-    value === null ? "n/a" : `${value.toFixed(2)}x`;
-  return `Four-way savings (cache-excluded total): vs oc — tc pinned-repair ${factor(
-    edit.vsOc,
-  )}, tc plan-exec ${factor(plan.vsOc)}; vs tc json — tc pinned-repair ${factor(
-    edit.vsJson,
-  )}, tc plan-exec ${factor(plan.vsJson)}.`;
 }
 
 // The references tree names one file per task (json/sexp/lisp today); probe the
@@ -2864,60 +2601,17 @@ export function writeMarkdownReport(
   }
   lines.push(successRateSentence(aggregates.bySide), "");
   lines.push(tokenMultiplierSentence(aggregates.bySide, aggregates.byTaskSide), "");
-  // The oc and tc-json sides are measured once; tc-only reports compare against
-  // those fixed baselines instead of re-running either.
+  // The oc side is measured once; tc-only reports compare against that fixed
+  // baseline instead of re-running it.
   const ranOpencode = aggregates.bySide.some((row) => row.side === "oc");
   const ocBaseline = ranOpencode ? null : loadOcBaseline(baselineRoot);
-  const jsonBaseline = ranOpencode ? null : loadJsonBaseline(baselineRoot);
-  const staleSpecs =
-    ocBaseline !== null && jsonBaseline !== null
-      ? staleBaselineSpec(ocBaseline, jsonBaseline)
-      : null;
-  if (staleSpecs !== null) {
+  if (ocBaseline !== null && staleBaselineSpec(ocBaseline) !== null) {
     lines.push(
       "## Baseline comparison unavailable",
       "",
-      "The frozen oc/tc-json baselines were measured with a different task-spec text and are not token-comparable to these spec runs. Re-freeze the baselines against `benchmark/specs/` before using the four-way table.",
+      "The frozen oc baseline was measured with a different task-spec text and is not token-comparable to these spec runs. Re-freeze the baseline against `benchmark/specs/` before comparing totals.",
       "",
     );
-  } else if (ocBaseline !== null && jsonBaseline !== null) {
-    const rows = fourWayComparison(
-      aggregates.byTaskSide,
-      ocBaseline.byTaskSide,
-      jsonBaseline.byTaskSide,
-      report.tasks,
-    );
-    if (rows.length > 0) {
-      const note = (baseline: FrozenBaseline, fallback: string): string => {
-        const model = baseline.model ?? fallback;
-        const reps = baseline.reps === null ? "n/a" : `${baseline.reps} reps`;
-        return `\`${baseline.path}\` (${model}, ${reps}, ${baseline.date ?? "date n/a"})`;
-      };
-      lines.push("## Four-way comparison (oc / tc json / tc pinned-repair / tc plan-exec)", "");
-      lines.push(
-        `Baselines: oc ${note(ocBaseline, "oc")}; tc json ${note(jsonBaseline, "tc json")}.`,
-        "Factor = baseline mean / variant mean; above 1 means the variant used that many times fewer cache-excluded tokens.",
-        "",
-      );
-      lines.push(
-        "| Task | Variant | Mean total | Cache hit | vs oc baseline | vs tc json baseline |",
-        "| --- | --- | ---: | ---: | ---: | ---: |",
-      );
-      const factor = (value: number | null): string =>
-        value === null ? "n/a" : `${value.toFixed(2)}x`;
-      for (const row of rows) {
-        const task = row.task === null ? `**all ${row.tasks} tasks**` : row.task;
-        lines.push(
-          `| ${task} | ${row.label} | ${formatTokenCount(row.mean)} | ${formatCacheHit(
-            row.cacheHitRate,
-          )} | ${factor(row.vsOc)} | ${factor(row.vsJson)} |`,
-        );
-      }
-      const sentence = fourWaySavingsSentence(rows);
-      if (sentence !== null) {
-        lines.push("", sentence, "");
-      }
-    }
   } else if (ocBaseline !== null) {
     const savings = savingsVsOcBaseline(aggregates.byTaskSide, ocBaseline.byTaskSide);
     if (savings.rows.length > 0) {
@@ -3457,28 +3151,16 @@ async function main(): Promise<number> {
   const ranOpencode = report.aggregates.bySide.some((row) => row.side === "oc");
   if (!ranOpencode) {
     const ocBaseline = loadOcBaseline(repoRoot);
-    const jsonBaseline = loadJsonBaseline(repoRoot);
-    if (ocBaseline !== null && jsonBaseline !== null) {
-      if (staleBaselineSpec(ocBaseline, jsonBaseline) !== null) {
+    if (ocBaseline !== null) {
+      if (staleBaselineSpec(ocBaseline) !== null) {
         process.stdout.write(
-          "baseline: frozen oc/tc-json baselines use a different task spec; four-way factors withheld\n",
+          "baseline: frozen oc baseline uses a different task spec; factors withheld\n",
         );
       } else {
-        const rows = fourWayComparison(
-          report.aggregates.byTaskSide,
-          ocBaseline.byTaskSide,
-          jsonBaseline.byTaskSide,
-          report.tasks,
-        );
-        const sentence = fourWaySavingsSentence(rows);
-        if (sentence !== null) {
-          process.stdout.write(`${sentence}\n`);
+        const savings = savingsVsOcBaseline(report.aggregates.byTaskSide, ocBaseline.byTaskSide);
+        if (savings.rows.length > 0) {
+          process.stdout.write(`${ocBaselineSavingsSentence(savings)}\n`);
         }
-      }
-    } else if (ocBaseline !== null) {
-      const savings = savingsVsOcBaseline(report.aggregates.byTaskSide, ocBaseline.byTaskSide);
-      if (savings.rows.length > 0) {
-        process.stdout.write(`${ocBaselineSavingsSentence(savings)}\n`);
       }
     }
   }

@@ -52,29 +52,28 @@ harness — deterministic tests, offline acceptance scenarios, replay fixtures,
 diagnostics — and reserve a targeted live run for the end of a change, when a
 human asks for it or the harness cannot answer the question.
 
-The oc side and the legacy `json` edit protocol are **frozen reference points**,
-re-frozen on 2026-10-25 against the current `benchmark/specs/`:
+The oc side is the **frozen reference point**, re-frozen on 2026-10-25 against the
+current `benchmark/specs/`:
 
 - `benchmark/results/oc-baseline.json` — oc, official `deepseek/deepseek-flash`,
   4 tasks × 3 reps, 2026-10-25.
-- `benchmark/results/json-format-baseline.json` — tc with `--protocol-format
-  json`, 4 tasks × 3 reps, 2026-10-25.
 
 **Baseline updates and live tests are human-gated.** Before overwriting or
-re-freezing either baseline, or running any benchmark with `--reps >= 1`
+re-freezing the baseline, or running any benchmark with `--reps >= 1`
 (including `--pilot`) or `just accept --live`, ask the human first and warn that
 the run calls the real model and costs money. Do not run any of these
 unprompted, and do not use them as an iteration loop.
 
 Normal tc reports run `--side tc` with the default `--protocol-format edit-dsl`
-and report savings against **both** frozen baselines (oc and tc json) in a
-four-way table; `--agent-mode pinned-repair|plan-exec|both` selects the tc loop
-mode(s), where `both` is the benchmark's multi-mode selector; the `edit` alias
-is deprecated. The benchmark still hard-rejects `--side oc` and
-`--protocol-format json`; an authorized baseline re-freeze is the only
-exception. Implement it as a deliberate, temporary bypass of
-`frozenDimensionError`, run exactly the approved matrix, then restore the guard
-and verify it is restored before finishing. Never leave the bypass enabled.
+and compare their cache-excluded totals against the oc baseline only;
+`--agent-mode pinned-repair|plan-exec|both` selects the tc loop mode(s), where
+`both` is the benchmark's multi-mode selector; the `edit` alias is deprecated.
+The benchmark still hard-rejects `--side oc` and `--protocol-format json`: the
+json protocol stays frozen for historical/replay compatibility, and an
+authorized baseline re-freeze is the only exception. Implement it as a
+deliberate, temporary bypass of `frozenDimensionError`, run exactly the approved
+matrix, then restore the guard and verify it is restored before finishing. Never
+leave the bypass enabled.
 
 The oc baseline measures the ambient OpenCode configuration of this repo,
 including its registered skills. Changing `.opencode/skills` or other

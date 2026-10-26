@@ -54,18 +54,14 @@ JSON, re-derived by `bun benchmark/check.ts`.
 
 ## Frozen baselines
 
-Two reference points were re-frozen on 2026-10-25 against the current
+One reference point was re-frozen on 2026-10-25 against the current
 `benchmark/specs/`; normal benchmark runs reject `--side oc` and
-`--protocol-format json` so neither can move. See `benchmark/README.md`
-§"Frozen baselines". tc reports compare their cache-excluded totals against both
-frozen baselines.
+`--protocol-format json`, so it cannot move. See `benchmark/README.md`
+§"Frozen baselines". tc reports compare their cache-excluded totals against the
+oc baseline only; the retired JSON comparison baseline is preserved in git
+history while the `json` protocol remains frozen for replay compatibility.
 
-| Group       | Date       | Side / protocol | Model                     | Tasks | Reps | Success | Mean total (cache-excluded) | Source                                      |
-| ----------- | ---------- | --------------- | ------------------------- | ----- | ---- | ------- | --------------------------: | ------------------------------------------- |
-| oc          | 2026-10-25 | oc              | `deepseek/deepseek-flash` | all 4 | 3    | 12/12   | 8,904                       | `benchmark/results/oc-baseline.json`        |
-| json-format | 2026-10-25 | tc / `json`     | `deepseek-flash`          | all 4 | 3    | 11/12   | 12,274                      | `benchmark/results/json-format-baseline.json` |
-
-The json-format group used 1.38× more cache-excluded tokens than the oc
-baseline over the same four tasks; its minilisp run also has one token-budget
-failure.
+| Group | Date       | Side | Model                     | Tasks | Reps | Success | Mean total (cache-excluded) | Source                               |
+| ----- | ---------- | ---- | ------------------------- | ----- | ---- | ------- | --------------------------: | ------------------------------------ |
+| oc    | 2026-10-25 | oc   | `deepseek/deepseek-flash` | all 4 | 3    | 12/12   | 8,904                       | `benchmark/results/oc-baseline.json` |
 

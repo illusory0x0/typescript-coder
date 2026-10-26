@@ -44,39 +44,35 @@ The tc side runs every Edit-loop call at `reasoning_effort: none` by default
 
 ## Frozen baselines
 
-The oc side and the legacy `json` edit protocol are frozen reference points.
-They were re-frozen on 2026-10-25 against `benchmark/specs/` (4 tasks × 3 reps):
+The oc side is the frozen reference point. It was re-frozen on 2026-10-25
+against `benchmark/specs/` (4 tasks × 3 reps):
 
 - `benchmark/results/oc-baseline.json` — `--side oc`, `deepseek/deepseek-flash`.
-- `benchmark/results/json-format-baseline.json` — tc with `--protocol-format
-  json`.
 
-They are reference points, not a development loop: the benchmark **rejects**
+It is a reference point, not a development loop: the benchmark **rejects**
 `--side oc` and `--protocol-format json` outright under normal operation, so a
-change can never move them. A baseline update requires explicit human approval
-and a deliberate, temporary bypass of the guard; restore the guard after the
-approved matrix. tc reports run `--side tc` with the default `edit-dsl` protocol.
+change can never move the baseline. The json protocol stays frozen for
+historical/replay compatibility; its comparison baseline was retired. A
+baseline update requires explicit human approval and a deliberate, temporary
+bypass of the guard; restore the guard after the approved matrix. tc reports
+run `--side tc` with the default `edit-dsl` protocol.
 
 The oc baseline measures the ambient OpenCode configuration, including its
 registered skills; keep `.opencode/skills` and other OpenCode-level inputs
 stable across oc re-freezes. The 2026-10-25 freeze had 25 registered skills.
 
 A report whose `taskIssue` or `fixture` hash does not match the baseline's
-withholds the four-way table instead of comparing different inputs. Re-freeze
-both baselines with approval when the spec or fixture inputs change.
+withholds the comparison instead of comparing different inputs. Re-freeze the
+baseline with approval when the spec or fixture inputs change.
 
-A tc-only report loads **both** frozen baselines and renders a
-`## Four-way comparison (oc / tc json / tc pinned-repair / tc plan-exec)` section when
-`json-format-baseline.json` is present: per task and overall, with two factor
-columns — `vs oc baseline` and `vs tc json baseline`. A factor is the baseline's
-mean cache-excluded total divided by the variant's mean, so `2.5x` means the
-variant used 2.5 times fewer tokens. The two frozen rows themselves show `1.00x`
-in their own column and the cross-baseline ratio in the other. Overall rows are
-emitted only over tasks where all four variants report a total, so the columns
-stay like-for-like; tasks missing from a baseline are skipped. The same
-four-way sentence is printed after a run. Each baseline file carries its own
-`model`, `reps`, and `date`. If only `oc-baseline.json` is present, the older
-`## Savings vs oc baseline` section is rendered instead.
+A tc-only report loads `oc-baseline.json` and renders a
+`## Savings vs oc baseline` section: per task and overall, with a
+`Savings (oc/tc)` factor column. A factor is the baseline's mean cache-excluded
+total divided by the tc mean, so `2.5x` means tc used 2.5 times fewer tokens.
+Tasks missing from the baseline are skipped. The same sentence is printed after
+a run. The baseline file carries its own `model`, `reps`, and `date`. When the
+baseline is absent, no comparison section is rendered; when its spec hash is
+stale, the report renders `## Baseline comparison unavailable` instead.
 
 Each run also writes a sibling Markdown report next to the `--json` target
 (`.json` replaced by `.md`): aggregates per task and side plus token/cost
