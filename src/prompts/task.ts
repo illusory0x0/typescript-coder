@@ -416,6 +416,14 @@ whole-file \`write\` for this edit.`;
 export type TaskMatcherFailure = "malformed" | "repeated";
 
 /**
+ * The repair-first constraint shown with advisory tsc diagnostics after a large
+ * edit (#46). The advisory is not a gate: it never fails or reopens the applied
+ * edit, and the final Task gate remains the only hard boundary.
+ */
+export const TASK_POST_EDIT_ADVISORY_CONSTRAINT =
+  "Repair these errors first with a targeted `match`/`pick` change, a `create` for a missing declaration, or a whole-declaration/file replacement only when that replacement is the repair. Do not start unrelated work or repeat the large edit that caused them while the advisory is unresolved; the final Task gate still fails if they remain.";
+
+/**
  * The execution instruction. It teaches the same clause grammar as the edit
  * driver, but the target is already selected, so it omits the select-first
  * workflow and the raw file commands the executor rejects.
@@ -525,6 +533,11 @@ export interface TaskTurnInput {
   diagnostics?: string;
   /** Stage/task coordination context (for example an earlier failed gate). */
   context?: string;
+  /**
+   * Raw tsc diagnostics from the previous large edit in this Task. Rendered as
+   * an advisory block with a repair-first constraint, never as a gate failure.
+   */
+  postEditDiagnostics?: string;
   /** Append one action-specific example after a format/address rejection. */
   help?: boolean;
   /**
@@ -588,6 +601,20 @@ export function buildTaskTurnPrompt(input: TaskTurnInput): string {
   ];
   if (input.context !== undefined && input.context.trim() !== "") {
     blocks.push("", "# Context", "", input.context);
+  }
+  if (input.postEditDiagnostics !== undefined && input.postEditDiagnostics.trim() !== "") {
+    blocks.push(
+      "",
+      "# Post-edit type diagnostics",
+      "",
+      "The previous large edit left advisory type diagnostics. This is not a task gate failure: the edit stays applied and `done`, and the final Task gate is still the hard boundary.",
+      "",
+      "```",
+      input.postEditDiagnostics.trim(),
+      "```",
+      "",
+      TASK_POST_EDIT_ADVISORY_CONSTRAINT,
+    );
   }
   if (input.diagnostics !== undefined && input.diagnostics.trim() !== "") {
     blocks.push(

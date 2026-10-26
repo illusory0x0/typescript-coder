@@ -1179,7 +1179,7 @@ interface EditExecution {
   ok: boolean;
   diagnostics: string | null;
   messages: ChatMessage[];
-  /** Advisory tsc diagnostics after a large edit; never a gate failure. */
+  /** Raw advisory tsc diagnostics after a large edit; never a gate failure. */
   advisoryDiagnostics?: string | null;
 }
 
@@ -1258,9 +1258,6 @@ async function executeEdit(
       priorGateDiagnostics === undefined
         ? null
         : `A previous task gate in this stage failed; later edits may need to fix it:\n\n${priorGateDiagnostics}`,
-      postEditDiagnostics === undefined
-        ? null
-        : `A previous large edit has advisory type diagnostics; this is not a task gate failure:\n\n${postEditDiagnostics}`,
     ]
       .filter((block): block is string => block !== null && block.trim() !== "")
       .join("\n\n");
@@ -1275,6 +1272,7 @@ async function executeEdit(
       help: formatHelp,
       matcherFailure,
       context: contextText,
+      postEditDiagnostics,
     });
     const last = chat.messages[chat.messages.length - 1];
     if (last?.role === "user" && (last.content ?? "").startsWith("# Stage")) {
@@ -1418,9 +1416,7 @@ async function executeEdit(
       );
       if (!check.ok) {
         const output = check.output.trim();
-        advisoryDiagnostics = `stage: advisory-tsc\nthe previous large edit does not currently type-check; this is advisory, not a gate failure:\n\n${
-          output === "" ? "(tsc produced no output)" : output.slice(0, 6000)
-        }`;
+        advisoryDiagnostics = output === "" ? "(tsc produced no output)" : output.slice(0, 6000);
       }
     }
     return {

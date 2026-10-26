@@ -21,6 +21,7 @@ import {
   TASK_PLAN_EXAMPLE,
   TASK_MATCHER_FORMAT_HELP,
   TASK_PLANNER_VIEW,
+  TASK_POST_EDIT_ADVISORY_CONSTRAINT,
   TASK_SCAFFOLD_PLAN_EXAMPLE,
 } from "./task";
 import { initialState } from "../tasks";
@@ -462,6 +463,30 @@ describe("execution prompts", () => {
     const help = buildTaskTurnPrompt({ ...base, help: true });
     expect(help).toContain("# Format help");
     expect(help).toContain(taskEditDslHelp("modify"));
+  });
+
+  test("a post-edit advisory renders a dedicated repair-first block", () => {
+    const state = stateOf();
+    const prompt = buildTaskTurnPrompt({
+      state,
+      stage: STAGE,
+      task: TASK,
+      edit: EDIT,
+      contentView: renderTaskContentView("export function answer(): number {\n  return 1;\n}"),
+      postEditDiagnostics: "src/helper.ts(2,10): error TS2304: Cannot find name 'double'.",
+    });
+    expect(prompt).toContain("# Post-edit type diagnostics");
+    expect(prompt).toContain("advisory type diagnostics");
+    expect(prompt).toContain("not a task gate failure");
+    expect(prompt).toContain("stays applied and `done`");
+    expect(prompt).toContain("src/helper.ts(2,10): error TS2304");
+    expect(prompt).toContain(TASK_POST_EDIT_ADVISORY_CONSTRAINT);
+    expect(prompt).toContain("Repair these errors first");
+    expect(prompt).toContain("Do not start unrelated work");
+    expect(prompt).toContain("final Task gate still fails");
+    expect(prompt.indexOf("# Post-edit type diagnostics")).toBeLessThan(
+      prompt.indexOf("# Content view"),
+    );
   });
 
   test("the turn prompt carries stage, task, edit, and the content view last", () => {

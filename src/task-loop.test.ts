@@ -9,6 +9,7 @@ import {
   TASK_MATCHER_CORRECTION,
   TASK_MATCHER_FALLBACK,
   TASK_MATCHER_FORMAT_HELP,
+  TASK_POST_EDIT_ADVISORY_CONSTRAINT,
 } from "./prompts/task";
 import type { EditNode, Stage, TaskNode } from "./tasks";
 import type { ProviderLike } from "./loop";
@@ -1144,21 +1145,91 @@ end`;
     );
   }, 30000);
 
-  test("a large edit's advisory tsc reaches the next edit", async () => {
+  test("a large edit's advisory tsc reaches the next edit with a repair-first constraint", async () => {
     const dir = project();
     const plan = planText(
       [
         stageSpec(1, [
           taskSpec(1, {
             verify: "test",
+            instruction: "Wire answer through the missing helper, then add the helper.",
+            edits: [
+              editSpec(1001, {
+                instruction: "Replace answer with a call to the new double helper.",
+              }),
+              editSpec(1002, {
+                loc: { path: "src/helper.ts", symbol: "double", kind: "value" },
+                action: "create",
+                instruction: "Add the double helper.",
+              }),
+            ],
+          }),
+        ]),
+      ],
+      true,
+    );
+    const largeEdit = editDsl("export function answer(): number {\n  return double(1);\n}");
+    const createHelper = [
+      "select double in src/helper.ts resolve value",
+      "replace with",
+      "<<<TC_EDIT_BEGIN>>>",
+      "export function double(value: number): number {",
+      "  return value * 2;",
+      "}",
+      "<<<TC_EDIT_END>>>",
+      "end",
+    ].join("\n");
+    const provider = new ScriptedProvider([plan, largeEdit, createHelper]);
+    const result = await runTaskLoop(baseOptions(dir, provider));
+    expect(result.ok).toBe(true);
+    const prompt = provider.calls[2]?.at(-1)?.content ?? "";
+    expect(prompt).toContain("# Post-edit type diagnostics");
+    expect(prompt).toContain("advisory type diagnostics");
+    expect(prompt).toContain("not a task gate failure");
+    expect(prompt).toContain("src/helper.ts(");
+    expect(prompt).toContain("TS2304");
+    expect(prompt).toContain(TASK_POST_EDIT_ADVISORY_CONSTRAINT);
+    expect(prompt).toContain("Repair these errors first");
+    expect(prompt).toContain("Do not start unrelated work");
+    // The large edit stays applied; the targeted repair lands and the final gate passes.
+    expect(result.records.map((record) => record.outcome)).toEqual(["applied", "applied", "ok"]);
+    expect(result.tasks?.map((entry) => entry.status)).toEqual(["done", "done"]);
+    const source = readFileSync(join(dir, "src", "helper.ts"), "utf8");
+    expect(source).toContain("return double(1);");
+    expect(source).toContain("export function double");
+  }, 30000);
+
+  test("an unresolved large-edit advisory is caught by the final task gate, not rolled back", async () => {
+    const dir = project();
+    writeFileSync(
+      join(dir, "src", "helper.ts"),
+      [
+        "export function answer(): number {",
+        "  return 1;",
+        "}",
+        "",
+        "export function label(): string {",
+        '  return "a";',
+        "}",
+        "",
+      ].join("\n"),
+    );
+    const plan = planText(
+      [
+        stageSpec(1, [
+          taskSpec(1, {
+            verify: "test",
+            instruction: "Write the module, then change the label.",
             edits: [
               editSpec(1001, {
                 loc: { path: "src/helper.ts", symbol: "", kind: "file" },
                 action: "write",
-                instruction: "Write a temporary implementation.",
+                instruction:
+                  "Write the temporary module that calls the two-argument double helper.",
               }),
               editSpec(1002, {
-                instruction: "Repair the answer after the write.",
+                loc: { path: "src/helper.ts", symbol: "label", kind: "value" },
+                instruction: "Change the label after the write.",
               }),
             ],
           }),
@@ -1169,19 +1240,51 @@ end`;
     const write = [
       "write src/helper.ts with",
       "<<<TC_EDIT_BEGIN>>>",
+      "export function double(value: number, factor: number): number {",
+      "  return value * factor;",
+      "}",
+      "",
       "export function answer(): number {",
-      "  const broken: string = 1;",
-      "  return 2;",
+      "  return double(1);",
+      "}",
+      "",
+      "export function label(): string {",
+      '  return "a";',
       "}",
       "<<<TC_EDIT_END>>>",
     ].join("\n");
-    const provider = new ScriptedProvider([plan, write, GOOD_EDIT]);
+    const unrelated = [
+      "select label in src/helper.ts resolve value",
+      "replace with",
+      "<<<TC_EDIT_BEGIN>>>",
+      "export function label(): string {",
+      '  return "b";',
+      "}",
+      "<<<TC_EDIT_END>>>",
+      "end",
+    ].join("\n");
+    const provider = new ScriptedProvider([plan, write, unrelated, "patch"]);
     const result = await runTaskLoop(baseOptions(dir, provider));
-    expect(result.ok).toBe(true);
+    expect(result.ok).toBe(false);
+    expect(result.terminationReason).toBe("task-exhausted");
     const prompt = provider.calls[2]?.at(-1)?.content ?? "";
-    expect(prompt).toContain("advisory type diagnostics");
-    expect(prompt).toContain("TS2322");
-    expect(readFileSync(join(dir, "src", "helper.ts"), "utf8")).toContain("return 2;");
+    expect(prompt).toContain("# Post-edit type diagnostics");
+    expect(prompt).toContain("src/helper.ts(");
+    expect(prompt).toContain("TS2554");
+    expect(prompt).toContain("not a task gate failure");
+    expect(prompt).toContain(TASK_POST_EDIT_ADVISORY_CONSTRAINT);
+    // The advisory never rolled back or failed the applied large edit; the final
+    // Task gate is what records the hard failure.
+    const verification = result.records.find((record) => record.kind === "verification");
+    expect(verification?.outcome).toBe("tsc");
+    expect(verification?.diagnostics).toContain("TS2554");
+    expect(result.tasks?.map((entry) => entry.status)).toEqual(["done", "done"]);
+    const review = reviewPrompts(provider)[0]?.at(-1)?.content ?? "";
+    expect(review).toContain("Gate: test failed.");
+    expect(review).toContain("TS2554");
+    const source = readFileSync(join(dir, "src", "helper.ts"), "utf8");
+    expect(source).toContain("return double(1);");
+    expect(source).toContain('return "b";');
   }, 30000);
 
   test("a failed edit is reported to the planner, which changes its definition", async () => {

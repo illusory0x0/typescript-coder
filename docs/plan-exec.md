@@ -881,11 +881,17 @@ are:
 
 When a `write` or whole-declaration `modify` lands and another edit remains in
 the same Task, the harness may run `tsc --noEmit` immediately as an **advisory**
-check. Its diagnostics are shown in the next edit prompt under
-`# Post-edit type diagnostics`, but they do not reopen or fail the edit; the
-final Task gate remains the hard boundary. This catches a corrupted large edit
-earlier without rejecting the intermediate type-broken states that a multi-edit
-Task legitimately needs.
+check. Its raw diagnostics (with `path(line,col)` locations) are shown in the
+next edit prompt under `# Post-edit type diagnostics`, labeled as **not a task
+gate failure**, together with an explicit repair-first constraint: repair the
+errors with a targeted `match`/`pick` change, a `create` for a missing
+declaration, or a whole-declaration/file replacement that is itself the repair,
+before unrelated work, and do not repeat the large edit that caused them while
+the advisory is unresolved. Advisory diagnostics never reopen or fail the edit:
+the edit stays `done` and the harness does not roll back the applied work. The
+final Task gate remains the only hard boundary and fails if the errors remain.
+This catches a corrupted large edit earlier without rejecting the intermediate
+type-broken states that a multi-edit Task legitimately needs.
 
 A rejected reply or a read-only viewer costs one exchange. Per edit: at most 3
 exchanges. A malformed matcher (`EDIT_MATCHER_MISSING` or a snippet that does
