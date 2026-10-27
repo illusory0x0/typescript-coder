@@ -166,9 +166,9 @@ function clause(
     header,
     `match ${locator === "regex" ? `/${matcher}/` : `\`${matcher}\``}`,
     "replace with",
-    "<<<TC_EDIT_BEGIN>>>",
+    "TC_EDIT_BEGIN",
     replacement,
-    "<<<TC_EDIT_END>>>",
+    "TC_EDIT_END",
     "end",
   ].join("\n");
 }
@@ -178,21 +178,17 @@ function fileClause(locator: "match" | "regex", matcher: string, replacement: st
 }
 
 function moduleCreate(kind: "import" | "export", body: string): string {
-  return [
-    `create ${kind} in ${TARGET} with`,
-    "<<<TC_EDIT_BEGIN>>>",
-    body,
-    "<<<TC_EDIT_END>>>",
-    "end",
-  ].join("\n");
+  return [`create ${kind} in ${TARGET} with`, "TC_EDIT_BEGIN", body, "TC_EDIT_END", "end"].join(
+    "\n",
+  );
 }
 
 function declarationCreate(kind: string, name: string, body: string): string {
   return [
     `create ${kind} ${name} in ${TARGET} with`,
-    "<<<TC_EDIT_BEGIN>>>",
+    "TC_EDIT_BEGIN",
     body,
-    "<<<TC_EDIT_END>>>",
+    "TC_EDIT_END",
     "end",
   ].join("\n");
 }
@@ -443,9 +439,9 @@ const SUCCESS_CASES: FormCase[] = [
       "select class Widget in src/a.ts",
       "pick 16",
       "replace with",
-      "<<<TC_EDIT_BEGIN>>>",
+      "TC_EDIT_BEGIN",
       "    return 4;",
-      "<<<TC_EDIT_END>>>",
+      "TC_EDIT_END",
       "end",
     ].join("\n"),
     contains: ["return 4;"],
@@ -796,9 +792,9 @@ const FAILURE_CASES: FailureCase[] = [
     reply: [
       "select const first in src/a.ts",
       "replace with",
-      "<<<TC_EDIT_BEGIN>>>",
+      "TC_EDIT_BEGIN",
       "const first = 9;",
-      "<<<TC_EDIT_END>>>",
+      "TC_EDIT_END",
       "end",
     ].join("\n"),
     contains: ["sibling declarators", "sibling binding", "match", "pick"],
@@ -810,9 +806,9 @@ const FAILURE_CASES: FailureCase[] = [
     reply: [
       "select const a in src/a.ts",
       "replace with",
-      "<<<TC_EDIT_BEGIN>>>",
+      "TC_EDIT_BEGIN",
       "const a = 1;",
-      "<<<TC_EDIT_END>>>",
+      "TC_EDIT_END",
       "end",
     ].join("\n"),
     contains: ["sibling binding", "match", "pick", "destructuring"],

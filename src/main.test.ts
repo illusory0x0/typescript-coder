@@ -153,11 +153,11 @@ function planExecResponses(): string[] {
     [
       "select answer in src/helper.ts resolve value",
       "replace with",
-      "<<<TC_EDIT_BEGIN>>>",
+      "TC_EDIT_BEGIN",
       "export function answer(): number {",
       "  return 2;",
       "}",
-      "<<<TC_EDIT_END>>>",
+      "TC_EDIT_END",
       "end",
     ].join("\n"),
     "approve",

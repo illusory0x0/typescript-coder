@@ -101,7 +101,7 @@ test("a duplicate-export format failure names the file and the recovery", async 
   expect(diagnostics).toContain("src/a.ts: oxfmt failed:");
   expect(diagnostics).toContain("'export' modifier already seen");
   expect(diagnostics).toContain("hint: the edit produced a duplicate export modifier");
-  expect(diagnostics).toContain("write src/a.ts with <<<TC_EDIT_BEGIN>>>");
+  expect(diagnostics).toContain("write src/a.ts with TC_EDIT_BEGIN");
 });
 
 test("an unrelated format failure names the file without the export hint", () => {

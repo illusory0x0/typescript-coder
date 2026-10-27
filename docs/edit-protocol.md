@@ -96,8 +96,8 @@ A select clause is never a file command. A select clause with `replace` or
   fence replacement is applied to every resolved range (all-or-none at
   resolution; overlapping ranges are a `stage: range` failure).
 - **`replace with <fence>`**: the sentinel-only fence shared with the Plan DSL
-  ([`plan-exec.md`](plan-exec.md) §3). `<<<TC_EDIT_BEGIN>>>` and
-  `<<<TC_EDIT_END>>>` are exact whole lines, optionally indented or with
+  ([`plan-exec.md`](plan-exec.md) §3). `TC_EDIT_BEGIN` and
+  `TC_EDIT_END` are exact whole lines, optionally indented or with
   trailing whitespace. The opener may share the `with` line when it is the last
   non-whitespace token; the raw body still starts on the next line. The body is
   raw, so hyphen runs, six-backtick runs, `done`, and `end` are ordinary body
@@ -346,9 +346,9 @@ owner        = symbol, { '.', symbol } ;
 identifier   = ? TypeScript identifier ? ;
 snippet      = ? '`' , verbatim source, '`' ; only \` and \\ are escapes ? ;
 regex        = ? '/' , ECMA-262 pattern, no flags, '/' ? ;
-fence        = ? a line exactly <<<TC_EDIT_BEGIN>>>, or an opener at the end
+fence        = ? a line exactly TC_EDIT_BEGIN, or an opener at the end
                  of the `with` line, then raw body lines, then a line exactly
-                 <<<TC_EDIT_END>>>; each marker may have leading or trailing
+                 TC_EDIT_END; each marker may have leading or trailing
                  whitespace; the first exact close line terminates and nothing
                  may follow it on that line (a later statement may start on the
                  next line); the body may be empty ? ;
@@ -360,9 +360,10 @@ braces cannot be empty. `end` is required by the grammar. For `select`,
 `create`, `delete`, and `read`, the tolerant reader may warn
 `EDIT_MISSING_END` and recover at EOF or before an unambiguous next statement
 (`select`, `create`, `delete`, `read`, or `write`); arbitrary following text is
-a hard error. A `write` has no `end`: its `<<<TC_EDIT_END>>>` close terminates
-it, and a trailing `end` is `EDIT_STRAY_END`. Prompts and examples always emit
-the canonical terminator; recovery is not taught as a form.
+a hard error. A `write` has no `end` in the canonical grammar: its
+`TC_EDIT_END` close terminates it. One trailing `end` after a `write` close is
+accepted as a compatibility normalization; a second one is an error. Prompts and
+examples always emit the canonical form; the compatibility form is not taught.
 
 ### Self-check control turn
 
@@ -488,8 +489,9 @@ a partial destructive result. In particular:
   (there is no escape for a body containing the close marker). An opener sharing
   the `with` line is recovered with an `EDIT_INLINE_FENCE_OPEN` warning; it is
   not a rejection.
-- The retired `done` terminator reports `EDIT_RETIRED_DONE`; a trailing `end`
-  after a `write` close reports `EDIT_STRAY_END`.
+- The retired `done` terminator reports `EDIT_RETIRED_DONE`; one trailing `end`
+  after a `write` close is accepted as compatibility, and a second one is an
+  error.
 - `match` without a snippet/regex reports `EDIT_MATCHER_MISSING` with the
   accepted forms and an example.
 - `pick` without `replace`, `rename` mixed with `replace`, unknown `resolve`
@@ -539,22 +541,22 @@ The reply grammar also admits four file-command families:
 ```text
 create <path> end
 create [static] <kind> <name> in <path> with
-<<<TC_EDIT_BEGIN>>>
+TC_EDIT_BEGIN
 <declaration or member>
-<<<TC_EDIT_END>>>
+TC_EDIT_END
 end
 create import|export in <path> with
-<<<TC_EDIT_BEGIN>>>
+TC_EDIT_BEGIN
 <module-boundary statement>
-<<<TC_EDIT_END>>>
+TC_EDIT_END
 end
 
 delete <path> end
 read   <path> [ within <selecters> ] end
 write  <path> [ within <selecters> ] with
-<<<TC_EDIT_BEGIN>>>
+TC_EDIT_BEGIN
 <raw body>
-<<<TC_EDIT_END>>>
+TC_EDIT_END
 ```
 
 - **`create <path> end`** creates an empty file. An existing path is an `address` failure; parent directories are created. It does not run the parse/format gate. A path literally named like a create kind (for example `create function end`) remains this empty-file form because it has no `in` header.
@@ -611,9 +613,9 @@ end
 select function parse in src/helper.ts
 match `return input;`
 replace with
-<<<TC_EDIT_BEGIN>>>
+TC_EDIT_BEGIN
 return input.trim();
-<<<TC_EDIT_END>>>
+TC_EDIT_END
 end
 ```
 
@@ -638,8 +640,8 @@ An empty sentinel fence deletes the target:
 ```text
 select function unused in src/helper.ts
 replace with
-<<<TC_EDIT_BEGIN>>>
-<<<TC_EDIT_END>>>
+TC_EDIT_BEGIN
+TC_EDIT_END
 end
 ```
 
@@ -657,19 +659,19 @@ owner:
 
 ```text
 create function parseJson in src/json.ts with
-<<<TC_EDIT_BEGIN>>>
+TC_EDIT_BEGIN
 export function parseJson(text: string): unknown {
   return JSON.parse(text);
 }
-<<<TC_EDIT_END>>>
+TC_EDIT_END
 end
 
 create static method Parser.parse in src/parser.ts with
-<<<TC_EDIT_BEGIN>>>
+TC_EDIT_BEGIN
 static parse(text: string): Parser {
   return new Parser(text);
 }
-<<<TC_EDIT_END>>>
+TC_EDIT_END
 end
 ```
 
@@ -680,15 +682,15 @@ create adds one statement at the module boundary:
 select file src/parser.ts
 match `import { trim } from "./strings";`
 replace with
-<<<TC_EDIT_BEGIN>>>
+TC_EDIT_BEGIN
 import { trimEnd } from "./strings";
-<<<TC_EDIT_END>>>
+TC_EDIT_END
 end
 
 create import in src/parser.ts with
-<<<TC_EDIT_BEGIN>>>
+TC_EDIT_BEGIN
 import type { ParserOptions } from "./options";
-<<<TC_EDIT_END>>>
+TC_EDIT_END
 end
 ```
 
@@ -696,22 +698,22 @@ A whole-file write:
 
 ```text
 write src/parser.ts with
-<<<TC_EDIT_BEGIN>>>
+TC_EDIT_BEGIN
 export function parse(input: string): string {
   return input.trim();
 }
-<<<TC_EDIT_END>>>
+TC_EDIT_END
 ```
 
 A ranged write:
 
 ```text
 write src/parser.ts within 2-4 with
-<<<TC_EDIT_BEGIN>>>
+TC_EDIT_BEGIN
 export function parse(input: string): string {
   return input.trim();
 }
-<<<TC_EDIT_END>>>
+TC_EDIT_END
 ```
 
 ## 3. Resolution: the cascade

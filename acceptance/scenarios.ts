@@ -379,11 +379,11 @@ finish`,
       [
         "select answer in src/helper.ts resolve value",
         "replace with",
-        "<<<TC_EDIT_BEGIN>>>",
+        "TC_EDIT_BEGIN",
         "export function answer(): number {",
         "  return 2;",
         "}",
-        "<<<TC_EDIT_END>>>",
+        "TC_EDIT_END",
         "end",
       ].join("\n"),
       "approve",
@@ -406,30 +406,30 @@ finish`,
     responses: [
       `plan "01-main"
 goal:
-<<<TC_EDIT_BEGIN>>>
+TC_EDIT_BEGIN
 Make the failing answer test pass.
-<<<TC_EDIT_END>>>
+TC_EDIT_END
 
 node "02-answer" verify test
 instruction:
-<<<TC_EDIT_BEGIN>>>
+TC_EDIT_BEGIN
 Replace src/helper.ts so answer returns 2.
-<<<TC_EDIT_END>>>
+TC_EDIT_END
 hint file src/helper.ts
 approach:
-<<<TC_EDIT_BEGIN>>>
+TC_EDIT_BEGIN
 The file is small; one whole-file write is often cheapest.
-<<<TC_EDIT_END>>>
+TC_EDIT_END
 end
 
 finish`,
       [
         "write src/helper.ts with",
-        "<<<TC_EDIT_BEGIN>>>",
+        "TC_EDIT_BEGIN",
         "export function answer(): number {",
         "  return 2;",
         "}",
-        "<<<TC_EDIT_END>>>",
+        "TC_EDIT_END",
       ].join("\n"),
       "approve",
     ],

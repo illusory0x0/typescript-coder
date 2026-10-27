@@ -394,8 +394,8 @@ type TextFieldLabel = "goal:" | "instruction:" | "approach:" | "phase:";
 
 /**
  * Read one text field: the rest of the label line, or an empty label followed by
- * a `<<<TC_EDIT_BEGIN>>>` line and raw body lines closed by an exact
- * `<<<TC_EDIT_END>>>` line. Fenced raw lines are kept exactly as sent. A missing
+ * a `TC_EDIT_BEGIN` line and raw body lines closed by an exact
+ * `TC_EDIT_END` line. Fenced raw lines are kept exactly as sent. A missing
  * label, empty text, or unclosed fence is an error; legacy hyphen and backtick
  * fences are rejected with a hint to use the sentinel.
  */

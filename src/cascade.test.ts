@@ -107,7 +107,7 @@ describe("resolveCascade: omitted stages", () => {
   test("no match with replace rewrites the whole declaration", () => {
     const entry = entryFor(ONCE, "once", "function");
     const selection = firstSelection(
-      "select function once in a.ts\nreplace with\n<<<TC_EDIT_BEGIN>>>\nfunction once(): number {\n  return 2;\n}\n<<<TC_EDIT_END>>>\nend",
+      "select function once in a.ts\nreplace with\nTC_EDIT_BEGIN\nfunction once(): number {\n  return 2;\n}\nTC_EDIT_END\nend",
     );
     const result = ok(resolveCascade(ONCE, entry, selection));
     expect(result.stage).toBe<SelectionStage>("whole-symbol");
@@ -137,7 +137,7 @@ describe("resolveCascade: omitted stages", () => {
   test("a match with replace rewrites the matched span", () => {
     const entry = entryFor(ONCE, "once", "function");
     const selection = firstSelection(
-      "select function once in a.ts\nmatch `return 1;`\nreplace with\n<<<TC_EDIT_BEGIN>>>\n  return 2;\n<<<TC_EDIT_END>>>\nend",
+      "select function once in a.ts\nmatch `return 1;`\nreplace with\nTC_EDIT_BEGIN\n  return 2;\nTC_EDIT_END\nend",
     );
     const result = ok(resolveCascade(ONCE, entry, selection));
     expect(result.stage).toBe<SelectionStage>("match");
@@ -230,7 +230,7 @@ describe("resolveCascade: regex matcher", () => {
         ONCE,
         entry,
         firstSelection(
-          "select function once in a.ts\nmatch /return 1;/\nreplace with\n<<<TC_EDIT_BEGIN>>>\nreturn 2;\n<<<TC_EDIT_END>>>\nend",
+          "select function once in a.ts\nmatch /return 1;/\nreplace with\nTC_EDIT_BEGIN\nreturn 2;\nTC_EDIT_END\nend",
         ),
       ),
     );
@@ -276,7 +276,7 @@ describe("resolveCascade: regex matcher", () => {
         TWICE,
         entry,
         firstSelection(
-          "select function twice in a.ts\nmatch /return 1;/\npick 3\nreplace with\n<<<TC_EDIT_BEGIN>>>\n  return 2;\n<<<TC_EDIT_END>>>\nend",
+          "select function twice in a.ts\nmatch /return 1;/\npick 3\nreplace with\nTC_EDIT_BEGIN\n  return 2;\nTC_EDIT_END\nend",
         ),
       ),
     );
@@ -293,7 +293,7 @@ describe("resolveCascade: regex matcher", () => {
         TWICE,
         entry,
         firstSelection(
-          "select function twice in a.ts\nmatch /return 1;/\npick {2, 3}\nreplace with\n<<<TC_EDIT_BEGIN>>>\n  return 2;\n<<<TC_EDIT_END>>>\nend",
+          "select function twice in a.ts\nmatch /return 1;/\npick {2, 3}\nreplace with\nTC_EDIT_BEGIN\n  return 2;\nTC_EDIT_END\nend",
         ),
       ),
     );
@@ -397,7 +397,7 @@ describe("resolveCascade: pick narrows match", () => {
         TWICE,
         entry,
         firstSelection(
-          "select function twice in a.ts\nmatch `return 1;`\npick 3:5\nreplace with\n<<<TC_EDIT_BEGIN>>>\n  return 2;\n<<<TC_EDIT_END>>>\nend",
+          "select function twice in a.ts\nmatch `return 1;`\npick 3:5\nreplace with\nTC_EDIT_BEGIN\n  return 2;\nTC_EDIT_END\nend",
         ),
       ),
     );
@@ -414,7 +414,7 @@ describe("resolveCascade: pick narrows match", () => {
         TWICE,
         entry,
         firstSelection(
-          "select function twice in a.ts\nmatch `return 1;`\npick 4:1\nreplace with\n<<<TC_EDIT_BEGIN>>>\n  return 2;\n<<<TC_EDIT_END>>>\nend",
+          "select function twice in a.ts\nmatch `return 1;`\npick 4:1\nreplace with\nTC_EDIT_BEGIN\n  return 2;\nTC_EDIT_END\nend",
         ),
       ),
     );
@@ -424,7 +424,7 @@ describe("resolveCascade: pick narrows match", () => {
   test("a pick range disambiguates two matches to the second occurrence", () => {
     const entry = entryFor(TWICE, "twice", "function");
     const selection = firstSelection(
-      "select function twice in a.ts\nmatch `return 1;`\npick 3\nreplace with\n<<<TC_EDIT_BEGIN>>>\n  return 2;\n<<<TC_EDIT_END>>>\nend",
+      "select function twice in a.ts\nmatch `return 1;`\npick 3\nreplace with\nTC_EDIT_BEGIN\n  return 2;\nTC_EDIT_END\nend",
     );
     const result = ok(resolveCascade(TWICE, entry, selection));
     expect(result.stage).toBe<SelectionStage>("pick");
@@ -457,7 +457,7 @@ describe("resolveCascade: pick narrows match", () => {
         TWO_DECLARATIONS,
         entry,
         firstSelection(
-          "select function twice in a.ts\nmatch `return 1;`\npick 3\nreplace with\n<<<TC_EDIT_BEGIN>>>\n  return 2;\n<<<TC_EDIT_END>>>\nend",
+          "select function twice in a.ts\nmatch `return 1;`\npick 3\nreplace with\nTC_EDIT_BEGIN\n  return 2;\nTC_EDIT_END\nend",
         ),
       ),
     );
@@ -474,7 +474,7 @@ describe("resolveCascade: pick narrows match", () => {
         TWICE,
         entry,
         firstSelection(
-          "select function twice in a.ts\nmatch `return 1;`\npick {2, 3}\nreplace with\n<<<TC_EDIT_BEGIN>>>\n  return 2;\n<<<TC_EDIT_END>>>\nend",
+          "select function twice in a.ts\nmatch `return 1;`\npick {2, 3}\nreplace with\nTC_EDIT_BEGIN\n  return 2;\nTC_EDIT_END\nend",
         ),
       ),
     );
@@ -489,7 +489,7 @@ describe("resolveCascade: pick narrows match", () => {
         TWICE,
         entry,
         firstSelection(
-          "select function twice in a.ts\nmatch `return 1;`\npick 4\nreplace with\n<<<TC_EDIT_BEGIN>>>\n  return 2;\n<<<TC_EDIT_END>>>\nend",
+          "select function twice in a.ts\nmatch `return 1;`\npick 4\nreplace with\nTC_EDIT_BEGIN\n  return 2;\nTC_EDIT_END\nend",
         ),
       ),
     );
@@ -503,7 +503,7 @@ describe("resolveCascade: pick narrows match", () => {
         TWICE,
         entry,
         firstSelection(
-          "select function twice in a.ts\nmatch `return 1;`\npick 99\nreplace with\n<<<TC_EDIT_BEGIN>>>\n  return 2;\n<<<TC_EDIT_END>>>\nend",
+          "select function twice in a.ts\nmatch `return 1;`\npick 99\nreplace with\nTC_EDIT_BEGIN\n  return 2;\nTC_EDIT_END\nend",
         ),
       ),
     );
@@ -519,7 +519,7 @@ describe("resolveCascade: pick narrows match", () => {
         TWICE,
         entry,
         firstSelection(
-          "select function twice in a.ts\nmatch `return 1;`\npick 3:5-3:3\nreplace with\n<<<TC_EDIT_BEGIN>>>\n  return 2;\n<<<TC_EDIT_END>>>\nend",
+          "select function twice in a.ts\nmatch `return 1;`\npick 3:5-3:3\nreplace with\nTC_EDIT_BEGIN\n  return 2;\nTC_EDIT_END\nend",
         ),
       ),
     );
@@ -534,7 +534,7 @@ describe("resolveCascade: pick narrows match", () => {
         TWO_DECLARATIONS,
         entry,
         firstSelection(
-          "select function twice in a.ts\nmatch `return 1;`\npick 1\nreplace with\n<<<TC_EDIT_BEGIN>>>\n  return 2;\n<<<TC_EDIT_END>>>\nend",
+          "select function twice in a.ts\nmatch `return 1;`\npick 1\nreplace with\nTC_EDIT_BEGIN\n  return 2;\nTC_EDIT_END\nend",
         ),
       ),
     );
@@ -551,7 +551,7 @@ describe("resolveCascade: pick-only editor", () => {
         TWICE,
         entry,
         firstSelection(
-          "select function twice in a.ts\npick 2\nreplace with\n<<<TC_EDIT_BEGIN>>>\n  return 2;\n<<<TC_EDIT_END>>>\nend",
+          "select function twice in a.ts\npick 2\nreplace with\nTC_EDIT_BEGIN\n  return 2;\nTC_EDIT_END\nend",
         ),
       ),
     );
@@ -569,7 +569,7 @@ describe("resolveCascade: pick-only editor", () => {
         TWICE,
         entry,
         firstSelection(
-          "select function twice in a.ts\npick 2:3\nreplace with\n<<<TC_EDIT_BEGIN>>>\nR\n<<<TC_EDIT_END>>>\nend",
+          "select function twice in a.ts\npick 2:3\nreplace with\nTC_EDIT_BEGIN\nR\nTC_EDIT_END\nend",
         ),
       ),
     );
@@ -586,7 +586,7 @@ describe("resolveCascade: pick-only editor", () => {
         TWICE,
         entry,
         firstSelection(
-          "select function twice in a.ts\npick 2:3-2:8\nreplace with\n<<<TC_EDIT_BEGIN>>>\nyield\n<<<TC_EDIT_END>>>\nend",
+          "select function twice in a.ts\npick 2:3-2:8\nreplace with\nTC_EDIT_BEGIN\nyield\nTC_EDIT_END\nend",
         ),
       ),
     );
@@ -605,7 +605,7 @@ describe("resolveCascade: pick-only editor", () => {
         TWICE,
         entry,
         firstSelection(
-          "select function twice in a.ts\npick {2, 3}\nreplace with\n<<<TC_EDIT_BEGIN>>>\n  return 2;\n<<<TC_EDIT_END>>>\nend",
+          "select function twice in a.ts\npick {2, 3}\nreplace with\nTC_EDIT_BEGIN\n  return 2;\nTC_EDIT_END\nend",
         ),
       ),
     );
@@ -625,7 +625,7 @@ describe("resolveCascade: replace guards", () => {
   test("a replacement identical to the matched text is a no-op", () => {
     const entry = entryFor(ONCE, "once", "function");
     const selection = firstSelection(
-      "select function once in a.ts\nmatch `return 1;`\nreplace with\n<<<TC_EDIT_BEGIN>>>\nreturn 1;\n<<<TC_EDIT_END>>>\nend",
+      "select function once in a.ts\nmatch `return 1;`\nreplace with\nTC_EDIT_BEGIN\nreturn 1;\nTC_EDIT_END\nend",
     );
     const result = failure(resolveCascade(ONCE, entry, selection));
     expect(result.cause).toBe("no-op");
@@ -634,7 +634,7 @@ describe("resolveCascade: replace guards", () => {
   test("a whole-declaration replacement strips a duplicated leading export", () => {
     const entry = entryFor(ONCE, "once", "function");
     const selection = firstSelection(
-      "select function once in a.ts\nreplace with\n<<<TC_EDIT_BEGIN>>>\nexport function once(): number {\n  return 2;\n}\n<<<TC_EDIT_END>>>\nend",
+      "select function once in a.ts\nreplace with\nTC_EDIT_BEGIN\nexport function once(): number {\n  return 2;\n}\nTC_EDIT_END\nend",
     );
     const result = ok(resolveCascade(ONCE, entry, selection));
     expect(result.text).toBe("function once(): number {\n  return 2;\n}");
@@ -643,7 +643,7 @@ describe("resolveCascade: replace guards", () => {
   test("a leading comment before export is still a duplicated modifier", () => {
     const entry = entryFor(ONCE, "once", "function");
     const selection = firstSelection(
-      "select function once in a.ts\nreplace with\n<<<TC_EDIT_BEGIN>>>\n// note\nexport function once(): number {\n  return 2;\n}\n<<<TC_EDIT_END>>>\nend",
+      "select function once in a.ts\nreplace with\nTC_EDIT_BEGIN\n// note\nexport function once(): number {\n  return 2;\n}\nTC_EDIT_END\nend",
     );
     const result = ok(resolveCascade(ONCE, entry, selection));
     expect(result.text).toBe("// note\nfunction once(): number {\n  return 2;\n}");
@@ -653,7 +653,7 @@ describe("resolveCascade: replace guards", () => {
   test("a block comment before export is still a duplicated modifier", () => {
     const entry = entryFor(ONCE, "once", "function");
     const selection = firstSelection(
-      "select function once in a.ts\nreplace with\n<<<TC_EDIT_BEGIN>>>\n/* note */ export function once(): number {\n  return 2;\n}\n<<<TC_EDIT_END>>>\nend",
+      "select function once in a.ts\nreplace with\nTC_EDIT_BEGIN\n/* note */ export function once(): number {\n  return 2;\n}\nTC_EDIT_END\nend",
     );
     const result = ok(resolveCascade(ONCE, entry, selection));
     expect(result.text).toBe("/* note */ function once(): number {\n  return 2;\n}");
@@ -662,7 +662,7 @@ describe("resolveCascade: replace guards", () => {
   test("a body-level replacement keeps a leading export verbatim", () => {
     const entry = entryFor(ONCE, "once", "function");
     const selection = firstSelection(
-      "select function once in a.ts\nmatch `return 1;`\nreplace with\n<<<TC_EDIT_BEGIN>>>\nexport return 2;\n<<<TC_EDIT_END>>>\nend",
+      "select function once in a.ts\nmatch `return 1;`\nreplace with\nTC_EDIT_BEGIN\nexport return 2;\nTC_EDIT_END\nend",
     );
     const result = ok(resolveCascade(ONCE, entry, selection));
     expect(result.text).toBe("export return 2;");
@@ -671,7 +671,7 @@ describe("resolveCascade: replace guards", () => {
   test("a plain export source keeps an intentional default conversion", () => {
     const entry = entryFor(ONCE, "once", "function");
     const selection = firstSelection(
-      "select function once in a.ts\nreplace with\n<<<TC_EDIT_BEGIN>>>\nexport default function once(): number {\n  return 2;\n}\n<<<TC_EDIT_END>>>\nend",
+      "select function once in a.ts\nreplace with\nTC_EDIT_BEGIN\nexport default function once(): number {\n  return 2;\n}\nTC_EDIT_END\nend",
     );
     const result = ok(resolveCascade(ONCE, entry, selection));
     expect(result.text).toBe("default function once(): number {\n  return 2;\n}");

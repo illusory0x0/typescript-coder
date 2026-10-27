@@ -183,25 +183,25 @@ end`);
   test("preserves fenced instruction, approach, phase, and goal text raw", () => {
     const content = `plan "01-main"
 goal:
-<<<TC_EDIT_BEGIN>>>
+TC_EDIT_BEGIN
 line one
 
   line two
-<<<TC_EDIT_END>>>
+TC_EDIT_END
 
 node "02-a" verify test
 instruction:
-<<<TC_EDIT_BEGIN>>>
+TC_EDIT_BEGIN
 alpha
   beta
-<<<TC_EDIT_END>>>
-approach: <<<TC_EDIT_BEGIN>>>
+TC_EDIT_END
+approach: TC_EDIT_BEGIN
 approach line
-<<<TC_EDIT_END>>>
+TC_EDIT_END
 phase:
-<<<TC_EDIT_BEGIN>>>
+TC_EDIT_BEGIN
   phase raw
-<<<TC_EDIT_END>>>
+TC_EDIT_END
 end`;
     const parsed = accepted(content);
     expect(parsed.goal).toBe("line one\n\n  line two");
@@ -505,7 +505,7 @@ end`);
   test("rejects an unclosed field fence as truncated", () => {
     const parsed = parsePlanDslDetailed(`plan "01-main"
 goal:
-<<<TC_EDIT_BEGIN>>>
+TC_EDIT_BEGIN
 unterminated`);
     expect(parsed.ok).toBe(false);
     expect(parsed.truncated).toBe(true);
@@ -610,19 +610,13 @@ describe("Plan DSL serialize", () => {
       }),
     ]);
     const wire = serializePlanDsl(shape);
-    expect(wire).toContain(
-      "instruction:\n<<<TC_EDIT_BEGIN>>>\nalpha\n-----\nbeta\n<<<TC_EDIT_END>>>",
-    );
-    expect(wire).toContain(
-      "approach:\n<<<TC_EDIT_BEGIN>>>\n  padded approach  \n<<<TC_EDIT_END>>>",
-    );
+    expect(wire).toContain("instruction:\nTC_EDIT_BEGIN\nalpha\n-----\nbeta\nTC_EDIT_END");
+    expect(wire).toContain("approach:\nTC_EDIT_BEGIN\n  padded approach  \nTC_EDIT_END");
     expect(accepted(wire)).toEqual(shape);
   });
 
   test("throws when Plan text contains the close sentinel line", () => {
-    expect(() => serializePlanDsl(plan([], "before\n<<<TC_EDIT_END>>>\nafter"))).toThrow(
-      /literal line/,
-    );
+    expect(() => serializePlanDsl(plan([], "before\nTC_EDIT_END\nafter"))).toThrow(/literal line/);
   });
 });
 
@@ -668,6 +662,24 @@ const PATCH_OPS: PlanPatchOp[] = [
   },
   { kind: "node-remove", id: "05-repair" },
 ];
+
+describe("plan sentinel hard switch", () => {
+  test("rejects the removed angle-bracket sentinel", () => {
+    const old = `plan "01-main"
+goal:
+<<<TC_EDIT_BEGIN>>>
+g
+<<<TC_EDIT_END>>>
+
+node "02-a" verify tsc
+instruction: x
+end
+finish`;
+    const parsed = parsePlan(old);
+    expect(parsed.ok).toBe(false);
+    expect(parsed.ok ? "" : parsed.diagnostics).toContain("TC_EDIT_BEGIN");
+  });
+});
 
 describe("Plan patch DSL parse", () => {
   test("parses every node operator and finish", () => {
@@ -861,15 +873,15 @@ end`;
     const content = `patch
 node~ "02-a"
 instruction:
-<<<TC_EDIT_BEGIN>>>
+TC_EDIT_BEGIN
 alpha
   beta
-<<<TC_EDIT_END>>>
+TC_EDIT_END
 approach:
-<<<TC_EDIT_BEGIN>>>
+TC_EDIT_BEGIN
 scaffold
 then fill bodies
-<<<TC_EDIT_END>>>
+TC_EDIT_END
 end`;
     expect(serializePlanPatch(acceptedPatch(content))).toBe(content);
   });

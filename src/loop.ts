@@ -158,7 +158,7 @@ function editDslParseDiagnostics(content: string, error: SelectionSyntaxError): 
 // JSON edit payload). The retry must re-teach the edit-dsl form rather than the
 // old payload correction that would drive the model back to it.
 const EDIT_DSL_PROTOCOL_CORRECTION =
-  "Reply with one or more `select … end` clauses or a file command (`create`, `delete`, `read`, `write`) as the entire response (`select <symbol> in <path> [ resolve <value|type|namespace> ] [ match (<snippet> | /regex/) ] [ [ pick <range> ] replace with <fence> | rename <old> to <new> ] end`, where the fence opens with `<<<TC_EDIT_BEGIN>>>` on its own line and closes with `<<<TC_EDIT_END>>>` on its own line; a `pick` requires `replace`, and `rename` cannot be combined with either; every clause in one reply must target a different resolved declaration `(path, symbol, kind)`, so address one declaration at most once and split its edits across exchanges); a JSON edit payload is not accepted in this mode.";
+  "Reply with one or more `select … end` clauses or a file command (`create`, `delete`, `read`, `write`) as the entire response (`select <symbol> in <path> [ resolve <value|type|namespace> ] [ match (<snippet> | /regex/) ] [ [ pick <range> ] replace with <fence> | rename <old> to <new> ] end`, where the fence opens with `TC_EDIT_BEGIN` on its own line and closes with `TC_EDIT_END` on its own line; a `pick` requires `replace`, and `rename` cannot be combined with either; every clause in one reply must target a different resolved declaration `(path, symbol, kind)`, so address one declaration at most once and split its edits across exchanges); a JSON edit payload is not accepted in this mode.";
 const EDIT_DSL_PROTOCOL_ESCALATION =
   "This attempt MUST reply with only `select … end` clauses or file commands — with no prose, no markdown fences, and no JSON edit payload.";
 
@@ -1058,11 +1058,11 @@ function addressUndeclaredEscalation(name: string): string {
 // derived from the live target: the bare select that omits the kind, and the
 // raw whole-file write that bypasses address resolution entirely.
 function repeatedAddressFallback(path: string, name: string): string {
-  const write = `write ${path} with <<<TC_EDIT_BEGIN>>> … <<<TC_EDIT_END>>>`;
+  const write = `write ${path} with TC_EDIT_BEGIN … TC_EDIT_END`;
   if (name === "") {
-    return `The address keeps failing, so stop trying to select it. Repair the whole file with a raw \`${write}\` (open the body with \`<<<TC_EDIT_BEGIN>>>\` and close it with \`<<<TC_EDIT_END>>>\`).`;
+    return `The address keeps failing, so stop trying to select it. Repair the whole file with a raw \`${write}\` (open the body with \`TC_EDIT_BEGIN\` and close it with \`TC_EDIT_END\`).`;
   }
-  return `The address keeps failing, so stop guessing at its kind. Select the live target with a bare \`select ${name} in ${path}\` (omit the kind), or repair the whole file with a raw \`${write}\` (open the body with \`<<<TC_EDIT_BEGIN>>>\` and close it with \`<<<TC_EDIT_END>>>\`).`;
+  return `The address keeps failing, so stop guessing at its kind. Select the live target with a bare \`select ${name} in ${path}\` (omit the kind), or repair the whole file with a raw \`${write}\` (open the body with \`TC_EDIT_BEGIN\` and close it with \`TC_EDIT_END\`).`;
 }
 
 /**

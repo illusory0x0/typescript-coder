@@ -207,8 +207,8 @@ export const END_OF_LINE_COLUMN = 0;
  * trailing whitespace; the body is otherwise raw and only the exact end marker
  * terminates it.
  */
-export const EDIT_FENCE_BEGIN = "<<<TC_EDIT_BEGIN>>>";
-export const EDIT_FENCE_END = "<<<TC_EDIT_END>>>";
+export const EDIT_FENCE_BEGIN = "TC_EDIT_BEGIN";
+export const EDIT_FENCE_END = "TC_EDIT_END";
 
 /** True for a legacy 5+ hyphen or 6+ backtick fence line (removed wire form). */
 export function isLegacyEditFence(line: string): boolean {
@@ -1605,7 +1605,7 @@ function dsmlIssue(text: string, marker: LeadingDsml): DslIssue {
     stage: "protocol",
     code: "EDIT_DSML_UNSUPPORTED",
     message:
-      "DSML/tool-call markup is not supported: this turn has no tool namespace, and `read`, `select`, `write`, `create`, and `delete` are literal edit-dsl text commands, not function calls. Reply with edit-dsl only; the `<<<TC_EDIT_BEGIN>>>` … `<<<TC_EDIT_END>>>` block is literal text.",
+      "DSML/tool-call markup is not supported: this turn has no tool namespace, and `read`, `select`, `write`, `create`, and `delete` are literal edit-dsl text commands, not function calls. Reply with edit-dsl only; the `TC_EDIT_BEGIN` … `TC_EDIT_END` block is literal text.",
     line: marker.line,
     column: marker.column,
     excerpt: text,

@@ -135,12 +135,7 @@ describe("resolveMultiEditor file commands", () => {
 
   test("write with no within replaces the whole file", () => {
     const result = resolve(
-      [
-        "write src/a.ts with",
-        "<<<TC_EDIT_BEGIN>>>",
-        "export const a = 2;",
-        "<<<TC_EDIT_END>>>",
-      ].join("\n"),
+      ["write src/a.ts with", "TC_EDIT_BEGIN", "export const a = 2;", "TC_EDIT_END"].join("\n"),
       { "src/a.ts": "export const a = 1;\n" },
     );
     expect(result.failures).toEqual([]);
@@ -155,12 +150,7 @@ describe("resolveMultiEditor file commands", () => {
 
   test("write with within replaces only the selected line", () => {
     const result = resolve(
-      [
-        "write src/a.ts within 2 with",
-        "<<<TC_EDIT_BEGIN>>>",
-        "two changed",
-        "<<<TC_EDIT_END>>>",
-      ].join("\n"),
+      ["write src/a.ts within 2 with", "TC_EDIT_BEGIN", "two changed", "TC_EDIT_END"].join("\n"),
       { "src/a.ts": "one\ntwo\nthree\n" },
     );
     expect(result.failures).toEqual([]);
@@ -173,12 +163,7 @@ describe("resolveMultiEditor file commands", () => {
 
   test("write creates a missing file at offset 0", () => {
     const result = resolve(
-      [
-        "write src/new.ts with",
-        "<<<TC_EDIT_BEGIN>>>",
-        "export const a = 1;",
-        "<<<TC_EDIT_END>>>",
-      ].join("\n"),
+      ["write src/new.ts with", "TC_EDIT_BEGIN", "export const a = 1;", "TC_EDIT_END"].join("\n"),
       {},
     );
     expect(result.failures).toEqual([]);
@@ -193,13 +178,9 @@ describe("resolveMultiEditor file commands", () => {
 
   test("conflicts create/delete with another operation on the same path", () => {
     const createWrite = resolve(
-      [
-        "create src/a.ts end",
-        "write src/a.ts with",
-        "<<<TC_EDIT_BEGIN>>>",
-        "x",
-        "<<<TC_EDIT_END>>>",
-      ].join("\n"),
+      ["create src/a.ts end", "write src/a.ts with", "TC_EDIT_BEGIN", "x", "TC_EDIT_END"].join(
+        "\n",
+      ),
       {},
     );
     expect(createWrite.failures[0]?.diagnostics).toContain("conflicts");
@@ -207,12 +188,7 @@ describe("resolveMultiEditor file commands", () => {
 
   test("rejects overlapping write ranges", () => {
     const result = resolve(
-      [
-        "write src/a.ts within {1, 1:2-2:4} with",
-        "<<<TC_EDIT_BEGIN>>>",
-        "x",
-        "<<<TC_EDIT_END>>>",
-      ].join("\n"),
+      ["write src/a.ts within {1, 1:2-2:4} with", "TC_EDIT_BEGIN", "x", "TC_EDIT_END"].join("\n"),
       { "src/a.ts": "one\ntwo\nthree\n" },
     );
     expect(result.regions).toEqual([]);
@@ -223,9 +199,9 @@ describe("resolveMultiEditor file commands", () => {
     const result = resolve(
       [
         "write src/a.ts with",
-        "<<<TC_EDIT_BEGIN>>>",
+        "TC_EDIT_BEGIN",
         "two",
-        "<<<TC_EDIT_END>>>",
+        "TC_EDIT_END",
         "read src/a.ts within 99 end",
       ].join("\n"),
       { "src/a.ts": "one\n" },
@@ -265,9 +241,9 @@ function replaceClause(name: string, body: string, path = "src/helper.ts"): stri
     `select function ${name} in ${path}`,
     "match `return 1;`",
     "replace with",
-    "<<<TC_EDIT_BEGIN>>>",
+    "TC_EDIT_BEGIN",
     body,
-    "<<<TC_EDIT_END>>>",
+    "TC_EDIT_END",
     "end",
   ].join("\n");
 }
@@ -373,9 +349,9 @@ function createDeclaration(
 ): string {
   return [
     `create ${isStatic ? "static " : ""}${kind} ${name} in ${path} with`,
-    "<<<TC_EDIT_BEGIN>>>",
+    "TC_EDIT_BEGIN",
     body,
-    "<<<TC_EDIT_END>>>",
+    "TC_EDIT_END",
     "end",
   ].join("\n");
 }
@@ -883,9 +859,9 @@ describe("resolveMultiEditor kind-aware create (#50)", () => {
     const implicit = [
       "select const VALUE in src/a.ts",
       "replace with",
-      "<<<TC_EDIT_BEGIN>>>",
+      "TC_EDIT_BEGIN",
       "const VALUE = 1;",
-      "<<<TC_EDIT_END>>>",
+      "TC_EDIT_END",
       "end",
     ].join("\n");
     const explicit = createDeclaration("const", "VALUE", "src/a.ts", "const VALUE = 2;");
@@ -944,9 +920,9 @@ describe("resolveMultiEditor kind-aware create (#50)", () => {
     );
     const write = [
       "write src/a.ts with",
-      "<<<TC_EDIT_BEGIN>>>",
+      "TC_EDIT_BEGIN",
       "export const a = 1;",
-      "<<<TC_EDIT_END>>>",
+      "TC_EDIT_END",
     ].join("\n");
     const withWrite = resolve([create, write].join("\n\n"), { "src/a.ts": "" });
     expect(withWrite.failures[0]?.diagnostics).toContain("whole-file write");
@@ -965,13 +941,7 @@ describe("resolveMultiEditor kind-aware create (#50)", () => {
 
 describe("module-boundary create (#54)", () => {
   const moduleCreate = (kind: "import" | "export", path: string, body: string): string =>
-    [
-      `create ${kind} in ${path} with`,
-      "<<<TC_EDIT_BEGIN>>>",
-      body,
-      "<<<TC_EDIT_END>>>",
-      "end",
-    ].join("\n");
+    [`create ${kind} in ${path} with`, "TC_EDIT_BEGIN", body, "TC_EDIT_END", "end"].join("\n");
 
   test("creates an import in a new file and an existing file", () => {
     const fresh = resolve(moduleCreate("import", "src/new.ts", 'import { a } from "./a";'), {});
@@ -1130,9 +1100,9 @@ describe("module-boundary create (#54)", () => {
       "select file src/a.ts",
       'match `import { a } from "./a";`',
       "replace with",
-      "<<<TC_EDIT_BEGIN>>>",
+      "TC_EDIT_BEGIN",
       'import { a } from "./a-v2";',
-      "<<<TC_EDIT_END>>>",
+      "TC_EDIT_END",
       "end",
     ].join("\n");
     const withSelect = resolve(
@@ -1141,9 +1111,7 @@ describe("module-boundary create (#54)", () => {
     );
     expect(withSelect.failures[0]?.diagnostics).toContain("file-level select");
 
-    const write = ["write src/a.ts with", "<<<TC_EDIT_BEGIN>>>", source, "<<<TC_EDIT_END>>>"].join(
-      "\n",
-    );
+    const write = ["write src/a.ts with", "TC_EDIT_BEGIN", source, "TC_EDIT_END"].join("\n");
     const withWrite = resolve(
       [moduleCreate("import", "src/a.ts", 'import { b } from "./b";'), write].join("\n\n"),
       { "src/a.ts": source },
@@ -1175,9 +1143,9 @@ describe("module-boundary create (#54)", () => {
         [
           "select existing in src/a.ts",
           "replace with",
-          "<<<TC_EDIT_BEGIN>>>",
+          "TC_EDIT_BEGIN",
           "export const existing = 2;",
-          "<<<TC_EDIT_END>>>",
+          "TC_EDIT_END",
           "end",
         ].join("\n"),
       ].join("\n\n"),
@@ -1227,14 +1195,9 @@ describe("nested declaration addresses (#52)", () => {
 
   test("rejects an unsafe whole-symbol delete of a destructuring binding", () => {
     const result = resolve(
-      [
-        "select a in src/a.ts",
-        "replace with",
-        "<<<TC_EDIT_BEGIN>>>",
-        "",
-        "<<<TC_EDIT_END>>>",
-        "end",
-      ].join("\n"),
+      ["select a in src/a.ts", "replace with", "TC_EDIT_BEGIN", "", "TC_EDIT_END", "end"].join(
+        "\n",
+      ),
       { "src/a.ts": "const { a, b } = pair;\n" },
     );
     expect(result.regions).toEqual([]);

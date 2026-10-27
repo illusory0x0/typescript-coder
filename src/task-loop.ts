@@ -557,7 +557,7 @@ function targetDeclarationShape(source: string, entry: IndexEntry): DeclarationS
  * declaration's kind, so the model must switch forms or split the change.
  */
 function declarationShapeRecovery(path: string): string {
-  return `recovery: do not resend this select; use 'write ${path} with <<<TC_EDIT_BEGIN>>> ... <<<TC_EDIT_END>>>' or split this into one declaration per reply / one create per added declaration.`;
+  return `recovery: do not resend this select; use 'write ${path} with TC_EDIT_BEGIN ... TC_EDIT_END' or split this into one declaration per reply / one create per added declaration.`;
 }
 
 /**
@@ -571,7 +571,7 @@ function declarationShapeRemediation(
   target: DeclarationShape,
   kindChanged: boolean,
 ): string {
-  const write = `\`write ${path} with <<<TC_EDIT_BEGIN>>> … <<<TC_EDIT_END>>>\``;
+  const write = `\`write ${path} with TC_EDIT_BEGIN … TC_EDIT_END\``;
   return kindChanged
     ? `hint: to change the declaration's kind, use ${write} for the new form; otherwise keep the selected ${target.kind} ${JSON.stringify(target.name)}. For several declarations, send one declaration per reply or one \`create <kind> <name> in ${path} with <fence> end\` clause per added declaration.`
     : `hint: use ${write} for a multi-declaration or name-changing replacement, or split the change into one declaration per reply with a \`create <kind> <name> in ${path} with <fence> end\` clause per new declaration; a whole-declaration replacement must keep the selected ${target.kind} ${JSON.stringify(target.name)}.`;

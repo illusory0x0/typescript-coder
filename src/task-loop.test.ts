@@ -162,26 +162,19 @@ function editDsl(replacement: string): string {
   return [
     "select answer in src/helper.ts resolve value",
     "replace with",
-    "<<<TC_EDIT_BEGIN>>>",
+    "TC_EDIT_BEGIN",
     replacement,
-    "<<<TC_EDIT_END>>>",
+    "TC_EDIT_END",
     "end",
   ].join("\n");
 }
 
 function wholeSymbolEdit(head: string, replacement: string): string {
-  return [
-    head,
-    "replace with",
-    "<<<TC_EDIT_BEGIN>>>",
-    replacement,
-    "<<<TC_EDIT_END>>>",
-    "end",
-  ].join("\n");
+  return [head, "replace with", "TC_EDIT_BEGIN", replacement, "TC_EDIT_END", "end"].join("\n");
 }
 
 function wholeFileWrite(path: string, source: string): string {
-  return [`write ${path} with`, "<<<TC_EDIT_BEGIN>>>", source, "<<<TC_EDIT_END>>>"].join("\n");
+  return [`write ${path} with`, "TC_EDIT_BEGIN", source, "TC_EDIT_END"].join("\n");
 }
 
 const GOOD_EDIT = editDsl("export function answer(): number {\n  return 2;\n}");
@@ -189,25 +182,25 @@ const BAD_EDIT = editDsl("export function answer(): number {\n  return 3;\n}");
 const SETTINGS_EDIT = [
   "select other in src/settings.ts resolve value",
   "replace with",
-  "<<<TC_EDIT_BEGIN>>>",
+  "TC_EDIT_BEGIN",
   "export const other = 2;",
-  "<<<TC_EDIT_END>>>",
+  "TC_EDIT_END",
   "end",
 ].join("\n");
 const EXTRA_EDIT = [
   "select extra in src/extra.ts resolve value",
   "replace with",
-  "<<<TC_EDIT_BEGIN>>>",
+  "TC_EDIT_BEGIN",
   "export const extra = 2;",
-  "<<<TC_EDIT_END>>>",
+  "TC_EDIT_END",
   "end",
 ].join("\n");
 const READY_EDIT = [
   "select ready in src/ready.ts resolve value",
   "replace with",
-  "<<<TC_EDIT_BEGIN>>>",
+  "TC_EDIT_BEGIN",
   "export const ready = 2;",
-  "<<<TC_EDIT_END>>>",
+  "TC_EDIT_END",
   "end",
 ].join("\n");
 
@@ -217,9 +210,9 @@ function matchEdit(name: string, path: string, matcher: string, replacement: str
     `select ${name} in ${path} resolve value`,
     `match ${matcher}`,
     "replace with",
-    "<<<TC_EDIT_BEGIN>>>",
+    "TC_EDIT_BEGIN",
     replacement,
-    "<<<TC_EDIT_END>>>",
+    "TC_EDIT_END",
     "end",
   ].join("\n");
 }
@@ -533,11 +526,11 @@ describe("executor autonomy", () => {
     });
     const reply = [
       "create function parseJson in src/json.ts with",
-      "<<<TC_EDIT_BEGIN>>>",
+      "TC_EDIT_BEGIN",
       "export function parseJson(text: string): string {",
       "  return text;",
       "}",
-      "<<<TC_EDIT_END>>>",
+      "TC_EDIT_END",
       "end",
     ].join("\n");
     const provider = new ScriptedProvider([
@@ -569,11 +562,11 @@ describe("executor autonomy", () => {
     });
     const reply = [
       "create method Parser.trim in src/parser.ts with",
-      "<<<TC_EDIT_BEGIN>>>",
+      "TC_EDIT_BEGIN",
       "trim(): string {",
       '  return "";',
       "}",
-      "<<<TC_EDIT_END>>>",
+      "TC_EDIT_END",
       "end",
     ].join("\n");
     const provider = new ScriptedProvider([
@@ -606,9 +599,9 @@ describe("executor autonomy", () => {
       "select file src/helper.ts",
       'match `import { BASE } from "./base";`',
       "replace with",
-      "<<<TC_EDIT_BEGIN>>>",
+      "TC_EDIT_BEGIN",
       'import { BASE } from "./base2";',
-      "<<<TC_EDIT_END>>>",
+      "TC_EDIT_END",
       "end",
     ].join("\n");
     const provider = new ScriptedProvider([planText([node]), reply, "approve"]);
@@ -636,15 +629,15 @@ describe("executor autonomy", () => {
     });
     const reply = [
       "create import in src/helper.ts with",
-      "<<<TC_EDIT_BEGIN>>>",
+      "TC_EDIT_BEGIN",
       'import { BASE } from "./base";',
-      "<<<TC_EDIT_END>>>",
+      "TC_EDIT_END",
       "end",
       "",
       "create import in src/modules.ts with",
-      "<<<TC_EDIT_BEGIN>>>",
+      "TC_EDIT_BEGIN",
       'import { BASE as MODULE_BASE } from "./base";',
-      "<<<TC_EDIT_END>>>",
+      "TC_EDIT_END",
       "end",
     ].join("\n");
     const provider = new ScriptedProvider([
@@ -676,9 +669,9 @@ describe("executor autonomy", () => {
       "select extra in src/extra.ts resolve value",
       "match /extra = 1/",
       "replace with",
-      "<<<TC_EDIT_BEGIN>>>",
+      "TC_EDIT_BEGIN",
       "extra = 2",
-      "<<<TC_EDIT_END>>>",
+      "TC_EDIT_END",
       "end",
     ].join("\n");
     const badMatcher = [
@@ -686,11 +679,11 @@ describe("executor autonomy", () => {
       "select answer in src/helper.ts resolve value",
       "match `this text is not in the file`",
       "replace with",
-      "<<<TC_EDIT_BEGIN>>>",
+      "TC_EDIT_BEGIN",
       "export function answer(): number {",
       "  return 2;",
       "}",
-      "<<<TC_EDIT_END>>>",
+      "TC_EDIT_END",
       "end",
     ].join("\n");
     const batch = [
@@ -726,11 +719,11 @@ describe("executor autonomy", () => {
     });
     const write = [
       "write src/helper.ts with",
-      "<<<TC_EDIT_BEGIN>>>",
+      "TC_EDIT_BEGIN",
       "export function answer(): number {",
       "  return 2;",
       "}",
-      "<<<TC_EDIT_END>>>",
+      "TC_EDIT_END",
     ].join("\n");
     const provider = new ScriptedProvider([planText([node]), write, "approve"]);
     const result = await runTaskLoop(baseOptions(dir, provider));
@@ -768,20 +761,20 @@ describe("address feedback", () => {
     const multi = [
       "select answer in src/helper.ts resolve value",
       "replace with",
-      "<<<TC_EDIT_BEGIN>>>",
+      "TC_EDIT_BEGIN",
       "export function answer(): number {",
       "  return 2;",
       "}",
       "export const sibling = 1;",
-      "<<<TC_EDIT_END>>>",
+      "TC_EDIT_END",
       "end",
     ].join("\n");
     const kindChange = [
       "select function answer in src/helper.ts",
       "replace with",
-      "<<<TC_EDIT_BEGIN>>>",
+      "TC_EDIT_BEGIN",
       "export const answer = 2;",
-      "<<<TC_EDIT_END>>>",
+      "TC_EDIT_END",
       "end",
     ].join("\n");
     const provider = new ScriptedProvider([
@@ -799,9 +792,7 @@ describe("address feedback", () => {
     expect(execution[1]).toContain(
       "split this into one declaration per reply / one create per added declaration",
     );
-    expect(execution[1]).toContain(
-      "use 'write src/helper.ts with <<<TC_EDIT_BEGIN>>> ... <<<TC_EDIT_END>>>'",
-    );
+    expect(execution[1]).toContain("use 'write src/helper.ts with TC_EDIT_BEGIN ... TC_EDIT_END'");
     expect(execution[1]).not.toContain("this shape failure already occurred");
     expect(execution[1]).toContain("write src/helper.ts with");
     expect(execution[1]).toContain("create <kind> <name> in src/helper.ts");
@@ -995,11 +986,11 @@ describe("inline fence warnings", () => {
     const dir = project();
     const node = workNode(2, "answer");
     const inlineWrite = [
-      "write src/helper.ts with <<<TC_EDIT_BEGIN>>>",
+      "write src/helper.ts with TC_EDIT_BEGIN",
       "export function answer(): number {",
       "  return 2;",
       "}",
-      "<<<TC_EDIT_END>>>",
+      "TC_EDIT_END",
     ].join("\n");
     const provider = new ScriptedProvider([planText([node]), inlineWrite, "approve"]);
     const result = await runTaskLoop(baseOptions(dir, provider));
@@ -1040,11 +1031,11 @@ describe("edit strategy advisory", () => {
     const repair = [
       "select largeAnswer in src/large.ts resolve value",
       "replace with",
-      "<<<TC_EDIT_BEGIN>>>",
+      "TC_EDIT_BEGIN",
       "export function largeAnswer(): number {",
       "  return 1;",
       "}",
-      "<<<TC_EDIT_END>>>",
+      "TC_EDIT_END",
       "end",
     ].join("\n");
     const provider = new ScriptedProvider([
@@ -1097,9 +1088,9 @@ describe("edit strategy advisory", () => {
     const repair = [
       "select broken in src/new.ts resolve value",
       "replace with",
-      "<<<TC_EDIT_BEGIN>>>",
+      "TC_EDIT_BEGIN",
       "export const broken: number = 1;",
-      "<<<TC_EDIT_END>>>",
+      "TC_EDIT_END",
       "end",
     ].join("\n");
     const provider = new ScriptedProvider([
@@ -1323,7 +1314,7 @@ describe("planner turns", () => {
     const dir = project();
     const node = workNode(2, "answer");
     const provider = new ScriptedProvider([
-      "write src/helper.ts with\n<<<TC_EDIT_BEGIN>>>\nexport const bad = 1;\n<<<TC_EDIT_END>>>",
+      "write src/helper.ts with\nTC_EDIT_BEGIN\nexport const bad = 1;\nTC_EDIT_END",
       planText([node]),
       GOOD_EDIT,
       "approve",

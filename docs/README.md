@@ -39,7 +39,7 @@ Recommended reading order:
 | **AgentMode**      | The loop shape: `pinned-repair` (default) or `plan-exec`.                                                               |
 | **selection mode** | The pinned target mode: `modify`, `create`, or `delete`.                                                                |
 | **WorkNode**       | One task-level unit in the plan-exec DAG: `id`, `after`, `verify`, `instruction`, `hints`, optional `approach`/`phase`. |
-| **fence**          | The sentinel edit-action fence: exact `<<<TC_EDIT_BEGIN>>>` and `<<<TC_EDIT_END>>>` lines around a raw body.            |
+| **fence**          | The sentinel edit-action fence: exact `TC_EDIT_BEGIN` and `TC_EDIT_END` lines around a raw body.                        |
 | **outer wrapper**  | A whole-reply Markdown fence tolerated around a complete reply; it is not a `<fence>`.                                  |
 
 ## Ownership rules

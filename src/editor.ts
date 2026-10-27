@@ -38,7 +38,7 @@ export function formatFailureDiagnostics(path: string, error: unknown): string {
   const lines = ["stage: format", `${path}: ${message}`];
   if (isDuplicateExportError(message)) {
     lines.push(
-      `hint: the edit produced a duplicate export modifier; remove the extra export from the replacement or use write ${path} with <<<TC_EDIT_BEGIN>>> … <<<TC_EDIT_END>>>.`,
+      `hint: the edit produced a duplicate export modifier; remove the extra export from the replacement or use write ${path} with TC_EDIT_BEGIN … TC_EDIT_END.`,
     );
   }
   return lines.join("\n");

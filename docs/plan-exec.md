@@ -363,10 +363,10 @@ nesting, no JSON fallback, and no legacy Stage/Task/Edit mode.
 <path>        ::= NONSPACE+
 <symbol>      ::= NONSPACE+
 <line-text>   ::= { any character except newline }+
-<fence>       ::= "<<<TC_EDIT_BEGIN>>>" NL <raw-lines> NL "<<<TC_EDIT_END>>>"
+<fence>       ::= "TC_EDIT_BEGIN" NL <raw-lines> NL "TC_EDIT_END"
 <raw-lines>   ::= ? raw text; each sentinel marker is a whole line with optional
                     leading/trailing whitespace; no raw line may trim to exactly
-                    <<<TC_EDIT_END>>>; the first exact close line ends the
+                    TC_EDIT_END; the first exact close line ends the
                     fence ?
 <text>        ::= <line-text> | NL <fence> | <fence> ? inline opener after the label ?
 ```
@@ -389,7 +389,7 @@ Rules:
   following sentinel fence. The opener may also share the label line when it is
   the last token; the raw body still starts on the next line. The fence body is
   raw, so hyphen runs, backtick runs, `done`, and `end` are ordinary lines; it
-  must be non-empty after trimming, and only an exact `<<<TC_EDIT_END>>>` line
+  must be non-empty after trimming, and only an exact `TC_EDIT_END` line
   closes it (there is no escape). The same sentinel `<fence>` production is used
   by the edit-action reply; [`edit-protocol.md`](edit-protocol.md) §2 owns the
   canonical fence rules. Legacy hyphen/backtick fences are rejected

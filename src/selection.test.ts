@@ -13,8 +13,8 @@ import {
 } from "./selection";
 import type { Selection } from "./selection";
 
-const BEGIN = "<<<TC_EDIT_BEGIN>>>";
-const END = "<<<TC_EDIT_END>>>";
+const BEGIN = "TC_EDIT_BEGIN";
+const END = "TC_EDIT_END";
 const LEGACY_TICKS = "``````";
 const LEGACY_DASH = "-----";
 
@@ -893,6 +893,13 @@ describe("parseMultiEditor", () => {
       type: "fs",
       statement: { op: "write", path: "src/a.ts", ranges: null, replacement: "" },
     });
+  });
+
+  test("rejects the removed angle-bracket sentinel", () => {
+    const text = ["write src/a.ts with", "<<<TC_EDIT_BEGIN>>>", "x", "<<<TC_EDIT_END>>>"].join(
+      "\n",
+    );
+    expect(() => parseMultiEditor(text)).toThrow(SelectionSyntaxError);
   });
 
   test("rejects a legacy write fence with EDIT_LEGACY_FENCE", () => {

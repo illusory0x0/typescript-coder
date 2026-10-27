@@ -4510,8 +4510,8 @@ describe("runLoop", () => {
       expect(fallback).toContain("select MAXIMUM in src/lisp.ts");
       expect(fallback).toContain("omit the kind");
       expect(fallback).toContain("write src/lisp.ts with");
-      expect(fallback).toContain("<<<TC_EDIT_BEGIN>>>");
-      expect(fallback).toContain("<<<TC_EDIT_END>>>");
+      expect(fallback).toContain("TC_EDIT_BEGIN");
+      expect(fallback).toContain("TC_EDIT_END");
       // An undeclared name keeps its create/add-path wording.
       const undeclared = rejectionLead("address", 2, {
         addressFailures: 2,
@@ -5688,12 +5688,9 @@ describe("edit-dsl protocol (#111/#119)", () => {
         replacement: null,
         rename: { from: "answer", to: "result" },
       }),
-      [
-        "write src/other.ts with",
-        "<<<TC_EDIT_BEGIN>>>",
-        "export const touched = 1;",
-        "<<<TC_EDIT_END>>>",
-      ].join("\n"),
+      ["write src/other.ts with", "TC_EDIT_BEGIN", "export const touched = 1;", "TC_EDIT_END"].join(
+        "\n",
+      ),
     ].join("\n\n");
     const provider = new ScriptedProvider([
       editDslSelect("answer", "src/helper.ts", "value"),
@@ -5741,12 +5738,9 @@ describe("edit-dsl protocol (#111/#119)", () => {
         replacement: null,
         rename: { from: "answer", to: "result" },
       }),
-      [
-        "write src/other.ts with",
-        "<<<TC_EDIT_BEGIN>>>",
-        "export const touched = 1;",
-        "<<<TC_EDIT_END>>>",
-      ].join("\n"),
+      ["write src/other.ts with", "TC_EDIT_BEGIN", "export const touched = 1;", "TC_EDIT_END"].join(
+        "\n",
+      ),
     ].join("\n\n");
     const provider = new ScriptedProvider([
       editDslSelect("answer", "src/helper.ts", "value"),
@@ -5789,11 +5783,11 @@ describe("edit-dsl protocol (#111/#119)", () => {
       editDslSelect("answer", "src/helper.ts", "value"),
       [
         "write src/helper.ts with",
-        "<<<TC_EDIT_BEGIN>>>",
+        "TC_EDIT_BEGIN",
         "export function answer(): number {",
         "  return 2;",
         "}",
-        "<<<TC_EDIT_END>>>",
+        "TC_EDIT_END",
       ].join("\n"),
       "Great! I resolve this problem!",
     ]);
@@ -6216,7 +6210,7 @@ describe("edit-dsl protocol (#111/#119)", () => {
     expect(edit).toContain("select const MAX_TOKENS in src/x.ts");
     expect(edit).toContain("pick 2");
     expect(edit).toContain(`match ${TICK}return 1;${TICK}`);
-    expect(edit).toContain("<<<TC_EDIT_BEGIN>>>\nreturn 2;\n<<<TC_EDIT_END>>>");
+    expect(edit).toContain("TC_EDIT_BEGIN\nreturn 2;\nTC_EDIT_END");
     expect(edit).toContain("select function clamp in src/x.ts");
     const retry = buildRetryPrompt({
       exchangeNumber: 2,
@@ -6410,11 +6404,11 @@ describe("edit-dsl protocol (#111/#119)", () => {
     const dir = passingFixtureDir();
     const reply = [
       "create function extra in src/extra.ts with",
-      "<<<TC_EDIT_BEGIN>>>",
+      "TC_EDIT_BEGIN",
       "export function extra(): number {",
       "  return 1;",
       "}",
-      "<<<TC_EDIT_END>>>",
+      "TC_EDIT_END",
       "end",
     ].join("\n");
     const provider = new ScriptedProvider([reply, "Great! I resolve this problem!"]);
@@ -6443,11 +6437,11 @@ describe("edit-dsl protocol (#111/#119)", () => {
     );
     const reply = [
       "create method Parser.trim in src/parser.ts with",
-      "<<<TC_EDIT_BEGIN>>>",
+      "TC_EDIT_BEGIN",
       "trim(): string {",
       '  return "";',
       "}",
-      "<<<TC_EDIT_END>>>",
+      "TC_EDIT_END",
       "end",
     ].join("\n");
     const provider = new ScriptedProvider([reply, "Great! I resolve this problem!"]);
@@ -6506,15 +6500,15 @@ describe("edit-dsl protocol (#111/#119)", () => {
     writeFileSync(join(dir, "src", "base.ts"), "export const BASE = 2;\n");
     const reply = [
       "create import in src/helper.ts with",
-      "<<<TC_EDIT_BEGIN>>>",
+      "TC_EDIT_BEGIN",
       'import { BASE } from "./base";',
-      "<<<TC_EDIT_END>>>",
+      "TC_EDIT_END",
       "end",
       "",
       "create import in src/new.ts with",
-      "<<<TC_EDIT_BEGIN>>>",
+      "TC_EDIT_BEGIN",
       'import { BASE as NEW_BASE } from "./base";',
-      "<<<TC_EDIT_END>>>",
+      "TC_EDIT_END",
       "end",
     ].join("\n");
     const provider = new ScriptedProvider([reply, "Great! I resolve this problem!"]);
@@ -7576,7 +7570,7 @@ describe("edit-dsl protocol (#111/#119)", () => {
     const dir = fixtureDir();
     const body = "export function answer(): number {\n  return 2;\n}";
     const provider = new ScriptedProvider([
-      ["write src/helper.ts with", "<<<TC_EDIT_BEGIN>>>", body, "<<<TC_EDIT_END>>>"].join("\n"),
+      ["write src/helper.ts with", "TC_EDIT_BEGIN", body, "TC_EDIT_END"].join("\n"),
       "Great! I resolve this problem!",
     ]);
     const result = await runLoop({
@@ -7596,7 +7590,7 @@ describe("edit-dsl protocol (#111/#119)", () => {
     const body = "export function answer(): number {\n  return 2;\n}";
     const provider = new ScriptedProvider([
       "read src/helper.ts end",
-      ["write src/helper.ts with", "<<<TC_EDIT_BEGIN>>>", body, "<<<TC_EDIT_END>>>"].join("\n"),
+      ["write src/helper.ts with", "TC_EDIT_BEGIN", body, "TC_EDIT_END"].join("\n"),
       "Great! I resolve this problem!",
     ]);
     const result = await runLoop({
@@ -7619,7 +7613,7 @@ describe("edit-dsl protocol (#111/#119)", () => {
     const body = "export function answer(): number {\n  return 2;\n}";
     const provider = new ScriptedProvider([
       editDslSelect("answer", "src/helper.ts", "value"),
-      ["write src/helper.ts with", "<<<TC_EDIT_BEGIN>>>", body, "<<<TC_EDIT_END>>>"].join("\n"),
+      ["write src/helper.ts with", "TC_EDIT_BEGIN", body, "TC_EDIT_END"].join("\n"),
       "Great! I resolve this problem!",
     ]);
     const result = await runLoop({
@@ -7640,9 +7634,9 @@ describe("edit-dsl protocol (#111/#119)", () => {
       [
         "create src/new.ts end",
         "write src/helper.ts with",
-        "<<<TC_EDIT_BEGIN>>>",
+        "TC_EDIT_BEGIN",
         body,
-        "<<<TC_EDIT_END>>>",
+        "TC_EDIT_END",
       ].join("\n"),
       "Great! I resolve this problem!",
     ]);
@@ -7664,7 +7658,7 @@ describe("edit-dsl protocol (#111/#119)", () => {
     const body = "export function answer(): number {\n  return 2;\n}";
     const provider = new ScriptedProvider([
       "delete src/extra.ts end",
-      ["write src/helper.ts with", "<<<TC_EDIT_BEGIN>>>", body, "<<<TC_EDIT_END>>>"].join("\n"),
+      ["write src/helper.ts with", "TC_EDIT_BEGIN", body, "TC_EDIT_END"].join("\n"),
       "Great! I resolve this problem!",
     ]);
     const result = await runLoop({
@@ -7965,8 +7959,8 @@ describe("edit-dsl protocol (#111/#119)", () => {
     const prompt = buildSystemPrompt();
     // The edit-dsl edit rule and its create/delete semantics replace the JSON rule.
     expect(prompt).toContain("`select <symbol> in <path> [ resolve <value|type|namespace> ]");
-    expect(prompt).toContain("open the body with `<<<TC_EDIT_BEGIN>>>`");
-    expect(prompt).toContain("close it with `<<<TC_EDIT_END>>>`");
+    expect(prompt).toContain("open the body with `TC_EDIT_BEGIN`");
+    expect(prompt).toContain("close it with `TC_EDIT_END`");
     expect(prompt).toContain(
       "a clause with neither `replace` nor `rename` is a viewer that locates and writes nothing unless it contains `pick`; `pick` requires `replace`",
     );
@@ -8014,7 +8008,7 @@ describe("edit-dsl protocol (#111/#119)", () => {
     expect(edit).toContain("select const MAX_TOKENS in src/x.ts");
     expect(edit).toContain("pick 2");
     expect(edit).toContain(`match ${TICK}return 1;${TICK}`);
-    expect(edit).toContain("<<<TC_EDIT_BEGIN>>>\nreturn 2;\n<<<TC_EDIT_END>>>");
+    expect(edit).toContain("TC_EDIT_BEGIN\nreturn 2;\nTC_EDIT_END");
     expect(edit).toContain("select function clamp in src/x.ts");
     // #117 adds the create and the viewer-then-editor forms, labelled apart.
     expect(edit).toContain("5. Create:");
@@ -8029,7 +8023,7 @@ describe("edit-dsl protocol (#111/#119)", () => {
     expect(viewerThenEditor).toContain("select function parse in src/x.ts");
     expect(viewerThenEditor).toContain("select function format in src/x.ts");
     expect(viewerThenEditor).toContain("match `return null;`");
-    expect(viewerThenEditor).toContain("<<<TC_EDIT_BEGIN>>>\nreturn undefined;\n<<<TC_EDIT_END>>>");
+    expect(viewerThenEditor).toContain("TC_EDIT_BEGIN\nreturn undefined;\nTC_EDIT_END");
     expect(viewerThenEditor).toContain("end");
     expect(viewerThenEditor.match(/select function parse in src\/x\.ts/g)).toHaveLength(1);
     // The four base forms, create, and viewer-then-editor remain; the extra
@@ -8046,7 +8040,7 @@ describe("edit-dsl protocol (#111/#119)", () => {
       edit.indexOf("8. Whole-file repair:"),
       edit.indexOf("9. Kind-aware create:"),
     );
-    expect(writeExample.trimEnd().endsWith("<<<TC_EDIT_END>>>")).toBe(true);
+    expect(writeExample.trimEnd().endsWith("TC_EDIT_END")).toBe(true);
     expect(writeExample).not.toMatch(/\b(done|end)\b/);
   });
 
