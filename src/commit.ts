@@ -1,4 +1,4 @@
-import { formatSource } from "./editor";
+import { formatFailureDiagnostics, formatSource } from "./editor";
 import { applyMatcherSplice } from "./matcher";
 import { LexError } from "./lexer";
 import { ParseError, Parser } from "./parser";
@@ -384,7 +384,7 @@ export async function applyResolvedRegions<T extends CommittableRegion>(input: {
           region,
           path,
           stage: "format",
-          diagnostics: `stage: format\n${error instanceof Error ? error.message : String(error)}`,
+          diagnostics: formatFailureDiagnostics(path, error),
           formatMessage: error instanceof Error ? error.message : String(error),
         });
       }

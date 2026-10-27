@@ -322,9 +322,54 @@ Correct the graph:
 Reply with the complete, corrected initial Plan DSL only.`;
 }
 
+/**
+ * A concrete repair for a patch rejected by the final-node rule. Without a
+ * targeted recovery the model tends to resend the same patch until the
+ * exact-repeat stop; this names the two valid shapes while leaving the graph
+ * size and shape advisory.
+ */
+function finalNodeRecovery(diagnostics: string): string | null {
+  if (
+    !/PLAN_FINISH_NOT_LAST|final node must verify|finish must (?:be the last line|follow)|finish marks .*verif/i.test(
+      diagnostics,
+    )
+  ) {
+    return null;
+  }
+  const matches = [...diagnostics.matchAll(/#([0-9]{2,}-[a-z0-9]+(?:-[a-z0-9]+)*)/g)];
+  const id = matches.at(-1)?.[1];
+  const last = id ?? "06-last";
+  const appended = id === undefined ? "07-final" : `${id}-final`;
+  const after = id === undefined ? "" : ` after "${id}"`;
+  return [
+    "Recovery for this finish rejection:",
+    "- Keep the rejected patch available; change only the finish path, and do not resend the unchanged patch.",
+    "- Option A: append a new final node after the last node, then put `finish` on the last line:",
+    "",
+    "patch",
+    `node+ "${appended}"${after} verify test`,
+    "instruction: Run the full test suite and keep it green.",
+    "end",
+    "finish",
+    "",
+    "- Option B: change the last node's gate to `test`, then put `finish` on the last line:",
+    "",
+    "patch",
+    `node~ "${last}" verify test`,
+    "end",
+    "finish",
+    "",
+    "- `finish` is valid only as the last line, after every node record, and only when the last node verifies `test`. If the last node already verifies `test`, just move `finish` to the last line and remove anything after it. The node count and graph shape stay yours; these are recovery shapes, not a required shape.",
+  ].join("\n");
+}
+
 /** The patch correction: a rejected patch keeps the planning turn alive. */
 export function buildTaskPatchRetryPrompt(diagnostics: string, help = true): string {
-  const example = help ? `\n\nExample of a valid patch:\n\n${TASK_PATCH_EXAMPLE}` : "";
+  const recovery = finalNodeRecovery(diagnostics);
+  // The final-node recovery already carries two valid patch shapes; the generic
+  // repair example would end on a non-final `tsc` node and invite a repeat.
+  const example =
+    help && recovery === null ? `\n\nExample of a valid patch:\n\n${TASK_PATCH_EXAMPLE}` : "";
   return `The previous patch was rejected.
 
 Diagnostics:
@@ -332,7 +377,7 @@ Diagnostics:
 \`\`\`
 ${diagnostics}
 \`\`\`
-
+${recovery === null ? "" : `\n${recovery}\n`}
 Reply with exactly one corrected \`patch\` only. Do not re-emit the Plan. Add any number of nodes; update or remove pending/failed work; keep passed nodes and their ids unchanged.${example}`;
 }
 
@@ -574,6 +619,7 @@ export function buildTaskReviewPrompt(input: TaskReviewInput): string {
 
 /** A format retry for a malformed review reply. */
 export function buildTaskReviewRetryPrompt(diagnostics: string): string {
+  const recovery = finalNodeRecovery(diagnostics);
   return `# Review retry
 
 The previous review reply was rejected.
@@ -583,6 +629,6 @@ Diagnostics:
 \`\`\`
 ${diagnostics}
 \`\`\`
-
+${recovery === null ? "" : `\n${recovery}\n`}
 Reply with exactly \`approve\` or one corrected \`patch\`; no prose. A patch may repair the current node, its hints or dependencies, or add follow-up work.`;
 }

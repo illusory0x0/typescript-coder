@@ -13,6 +13,7 @@
  */
 import { findMatcherMatches, findRegexMatches } from "./matcher";
 import { sourceLineAt } from "./dsl-diagnostics";
+import { stripLeadingExportModifier } from "./export-modifier";
 import { resolveEditRange } from "./loop";
 import type { EditRange } from "./loop";
 import { END_OF_LINE_COLUMN } from "./selection";
@@ -68,26 +69,17 @@ const NOOP_DIAGNOSTICS =
 // The leading-`export` tolerance (#48, #50), mirrored from `src/loop.ts`'s
 // `precedingExportModifier`/`stripLeadingExport`: an indexed node range excludes
 // a wrapping `export`, so a whole-declaration replacement that still carries it
-// keeps exactly one copy; a body-level replacement is left untouched.
-const EXPORT_PATTERN = /^export\s+/;
-const EXPORT_DEFAULT_PATTERN = /^export\s+default\s+/;
-const EXPORT_DEFAULT_MODIFIER_PATTERN = /^export\s+default\s+$/;
-
+// keeps exactly one copy; a body-level replacement is left untouched. The
+// modifier may follow leading comments, so detection skips trivia instead of
+// requiring `export` to be the first byte of the replacement.
 function precedingExportModifier(source: string, entry: IndexEntry): string | null {
   return /(export\s+default\s+|export\s+)$/.exec(source.slice(0, entry.node.start))?.[0] ?? null;
 }
 
 function stripLeadingExport(replacement: string, modifier: string | null): string {
-  if (modifier === null) {
-    return replacement;
-  }
-  if (EXPORT_DEFAULT_MODIFIER_PATTERN.test(modifier)) {
-    const stripped = replacement.replace(EXPORT_DEFAULT_PATTERN, "");
-    if (stripped !== replacement) {
-      return stripped;
-    }
-  }
-  return replacement.replace(EXPORT_PATTERN, "");
+  return modifier === null
+    ? replacement
+    : stripLeadingExportModifier(replacement, modifier.includes("default"));
 }
 
 function declarationLabel(entry: IndexEntry): string {

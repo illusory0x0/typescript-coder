@@ -138,6 +138,49 @@ describe("planning prompts", () => {
     expect(patchRetry).toContain("Reply with exactly one corrected `patch`");
     expect(patchRetry).not.toContain("at most one new Task");
   });
+
+  test("a finish rejection gets a concrete final-test patch recovery", () => {
+    const diagnostics = [
+      "stage: plan-graph",
+      "code: PLAN_FINISH_NOT_LAST",
+      '- finish marks node #06-eval, but it verifies "tsc"; the final node must verify "test"',
+    ].join("\n");
+    const prompt = buildTaskPatchRetryPrompt(diagnostics);
+    expect(prompt).toContain("Recovery for this finish rejection:");
+    expect(prompt).toContain('node+ "06-eval-final" after "06-eval" verify test');
+    expect(prompt).toContain('node~ "06-eval" verify test');
+    expect(prompt).toContain("Keep the rejected patch available");
+    expect(prompt).toContain("do not resend the unchanged patch");
+    expect(prompt).toContain("`finish` is valid only as the last line");
+    expect(prompt).toContain("graph shape stay yours");
+    expect(prompt).not.toContain("05-repair");
+    expect(prompt).not.toContain("at most one new Task");
+  });
+
+  test("a finish-placement rejection is actionable without inventing ids", () => {
+    const prompt = buildTaskPatchRetryPrompt(
+      'stage: plan-graph\ncode: PLAN_FINISH_NOT_LAST\n- finish must be the last line; found "node" after it',
+    );
+    expect(prompt).toContain("Recovery for this finish rejection:");
+    expect(prompt).toContain('node+ "07-final" verify test');
+    expect(prompt).toContain('node~ "06-last" verify test');
+    expect(prompt).toContain("move `finish` to the last line");
+  });
+
+  test("the final-node recovery anchors the new node on the actual last node", () => {
+    const prompt = buildTaskPatchRetryPrompt(
+      "stage: plan-graph\ncode: PLAN_FINISH_NOT_LAST\n- the final node #02-answer is no longer last (the new last node is #03-next); append a final test node",
+    );
+    expect(prompt).toContain('node+ "03-next-final" after "03-next" verify test');
+    expect(prompt).toContain('node~ "03-next" verify test');
+  });
+
+  test("an unrelated patch rejection keeps the generic retry", () => {
+    const prompt = buildTaskPatchRetryPrompt("stage: plan-graph\n- dangling after");
+    expect(prompt).not.toContain("Recovery for this finish rejection:");
+    expect(prompt).not.toContain("verify test");
+    expect(prompt).toContain('node+ "05-repair"');
+  });
 });
 
 describe("execution prompts", () => {
@@ -322,6 +365,16 @@ describe("review prompts", () => {
     const prompt = buildTaskReviewRetryPrompt("stage: plan-protocol\nmissing end");
     expect(prompt).toContain("# Review retry");
     expect(prompt).toContain("missing end");
+    expect(prompt).toContain("`approve` or one corrected `patch`");
+    expect(prompt).not.toContain("Recovery for this finish rejection:");
+  });
+
+  test("a review retry carries the final-node recovery when finish is rejected", () => {
+    const prompt = buildTaskReviewRetryPrompt(
+      'stage: plan-graph\ncode: PLAN_FINISH_NOT_LAST\n- finish marks node #04-final, but it verifies "tsc"; the final node must verify "test"',
+    );
+    expect(prompt).toContain("Recovery for this finish rejection:");
+    expect(prompt).toContain('node+ "04-final-final" after "04-final" verify test');
     expect(prompt).toContain("`approve` or one corrected `patch`");
   });
 });

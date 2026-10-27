@@ -1,5 +1,5 @@
 import { expect, test } from "bun:test";
-import { applyEdits } from "./editor";
+import { applyEdits, formatFailureDiagnostics, formatSource } from "./editor";
 import type { Edit } from "./editor";
 
 function edit(name: string, kind: string, llmOutput: string, path = "file.ts"): Edit {
@@ -90,4 +90,24 @@ test("rejects when the replacement text cannot be parsed", async () => {
   await expect(
     applyEdits("function old() {}\n", [edit("old", "function", "function broken( {")]),
   ).rejects.toThrow(/oxfmt failed/);
+});
+
+test("a duplicate-export format failure names the file and the recovery", async () => {
+  const error = await formatSource("src/a.ts", "export export function f() {}\n").catch(
+    (caught: unknown) => caught,
+  );
+  const diagnostics = formatFailureDiagnostics("src/a.ts", error);
+  expect(diagnostics).toContain("stage: format");
+  expect(diagnostics).toContain("src/a.ts: oxfmt failed:");
+  expect(diagnostics).toContain("'export' modifier already seen");
+  expect(diagnostics).toContain("hint: the edit produced a duplicate export modifier");
+  expect(diagnostics).toContain("write src/a.ts with <<<TC_EDIT_BEGIN>>>");
+});
+
+test("an unrelated format failure names the file without the export hint", () => {
+  const diagnostics = formatFailureDiagnostics(
+    "src/a.ts",
+    new Error("oxfmt failed: unexpected token."),
+  );
+  expect(diagnostics).toBe("stage: format\nsrc/a.ts: oxfmt failed: unexpected token.");
 });

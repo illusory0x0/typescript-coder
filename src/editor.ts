@@ -23,6 +23,27 @@ export async function formatSource(fileName: string, source: string): Promise<st
   return code;
 }
 
+/** True when the formatter rejected a replacement that duplicated `export`. */
+function isDuplicateExportError(message: string): boolean {
+  return /export/i.test(message) && /(?:modifier already seen|duplicate)/i.test(message);
+}
+
+/**
+ * An actionable `stage: format` diagnostic: name the file and, when the
+ * formatter rejected a duplicated modifier, point at the likely repair instead
+ * of returning the bare oxfmt message.
+ */
+export function formatFailureDiagnostics(path: string, error: unknown): string {
+  const message = error instanceof Error ? error.message : String(error);
+  const lines = ["stage: format", `${path}: ${message}`];
+  if (isDuplicateExportError(message)) {
+    lines.push(
+      `hint: the edit produced a duplicate export modifier; remove the extra export from the replacement or use write ${path} with <<<TC_EDIT_BEGIN>>> … <<<TC_EDIT_END>>>.`,
+    );
+  }
+  return lines.join("\n");
+}
+
 export async function applyEdits(
   source: string,
   edits: Edit[],

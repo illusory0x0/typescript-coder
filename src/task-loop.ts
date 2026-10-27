@@ -41,7 +41,12 @@ import {
   prevBrokenDiagnostics,
 } from "./commit";
 import { checkTool, testTool } from "./tools";
-import { formatSource } from "./editor";
+import { formatFailureDiagnostics, formatSource } from "./editor";
+import {
+  addLeadingExportModifier,
+  hasLeadingExportModifier,
+  stripLeadingExportModifier,
+} from "./export-modifier";
 import { buildContextYaml } from "./loop";
 import {
   DEFAULT_TOKEN_BUDGET,
@@ -648,19 +653,19 @@ function expandVariableRegion(
     if (text.trim() === "") {
       return { ...region, start: statement.start, end: statement.end, text: "" };
     }
-    const lead = text.trimStart();
-    const shaped =
-      exported && !/^export\b/.test(lead)
-        ? `export ${text}`
-        : !exported && /^export\s+/.test(lead)
-          ? text.replace(/^\s*export\s+/, "")
-          : text;
+    const shaped = exported ? addLeadingExportModifier(text) : stripLeadingExportModifier(text);
     return { ...region, start: statement.start, end: statement.end, text: shaped };
   }
   return region;
 }
 
-/** Keep a whole-declaration rewrite's `export` modifier in step with the source. */
+/**
+ * Whole-declaration regions never include the wrapping `export`: the index
+ * excludes it and the cascade strips a repeated leading modifier. This guard
+ * only removes a second leading `export` from the region text when the source
+ * declaration is already exported; it never adds an export or removes one from
+ * an unexported declaration.
+ */
 function withExportText(
   source: string,
   entry: IndexEntry,
@@ -670,22 +675,21 @@ function withExportText(
   if (
     replacement === null ||
     replacement.trim() === "" ||
-    selection.rename !== undefined ||
+    (selection.rename !== undefined && selection.rename !== null) ||
     selection.matcher !== null ||
     selection.pick !== null
   ) {
     return selection;
   }
   const before = source.slice(0, entry.node.start);
-  const exported = /(export\s+(?:default\s+)?)$/.test(before);
-  const replierExported = /^\s*export\s+(?:default\s+)?/.test(replacement);
-  if (exported && !replierExported) {
-    return { ...selection, replacement: `export ${replacement}` };
+  const modifier = /(export\s+(?:default\s+)?)$/.exec(before)?.[0];
+  if (modifier === undefined || !hasLeadingExportModifier(replacement)) {
+    return selection;
   }
-  if (!exported && replierExported) {
-    return { ...selection, replacement: replacement.replace(/^\s*export\s+(?:default\s+)?/, "") };
-  }
-  return selection;
+  return {
+    ...selection,
+    replacement: stripLeadingExportModifier(replacement, modifier.includes("default")),
+  };
 }
 
 /**
@@ -963,10 +967,7 @@ async function applyEditReply(
     try {
       formatted = await formatSource(write.path, write.replacement);
     } catch (error) {
-      return rejected(
-        `stage: format\nthe whole-file write could not be formatted: ${error instanceof Error ? error.message : String(error)}`,
-        feedback,
-      );
+      return rejected(formatFailureDiagnostics(write.path, error), feedback);
     }
     const formattedCheck = parseCheck(formatted);
     if (!formattedCheck.ok) {

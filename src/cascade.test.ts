@@ -640,6 +640,25 @@ describe("resolveCascade: replace guards", () => {
     expect(result.text).toBe("function once(): number {\n  return 2;\n}");
   });
 
+  test("a leading comment before export is still a duplicated modifier", () => {
+    const entry = entryFor(ONCE, "once", "function");
+    const selection = firstSelection(
+      "select function once in a.ts\nreplace with\n<<<TC_EDIT_BEGIN>>>\n// note\nexport function once(): number {\n  return 2;\n}\n<<<TC_EDIT_END>>>\nend",
+    );
+    const result = ok(resolveCascade(ONCE, entry, selection));
+    expect(result.text).toBe("// note\nfunction once(): number {\n  return 2;\n}");
+    expect(result.text).not.toContain("export function");
+  });
+
+  test("a block comment before export is still a duplicated modifier", () => {
+    const entry = entryFor(ONCE, "once", "function");
+    const selection = firstSelection(
+      "select function once in a.ts\nreplace with\n<<<TC_EDIT_BEGIN>>>\n/* note */ export function once(): number {\n  return 2;\n}\n<<<TC_EDIT_END>>>\nend",
+    );
+    const result = ok(resolveCascade(ONCE, entry, selection));
+    expect(result.text).toBe("/* note */ function once(): number {\n  return 2;\n}");
+  });
+
   test("a body-level replacement keeps a leading export verbatim", () => {
     const entry = entryFor(ONCE, "once", "function");
     const selection = firstSelection(
@@ -647,5 +666,14 @@ describe("resolveCascade: replace guards", () => {
     );
     const result = ok(resolveCascade(ONCE, entry, selection));
     expect(result.text).toBe("export return 2;");
+  });
+
+  test("a plain export source keeps an intentional default conversion", () => {
+    const entry = entryFor(ONCE, "once", "function");
+    const selection = firstSelection(
+      "select function once in a.ts\nreplace with\n<<<TC_EDIT_BEGIN>>>\nexport default function once(): number {\n  return 2;\n}\n<<<TC_EDIT_END>>>\nend",
+    );
+    const result = ok(resolveCascade(ONCE, entry, selection));
+    expect(result.text).toBe("default function once(): number {\n  return 2;\n}");
   });
 });

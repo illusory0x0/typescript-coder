@@ -930,6 +930,54 @@ describe("whole-declaration member edits", () => {
   }, 30000);
 });
 
+describe("whole-declaration export normalization", () => {
+  test("a function replacement with a leading comment before export keeps one modifier", async () => {
+    const dir = project();
+    const node = workNode(2, "answer", {
+      instruction: "Change answer and keep its documentation.",
+    });
+    const replacement = [
+      "// keep the public surface documented",
+      "export function answer(): number {",
+      "  return 2;",
+      "}",
+    ].join("\n");
+    const provider = new ScriptedProvider([
+      planText([node]),
+      wholeSymbolEdit("select answer in src/helper.ts", replacement),
+      "approve",
+    ]);
+    const result = await runTaskLoop(baseOptions(dir, provider));
+    expect(result.ok).toBe(true);
+    const source = readFileSync(join(dir, "src", "helper.ts"), "utf8");
+    expect(source.match(/^export\b/gm) ?? []).toHaveLength(1);
+    expect(source).not.toContain("export export");
+    expect(source).toContain("// keep the public surface documented");
+    expect(result.records.some((record) => record.outcome === "format")).toBe(false);
+  }, 30000);
+
+  test("a variable replacement with a leading comment before export keeps one modifier", async () => {
+    const dir = project();
+    const node = workNode(2, "extra", {
+      instruction: "Change extra and keep its documentation.",
+      hints: [{ path: "src/extra.ts", symbol: "extra", kind: "value" }],
+    });
+    const replacement = ["// documented value", "export const extra = 2;"].join("\n");
+    const provider = new ScriptedProvider([
+      planText([node]),
+      [wholeSymbolEdit("select extra in src/extra.ts", replacement), GOOD_EDIT].join("\n"),
+      "approve",
+    ]);
+    const result = await runTaskLoop(baseOptions(dir, provider));
+    expect(result.ok).toBe(true);
+    const source = readFileSync(join(dir, "src", "extra.ts"), "utf8");
+    expect(source.match(/^export\b/gm) ?? []).toHaveLength(1);
+    expect(source).not.toContain("export export");
+    expect(source).toContain("// documented value");
+    expect(result.records.some((record) => record.outcome === "format")).toBe(false);
+  }, 30000);
+});
+
 describe("inline fence warnings", () => {
   test("accepts a warning-only inline-fence write reply", async () => {
     const dir = project();
@@ -1312,6 +1360,26 @@ describe("planner turns", () => {
     ]);
     const planning = promptsStartingWith(provider, "# Work graph");
     expect(planning.some((content) => content.includes("no final test node is marked"))).toBe(true);
+  }, 30000);
+
+  test("a finish rejection gets a concrete final-test retry and a repeat still stops", async () => {
+    const dir = project();
+    const node = workNode(2, "answer", { verify: "tsc" });
+    const provider = new ScriptedProvider([
+      planText([node], false),
+      GOOD_EDIT,
+      "approve",
+      patchText("finish"),
+      patchText("finish"),
+    ]);
+    const result = await runTaskLoop(baseOptions(dir, provider));
+    expect(result.ok).toBe(false);
+    expect(result.terminationReason).toBe("task-exhausted");
+    const retry = lastPrompt(provider, 4);
+    expect(retry).toContain("Recovery for this finish rejection:");
+    expect(retry).toContain('node+ "02-answer-final" after "02-answer" verify test');
+    expect(retry).toContain('node~ "02-answer" verify test');
+    expect(retry).toContain("do not resend the unchanged patch");
   }, 30000);
 
   test("a review patch reopens the current node and it executes again", async () => {
