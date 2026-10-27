@@ -803,7 +803,7 @@ describe("prompt builders", () => {
     const addressJson = '{"path":"src/a.ts","symbol":"make","kind":"function"}';
     const symbolSource = "export function make(): number {\n  return 1;\n}\n";
     const prompt = buildEditPrompt(addressJson, symbolSource);
-    expect(prompt).toContain("A reply is one or more `select … end` clauses");
+    expect(prompt).toContain("A reply is one or more `select` clauses");
     expect(prompt).toContain("Pinned selection:");
     expect(prompt).toContain(addressJson);
     expect(prompt).toContain("Current source:");
@@ -840,7 +840,7 @@ describe("prompt builders", () => {
     });
     expect(prompt).toContain("Edit exchange 2 failed verification.");
     expect(prompt).toContain("Make minimal corrective changes to the current source");
-    expect(prompt).toContain("A reply is one or more `select … end` clauses");
+    expect(prompt).toContain("A reply is one or more `select` clauses");
     expect(prompt).toContain("# details");
     expect(prompt).toContain("1 | export function make(): number {");
     expect(prompt).toContain('2 |   return "nope";');
@@ -1889,7 +1889,7 @@ describe("decision-only turn (#75)", () => {
     expect(prompt).toContain("Reply exactly `STOP` to end the run now");
     expect(prompt).toContain("Do not send an edit clause on this turn");
     // The edit template is gone entirely.
-    expect(prompt).not.toContain("A reply is one or more `select … end` clauses");
+    expect(prompt).not.toContain("A reply is one or more `select` clauses");
     // The failing diagnostics and history are kept.
     expect(prompt).toContain("Diagnostics:");
     expect(prompt).toContain("Failure history: the failing set is unchanged");
@@ -1922,7 +1922,7 @@ describe("decision-only turn (#75)", () => {
     expect(prompt).toContain("Failure history: the failing set is unchanged");
     // No JSON pinned selection or edit template leaks in.
     expect(prompt).not.toContain("```json");
-    expect(prompt).not.toContain("A reply is one or more `select … end` clauses");
+    expect(prompt).not.toContain("A reply is one or more `select` clauses");
   });
 
   test("fires for an alternating set too", () => {
@@ -1934,7 +1934,7 @@ describe("decision-only turn (#75)", () => {
     );
     expect(prompt).toContain("This is a decision turn");
     expect(prompt).toContain("cycled between two states");
-    expect(prompt).not.toContain("A reply is one or more `select … end` clauses");
+    expect(prompt).not.toContain("A reply is one or more `select` clauses");
   });
 
   test("fires on either signal; only a first ask with a still-changing set stays an edit prompt", () => {
@@ -1943,19 +1943,19 @@ describe("decision-only turn (#75)", () => {
       stalledInput({ askNumber: 1, history: { kind: "unchanged", rounds: 6 } }),
     );
     expect(firstUnchanged).toContain("This is a decision turn");
-    expect(firstUnchanged).not.toContain("A reply is one or more `select … end` clauses");
+    expect(firstUnchanged).not.toContain("A reply is one or more `select` clauses");
     // A repeat ask fires even while the pattern is still changing.
     const repeatChanging = buildRetryPrompt(stalledInput({ askNumber: 2, history: null }));
     expect(repeatChanging).toContain("This is a decision turn");
-    expect(repeatChanging).not.toContain("A reply is one or more `select … end` clauses");
+    expect(repeatChanging).not.toContain("A reply is one or more `select` clauses");
     // A later repeat ask fires regardless of pattern.
     const laterChanging = buildRetryPrompt(stalledInput({ askNumber: 3, history: null }));
     expect(laterChanging).toContain("This is a decision turn");
-    expect(laterChanging).not.toContain("A reply is one or more `select … end` clauses");
+    expect(laterChanging).not.toContain("A reply is one or more `select` clauses");
     // Only a first ask with a still-changing set keeps the normal edit prompt.
     const firstChanging = buildRetryPrompt(stalledInput({ askNumber: 1, history: null }));
     expect(firstChanging).not.toContain("This is a decision turn");
-    expect(firstChanging).toContain("A reply is one or more `select … end` clauses");
+    expect(firstChanging).toContain("A reply is one or more `select` clauses");
     expect(firstChanging).toContain("# details");
   });
 
@@ -1973,7 +1973,7 @@ describe("decision-only turn (#75)", () => {
       },
     });
     expect(prompt).toContain("This is a decision turn");
-    expect(prompt).not.toContain("A reply is one or more `select … end` clauses");
+    expect(prompt).not.toContain("A reply is one or more `select` clauses");
   });
 
   test("renders a stated re-approach alongside the normal edit template", () => {
@@ -1988,7 +1988,7 @@ describe("decision-only turn (#75)", () => {
     });
     expect(prompt).toContain("Approach to apply:");
     expect(prompt).toContain(approach);
-    expect(prompt).toContain("A reply is one or more `select … end` clauses");
+    expect(prompt).toContain("A reply is one or more `select` clauses");
     // An empty approach renders nothing.
     expect(buildRetryPrompt({ ...stalledInput({ askNumber: 1 }), approach: "" })).not.toContain(
       "Approach to apply:",
@@ -2015,12 +2015,12 @@ describe("decision-only turn (#75)", () => {
     // Round 13 opens with the decision turn, not the edit template.
     const decision = provider.calls[13]?.at(-1)?.content ?? "";
     expect(decision).toContain("This is a decision turn");
-    expect(decision).not.toContain("A reply is one or more `select … end` clauses");
+    expect(decision).not.toContain("A reply is one or more `select` clauses");
     // The stated approach rides the following exchange's edit prompt.
     const followup = provider.calls[14]?.at(-1)?.content ?? "";
     expect(followup).toContain("Approach to apply:");
     expect(followup).toContain(approach);
-    expect(followup).toContain("A reply is one or more `select … end` clauses");
+    expect(followup).toContain("A reply is one or more `select` clauses");
     // The decision reply is not an applied edit: only exchange 2 of round 13 is.
     const round13 = result.records.filter(
       (record) => record.iteration === 13 && record.kind === "exchange",
@@ -2601,7 +2601,7 @@ describe("runLoop", () => {
     // The post-pick prompt is the fresh edit prompt, not an exhausted-round
     // continuation.
     const contentPrompt = provider.calls[3]?.at(-1)?.content ?? "";
-    expect(contentPrompt).toContain("A reply is one or more `select … end` clauses");
+    expect(contentPrompt).toContain("A reply is one or more `select` clauses");
     expect(contentPrompt).not.toContain("No progress:");
     expect(helperSource(dir)).toContain("return 2;");
   }, 30000);
@@ -2728,7 +2728,7 @@ describe("runLoop", () => {
     // The failing diagnostics and history are kept; the edit template is gone.
     expect(ask).toContain("Diagnostics:");
     expect(ask).toContain("Failure history: the failing set is unchanged");
-    expect(ask).not.toContain("A reply is one or more `select … end` clauses");
+    expect(ask).not.toContain("A reply is one or more `select` clauses");
     expect(ask).not.toContain("Edit exchange 1 failed verification.");
     // A valid edit reply on the decision turn is still a real attempt and
     // continues through the unchanged guards.
@@ -2934,7 +2934,7 @@ describe("runLoop", () => {
     // JSON output shape, and no fixed-budget wording.
     expect(ask).toContain("# details");
     expect(ask).toContain("Diagnostics:");
-    expect(ask).toContain("A reply is one or more `select … end` clauses");
+    expect(ask).toContain("A reply is one or more `select` clauses");
     // Continue-through: the ask is an offer, and the edit applies and verifies.
     expect(result.records.at(-2)?.outcome).toBe("applied");
     expect(result.records.at(-1)?.outcome).toBe("ok");
@@ -4434,7 +4434,7 @@ describe("runLoop", () => {
       if (policy.action !== "retry") {
         throw new Error("expected a retryable protocol policy");
       }
-      expect(policy.correction).toContain("`select … end`");
+      expect(policy.correction).toContain("a replacement ends at its fence close");
       expect(policy.correction).toContain("different resolved declaration");
       expect(policy.correction).toContain("split its edits across exchanges");
       expect(policy.correction).not.toContain("flat JSON object");
@@ -5914,7 +5914,7 @@ describe("edit-dsl protocol (#111/#119)", () => {
     expect(details).toContain("3 | export function answer(): number {");
     expect(details).toContain("4 |   return 1;");
     expect(details).not.toContain("1 | export function answer");
-    expect(details).toContain("A reply is one or more `select … end` clauses");
+    expect(details).toContain("A reply is one or more `select` clauses");
   });
 
   test("the edit-dsl details prompt marks matched lines only when given marks", () => {
@@ -6033,7 +6033,8 @@ describe("edit-dsl protocol (#111/#119)", () => {
     expect(system.startsWith("You are a TypeScript expert using the Edit-action DSL")).toBe(true);
     expect(system).toContain("This is the Edit-action DSL.");
     expect(system).toContain("a bare `select <symbol> in <path> end` is a viewer");
-    expect(system).toContain("`create [static] <kind> <name> in <path> with <fence> end`");
+    expect(system).toContain("`create [static] <kind> <name> in <path> with <fence>`");
+    expect(system).toContain("The fence close terminates the replacement");
     expect(system).toContain("select file <path>");
     expect(system).toContain("create import|export in <path>");
     expect(system).toContain("a dotted create never creates its owner");
@@ -6155,7 +6156,7 @@ describe("edit-dsl protocol (#111/#119)", () => {
     expect(prompt).toContain("select answer in src/helper.ts resolve value");
     expect(prompt).toContain("# details");
     expect(prompt).toContain("4 | function answer(): number {");
-    expect(prompt).toContain("A reply is one or more `select … end` clauses");
+    expect(prompt).toContain("A reply is one or more `select` clauses");
     expect(prompt).not.toContain("```json");
     expect(prompt).not.toContain("Each line below is prefixed");
     expect(prompt).not.toContain("Optionally locate the span");
@@ -6200,7 +6201,7 @@ describe("edit-dsl protocol (#111/#119)", () => {
       '{"path":"src/a.ts","symbol":"make","kind":"function"}',
       "const x = 1;\n",
     );
-    expect(edit).toContain("A reply is one or more `select … end` clauses");
+    expect(edit).toContain("A reply is one or more `select` clauses");
     expect(edit).toContain(
       "A clause with neither `replace` nor `rename` is a viewer that writes nothing unless it contains `pick`; `pick` requires `replace`",
     );
@@ -6219,7 +6220,7 @@ describe("edit-dsl protocol (#111/#119)", () => {
       diagnostics: "boom",
       failure: "verification",
     });
-    expect(retry).toContain("A reply is one or more `select … end` clauses");
+    expect(retry).toContain("A reply is one or more `select` clauses");
     expect(retry).toContain("select function f in src/x.ts");
     expect(retry).not.toContain(
       'Output ONLY one flat JSON object {"path": ..., "symbol": ..., "kind": ..., "matcher": ..., "replacement": ...}',
@@ -6746,7 +6747,7 @@ describe("edit-dsl protocol (#111/#119)", () => {
     expect(retry).toContain("# Goal");
     expect(retry).toContain("# Symbol index");
     expect(retry).toContain("# details");
-    expect(retry).toContain("A reply is one or more `select … end` clauses");
+    expect(retry).toContain("A reply is one or more `select` clauses");
     expect(retry).not.toContain("```json");
   }, 30000);
 
@@ -7545,7 +7546,7 @@ describe("edit-dsl protocol (#111/#119)", () => {
   test("with the edit-dsl format the create prompts teach the edit-dsl create form", () => {
     const addressJson = '{"path":"src/new.ts","symbol":"make","kind":"function"}';
     const create = buildCreatePrompt(addressJson, "src/new.ts");
-    expect(create).toContain("A reply is one or more `select … end` clauses");
+    expect(create).toContain("A reply is one or more `select` clauses");
     expect(create).toContain("does not take `match` or `pick`");
     expect(create).toContain("An implicit create remains available");
     expect(create).toContain("create [static] <kind> <name> in <path>");
@@ -7964,12 +7965,14 @@ describe("edit-dsl protocol (#111/#119)", () => {
     expect(prompt).toContain(
       "a clause with neither `replace` nor `rename` is a viewer that locates and writes nothing unless it contains `pick`; `pick` requires `replace`",
     );
-    expect(prompt).toContain("[ [ pick <range> ] replace with <fence> | rename <old> to <new> ]");
+    expect(prompt).toContain(
+      "[ [ pick <range> ] replace with <fence> | rename <old> to <new> end | end ]",
+    );
     expect(prompt).toContain("`rename <old> to <new>` renames the selected declaration");
     expect(prompt).toContain("renders the numbered declaration with `⁉️` on the matched lines");
     expect(prompt).not.toContain("select [kind]");
     expect(prompt).toContain(
-      "A bare `select … replace with … end` with no `match` rewrites the whole declaration",
+      "A bare `select … replace with <fence>` with no `match` rewrites the whole declaration",
     );
     expect(prompt).toContain("an empty body deletes it");
     expect(prompt).toContain("no JSON edit payload");
@@ -8002,7 +8005,7 @@ describe("edit-dsl protocol (#111/#119)", () => {
       '{"path":"src/a.ts","symbol":"make","kind":"function"}',
       "const x = 1;\n",
     );
-    expect(edit).toContain("A reply is one or more `select … end` clauses");
+    expect(edit).toContain("A reply is one or more `select` clauses");
     // The four pre-#117 forms remain.
     expect(edit).toContain("select function f in src/x.ts resolve value");
     expect(edit).toContain("select const MAX_TOKENS in src/x.ts");

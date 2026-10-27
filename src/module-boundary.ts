@@ -4,9 +4,9 @@
  * Imports and exports have no declaration address: the symbol index deliberately
  * excludes them. This module owns their file-level owner instead:
  *
- * - `select file <path> [match …] [pick …] replace with <fence> end` resolves
+ * - `select file <path> [match …] [pick …] replace with <fence>` resolves
  *   one span inside an import/export statement;
- * - `create import|export in <path> with <fence> end` inserts exactly one
+ * - `create import|export in <path> with <fence>` inserts exactly one
  *   module-boundary statement after the shebang, directives, and existing
  *   imports.
  *

@@ -48,13 +48,13 @@ the failing line, column, and a short excerpt so the retry can see exactly
 where the reply stopped. A partial selection is never returned.
 
 ```text
-select [kind] <symbol> in <path> [ resolve (value|type|namespace) ] [ within <selecters> ] [ match (<snippet> | /regex/) ] [ [ pick <selecters> ] replace with <fence> | rename <old> to <new> ] end
+select [kind] <symbol> in <path> [ resolve (value|type|namespace) ] [ within <selecters> ] [ match (<snippet> | /regex/) ] [ [ pick <selecters> ] replace with <fence> | rename <old> to <new> end | end ]
 ```
 
 The module-boundary form is the separate file-level editor:
 
 ```text
-select file <path> [ match (<snippet> | /regex/) ] [ pick <selecters> ] replace with <fence> end
+select file <path> [ match (<snippet> | /regex/) ] [ pick <selecters> ] replace with <fence>
 ```
 
 A select clause is never a file command. A select clause with `replace` or
@@ -112,8 +112,11 @@ A select clause is never a file command. A select clause with `replace` or
   plus same-class static accesses). A collision with an existing binding at the
   same scope or qualified path is an `address` failure, and a rename cannot be
   combined with `pick` or `replace`.
-- **`end`** terminates a select clause. File commands use `end` too, except
-  `write`, whose sentinel close terminates it.
+- **`end`** terminates a viewer or rename select clause. `create <path> end`,
+  `delete <path> end`, and `read <path> end` use it too. A `replace with`,
+  `create … with`, or `write … with` body ends at its `TC_EDIT_END` close, not
+  at `end`; one trailing `end` after a body close is accepted only as a
+  compatibility normalization.
 
 A select clause with neither `replace` nor `rename` is a **viewer**: it locates
 and writes nothing (§4). A select clause with `replace` is an editor (after
@@ -321,7 +324,7 @@ descriptor and modifier validation.
 
 ### File-level module-boundary select
 
-`select file <path> … replace with <fence> end` gives imports and exports an
+`select file <path> … replace with <fence>` gives imports and exports an
 owner without a synthetic declaration name. The owner is the file source; no
 symbol-index entry is resolved. The path must be safe, inside the workspace, and
 an existing regular file.
@@ -390,12 +393,12 @@ statement    = select-clause | file-select-clause | file-command ;
 
 file-command = 'create', path, 'end'
              | 'create', [ 'static' ], create-kind, create-name, 'in', path,
-               [ 'with' ], fence, 'end'
-             | 'create', module-kind, 'in', path, [ 'with' ], fence, 'end'
+               [ 'with' ], fence
+             | 'create', module-kind, 'in', path, [ 'with' ], fence
              | 'delete', path, 'end'
              | 'read', path, [ 'within', selecters ], 'end'
              | 'write', path, [ 'within', selecters ], 'with', fence
-             (* sentinel close terminates; no trailing 'end' *) ;
+             (* body commands: the sentinel close terminates; no trailing 'end' *) ;
 
 create-kind  = declaration-kind | member-kind ;
 declaration-kind = 'function' | 'class' | 'interface' | 'type' | 'enum'
@@ -409,17 +412,18 @@ select-clause = 'select', [ kind ], symbol, 'in', path,
                 [ 'resolve', space ],
                 [ 'within', selecters ],
                 [ 'match', ( snippet | regex ) ],
-                [ replacer | renamer ],
-                'end' ;
+                select-tail ;
+
+select-tail  = replacer | renamer | 'end' ;
 
 file-select-clause = 'select', 'file', path,
                      [ 'match', ( snippet | regex ) ],
                      [ 'pick', selecters ],
-                     'replace', 'with', fence, 'end' ;
+                     'replace', 'with', fence ;
                      (* editor only: no viewer, resolve, within, or rename *)
 
 replacer     = [ 'pick', selecters ], 'replace', 'with', fence ;
-renamer      = 'rename', identifier, 'to', identifier ;
+renamer      = 'rename', identifier, 'to', identifier, 'end' ;
 
 selecters    = '{', range, { ',', range }, '}'
              | range ;                                   (* single-range sugar *)
@@ -450,14 +454,15 @@ fence        = ? a line exactly TC_EDIT_BEGIN, or an opener at the end
 
 A select clause is never a file command. A coordinate is digits only: `0`
 parses as a `line`/`column` but is rejected as not positive, and `selecters`
-braces cannot be empty. `end` is required by the grammar. For `select`,
-`create`, `delete`, and `read`, the tolerant reader may warn
-`EDIT_MISSING_END` and recover at EOF or before an unambiguous next statement
-(`select`, `create`, `delete`, `read`, or `write`); arbitrary following text is
-a hard error. A `write` has no `end` in the canonical grammar: its
-`TC_EDIT_END` close terminates it. One trailing `end` after a `write` close is
-accepted as a compatibility normalization; a second one is an error. Prompts and
-examples always emit the canonical form; the compatibility form is not taught.
+braces cannot be empty. `end` is required by the grammar for a viewer or rename select clause and for
+`create <path> end`, `delete`, and `read`. For those forms, the tolerant reader
+may warn `EDIT_MISSING_END` and recover at EOF or before an unambiguous next
+statement (`select`, `create`, `delete`, `read`, or `write`); arbitrary
+following text is a hard error. A `select … replace with`, `create … with`, or
+`write … with` has no `end` in the canonical grammar: its `TC_EDIT_END` close
+terminates it. One trailing `end` after any body close is accepted as a
+compatibility normalization; a second one is an error. Prompts and examples
+always emit the canonical form; the compatibility form is not taught.
 
 ### Self-check control turn
 
@@ -478,7 +483,7 @@ ordinary automatic verification and judge.
 
 ### Declaration and member create
 
-`create <kind> <name> in <path> with <fence> end` is the precise create form.
+`create <kind> <name> in <path> with <fence>` is the precise create form.
 The kind token and the `in` header dispatch it; without `in`, the token is a
 path and the statement is the empty-file command. `with` is the canonical
 spelling but may be omitted, with the fence following the header directly. The
@@ -536,8 +541,8 @@ signature create and object-literal member create are out of scope.
 
 ### Module-boundary create
 
-`create import in <path> with <fence> end` and
-`create export in <path> with <fence> end` add one module statement without a
+`create import in <path> with <fence>` and
+`create export in <path> with <fence>` add one module statement without a
 synthetic declaration name. The fence must parse as exactly one matching
 statement:
 
@@ -570,12 +575,13 @@ a partial destructive result. In particular:
 
 - Clause splitting recognizes `select` … `end` and respects sentinel bodies, so
   `select` inside a replacement body is not a boundary.
-- A missing `end` after `select`, `create`, `delete`, or `read` is recovered
-  with an `EDIT_MISSING_END` warning at EOF or before an unambiguous next
-  statement (`select`, `create`, `delete`, `read`, or `write`); the reply is
-  not rejected solely for this. Arbitrary following text is a hard
-  `EDIT_MISSING_END`, and a `write` has no `end` to recover. A truncated fence
-  or mid-clause EOF still rejects.
+- A missing `end` after a viewer/rename select clause or a bodyless
+  `create`/`delete`/`read` is recovered with an `EDIT_MISSING_END` warning at EOF
+  or before an unambiguous next statement (`select`, `create`, `delete`, `read`,
+  or `write`); the reply is not rejected solely for this. Arbitrary following
+  text is a hard `EDIT_MISSING_END`. A `select … replace with`, `create … with`,
+  or `write … with` has no `end` to recover: the sentinel close terminates it.
+  A truncated fence or mid-clause EOF still rejects.
 - Legacy hyphen/backtick fences report `EDIT_LEGACY_FENCE`; a misplaced or
   malformed sentinel reports `EDIT_MALFORMED_FENCE`, trailing text on a
   close-marker line reports `EDIT_FENCE_TRAILING_TEXT`, and content after a
@@ -638,12 +644,10 @@ create [static] <kind> <name> in <path> with
 TC_EDIT_BEGIN
 <declaration or member>
 TC_EDIT_END
-end
 create import|export in <path> with
 TC_EDIT_BEGIN
 <module-boundary statement>
 TC_EDIT_END
-end
 
 delete <path> end
 read   <path> [ within <selecters> ] end
@@ -653,9 +657,9 @@ TC_EDIT_BEGIN
 TC_EDIT_END
 ```
 
-- **`create <path> end`** creates an empty file. An existing path is an `address` failure; parent directories are created. It does not run the parse/format gate. A path literally named like a create kind (for example `create function end`) remains this empty-file form because it has no `in` header.
-- **`create [static] <kind> <name> in <path> with <fence> end`** adds exactly one named declaration or member (§2.1). The descriptor is authoritative; a fence that declares a different name/kind, an invalid modifier, an unsafe path, or a duplicate name is rejected without writing.
-- **`create import|export in <path> with <fence> end`** adds exactly one module-boundary statement (§2.1). The fence must parse as one matching import/export form; the statement is inserted after the shebang, directives, and existing imports. A wrong-kind, malformed, duplicate, or unsafe path is rejected without writing.
+- **`create … with`** bodies end at the `TC_EDIT_END` close; no `end` follows. **`create <path> end`** creates an empty file. An existing path is an `address` failure; parent directories are created. It does not run the parse/format gate. A path literally named like a create kind (for example `create function end`) remains this empty-file form because it has no `in` header.
+- **`create [static] <kind> <name> in <path> with <fence>`** adds exactly one named declaration or member (§2.1). The descriptor is authoritative; a fence that declares a different name/kind, an invalid modifier, an unsafe path, or a duplicate name is rejected without writing.
+- **`create import|export in <path> with <fence>`** adds exactly one module-boundary statement (§2.1). The fence must parse as one matching import/export form; the statement is inserted after the shebang, directives, and existing imports. A wrong-kind, malformed, duplicate, or unsafe path is rejected without writing.
 - **`delete`** removes an existing regular file inside the workspace. A missing
   path is an `address` failure; directories and paths outside the workspace are
   rejected. `human/` is read-only for agents.
@@ -710,7 +714,6 @@ replace with
 TC_EDIT_BEGIN
 return input.trim();
 TC_EDIT_END
-end
 ```
 
 A viewer slice returns only the selected declaration lines:
@@ -736,11 +739,10 @@ select function unused in src/helper.ts
 replace with
 TC_EDIT_BEGIN
 TC_EDIT_END
-end
 ```
 
-File commands end with `end` except `write`, whose sentinel close terminates
-it:
+A viewer or rename ends with `end`; a body command ends at its sentinel close.
+Bodyless file commands use `end`:
 
 ```text
 create src/parser.ts end
@@ -758,7 +760,6 @@ export function parseJson(text: string): unknown {
   return JSON.parse(text);
 }
 TC_EDIT_END
-end
 
 create static method Parser.parse in src/parser.ts with
 TC_EDIT_BEGIN
@@ -766,7 +767,6 @@ static parse(text: string): Parser {
   return new Parser(text);
 }
 TC_EDIT_END
-end
 ```
 
 A file-level select edits one import/export statement or specifier; a module
@@ -779,13 +779,11 @@ replace with
 TC_EDIT_BEGIN
 import { trimEnd } from "./strings";
 TC_EDIT_END
-end
 
 create import in src/parser.ts with
 TC_EDIT_BEGIN
 import type { ParserOptions } from "./options";
 TC_EDIT_END
-end
 ```
 
 A whole-file write:
@@ -1001,17 +999,17 @@ next diagnostics. The feedback ends by asking for an editor select clause: add
 Every rejection carries a `stage:` tag and costs one exchange. The vocabulary is
 shared by every reply path so metrics compare.
 
-| Stage       | Cause                                                                                                                             |
-| ----------- | --------------------------------------------------------------------------------------------------------------------------------- |
-| `syntax`    | Edit-dsl only: the reply does not parse as a statement (`select … end` or a file command), including a fence or terminator error. |
-| `protocol`  | The reply is not edit-dsl, including a JSON edit payload.                                                                         |
-| `address`   | The address does not resolve uniquely.                                                                                            |
-| `matcher`   | `matcher-unparseable`, `matcher-not-found`, `matcher-ambiguous`, or `regex-invalid`.                                              |
-| `range`     | A `range`/`pick` that is out of bounds, empty, inverted, or outside the declaration.                                              |
-| `no-op`     | The replacement equals the text it replaces; ignored when another clause in the reply applies, otherwise a rejection.             |
-| `duplicate` | A repeated resolved target; a duplicate top-level declaration or create.                                                          |
-| `gate`      | The file parsed before and does not parse after.                                                                                  |
-| `format`    | oxfmt rejected the result, or the formatted source equals the pre-edit source.                                                    |
+| Stage       | Cause                                                                                                                         |
+| ----------- | ----------------------------------------------------------------------------------------------------------------------------- |
+| `syntax`    | Edit-dsl only: the reply does not parse as a statement (`select …` or a file command), including a fence or terminator error. |
+| `protocol`  | The reply is not edit-dsl, including a JSON edit payload.                                                                     |
+| `address`   | The address does not resolve uniquely.                                                                                        |
+| `matcher`   | `matcher-unparseable`, `matcher-not-found`, `matcher-ambiguous`, or `regex-invalid`.                                          |
+| `range`     | A `range`/`pick` that is out of bounds, empty, inverted, or outside the declaration.                                          |
+| `no-op`     | The replacement equals the text it replaces; ignored when another clause in the reply applies, otherwise a rejection.         |
+| `duplicate` | A repeated resolved target; a duplicate top-level declaration or create.                                                      |
+| `gate`      | The file parsed before and does not parse after.                                                                              |
+| `format`    | oxfmt rejected the result, or the formatted source equals the pre-edit source.                                                |
 
 When an edit-dsl statement fails at any stage other than `no-op`, its
 diagnostic names the statement, its position in the reply (`clause N of M`), its
@@ -1066,7 +1064,7 @@ appends the fence body as a new top-level declaration, creating the file and its
 parent directories as needed, spliced at the file's current end behind a
 separating newline. `match` and `pick` do not change creation; they are ignored
 when the symbol is missing. Viewers never create. The kind-aware
-`create <kind> <name> in <path> with <fence> end` statement (§2.1) is the
+`create <kind> <name> in <path> with <fence>` statement (§2.1) is the
 precise form when the fence is not a complete declaration or when a member is
 the target; the implicit path remains for a whole-declaration `select … replace`.
 
@@ -1108,7 +1106,8 @@ A rejection is never a give-up; it is a retry with better information. The next
 prompt carries the stage-tagged diagnostic, and from the second consecutive
 rejection of the same cause, an escalation. The corrections are:
 
-- A `protocol` rejection re-teaches the `select … end` form.
+- A `protocol` rejection re-teaches the `select` form (`end` for a viewer or
+  rename, fence close for a replacement).
 - Edit-dsl edit retries and round continuations keep the select-first shape:
   `# Goal`, the select-line `# Symbol index`, and `# details` with the numbered
   current declaration. A rejected selection retry or selection continuation asks

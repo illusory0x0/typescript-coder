@@ -129,7 +129,7 @@ export function isFileSelection(selection: Selection): boolean {
 }
 
 /**
- * A `create [static] <kind> <name> in <path> with <fence> end` declaration or
+ * A `create [static] <kind> <name> in <path> with <fence>` declaration or
  * member create. `name` is a top-level identifier, a dotted `Owner.member`, or,
  * for `constructor`, the owner name. A top-level declaration kind with a dotted
  * name inserts that declaration into a namespace owner.
@@ -144,7 +144,7 @@ export interface CreateDeclarationStatement {
 }
 
 /**
- * A nameless `create import|export in <path> with <fence> end` module-boundary
+ * A nameless `create import|export in <path> with <fence>` module-boundary
  * create. The fence is exactly one import or export statement; the descriptor
  * carries no synthetic declaration name.
  */
@@ -475,8 +475,8 @@ class SelectionReader {
           if (!this.keywordAt("select")) {
             if (this.keywordAt("done")) {
               this.rejectRetiredDone(
-                "`done` is no longer an edit-action terminator: a clause ends with `end`",
-                "remove `done`; select clauses end with `end`",
+                "`done` is no longer an edit-action terminator: a clause ends with `end`, and a body command ends at its fence close",
+                "remove `done`; a viewer or rename ends with `end`, and a replacement/create/write body ends at its fence close",
               );
             }
             this.syntax(
@@ -516,8 +516,8 @@ class SelectionReader {
         }
         if (this.keywordAt("done")) {
           this.rejectRetiredDone(
-            "`done` is no longer an edit-action terminator: clauses end with `end`, and a `write` ends at its sentinel close",
-            "remove `done`; use `end` for a clause or file command, and no terminator after a `write`",
+            "`done` is no longer an edit-action terminator: clauses end with `end`, and body commands end at their sentinel close",
+            "remove `done`; use `end` for a viewer/rename or a bodyless file command, and no terminator after a body close",
             ["select", "create", "delete", "read", "write"],
           );
         }
@@ -687,7 +687,7 @@ class SelectionReader {
           {
             expected: ["import", "export"],
             found: `static ${kindToken}`,
-            hint: `drop \`static\`: use \`create ${kindToken} in <path> with <fence> end\``,
+            hint: `drop \`static\`: use \`create ${kindToken} in <path> with <fence>\``,
           },
         );
       }
@@ -704,7 +704,7 @@ class SelectionReader {
       }
       this.lastFenceClosed = false;
       const replacement = this.parseFence();
-      this.consumeEnd("`create` command");
+      this.consumeBodyEnd("`create` command");
       return { op: "create-module", path, kind: kindToken, replacement };
     }
     if (!isCreateDeclarationKind(kindToken)) {
@@ -714,7 +714,7 @@ class SelectionReader {
         {
           expected: [...DECLARATION_CREATE_KINDS, ...MEMBER_CREATE_KINDS],
           found: kindToken,
-          hint: "use `create <path> end` for an empty file, or `create <kind> <name> in <path> with <fence> end`",
+          hint: "use `create <path> end` for an empty file, or `create <kind> <name> in <path> with <fence>`",
         },
       );
     }
@@ -725,7 +725,7 @@ class SelectionReader {
         {
           expected: [...MEMBER_CREATE_KINDS],
           found: kindToken,
-          hint: "drop `static`, or use `create static method Owner.name in <path> with <fence> end`",
+          hint: "drop `static`, or use `create static method Owner.name in <path> with <fence>`",
         },
       );
     }
@@ -745,7 +745,7 @@ class SelectionReader {
     }
     this.lastFenceClosed = false;
     const replacement = this.parseFence();
-    this.consumeEnd("`create` command");
+    this.consumeBodyEnd("`create` command");
     return {
       op: "create-declaration",
       path,
@@ -778,33 +778,7 @@ class SelectionReader {
     this.expectKeyword("with", "expected `with` before the fence in a `write` command");
     this.lastFenceClosed = false;
     const replacement = this.parseFence();
-    this.skipWhitespace();
-    if (!this.atEnd()) {
-      if (this.keywordAt("done")) {
-        this.rejectRetiredDone(
-          `\`done\` is no longer a terminator: a \`write\` ends at its ${EDIT_FENCE_END} close`,
-          `remove \`done\`; the sentinel close ${EDIT_FENCE_END} already terminates the write`,
-          [EDIT_FENCE_END],
-        );
-      }
-      // Compatibility: models often append the statement-style `end` after a
-      // write's sentinel close. The sentinel already terminates the write, so
-      // consume one optional trailing `end`; a second one remains an error.
-      if (this.keywordAt("end")) {
-        this.consumeEnd("`write` command");
-      } else if (!this.statementStartAt()) {
-        this.syntax(
-          "EDIT_EMBEDDED_FENCE_END",
-          `the write body contains the literal line ${EDIT_FENCE_END}; a fence body cannot carry the end marker, and no text may follow the close on its line`,
-          {
-            expected: [EDIT_FENCE_END],
-            found: this.peekToken(),
-            hint: `close the body with ${EDIT_FENCE_END} on its own line; the sentinel close terminates the write`,
-          },
-        );
-      }
-    }
-    this.lastFenceClosed = false;
+    this.consumeBodyEnd("`write` command");
     return { op: "write", path, ranges, replacement };
   }
 
@@ -895,7 +869,11 @@ class SelectionReader {
     if (this.keywordAt("rename")) {
       this.rejectFileRename();
     }
-    this.consumeEnd();
+    if (replacement === null) {
+      this.consumeEnd("`select file` command");
+    } else {
+      this.consumeBodyEnd("`select file` command");
+    }
 
     if (pick !== null && replacement === null) {
       this.syntax(
@@ -1082,7 +1060,11 @@ class SelectionReader {
       }
     }
 
-    this.consumeEnd();
+    if (replacement === null) {
+      this.consumeEnd();
+    } else {
+      this.consumeBodyEnd("select clause");
+    }
 
     if (pick !== null && replacement === null) {
       this.syntax(
@@ -1126,6 +1108,41 @@ class SelectionReader {
       selection.rename = rename;
     }
     return selection;
+  }
+
+  /**
+   * Terminate a command that carries a raw body. The fence close is canonical;
+   * one trailing `end` is accepted as compatibility, and no other text may
+   * follow the body. A second `end` is left for the outer statement parser to
+   * reject.
+   */
+  private consumeBodyEnd(label: string): void {
+    this.skipWhitespace();
+    if (this.keywordAt("done")) {
+      this.rejectRetiredDone(
+        `the ${label} already ends at the ${EDIT_FENCE_END} close`,
+        `remove \`done\`; the sentinel close already terminates a body command (no extra \`end\`)`,
+        [EDIT_FENCE_END, "end"],
+      );
+    }
+    if (this.keywordAt("end")) {
+      this.pos += 3;
+      this.lastFenceClosed = false;
+      return;
+    }
+    if (this.atEnd() || this.statementStartAt()) {
+      this.lastFenceClosed = false;
+      return;
+    }
+    this.syntax(
+      "EDIT_EMBEDDED_FENCE_END",
+      `the ${label} body is closed by ${EDIT_FENCE_END}; no text may follow it except one compatibility \`end\` or a new statement`,
+      {
+        expected: [EDIT_FENCE_END, "end", "new statement"],
+        found: this.peekToken(),
+        hint: `remove the text after ${EDIT_FENCE_END}; start a new statement or end the reply`,
+      },
+    );
   }
 
   /**
@@ -1821,8 +1838,9 @@ export function serializeSelection(selection: Selection): string {
   }
   if (selection.replacement !== null) {
     parts.push("replace with", renderFence(selection.replacement));
+  } else {
+    parts.push("end");
   }
-  parts.push("end");
   return parts.join("\n");
 }
 
@@ -1837,9 +1855,9 @@ export function serializeFileStatement(statement: FileStatement): string {
     case "create":
       return `create ${statement.path} end`;
     case "create-declaration":
-      return `create ${statement.static ? "static " : ""}${statement.kind} ${statement.name} in ${statement.path} with\n${renderFence(statement.replacement)}\nend`;
+      return `create ${statement.static ? "static " : ""}${statement.kind} ${statement.name} in ${statement.path} with\n${renderFence(statement.replacement)}`;
     case "create-module":
-      return `create ${statement.kind} in ${statement.path} with\n${renderFence(statement.replacement)}\nend`;
+      return `create ${statement.kind} in ${statement.path} with\n${renderFence(statement.replacement)}`;
     case "delete":
       return `delete ${statement.path} end`;
     case "read": {

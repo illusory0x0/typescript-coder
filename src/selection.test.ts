@@ -1,5 +1,6 @@
 import { describe, expect, test } from "bun:test";
 import { renderDslIssues } from "./dsl-diagnostics";
+import { EDIT_DSL_EXAMPLE_FORMS } from "./prompts/edit-dsl";
 import {
   END_OF_LINE_COLUMN,
   SelectionSyntaxError,
@@ -1036,6 +1037,98 @@ describe("parseMultiEditor", () => {
     expect(() => parseMultiEditor(text)).toThrow(SelectionSyntaxError);
   });
 
+  test("a replace or create body close terminates the statement without end", () => {
+    const selection = [
+      "select function f in src/a.ts",
+      "replace with",
+      BEGIN,
+      "return 1;",
+      END,
+    ].join("\n");
+    expect(first(selection).replacement).toBe("return 1;");
+
+    const create = [
+      "create function f in src/a.ts with",
+      BEGIN,
+      "function f(): number {",
+      "  return 1;",
+      "}",
+      END,
+    ].join("\n");
+    expect(serializeMultiEditor(parseMultiEditor(create))).toBe(create);
+
+    const both = [
+      selection,
+      "",
+      "create function g in src/a.ts with",
+      BEGIN,
+      "function g(): number {",
+      "  return 2;",
+      "}",
+      END,
+    ].join("\n");
+    expect(parseMultiEditor(both)).toHaveLength(2);
+  });
+
+  test("a body close also ends a file-level select without end", () => {
+    const selection = [
+      "select file src/a.ts",
+      'match `import { a } from "./a";`',
+      "replace with",
+      BEGIN,
+      'import { b } from "./b";',
+      END,
+    ].join("\n");
+    expect(first(selection).replacement).toBe('import { b } from "./b";');
+  });
+
+  test("accepts one compatibility end after a replace or create close and serializes canonically", () => {
+    const selection = [
+      "select function f in src/a.ts",
+      "replace with",
+      BEGIN,
+      "return 1;",
+      END,
+      "end",
+    ].join("\n");
+    expect(serializeSelection(first(selection))).not.toMatch(/TC_EDIT_END\nend$/);
+
+    const create = [
+      "create function f in src/a.ts with",
+      BEGIN,
+      "function f(): number {",
+      "  return 1;",
+      "}",
+      END,
+      "end",
+    ].join("\n");
+    expect(serializeMultiEditor(parseMultiEditor(create))).not.toMatch(/TC_EDIT_END\nend$/);
+  });
+
+  test("rejects a second end after a replace or create close", () => {
+    for (const text of [
+      ["select function f in src/a.ts", "replace with", BEGIN, "x", END, "end", "end"].join("\n"),
+      ["create function f in src/a.ts with", BEGIN, "x", END, "end", "end"].join("\n"),
+    ]) {
+      expect(() => parseMultiEditor(text)).toThrow(SelectionSyntaxError);
+    }
+  });
+
+  test("rejects arbitrary text after a replace or create close", () => {
+    for (const text of [
+      ["select function f in src/a.ts", "replace with", BEGIN, "x", END, "nonsense"].join("\n"),
+      ["create function f in src/a.ts with", BEGIN, "x", END, "nonsense"].join("\n"),
+    ]) {
+      try {
+        parseMultiEditor(text);
+        throw new Error("expected a syntax error");
+      } catch (error) {
+        expect(error).toBeInstanceOf(SelectionSyntaxError);
+        expect((error as SelectionSyntaxError).issues[0]?.code).toBe("EDIT_EMBEDDED_FENCE_END");
+      }
+    }
+  });
+
   test("an unclosed write fence remains EDIT_UNCLOSED_FENCE", () => {
     const text = ["write src/a.ts with", BEGIN, "x"].join("\n");
     try {
@@ -1287,7 +1380,6 @@ describe("create declaration statements (#50)", () => {
       "  return input;",
       "}",
       END,
-      "end",
       "",
       "create static method Parser.parse in src/parser.ts with",
       BEGIN,
@@ -1295,13 +1387,11 @@ describe("create declaration statements (#50)", () => {
       "  return 1;",
       "}",
       END,
-      "end",
       "",
       "create enum-member Color.Red in src/color.ts with",
       BEGIN,
       "Red = 0",
       END,
-      "end",
       "",
       "create src/empty.ts end",
     ].join("\n");
@@ -1366,7 +1456,6 @@ describe("file-level select statements (#54)", () => {
       BEGIN,
       'import { value } from "./new";',
       END,
-      "end",
     ].join("\n");
     expect(serializeSelection(first(text))).toBe(text);
   });
@@ -1453,13 +1542,11 @@ describe("module-boundary create statements (#54)", () => {
       BEGIN,
       'import type { Config } from "./config";',
       END,
-      "end",
       "",
       "create export in src/a.ts with",
       BEGIN,
       'export * from "./b";',
       END,
-      "end",
     ].join("\n");
     expect(serializeMultiEditor(parseMultiEditor(text))).toBe(text);
   });
@@ -1475,5 +1562,18 @@ describe("module-boundary create statements (#54)", () => {
         ["create import Binding in src/a.ts with", BEGIN, 'import "a";', END, "end"].join("\n"),
       ),
     ).toThrow(/in <path>/);
+  });
+});
+
+describe("prompt examples", () => {
+  test("every edit-dsl example is a parseable canonical reply", () => {
+    for (const form of EDIT_DSL_EXAMPLE_FORMS) {
+      if ("raw" in form) {
+        expect(() => parseMultiEditor(form.raw)).not.toThrow();
+      } else {
+        const reply = serializeSelections(form.selections);
+        expect(() => parseSelection(reply)).not.toThrow();
+      }
+    }
   });
 });

@@ -573,8 +573,8 @@ function declarationShapeRemediation(
 ): string {
   const write = `\`write ${path} with TC_EDIT_BEGIN … TC_EDIT_END\``;
   return kindChanged
-    ? `hint: to change the declaration's kind, use ${write} for the new form; otherwise keep the selected ${target.kind} ${JSON.stringify(target.name)}. For several declarations, send one declaration per reply or one \`create <kind> <name> in ${path} with <fence> end\` clause per added declaration.`
-    : `hint: use ${write} for a multi-declaration or name-changing replacement, or split the change into one declaration per reply with a \`create <kind> <name> in ${path} with <fence> end\` clause per new declaration; a whole-declaration replacement must keep the selected ${target.kind} ${JSON.stringify(target.name)}.`;
+    ? `hint: to change the declaration's kind, use ${write} for the new form; otherwise keep the selected ${target.kind} ${JSON.stringify(target.name)}. For several declarations, send one declaration per reply or one \`create <kind> <name> in ${path} with <fence>\` clause per added declaration.`
+    : `hint: use ${write} for a multi-declaration or name-changing replacement, or split the change into one declaration per reply with a \`create <kind> <name> in ${path} with <fence>\` clause per new declaration; a whole-declaration replacement must keep the selected ${target.kind} ${JSON.stringify(target.name)}.`;
 }
 
 interface DeclarationShapeFailure {

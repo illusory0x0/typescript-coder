@@ -311,7 +311,7 @@ function createAddressDiagnostics(selection: Selection, detail: string): string 
     "code: EDIT_TARGET_MISMATCH",
     `cannot create ${label} in ${locator.path}: ${detail}${spaceNote}`,
     "hint: make the fence declare exactly the clause's target, or send a body that the clause's space can wrap",
-    `repair: for a mixed declaration list or a whole-file change, use \`write ${locator.path} with ${EDIT_FENCE_BEGIN} … ${EDIT_FENCE_END}\`; for one declaration, use \`create ${kind} ${JSON.stringify(locator.name)} in ${locator.path} with <fence> end\` and keep the selected declaration's kind`,
+    `repair: for a mixed declaration list or a whole-file change, use \`write ${locator.path} with ${EDIT_FENCE_BEGIN} … ${EDIT_FENCE_END}\`; for one declaration, use \`create ${kind} ${JSON.stringify(locator.name)} in ${locator.path} with <fence>\` and keep the selected declaration's kind`,
     `a create fence must contain either one complete top-level declaration named ${JSON.stringify(locator.name)}, or a body that is not a declaration list (it is then wrapped by the requested space)`,
   ].join("\n");
 }

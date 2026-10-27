@@ -149,7 +149,7 @@ the guidance below is advisory, and `write` is always valid. No edit is rejected
 merely for its size or shape.
 
 - **New file or skeleton:** write the whole file, or create it and add the
-  top-level declarations with `create <kind> <name> in <path> with <fence> end`.
+  top-level declarations with `create <kind> <name> in <path> with <fence>`.
   For a new large file or module, one whole-file `write` scaffold with the
   public types, signatures, and stub bodies is usually cheapest; add later
   declarations with targeted edits or `create` rather than dozens of separate
@@ -162,9 +162,9 @@ merely for its size or shape.
   still be clearest as one whole-file write.
 - **Large declaration rewrite:** rewrite only that declaration and leave the
   file's other declarations untouched.
-- **Import/export statement:** use `create import|export in <path> with <fence> end`
-  to add one, or `select file <path> [ match … ] [ pick … ] replace with <fence>
-  end` to edit or delete an existing statement or specifier. No whole-file write
+- **Import/export statement:** use `create import|export in <path> with <fence>`
+  to add one, or `select file <path> [ match … ] [ pick … ] replace with <fence>`
+  to edit or delete an existing statement or specifier. No whole-file write
   is required; a file-level rename is unsupported.
 - **Whole-file rewrite of an existing file:** valid when the change touches most
   of the file or a targeted edit would be riskier than the rewrite; there is no
@@ -875,15 +875,16 @@ self-contained.
 The executor owns the concrete actions and granularity. One reply may carry one
 or more edit-dsl clauses and/or file commands:
 
-- `select … end` with `replace`, `rename`, `match`, `pick`, or a viewer slice;
-- `select file <path> [ match … ] [ pick … ] replace with <fence> end` for one
+- `select …` with `replace` ending at the fence close; or `select … end` for a
+  viewer, a `match`-only viewer, or a rename;
+- `select file <path> [ match … ] [ pick … ] replace with <fence>` for one
   existing import/export statement or specifier (a file-level editor, not a
   viewer or rename);
 - `create <path> end`, `delete <path> end`, `read <path> [within …] end`;
-- `create [static] <kind> <name> in <path> with <fence> end` for one named
+- `create [static] <kind> <name> in <path> with <fence>` for one named
   top-level declaration or one member of an existing class/interface/namespace/
   enum (a dotted `Owner.name`; the owner must already exist);
-- `create import|export in <path> with <fence> end` for one module-boundary
+- `create import|export in <path> with <fence>` for one module-boundary
   statement, inserted after the shebang, directives, and existing imports;
 - `write <path> with <fence>` for a whole-file replacement.
 

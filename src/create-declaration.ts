@@ -1,7 +1,7 @@
 /**
  * Kind-aware `create` resolution (#50).
  *
- * A `create [static] <kind> <name> in <path> with <fence> end` statement adds
+ * A `create [static] <kind> <name> in <path> with <fence>` statement adds
  * exactly one named top-level declaration or one member of an existing
  * class/interface/namespace/enum. The descriptor is authoritative: the fence
  * must declare that name and kind, may only carry modifiers valid for the
@@ -164,7 +164,7 @@ function createKindRemediation(
   actualName: string | null,
 ): string {
   const name = actualName === null ? statement.name : actualName;
-  return `use \`create ${actualKind} ${JSON.stringify(name)} in ${statement.path} with <fence> end\` when that kind is intended, or make the fence declare the descriptor's ${statement.kind}; ${writeRemediation(statement.path)}`;
+  return `use \`create ${actualKind} ${JSON.stringify(name)} in ${statement.path} with <fence>\` when that kind is intended, or make the fence declare the descriptor's ${statement.kind}; ${writeRemediation(statement.path)}`;
 }
 
 function failure(
@@ -726,7 +726,7 @@ function splitAddress(
           "address",
           "EDIT_CREATE_INVALID_NAME",
           "a constructor descriptor names its owner, which must be a class",
-          "use `create constructor Owner in <path> with <fence> end`",
+          "use `create constructor Owner in <path> with <fence>`",
         );
       }
       return { owner: statement.name, member: null, namespaceDeclaration: false, memberKind };
@@ -737,7 +737,7 @@ function splitAddress(
         "address",
         "EDIT_CREATE_INVALID_NAME",
         `a ${memberKind} create needs a dotted \`Owner.name\` target`,
-        `use \`create ${statement.kind} Owner.name in <path> with <fence> end\``,
+        `use \`create ${statement.kind} Owner.name in <path> with <fence>\``,
       );
     }
     const split = splitDotted(statement.name);
