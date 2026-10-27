@@ -1,7 +1,7 @@
 ---
 id: 56
 title: "Add pinned-repair output contract and scaffold guidance"
-status: todo
+status: done
 priority: medium
 milestone: null
 parent: 55
@@ -43,3 +43,5 @@ git diff --check
 
 - Prefer a shared contract literal with plan-exec if that avoids prompt drift, but do not change plan-exec semantics in this child.
 - Do not add hard style constraints; this is soft guidance only.
+- Starting: port the portable executor output contract (no tools/DSML, literal sentinel) and soft new-file scaffold guidance to the pinned-repair prompt; no plan-specific machinery.
+- Resolved: added the pinned-repair output contract (no tools; literal edit-dsl commands; no DSML/tool-call markup; sentinel is plain text; no prose/JSON/Markdown fence) and soft new-large-file whole-write scaffold guidance. No plan DAG/final-test/early-checkpoint language. Tests cover the contract and advisory nature; parity hashes updated for the pinned prompt only. Verified: typecheck, 1668 tests pass, accept 9/9, diff check. No live; no baseline change.

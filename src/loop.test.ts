@@ -84,6 +84,7 @@ import { Parser } from "./parser";
 import {
   buildEditDslCommandPrompt,
   buildEditDslReadPrompt,
+  EDIT_DSL_OUTPUT_CONTRACT,
   editDslInstruction,
   renderEditDslExamples,
 } from "./prompts/edit-dsl";
@@ -9447,6 +9448,43 @@ describe("edit-dsl protocol (#111/#119)", () => {
     expect(jsonRetry).not.toContain("A folded block");
     expect(jsonSystem).not.toBe(system);
     expect(jsonRetry).not.toBe(retry);
+  });
+
+  test("the edit-dsl system prompt states the pinned output contract and soft scaffold advice (#56)", () => {
+    const system = buildSystemPrompt(false, "edit-dsl");
+    const multi = buildSystemPrompt(true, "edit-dsl");
+
+    for (const prompt of [system, multi]) {
+      expect(prompt).toContain(EDIT_DSL_OUTPUT_CONTRACT);
+      expect(prompt).toContain("No tools are available on this turn");
+      expect(prompt).toContain(
+        "`read`, `select`, `write`, `create`, and `delete` are literal edit-dsl text commands, not function calls",
+      );
+      expect(prompt).toContain("Never emit `<|...|>`, `<｜...｜>`");
+      expect(prompt).toContain(
+        "is plain text: it is not a Markdown code fence and not a tool-call boundary",
+      );
+      expect(prompt).toContain("no prose preamble, no Markdown fence around the reply, no JSON");
+
+      // Scaffold advice is advisory, not a cap: a large write stays valid.
+      expect(prompt).toContain(
+        "one whole-file `write` scaffold of the public types, signatures, and stub bodies is often cheapest",
+      );
+      expect(prompt).toContain(
+        "dozens of separate initial `create` clauses usually cost more and are easier to break",
+      );
+      expect(prompt).toContain(
+        "A large `write` remains valid: this is advice, not a size or clause-count cap",
+      );
+
+      // Pinned repair gets no plan-exec node/DAG or test-checkpoint language.
+      expect(prompt).not.toContain("WorkNode");
+      expect(prompt).not.toContain("final test node");
+      expect(prompt).not.toContain("early verify checkpoint");
+    }
+
+    // The contract is pinned-specific and never leaks into the JSON prompt.
+    expect(buildSystemPrompt(false, "json")).not.toContain(EDIT_DSL_OUTPUT_CONTRACT);
   });
 
   test("an edit-dsl retry prompt uses Goal, index, and details without the JSON block", () => {

@@ -39,13 +39,19 @@ export const EDIT_DSL_ROLE =
 export const EDIT_DSL_MOTIVATION =
   "Edits are small and addressable: a clause names one declaration or span instead of resending a whole file. Editing clauses in one reply apply atomically; a failed read writes nothing. Every write passes the parse gate, formatter, and verification.";
 
+// #56: the pinned-repair turn gets no tool definitions. This names that absence
+// and the literal text form up front, mirroring the plan-exec executor contract
+// without any node/DAG language.
+export const EDIT_DSL_OUTPUT_CONTRACT =
+  "Output contract (binding): No tools are available on this turn; `read`, `select`, `write`, `create`, and `delete` are literal edit-dsl text commands, not function calls. Never emit `<|...|>`, `<｜...｜>`, or any DSML/tool-call markup. The block opened by `<<<TC_EDIT_BEGIN>>>` and closed by `<<<TC_EDIT_END>>>` is plain text: it is not a Markdown code fence and not a tool-call boundary. Reply with edit-dsl only: no prose preamble, no Markdown fence around the reply, no JSON.";
+
 // The one detailed fold explanation (system prompt). The read/command prompts
 // carry only the short hint below; the edit instruction teaches the workflow.
 export const EDIT_DSL_FOLD_DETAIL =
   "A source block longer than 6 lines folds by indentation when it has nested blocks, otherwise it keeps only its first 3 and last 3 lines. The folded line is `... // content folded, <path>: N-ML (H of T lines hidden); expand with read <path> within N-M end`: it names the hidden file-absolute lines, how many of the block's lines are hidden, and the command that expands exactly that range. A whole-file `read` is folded the same way, so repeating it returns the same outline; a `read within` is the expansion and returns the selected lines unfolded (`within {a-b, c-d}` expands several ranges). When a repair spans several declarations, or repeated localized edits keep introducing new tsc/test errors, use a whole-file `write <path> with <fence>` instead of more local edits.";
 
 export const EDIT_DSL_WORKFLOW_SUMMARY =
-  "Workflow: pin one target with `select` (or a raw command), inspect it, then edit the smallest span with `match`/`pick`; on a verification failure repair the same declaration; escalate to a whole-file `write` when the repair outgrows one declaration or localized edits keep adding errors; if no operation fits, explore with `read`/`select` viewers first.";
+  "Workflow: pin one target with `select` (or a raw command), inspect it, then edit the smallest span with `match`/`pick`; on a verification failure repair the same declaration; escalate to a whole-file `write` when the repair outgrows one declaration or localized edits keep adding errors; if no operation fits, explore with `read`/`select` viewers first. For a new large file or module, one whole-file `write` scaffold of the public types, signatures, and stub bodies is often cheapest, with later additions as targeted edits or `create`, because dozens of separate initial `create` clauses usually cost more and are easier to break. A large `write` remains valid: this is advice, not a size or clause-count cap.";
 
 // #25: read turns are the token storm, so they carry only this terse hint.
 export const EDIT_DSL_FOLD_HINT =
@@ -64,7 +70,7 @@ export function buildEditDslSystemPrompt(multiPayload = false): string {
     },
     multiPayload,
     EDIT_DSL_ROLE,
-    [EDIT_DSL_AT_A_GLANCE, EDIT_DSL_MOTIVATION],
+    [EDIT_DSL_AT_A_GLANCE, EDIT_DSL_MOTIVATION, EDIT_DSL_OUTPUT_CONTRACT],
   );
 }
 
