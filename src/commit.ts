@@ -5,10 +5,9 @@ import { ParseError, Parser } from "./parser";
 import type { Expression, Program, Statement } from "./parser";
 import type { Locator } from "./utility";
 
-// The shared commit pipeline: protocol-neutral primitives used by the json
-// single/batch paths and by edit-dsl. Protocol-specific overlap wording and
-// atomicity stay with the caller; the policy object carries only the rules that
-// are allowed to differ between protocols.
+// The shared commit pipeline: protocol-neutral primitives used by edit-dsl.
+// Protocol-specific overlap wording and atomicity stay with the caller; the
+// policy object carries only the rules that are allowed to differ.
 
 /** The fields the commit pipeline needs from a resolved clause/payload. */
 export interface CommittableRegion {

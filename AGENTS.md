@@ -64,16 +64,15 @@ re-freezing the baseline, or running any benchmark with `--reps >= 1`
 the run calls the real model and costs money. Do not run any of these
 unprompted, and do not use them as an iteration loop.
 
-Normal tc reports run `--side tc` with the default `--protocol-format edit-dsl`
-and compare their cache-excluded totals against the oc baseline only;
-`--agent-mode pinned-repair|plan-exec|both` selects the tc loop mode(s), where
-`both` is the benchmark's multi-mode selector; the `edit` alias is deprecated.
-The benchmark still hard-rejects `--side oc` and `--protocol-format json`: the
-json protocol stays frozen for historical/replay compatibility, and an
-authorized baseline re-freeze is the only exception. Implement it as a
-deliberate, temporary bypass of `frozenDimensionError`, run exactly the approved
-matrix, then restore the guard and verify it is restored before finishing. Never
-leave the bypass enabled.
+Normal tc reports run `--side tc` with the edit-dsl protocol and compare their
+cache-excluded totals against the oc baseline only; `--agent-mode
+pinned-repair|plan-exec|both` selects the tc loop mode(s), where `both` is the
+benchmark's multi-mode selector; the `edit` alias is deprecated. The benchmark
+still hard-rejects `--side oc`: the oc baseline is frozen, and an authorized
+baseline re-freeze is the only exception. Implement it as a deliberate,
+temporary bypass of `frozenDimensionError`, run exactly the approved matrix,
+then restore the guard and verify it is restored before finishing. Never leave
+the bypass enabled.
 
 The oc baseline measures the ambient OpenCode configuration of this repo,
 including its registered skills. Changing `.opencode/skills` or other
@@ -83,7 +82,7 @@ if that environment changes.
 ## Layout / entrypoints
 
 - `src/main.ts` — CLI entry (`#!/usr/bin/env bun`, piped-stdin contract `tc < task.txt`; a TTY stdin prints help).
-- `src/loop.ts` — `runLoop` dispatcher (default pinned-repair; plan-exec route) + `buildSystemPrompt` (the model-facing prompt is a literal in this file; prompt text is benchmark-sensitive).
+- `src/loop.ts` — `runLoop` dispatcher (default pinned-repair; plan-exec route), the edit-dsl loop, and prompt entry points. The model-facing edit-dsl prompt is a literal in `src/prompts/edit-dsl.ts`; prompt text is benchmark-sensitive.
 - `src/tasks.ts` / `src/task-loop.ts` — Plan/WorkNode DAG contract and the `--mode plan-exec` driver: ready-node scheduling, gates, post-execution review, usage buckets; spec in `docs/plan-exec.md`.
 - `src/plan-dsl.ts` — flat Plan and patch DSL parser/serializer; `src/dsl-diagnostics.ts` — shared tolerant diagnostics renderer.
 - `src/prompts/task.ts` — planning/execution/review prompt text for plan-exec.

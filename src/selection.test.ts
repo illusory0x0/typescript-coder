@@ -10,7 +10,6 @@ import {
   serializeMultiEditor,
   serializeSelection,
   serializeSelections,
-  toEditPayload,
 } from "./selection";
 import type { Selection } from "./selection";
 
@@ -813,74 +812,6 @@ describe("serializeSelection", () => {
     };
     expect(() => serializeSelection(selection)).toThrow(SelectionSyntaxError);
     expect(() => serializeSelection(selection)).toThrow(/literal line/);
-  });
-});
-
-describe("toEditPayload", () => {
-  test("bridges a snippet editor with no pick", () => {
-    const selection = first(
-      `select function clamp in src/math.ts\nmatch \`Number.isNaN\`\nreplace with\n${BEGIN}\nNumber.isFinite\n${END}\nend`,
-    );
-    expect(toEditPayload(selection)).toEqual({
-      locator: { path: "src/math.ts", name: "clamp", kind: "function" },
-      matcher: "Number.isNaN",
-      range: null,
-      replacement: "Number.isFinite",
-    });
-  });
-
-  test("bridges a whole-declaration rewrite and a delete", () => {
-    const rewrite = first(
-      `select const MAX in a.ts\nreplace with\n${BEGIN}\nreturn 1;\n${END}\nend`,
-    );
-    expect(toEditPayload(rewrite)).toEqual({
-      locator: { path: "a.ts", name: "MAX", kind: "const" },
-      matcher: null,
-      range: null,
-      replacement: "return 1;",
-    });
-    const remove = first(`select const MAX in a.ts\nreplace with\n${BEGIN}\n${END}\nend`);
-    expect(toEditPayload(remove)?.replacement).toBe("");
-  });
-
-  test("bridges a single-range pick as a payload range", () => {
-    const selection = first(
-      `select function tokenize in src/lexer.ts\nmatch \`x\`\npick 12:3-14:5\nreplace with\n${BEGIN}\ny\n${END}\nend`,
-    );
-    expect(toEditPayload(selection)).toEqual({
-      locator: { path: "src/lexer.ts", name: "tokenize", kind: "function" },
-      matcher: "x",
-      range: { line: 12, column: 3, endLine: 14, endColumn: 5 },
-      replacement: "y",
-    });
-  });
-
-  test("has no payload form for a viewer", () => {
-    expect(toEditPayload(first("select foo in a.ts\nend"))).toBeNull();
-  });
-
-  test("has no payload form for a rename", () => {
-    expect(toEditPayload(first("select value in a.ts\nrename value to total\nend"))).toBeNull();
-  });
-
-  test("has no payload form for a regex matcher", () => {
-    expect(
-      toEditPayload(first(`select foo in a.ts\nmatch /x/\nreplace with\n${BEGIN}\ny\n${END}\nend`)),
-    ).toBeNull();
-  });
-
-  test("has no payload form for a multi-range pick", () => {
-    const selection = first(
-      `select foo in a.ts\nmatch \`x\`\npick {1, 2}\nreplace with\n${BEGIN}\ny\n${END}\nend`,
-    );
-    expect(toEditPayload(selection)).toBeNull();
-  });
-
-  test("has no payload form when a resolve space is set", () => {
-    const selection = first(
-      `select answer in main.ts resolve value\nreplace with\n${BEGIN}\nlet answer = 2;\n${END}\nend`,
-    );
-    expect(toEditPayload(selection)).toBeNull();
   });
 });
 

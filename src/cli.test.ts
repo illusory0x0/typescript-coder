@@ -15,6 +15,8 @@ import { helpText, parseArgs } from "./cli";
 import { AGENT_MODES, canonicalAgentMode } from "./loop";
 import { runMain as runMainBase } from "./main";
 import type { MainIo } from "./main";
+import { serializeSelections } from "./selection";
+import type { Selection } from "./selection";
 import type { ProviderLike } from "./loop";
 import type { ChatMessage, ChatResponse, ToolDefinition } from "./openai";
 
@@ -25,10 +27,8 @@ const nestedSmoke = existsSync(join(repoRoot, ".nested-smoke"));
 // and the self-host case below copies the tree and spawns a nested Bun process.
 const tempDirs: string[] = [];
 
-// The runMain tests script JSON responses; the production default is edit-dsl,
-// so select JSON explicitly unless a case overrides it.
 function runMain(options: Parameters<typeof runMainBase>[0]) {
-  return runMainBase({ protocolFormat: "json", ...options });
+  return runMainBase(options);
 }
 
 function tempDir(): string {
@@ -52,9 +52,6 @@ describe("parseArgs", () => {
     help: false,
     model: "deepseek-v4.1-flash",
     agentMode: "pinned-repair" as const,
-    multiPayload: false,
-    protocolFormat: "edit-dsl" as const,
-    targets: null,
     format: "text" as const,
     tokenBudget: null,
     checkCommand: null,
@@ -63,7 +60,7 @@ describe("parseArgs", () => {
     commandTimeoutMs: null,
   };
 
-  test("defaults to no help, the deepseek-v4.1-flash model, and multi-payload off", () => {
+  test("defaults to no help and the deepseek-v4.1-flash model", () => {
     expect(parseArgs([])).toEqual(DEFAULTS);
   });
 
@@ -78,38 +75,6 @@ describe("parseArgs", () => {
 
   test("reads --model=<id>", () => {
     expect(parseArgs(["--model=qwen"])).toEqual({ ...DEFAULTS, model: "qwen" });
-  });
-
-  test("reads --multi-payload and its camelCase alias (#69)", () => {
-    expect(parseArgs(["--multi-payload"]).multiPayload).toBe(true);
-    expect(parseArgs(["--multiPayload"]).multiPayload).toBe(true);
-    expect(parseArgs(["--multi-payload", "--model", "qwen"]).multiPayload).toBe(true);
-    expect(parseArgs(["--model", "qwen"]).multiPayload).toBe(false);
-  });
-
-  test("reads --protocol-format json|edit-dsl, defaulting to edit-dsl (#119)", () => {
-    expect(parseArgs([]).protocolFormat).toBe("edit-dsl");
-    expect(parseArgs(["--protocol-format", "edit-dsl"]).protocolFormat).toBe("edit-dsl");
-    expect(parseArgs(["--protocol-format=edit-dsl"]).protocolFormat).toBe("edit-dsl");
-    expect(parseArgs(["--protocol-format", "json"]).protocolFormat).toBe("json");
-    expect(parseArgs(["--protocol-format=json"]).protocolFormat).toBe("json");
-    expect(parseArgs(["--protocol-format", "edit-dsl", "--model", "qwen"])).toEqual({
-      ...DEFAULTS,
-      protocolFormat: "edit-dsl",
-      model: "qwen",
-    });
-  });
-
-  test("normalizes the deprecated `compact` alias to edit-dsl (#15)", () => {
-    expect(parseArgs(["--protocol-format", "compact"]).protocolFormat).toBe("edit-dsl");
-    expect(parseArgs(["--protocol-format=compact"]).protocolFormat).toBe("edit-dsl");
-  });
-
-  test("throws on an unknown --protocol-format value (#119)", () => {
-    expect(() => parseArgs(["--protocol-format", "yaml"])).toThrow(
-      '--protocol-format must be "json" or "edit-dsl"',
-    );
-    expect(() => parseArgs(["--protocol-format="])).toThrow("--protocol-format requires a value");
   });
 
   test("throws when --model has no value", () => {
@@ -203,41 +168,6 @@ describe("parseArgs", () => {
     expect(() => parseArgs(["--timeout="])).toThrow("--timeout requires a value");
   });
 
-  test("reads --targets from a JSON file in both value forms (#81)", () => {
-    const file = join(tempDir(), "targets.json");
-    writeFileSync(
-      file,
-      JSON.stringify({ targets: [{ path: "src/a.ts", symbol: "one", kind: "function" }] }),
-    );
-    const expected = [{ path: "src/a.ts", name: "one", kind: "function" }];
-    expect(parseArgs(["--targets", file]).targets).toEqual(expected);
-    expect(parseArgs([`--targets=${file}`]).targets).toEqual(expected);
-  });
-
-  test("accepts a top-level --targets array (#81)", () => {
-    const file = join(tempDir(), "targets.json");
-    writeFileSync(file, JSON.stringify([{ path: "src/a.ts", symbol: "one", kind: "function" }]));
-    expect(parseArgs(["--targets", file]).targets).toEqual([
-      { path: "src/a.ts", name: "one", kind: "function" },
-    ]);
-  });
-
-  test("throws on a missing or malformed --targets file (#81)", () => {
-    expect(() => parseArgs(["--targets", join(tempDir(), "missing.json")])).toThrow(
-      "--targets could not read",
-    );
-    const badJson = join(tempDir(), "bad.json");
-    writeFileSync(badJson, "{ not json");
-    expect(() => parseArgs(["--targets", badJson])).toThrow("not valid JSON");
-    const badShape = join(tempDir(), "shape.json");
-    writeFileSync(badShape, JSON.stringify({ nope: [] }));
-    expect(() => parseArgs(["--targets", badShape])).toThrow('"targets" array');
-    const badEntry = join(tempDir(), "entry.json");
-    writeFileSync(badEntry, JSON.stringify([{ path: "src/a.ts", symbol: "one" }]));
-    expect(() => parseArgs(["--targets", badEntry])).toThrow('non-empty string "kind"');
-    expect(() => parseArgs(["--targets="])).toThrow("--targets requires a value");
-  });
-
   test("parses the full sub-agent flag set together", () => {
     expect(
       parseArgs([
@@ -283,11 +213,6 @@ describe("helpText", () => {
     expect(text).toContain("--test <cmd>");
     expect(text).toContain("--cwd <dir>");
     expect(text).toContain("--timeout <ms>");
-    expect(text).toContain("--protocol-format <json|edit-dsl>");
-    expect(text).toContain("edit protocol (default: edit-dsl)");
-    expect(text).toContain("`compact` is a");
-    expect(text).toContain("deprecated alias for edit-dsl");
-    expect(text).toContain("--targets <file>");
     expect(text).toContain("typescript-coder-result@3");
   });
 });
@@ -357,27 +282,28 @@ function captureIo(): { io: MainIo; out: string[]; err: string[] } {
 }
 
 const ADDRESS = { path: "src/helper.ts", symbol: "answer", kind: "function" };
-const LOCATOR = JSON.stringify(ADDRESS);
 
-// A v2 edit payload: one flat object with the pinned address, an optional
-// matcher, and the replacement.
-function editResponse(
-  matcher: string | null,
-  replacement: string,
+function selectionReply(
+  replacement: string | null,
+  matcher: string | null = null,
   address: { path: string; symbol: string; kind: string } = ADDRESS,
 ): string {
-  const payload: Record<string, string> = { ...address };
-  if (matcher !== null) {
-    payload["matcher"] = matcher;
-  }
-  payload["replacement"] = replacement;
-  return JSON.stringify(payload);
+  const selection: Selection = {
+    locator: { path: address.path, name: address.symbol, kind: address.kind },
+    space: null,
+    matcher: matcher === null ? null : { kind: "snippet", value: matcher },
+    pick: null,
+    replacement,
+  };
+  return serializeSelections([selection]);
 }
+
+const LOCATOR = selectionReply(null);
 
 describe("runMain", () => {
   test("applies a verified edit and reports success on stdout", async () => {
     const dir = fixtureDir();
-    const provider = new ScriptedProvider([LOCATOR, editResponse("return 1;", "return 2;")]);
+    const provider = new ScriptedProvider([LOCATOR, selectionReply("return 2;", "return 1;")]);
     const captured = captureIo();
     const code = await runMain({
       issue: "make the answer test pass",
@@ -396,7 +322,7 @@ describe("runMain", () => {
 
   test("surfaces diagnostics on stderr, writes a failure artifact, and prints the explanation last", async () => {
     const dir = fixtureDir();
-    const bad = editResponse("return 1;", 'return "no";');
+    const bad = selectionReply('return "no";', "return 1;");
     const explanation = "the symbol cannot satisfy the test without a larger refactor";
     // Iteration 1: a verified-failing edit. The repeated "junk" reply then
     // trips the no-progress fingerprint, and the summary is the final call.
@@ -448,7 +374,7 @@ describe("runMain", () => {
   test("tolerates an unparseable file elsewhere in the project", async () => {
     const dir = fixtureDir(["src/helper.ts"]);
     writeFileSync(join(dir, "src", "broken.ts"), "function broken( {\n");
-    const provider = new ScriptedProvider([LOCATOR, editResponse("return 1;", "return 2;")]);
+    const provider = new ScriptedProvider([LOCATOR, selectionReply("return 2;", "return 1;")]);
     const captured = captureIo();
     const code = await runMain({
       issue: "make the answer test pass",
@@ -466,7 +392,15 @@ describe("runMain", () => {
   test("fails cleanly when the intended target is unparseable", async () => {
     const dir = fixtureDir(["src/helper.ts"]);
     writeFileSync(join(dir, "src", "broken.ts"), "function broken( {\n");
-    const broken = '{"path":"src/broken.ts","symbol":"broken","kind":"function"}';
+    const broken = serializeSelections([
+      {
+        locator: { path: "src/broken.ts", name: "broken", kind: "function" },
+        space: null,
+        matcher: null,
+        pick: null,
+        replacement: null,
+      },
+    ]);
     const provider = new ScriptedProvider([
       broken,
       // The identical rejected selection trips the no-progress fingerprint.
@@ -481,8 +415,8 @@ describe("runMain", () => {
       io: captured.io,
     });
     expect(code).toBe(1);
-    expect(captured.err.join("\n")).toContain("could not be parsed and indexed");
-    expect(captured.err.join("\n")).toContain("edit-exhausted");
+    expect(captured.err.join("\n")).toContain("does not parse");
+    expect(captured.err.join("\n")).toContain("prev-broken");
     expect(captured.out[captured.out.length - 1]).toBe("the broken file cannot be selected");
     expect(readFileSync(join(dir, "src", "broken.ts"), "utf8")).toBe("function broken( {\n");
   }, 60000);
@@ -526,7 +460,7 @@ describe("runMain", () => {
 
   test("--format json emits one result object on stdout for a verified edit (#80)", async () => {
     const dir = fixtureDir();
-    const provider = new ScriptedProvider([LOCATOR, editResponse("return 1;", "return 2;")]);
+    const provider = new ScriptedProvider([LOCATOR, selectionReply("return 2;", "return 1;")]);
     const captured = captureIo();
     const code = await runMain({
       issue: "make the answer test pass",
@@ -556,7 +490,7 @@ describe("runMain", () => {
 
   test("--format json reports a failing run on stdout and its prose on stderr (#80)", async () => {
     const dir = fixtureDir();
-    const bad = editResponse("return 1;", 'return "no";');
+    const bad = selectionReply('return "no";', "return 1;");
     const explanation = "the symbol cannot satisfy the test without a larger refactor";
     const provider = new ScriptedProvider([LOCATOR, bad, "junk", "junk", explanation]);
     const captured = captureIo();
@@ -707,21 +641,6 @@ describe("--mode", () => {
     expect(() => parseArgs(["--agent-mode=both"])).toThrow("pinned-repair");
   });
 
-  test("plan-exec refuses explicit targets and the frozen json edit protocol", () => {
-    const targets = join(tempDir(), "targets.json");
-    writeFileSync(targets, JSON.stringify([{ path: "src/a.ts", symbol: "a", kind: "function" }]));
-    expect(() => parseArgs(["--mode", "plan-exec", "--targets", targets])).toThrow(
-      "cannot be combined with --mode plan-exec",
-    );
-    expect(() => parseArgs(["--mode", "plan-exec", "--protocol-format", "json"])).toThrow(
-      "cannot be combined with it",
-    );
-    expect(parseArgs(["--mode", "plan-exec", "--protocol-format", "edit-dsl"]).agentMode).toBe(
-      "plan-exec",
-    );
-    expect(parseArgs(["--mode", "edit", "--targets", targets]).agentMode).toBe("pinned-repair");
-  });
-
   test("help names the canonical mode flag, default, and alias", () => {
     const text = helpText();
     expect(text).toContain("--mode <pinned-repair|plan-exec>");
@@ -746,10 +665,10 @@ test.skipIf(nestedSmoke)(
     symlinkSync(join(repoRoot, "node_modules"), join(dir, "node_modules"), "dir");
     writeFileSync(join(dir, ".nested-smoke"), "this copy runs under the self-host smoke test\n");
     const provider = new ScriptedProvider([
-      '{"path":"src/index.ts","symbol":"greet","kind":"function"}',
-      editResponse(
-        "function greet(subject: string): string {\n  return `hello, ${subject}`;\n}",
+      selectionReply(null, null, { path: "src/index.ts", symbol: "greet", kind: "function" }),
+      selectionReply(
         "function greet(subject: string): string {\n  const greeting = `hello, ${subject}`;\n  return greeting;\n}",
+        "function greet(subject: string): string {\n  return `hello, ${subject}`;\n}",
         { path: "src/index.ts", symbol: "greet", kind: "function" },
       ),
     ]);

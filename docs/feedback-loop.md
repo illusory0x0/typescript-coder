@@ -5,8 +5,8 @@ routing, rounds and exchanges, the pinned-repair Edit → Verify flow, retry /
 no-progress / termination policy, caps, records/result, and the `runLoop`
 skeleton. [`plan-exec.md`](plan-exec.md) owns the Plan → Execute → Review model,
 Plan/patch DSL, planning/review, scheduling, and plan-exec-specific execution.
-[`edit-protocol.md`](edit-protocol.md) owns the edit-action reply language, both
-wire formats, resolution/cascade, application/gating, and repair feedback.
+[`edit-protocol.md`](edit-protocol.md) owns the edit-action reply language,
+resolution/cascade, application/gating, and repair feedback.
 Vocabulary is canonical in [`README.md`](README.md).
 
 `tc` is not an open-ended tool-calling agent. Its default `pinned-repair` run is
@@ -17,13 +17,12 @@ after pinning, request the configured `check`/`test` commands; the harness still
 owns discovery, splicing, formatting, and verification.
 
 Implementation: `runLoop` in `src/loop.ts` is a dispatcher. The default
-`pinned-repair` mode routes to `runEditDslLoop` (explicit targets and
-`--protocol-format=json` route to `runJsonLoop`); `--mode plan-exec` lazily
-routes to `runTaskLoop` in `src/task-loop.ts`. The drivers are independent: each
-owns its run driver (budget, rounds, records) and shares only the lower-level
-primitives (index and context, selection resolution, gates). Protocol prompt
-text lives in `src/prompts/{json,edit-dsl,task}.ts` and the commit/gate pipeline
-in `src/commit.ts`.
+`pinned-repair` mode routes to `runEditDslLoop`; `--mode plan-exec` lazily
+routes to `runTaskLoop` in `src/task-loop.ts`. Each driver owns its run
+lifecycle (budget, rounds, records) and shares the lower-level primitives (index
+and context, selection resolution, gates). Edit-dsl prompt text lives in
+`src/prompts/edit-dsl.ts`, task prompts in `src/prompts/task.ts`, and the
+commit/gate pipeline in `src/commit.ts`.
 
 ## Loop modes
 
@@ -68,11 +67,9 @@ count toward the budget. Recovered parser warnings are on
 ## Shape of a pinned-repair run
 
 1. **Context.** The workspace's `.ts` files are discovered and parsed into a
-   symbol index. Under the default edit-dsl format the index is rendered as
-   top-level `select <name> in <path> [resolve <space>]` lines (no signatures,
-   no test files, capped); explicit `--protocol-format=json` keeps the YAML
-   context (path → name/kind/signature, with a cap and a `truncated: true`
-   flag). Test files, plus any file the issue names inline, are attached whole
+   symbol index. The index is rendered as top-level
+   `select <name> in <path> [resolve <space>]` lines (no signatures, no test
+   files, capped). Test files, plus any file the issue names inline, are attached whole
    as read-only spec files. One system prompt and one user prompt (goal +
    index/context) open the run.
 2. **Round.** A round is one selection/repair cycle and has **no fixed
@@ -83,19 +80,15 @@ count toward the budget. Recovered parser warnings are on
    viewer pins the declaration and the harness sends a `# details` prompt with
    the declaration's source numbered by file-absolute lines; an editor clause
    applies its own replacement or rename. A missing path, missing symbol, or
-   space miss pins mode `create` and asks for a create clause. Under the JSON
-   payload format, the model instead replies with a JSON address
-   `{mode, path, symbol, kind}` (`modify` | `create` | `delete`); resolution is
+   space miss pins mode `create` and asks for a create clause. Resolution is
    strict and there is no silent first-match. The first successful selection is
    pinned for the run; later exchanges must echo it (a verification-repair round
    may re-pin to a different declaration in the same file). The edit-action
    grammar and the viewer/editor split are owned by
    [`edit-protocol.md`](edit-protocol.md) §2 and §4.
 4. **Edit.** The pinned declaration is shown with 1-based line numbers, and the
-   model replies with one edit-action in the format selected by
-   `--protocol-format`. [`edit-protocol.md`](edit-protocol.md) owns the wire
-   formats, locators, rename semantics, and the optional atomic multi-payload
-   batch.
+   model replies with edit-dsl. [`edit-protocol.md`](edit-protocol.md) owns the
+   clause grammar, locators, rename semantics, and atomic multi-clause replies.
 5. **Gates.** Before anything touches the disk, the candidate must pass the
    guards and gates owned by [`edit-protocol.md`](edit-protocol.md) §6. A
    failure is reported back with a `stage:` tag and costs an exchange.
@@ -107,8 +100,8 @@ count toward the budget. Recovered parser warnings are on
    `# modified text` prompt with the edited declaration.
    `Great! I resolve this problem!` (or any non-editor reply) confirms and ends;
    an editor clause with `replace` or `rename` and exchange room is applied and
-   verified again. JSON has no confirmation turn. The confirmation turn is owned
-   by [`edit-protocol.md`](edit-protocol.md) §6.
+   verified again. The confirmation turn is owned by
+   [`edit-protocol.md`](edit-protocol.md) §6.
 
 ## Records and result
 
@@ -136,17 +129,15 @@ Everything is expressed as a retry with better information, never as a silent
 give-up:
 
 - **Rejection retry** — the same round, with the failure class (`protocol`,
-  `address`, `matcher`, `gate`, `format`, `no-op`, `repeat`, …) turned into a
-  correction sentence. The same class repeated escalates. Edit-dsl retries reuse
-  the select-first `# Goal` + `# Symbol index` + `# details` shape; JSON keeps
-  its pinned-selection block. The format-specific correction text is owned by
-  [`edit-protocol.md`](edit-protocol.md) §7. There is no fixed retry count: a
+  `address`, `matcher`, `gate`, `format`, `no-op`, `duplicate`, …) turned into a
+  correction sentence. The same class repeated escalates. Retries reuse the
+  select-first `# Goal` + `# Symbol index` + `# details` shape. The correction
+  text is owned by [`edit-protocol.md`](edit-protocol.md) §7. There is no fixed retry count: a
   distinct failure is retried until the token budget or a no-progress stop.
-- **Before editing, a repair exchange may ask one bounded JSON self-check** —
-  `{"request":"read" | "check" | "test"}` — to see the current source or run
-  the task's commands itself. It does not write anything. Edit-dsl instead uses
-  standalone `check end` / `test end` control turns after pinning; they are
-  repeatable with no fixed count and are bounded by the token/no-progress policy.
+- **Self-check turns** — after a target is pinned, a standalone `check end` or
+  `test end` reply runs the task's configured check/test command and writes
+  nothing. Self-checks are repeatable with no fixed count and are bounded by the
+  token/no-progress policy.
 - **Repeated no-progress fingerprint** — a failed reply repeated against the
   same source and diagnostics is no progress and ends the run with
   `edit-exhausted`; a cycle that keeps producing distinct replies is bounded by
@@ -203,8 +194,7 @@ async function runLoop(options: LoopOptions): Promise<LoopResult> {
       }
 
       // 2. Select, if nothing is pinned yet. The reply language is owned by
-      //    edit-protocol.md: edit-dsl parses a select clause or file commands;
-      //    JSON resolves the strict address.
+      //    edit-protocol.md: parse a select clause or file commands.
       if (pinned === null) {
         const selection = resolveSelection(reply, options.cwd); // strict AND
         if (!selection.ok) {
@@ -219,13 +209,13 @@ async function runLoop(options: LoopOptions): Promise<LoopResult> {
         continue;
       }
 
-      // 3. Edit (or one bounded self-check request, which is not an edit).
-      const request = parseSelfCheck(reply);
-      if (request !== null) {
-        diagnostics = runSelfCheck(request, options);
+      // 3. Edit (or a standalone self-check, which is not an edit).
+      const selfCheck = parseSelfCheck(reply);
+      if (selfCheck !== null) {
+        diagnostics = runSelfCheck(selfCheck, options);
         continue;
       }
-      const payload = parseEdit(reply); // one JSON payload, a batch, or edit-dsl statements
+      const payload = parseEdit(reply); // edit-dsl statements
       if (!payload.ok) {
         diagnostics = payload.diagnostic;
         stalledAttempts += 1;
@@ -285,10 +275,6 @@ without them, which is why they sit outside it:
   completions (the `MAX_CONSECUTIVE_LENGTH` output-length guard, not a round or
   exchange cap), a broken previous source, a repeated no-progress fingerprint,
   and a harness-side formatter fault each take their own exit.
-- **Explicit-targets mode** — when the caller supplies `LoopOptions.targets`,
-  one locator per desired declaration, the JSON driver skips picking, the
-  target queue drives rounds, and same-file targets are sequenced across
-  exchanges; the edit-dsl driver never sees targets.
 - **Prompt variants** — lean issue messages on `tsc` repair rounds, repair-context
   shrinking, a bounded prior-attempts digest, and a failure-history note only
   feed the no-progress asks.

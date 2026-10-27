@@ -9,8 +9,7 @@ import {
   writeFileSync,
 } from "node:fs";
 import { basename, dirname, isAbsolute, join, relative, resolve, sep } from "node:path";
-import { applyMatcherSplice, extractJsonObject, findMatcher, stripCodeFences } from "./matcher";
-import type { MatcherResult } from "./matcher";
+import { stripCodeFences } from "./matcher";
 import { parseMultiEditor, parseSelection, SelectionSyntaxError } from "./selection";
 import type { EditStatement, FileStatement, Selection as EditDslSelection } from "./selection";
 import { isFileSelection } from "./selection";
@@ -76,8 +75,6 @@ import {
   APPROACH_LIMIT,
   CONTEXT_SYMBOL_LIMIT,
   numberedSourceBlock,
-  RANGE_SELECTOR_NOTE,
-  SELF_CHECK_OFFER,
   SPEC_FILE_LIMIT,
   splitSourceLines,
   TEST_FILE_SUFFIX,
@@ -101,22 +98,11 @@ import {
   editDslCreateInstruction,
   editDslInstruction,
 } from "./prompts/edit-dsl";
-import {
-  buildJsonCreatePrompt,
-  buildJsonEditPrompt,
-  buildJsonSystemPrompt,
-  buildSelectionContinuationPrompt,
-  buildSelectionRetryPrompt,
-  buildTargetsEditPrompt,
-  buildUserPrompt,
-} from "./prompts/json";
 
 export {
   APPROACH_LIMIT,
   numberedSourceBlock,
   numberedSourceRange,
-  RANGE_SELECTOR_NOTE,
-  SELF_CHECK_OFFER,
   SPEC_FILE_LIMIT,
 } from "./prompts/shared";
 export {
@@ -128,41 +114,21 @@ export {
   buildEditDslSymbolIndex,
   buildEditDslUserPrompt,
 } from "./prompts/edit-dsl";
-export {
-  buildSelectionContinuationPrompt,
-  buildSelectionRetryPrompt,
-  buildTargetsEditPrompt,
-  buildUserPrompt,
-} from "./prompts/json";
 
-// Protocol dispatch (Phase 1): the protocol-specific prompt text lives in
-// `./prompts/{json,edit-dsl}.ts`; these keep the public signatures used by the
-// loop and tests.
-export function buildSystemPrompt(multiPayload = false, format: ProtocolFormat = "json"): string {
-  return format === "edit-dsl"
-    ? buildEditDslSystemPrompt(multiPayload)
-    : buildJsonSystemPrompt(multiPayload);
+/** The loop's only model reply protocol. */
+export type ProtocolFormat = "edit-dsl";
+
+// Prompt entry points kept for callers that build the model-facing messages.
+export function buildSystemPrompt(): string {
+  return buildEditDslSystemPrompt();
 }
 
-export function buildEditPrompt(
-  addressJson: string,
-  symbolSource: string,
-  multiPayload = false,
-  format: ProtocolFormat = "json",
-): string {
-  return format === "edit-dsl"
-    ? buildEditDslEditPrompt(addressJson, symbolSource)
-    : buildJsonEditPrompt(addressJson, symbolSource, multiPayload);
+export function buildEditPrompt(addressJson: string, symbolSource: string): string {
+  return buildEditDslEditPrompt(addressJson, symbolSource);
 }
 
-export function buildCreatePrompt(
-  addressJson: string,
-  path: string,
-  format: ProtocolFormat = "json",
-): string {
-  return format === "edit-dsl"
-    ? buildEditDslPinnedCreatePrompt(addressJson, path)
-    : buildJsonCreatePrompt(addressJson, path);
+export function buildCreatePrompt(addressJson: string, path: string): string {
+  return buildEditDslPinnedCreatePrompt(addressJson, path);
 }
 
 const SKIPPED_DIRECTORIES = new Set(["node_modules", ".git", "dist", "tmp"]);
@@ -170,16 +136,15 @@ const SIGNATURE_LIMIT = 200;
 // Path-like tokens in the issue text, e.g. `src/lisp.ts` inside backticks.
 const ISSUE_PATH_PATTERN = /[\w./-]+\.ts\b/g;
 
-// #119: the protocol failure an edit-dsl round returns when the reply is not
-// a `select … end` clause. A JSON edit payload never matches the edit-dsl grammar,
-// so it is rejected here too.
+// The protocol failure an edit-dsl round returns when the reply is not a
+// `select … end` clause. A JSON edit payload never matches the grammar, so it is
+// rejected here too.
 export const EDIT_DSL_FORCE_DIAGNOSTICS =
   "stage: protocol\nthe reply must be one or more `select … end` clauses; a JSON edit payload is not accepted in this mode";
 
 // A JSON edit payload is a protocol rejection; any other unparseable reply names
 // its actual syntax error. `SelectionSyntaxError` already carries the shared
-// renderer's line/column excerpt (#33), so this only keeps the force-JSON
-// classification.
+// renderer's line/column excerpt (#33), so this only keeps that classification.
 function editDslParseDiagnostics(content: string, error: SelectionSyntaxError): string {
   const text = stripCodeFences(content);
   if (text.trimStart().startsWith("{")) {
@@ -188,11 +153,9 @@ function editDslParseDiagnostics(content: string, error: SelectionSyntaxError): 
   return error.diagnostics;
 }
 
-// #117/#119: under the edit-dsl protocol a `protocol` rejection means the reply
-// was not `select … end` (usually a JSON edit payload). The retry must re-teach
-// the edit-dsl form; the JSON-flavored #56 correction would drive the model
-// straight back to the payload this mode rejects (the observed rep1
-// `address ↔ protocol` loop).
+// A `protocol` rejection means the reply was not `select … end` (usually a
+// JSON edit payload). The retry must re-teach the edit-dsl form rather than the
+// old payload correction that would drive the model back to it.
 const EDIT_DSL_PROTOCOL_CORRECTION =
   "Reply with one or more `select … end` clauses or a file command (`create`, `delete`, `read`, `write`) as the entire response (`select <symbol> in <path> [ resolve <value|type|namespace> ] [ match (<snippet> | /regex/) ] [ [ pick <range> ] replace with <fence> | rename <old> to <new> ] end`, where the fence opens with `<<<TC_EDIT_BEGIN>>>` on its own line and closes with `<<<TC_EDIT_END>>>` on its own line; a `pick` requires `replace`, and `rename` cannot be combined with either; every clause in one reply must target a different resolved declaration `(path, symbol, kind)`, so address one declaration at most once and split its edits across exchanges); a JSON edit payload is not accepted in this mode.";
 const EDIT_DSL_PROTOCOL_ESCALATION =
@@ -339,24 +302,18 @@ export interface RetryPromptInput {
    * removed the fixed exchange budget, so no "N of M" remainder is rendered.
    */
   exchangeNumber: number;
-  /** `create` asks for the complete declaration; `modify` for the flat JSON payload. */
+  /** `create` asks for the complete declaration; `modify` for an edit clause. */
   mode: "modify" | "create";
-  /** Canonical pinned selection, `{mode, path, symbol, kind}`. */
-  locatorJson: string;
   /** Current on-disk source of the selected region (whole file in create mode). */
   currentSource: string;
   /**
-   * Optional pre-rendered `Current source:` block that replaces
-   * `numberedSourceBlock(currentSource)`. The repair-context shrink supplies a
-   * partial, original-line-numbered view here. Undefined keeps the prompt
-   * byte-identical to the whole-file path.
+   * Optional pre-rendered details block that replaces the numbered source. The
+   * repair-context shrink supplies a partial, original-line-numbered view here.
    */
   preRenderedSource?: string;
   diagnostics: string;
   /** Verification retries say "failed verification"; edit retries say "failed". */
   failure: "edit" | "verification";
-  /** True in a verification-repair iteration, where the pin may move to another declaration. */
-  repin: boolean;
   /**
    * No-progress ask (#54): replaces the exchange header (and the corrective
    * action sentence) with the consecutive-failed-attempts framing. From the
@@ -390,22 +347,7 @@ export interface RetryPromptInput {
    * nothing; the next exchange after a decision turn sets it.
    */
   approach?: string;
-  /**
-   * Opt-in multi-payload variant (#69): modify retries offer the
-   * `{"payloads": [...]}` batch shape alongside the flat payload; off (the
-   * default) keeps the exact single-payload instructions.
-   */
-  multiPayload?: boolean;
-  /**
-   * Edit protocol format (#119): `edit-dsl` renders the `select … end` clause
-   * instruction; `json` (default) keeps the JSON templates.
-   */
-  protocolFormat?: ProtocolFormat;
-  /**
-   * EditDsl retry context (#B4): Goal + symbol index for the edit-dsl prompt
-   * shape, plus the file-absolute start line of `currentSource`. Absent keeps
-   * the JSON prompt byte-identical.
-   */
+  /** Goal + symbol index for the edit-dsl prompt shape, plus the start line. */
   editDslContext?: { issue: string; indexText: string; startLine?: number };
   /**
    * Bounded self-verification result (#73), appended after the Diagnostics
@@ -413,19 +355,6 @@ export interface RetryPromptInput {
    * immediately follows the executed request; ordinary retries set nothing.
    */
   selfCheck?: string;
-}
-
-/** Multi-payload modify instruction (#69/#78): one flat payload or a same-file-or-cross-file batch. */
-function multiModifyInstruction(
-  lead: string,
-  status: string,
-  repin: boolean,
-  modifierNote: string,
-): string {
-  const address = repin
-    ? 'return the full address of the declaration you are fixing — either the pinned selection or a different declaration in the same file to re-pin and edit it (it must resolve uniquely in the current source) — or a {"payloads": [...]} object batching edits whose first entry carries that pinned-or-re-pinned address and each further entry names its own declaration, in the same or another file'
-    : 'echo the pinned selection in the first payload\'s address — or, to batch edits, return a {"payloads": [...]} object whose first entry echoes the pinned selection and each further entry names its own declaration, in the same or another file';
-  return `${lead} ${status}Output either ONE flat JSON object {"path": ..., "symbol": ..., "kind": ..., "matcher": ..., "replacement": ...} (${address}), or exactly that {"payloads": [ ... ]} batch shape. Same-file payloads must address non-overlapping regions. "matcher" is optional per payload: a snippet copied from the current source, or omit it for a whole-symbol rewrite; "replacement" replaces the matched range (empty removes it). ${RANGE_SELECTOR_NOTE} The exchange applies atomically: if any payload fails its own guard or two same-file regions overlap, nothing is written and the rejection names every failing payload. ${modifierNote} No markdown fences and no explanations.`;
 }
 
 /**
@@ -452,72 +381,33 @@ function stalledAskHeader(stalled: StalledAsk): string {
 }
 
 /**
- * Decision-only turn instruction (#75), shown in place of the edit template on a
+ * Decision-only turn instruction (#75): shown in place of the edit template on a
  * repeated no-progress ask whose `#71` pattern is non-converging. It keeps the
  * sharpened ask header, the failing diagnostics, and the failure history, and
  * offers only two replies: `STOP`, or a re-approach statement the next exchange
  * carries. No cap or auto-stop: a real edit reply is still a valid attempt.
  */
 const DECISION_INSTRUCTION =
-  "This is a decision turn: reply with a short re-approach statement — name what you will change (the cause) and where — instead of another edit payload. Reply exactly `STOP` to end the run now, but only if the failing set cannot be resolved. Do not send a JSON edit payload on this turn.";
-
-/**
- * EditDsl decision-only instruction (#75/#9): the select-first counterpart of
- * `DECISION_INSTRUCTION`. It keeps the decision framing and STOP semantics but
- * names the clause reply shape instead of a JSON payload, so no bare JSON edit
- * teaching leaks into an edit-dsl turn.
- */
-const DECISION_INSTRUCTION_EDIT_DSL =
   "This is a decision turn: reply with a short re-approach statement — name what you will change (the cause) and where — instead of another edit clause. Reply exactly `STOP` to end the run now, but only if the failing set cannot be resolved. Do not send an edit clause on this turn.";
 
 /**
- * True when a decision-turn reply still carries a structurally valid edit
- * payload (#75): such a reply is a real attempt and flows through the unchanged
- * guards; any other reply is the stated re-approach. Mirrors the exchange
- * parser's opt-in multi-payload shape.
+ * True when a decision-turn reply still carries a structurally valid edit-dsl
+ * reply (#75): such a reply is a real attempt and flows through the unchanged
+ * guards; any other reply is the stated re-approach.
  */
-function isEditPayloadReply(
-  content: string,
-  multiPayload: boolean,
-  format: ProtocolFormat,
-): boolean {
-  if (multiPayload) {
-    if (parseEditResponseList(content).ok) {
-      return true;
-    }
-  } else {
-    try {
-      parseEditResponse(content);
-      return true;
-    } catch {
-      // Fall through to the edit-dsl form under the edit-dsl format.
-    }
+function isEditDslReply(content: string): boolean {
+  try {
+    return parseSelection(content).length > 0;
+  } catch {
+    return false;
   }
-  // #111: under the edit-dsl format a reply of `select … end` clauses is also a
-  // real attempt (an editor or a viewer locate turn).
-  if (format === "edit-dsl") {
-    try {
-      return parseSelection(content).length > 0;
-    } catch {
-      return false;
-    }
-  }
-  return false;
 }
 
 export function buildRetryPrompt(input: RetryPromptInput): string {
-  const { exchangeNumber, mode, locatorJson, currentSource, diagnostics, failure, repin } = input;
+  const { exchangeNumber, mode, currentSource, diagnostics, failure } = input;
   const label = failure === "verification" ? "failed verification" : "failed";
-  const numbered = input.preRenderedSource ?? numberedSourceBlock(currentSource);
-  const sourceNote =
-    input.preRenderedSource !== undefined
-      ? "Each line below carries its ORIGINAL 1-based file line number; `// … [omitted: …] …` marks declarations left out of this partial view (their names are listed above)."
-      : 'Each line below is prefixed with its 1-based line number (the optional "range" coordinates; columns count the source text after the `N | ` prefix).';
-  // The splice tolerates a leading `export` that repeats the declaration's
-  // existing modifier, so no re-add warning is needed (#48).
-  const modifierNote =
-    "A leading `export` matching the declaration's existing modifier is accepted.";
   const stalled = input.stalled;
+  const editDslContext = input.editDslContext ?? { issue: "", indexText: "" };
   // No-progress ask (#54): the corrective lead is replaced by concrete
   // alternatives when the model has failed the same verification repeatedly.
   const stalledLead =
@@ -538,19 +428,10 @@ export function buildRetryPrompt(input: RetryPromptInput): string {
   // frames the no-progress ask. #57 removed the fixed exchange budget, so no
   // "N of M" or remaining count is rendered.
   const status = stalled !== undefined ? "" : `Edit exchange ${exchangeNumber} ${label}. `;
-  const modifyInstruction =
-    input.protocolFormat === "edit-dsl"
+  const instruction =
+    mode === "modify"
       ? `${modifyLead} ${status}${editDslInstruction()}`
-      : input.multiPayload === true
-        ? multiModifyInstruction(modifyLead, status, repin, modifierNote)
-        : repin
-          ? `${modifyLead} ${status}Output ONLY one flat JSON object {"path": ..., "symbol": ..., "kind": ..., "matcher": ..., "replacement": ...}: return the full address of the declaration you are fixing — either the pinned selection or a different declaration in the same file to re-pin and edit it (it must resolve uniquely in the current source). "matcher" is optional: a snippet copied from the current source, or omit it for a whole-symbol rewrite; "replacement" replaces the matched range (empty removes it). ${RANGE_SELECTOR_NOTE} ${modifierNote} No markdown fences and no explanations.`
-          : `${modifyLead} ${status}Output ONLY one flat JSON object {"path": ..., "symbol": ..., "kind": ..., "matcher": ..., "replacement": ...}: echo the pinned selection in the address. "matcher" is optional: a snippet copied from the current source, or omit it for a whole-symbol rewrite; "replacement" replaces the matched range (empty removes it). ${RANGE_SELECTOR_NOTE} ${modifierNote} No markdown fences and no explanations.`;
-  const createInstruction =
-    input.protocolFormat === "edit-dsl"
-      ? `${createLead} ${status}${editDslCreateInstruction()}`
-      : `${createLead} ${status}Output ONLY one flat JSON object {"path": ..., "symbol": ..., "kind": ..., "replacement": ...}: echo the pinned selection in the address, put the COMPLETE corrected declaration in "replacement", and omit "matcher" and "range". No markdown fences and no explanations.`;
-  const instruction = mode === "modify" ? modifyInstruction : createInstruction;
+      : `${createLead} ${status}${editDslCreateInstruction()}`;
   const header = stalled === undefined ? "" : stalledAskHeader(stalled);
   const digestSection =
     input.digest === undefined || input.digest.trim() === "" ? "" : `\n${input.digest}\n`;
@@ -567,18 +448,14 @@ export function buildRetryPrompt(input: RetryPromptInput): string {
       ? ""
       : `\nApproach to apply:\n\n${input.approach}\n`;
   // Decision-only turn (#75): a repeated non-converging ask drops the edit
-  // template (instruction, self-check offer, pinned selection, current source)
-  // and keeps the sharpened header plus the failing diagnostics and history.
+  // template and keeps the sharpened header plus the failing diagnostics and
+  // history.
   if (stalled !== undefined && isDecisionAsk(stalled)) {
-    // EditDsl decision-only turn (#9): keep the decision framing and STOP
-    // semantics but render the Goal/index/details context and the clause shape.
-    // The JSON decision turn below stays byte-identical.
-    if (input.protocolFormat === "edit-dsl" && input.editDslContext !== undefined) {
-      return `${header}
+    return `${header}
 
-${editDslContextBlock(input.editDslContext, currentSource, input.preRenderedSource)}
+${editDslContextBlock(editDslContext, currentSource, input.preRenderedSource)}
 
-${DECISION_INSTRUCTION_EDIT_DSL}
+${DECISION_INSTRUCTION}
 
 Diagnostics:
 
@@ -586,15 +463,8 @@ Diagnostics:
 ${diagnostics}
 \`\`\`
 ${failureHistorySection}${digestSection}`;
-    }
-    return `${header}\n\n${DECISION_INSTRUCTION}\n\nDiagnostics:\n\n\`\`\`\n${diagnostics}\n\`\`\`\n${failureHistorySection}${digestSection}`;
   }
-  // EditDsl retry/no-progress ask (#B4): Goal + select-line symbol index + the
-  // declaration details, with no JSON pinned-selection block. The edit-dsl
-  // instruction already carries the clause rules, including create mode.
-  // The self-check offer is JSON-only and is deliberately absent here (#9).
-  if (input.protocolFormat === "edit-dsl" && input.editDslContext !== undefined) {
-    return `${header === "" ? "" : `${header}\n\n`}${editDslContextBlock(input.editDslContext, currentSource, input.preRenderedSource)}
+  return `${header === "" ? "" : `${header}\n\n`}${editDslContextBlock(editDslContext, currentSource, input.preRenderedSource)}
 
 Diagnostics:
 
@@ -603,30 +473,6 @@ ${diagnostics}
 \`\`\`
 ${selfCheckSection}${approachSection}${failureHistorySection}${digestSection}
 ${instruction}`;
-  }
-  return `${header === "" ? "" : `${header}\n\n`}${instruction}
-
-${SELF_CHECK_OFFER}
-
-Pinned selection:
-
-\`\`\`json
-${locatorJson}
-\`\`\`
-
-Current source:
-
-${sourceNote}
-
-\`\`\`ts
-${numbered}\n\`\`\`
-
-Diagnostics:
-
-\`\`\`
-${diagnostics}
-\`\`\`
-${selfCheckSection}${approachSection}${failureHistorySection}${digestSection}`;
 }
 
 const TERMINATION_SUMMARY: Record<TerminationReason | "provider-error", string> = {
@@ -670,11 +516,6 @@ export { stripCodeFences };
 
 export type SelectionMode = "modify" | "create" | "delete";
 
-export interface SelectionResponse {
-  mode: SelectionMode;
-  locator: Locator;
-}
-
 /**
  * Optional `(line, column)` selector (#72): a 1-based, inclusive-end position
  * range relative to the current source block shown in the prompt (the pinned
@@ -689,39 +530,17 @@ export interface EditRange {
   endColumn: number;
 }
 
-export interface EditPayload {
-  locator: Locator;
-  /** Structural snippet copied from the current source; null = whole-symbol rewrite. */
-  matcher: string | null;
-  /** Optional `(line, column)` selector (#72); takes precedence over `matcher` when present. */
-  range: EditRange | null;
-  replacement: string;
-}
-
 /** Which selector an applied edit used (#101): range, matcher, or whole-symbol. */
 export type EditSelector = "range" | "matcher" | "whole-symbol";
 
 /**
  * The form of matcher a `match`-stage edit used (#110): a structural snippet
- * copied from the source, or a `/regex/` locator. Regex only arises on the
- * edit-dsl cascade path (#111); the JSON path sends snippets only.
+ * copied from the source, or a `/regex/` locator.
  */
 export type MatcherKind = "snippet" | "regex";
 
 /**
- * Classify one payload's selector (#101): `range` takes precedence over `matcher`
- * when both are sent, and a payload with neither is a whole-symbol rewrite.
- */
-export function selectorOf(payload: EditPayload): EditSelector {
-  if (payload.range !== null) {
-    return "range";
-  }
-  return payload.matcher !== null ? "matcher" : "whole-symbol";
-}
-
-/**
- * The #101 selector vocabulary for a resolved cascade stage (#111), so a
- * edit-dsl clause's selector metric reads the same as the JSON path's:
+ * The #101 selector vocabulary for a resolved cascade stage (#111):
  * `pick`→`range`, `match`→`matcher`, `whole-symbol`→`whole-symbol`.
  */
 export function selectorFromStage(stage: SelectionStage): EditSelector {
@@ -731,387 +550,8 @@ export function selectorFromStage(stage: SelectionStage): EditSelector {
   return stage === "match" ? "matcher" : "whole-symbol";
 }
 
-/**
- * Classify one payload's resolved cascade stage (#110): a `range` pins a
- * contiguous run inside the declaration (`pick`, and wins over `matcher`), a
- * `matcher` locates a candidate set (`match`), and neither falls back to the
- * declaration itself (`whole-symbol`). This mirrors `resolveCascade`'s `stage`
- * so the metric reads the same vocabulary on both paths.
- */
-export function stageOf(payload: EditPayload): SelectionStage {
-  if (payload.range !== null) {
-    return "pick";
-  }
-  return payload.matcher !== null ? "match" : "whole-symbol";
-}
-
-/**
- * The matcher form an edit used (#110), or `null` when no matcher resolved it:
- * `"snippet"` when the payload's `matcher` is the resolving locator (stage
- * `"match"`), else `null` (a range/whole-symbol edit names no matcher; `regex`
- * arrives with the edit-dsl cascade, #111).
- */
-export function matcherKindOf(payload: EditPayload): MatcherKind | null {
-  return stageOf(payload) === "match" ? "snippet" : null;
-}
-
-/**
- * Selectors of an exchange's parsed payloads (#101), in order: every entry of a
- * `{"payloads": [...]}` batch, else the single flat payload's selector, else
- * `undefined` when the exchange carried no payload.
- */
-export function selectorsOf(
-  payload: EditPayload | null,
-  batch: readonly EditPayload[] | null,
-): EditSelector[] | undefined {
-  if (batch !== null) {
-    return batch.map(selectorOf);
-  }
-  return payload === null ? undefined : [selectorOf(payload)];
-}
-
-/**
- * Resolved cascade stages of an exchange's parsed payloads (#110), in the same
- * order and with the same batch-or-flat-or-undefined shape as `selectorsOf`.
- */
-export function stagesOf(
-  payload: EditPayload | null,
-  batch: readonly EditPayload[] | null,
-): SelectionStage[] | undefined {
-  if (batch !== null) {
-    return batch.map(stageOf);
-  }
-  return payload === null ? undefined : [stageOf(payload)];
-}
-
-/**
- * Matcher kinds of an exchange's parsed payloads (#110), parallel to `stagesOf`:
- * one entry per payload (`null` when no matcher resolved it).
- */
-export function matcherKindsOf(
-  payload: EditPayload | null,
-  batch: readonly EditPayload[] | null,
-): (MatcherKind | null)[] | undefined {
-  if (batch !== null) {
-    return batch.map(matcherKindOf);
-  }
-  return payload === null ? undefined : [matcherKindOf(payload)];
-}
-
-const SELECTION_EXPECTED =
-  'expected {"mode":"modify"|"create"|"delete","path": ..., "symbol": ..., "kind": ...}';
-const EDIT_EXPECTED =
-  'expected {"path": ..., "symbol": ..., "kind": ..., "matcher": ..., "replacement": ...}';
-const SELECTION_MODES: ReadonlySet<string> = new Set(["modify", "create", "delete"]);
-const SELECTION_KEYS: ReadonlySet<string> = new Set(["mode", "path", "symbol", "kind"]);
-const EDIT_KEYS: ReadonlySet<string> = new Set([
-  "path",
-  "symbol",
-  "kind",
-  "matcher",
-  "range",
-  "replacement",
-]);
-
-/** Keys of the optional `(line,column)` selector (#72). */
-const RANGE_KEYS: ReadonlySet<string> = new Set(["line", "column", "endLine", "endColumn"]);
-
-function isRecord(value: unknown): value is Record<string, unknown> {
-  return typeof value === "object" && value !== null && !Array.isArray(value);
-}
-
-/** Tolerant object reader: whole-text fences and surrounding prose are tolerated. */
-function readJsonObject(content: string, expected: string): Record<string, unknown> {
-  let parsed: unknown;
-  try {
-    parsed = extractJsonObject(content);
-  } catch (error) {
-    throw new Error(`${expected}; ${errorMessage(error)}`);
-  }
-  if (!isRecord(parsed)) {
-    throw new Error(`${expected}; got a JSON value that is not an object`);
-  }
-  return parsed;
-}
-
-// v2 protocol errors name the unexpected keys the model actually sent; `name`
-// and `edits` get targeted hints because they are the v1 shapes.
-function parseAddressFields(
-  record: Record<string, unknown>,
-  allowed: ReadonlySet<string>,
-  expected: string,
-): Locator {
-  const extra = Object.keys(record).filter((key) => !allowed.has(key));
-  if (extra.length > 0) {
-    const hints: string[] = [];
-    if (extra.includes("name") && !("symbol" in record)) {
-      hints.push('the address field is "symbol" (renamed from "name")');
-    }
-    if (extra.includes("edits")) {
-      hints.push('v2 carries one flat edit object, not an "edits" array');
-    }
-    const hint = hints.length === 0 ? "" : ` (${hints.join("; ")})`;
-    throw new Error(
-      `${expected}; unexpected key(s) ${extra.map((key) => JSON.stringify(key)).join(", ")}${hint}`,
-    );
-  }
-  const path = record["path"];
-  const symbol = record["symbol"];
-  const kind = record["kind"];
-  if (typeof path !== "string" || path === "") {
-    throw new Error(`${expected}; "path" must be a non-empty string`);
-  }
-  if (typeof symbol !== "string" || symbol === "") {
-    throw new Error(`${expected}; "symbol" must be a non-empty string`);
-  }
-  if (typeof kind !== "string" || kind === "") {
-    throw new Error(`${expected}; "kind" must be a non-empty string`);
-  }
-  return { path, name: symbol, kind };
-}
-
-function selectionFromValue(parsed: unknown): SelectionResponse {
-  if (!isRecord(parsed)) {
-    throw new Error(`${SELECTION_EXPECTED}; got a JSON value that is not an object`);
-  }
-  const locator = parseAddressFields(parsed, SELECTION_KEYS, SELECTION_EXPECTED);
-  const mode = parsed["mode"];
-  if (mode === undefined) {
-    return { mode: "modify", locator };
-  }
-  if (typeof mode !== "string" || !SELECTION_MODES.has(mode)) {
-    throw new Error(
-      `${SELECTION_EXPECTED}; "mode" must be one of "modify", "create", "delete" (got ${JSON.stringify(mode)})`,
-    );
-  }
-  return { mode: mode as SelectionMode, locator };
-}
-
-export function parseSelectionResponse(content: string): SelectionResponse {
-  return selectionFromValue(readJsonObject(content, SELECTION_EXPECTED));
-}
-
-// Optional `(line,column)` selector (#72): shape errors are protocol rejections
-// (like a malformed `matcher`); resolution errors are `range-invalid`.
-function parseRangeField(record: Record<string, unknown>, expected: string): EditRange | null {
-  const raw = record["range"];
-  if (raw === undefined) {
-    return null;
-  }
-  if (!isRecord(raw)) {
-    throw new Error(
-      `${expected}; "range" must be an object {"line": ..., "column": ..., "endLine": ..., "endColumn": ...} of positive integers (omit it to keep the matcher/whole-symbol path)`,
-    );
-  }
-  const extra = Object.keys(raw).filter((key) => !RANGE_KEYS.has(key));
-  if (extra.length > 0) {
-    throw new Error(
-      `${expected}; "range" carries unexpected key(s) ${extra.map((key) => JSON.stringify(key)).join(", ")}`,
-    );
-  }
-  const fields: readonly (keyof EditRange)[] = ["line", "column", "endLine", "endColumn"];
-  const parsed: EditRange = { line: 0, column: 0, endLine: 0, endColumn: 0 };
-  for (const key of fields) {
-    const value = raw[key];
-    if (typeof value !== "number" || !Number.isInteger(value) || value < 1) {
-      throw new Error(`${expected}; "range.${key}" must be a positive integer (1-based)`);
-    }
-    parsed[key] = value;
-  }
-  return parsed;
-}
-
-// One flat edit payload from an already-parsed record; shared by the classic
-// single-payload reply and each entry of an opt-in `{"payloads": [...]}` batch
-// (#69).
-function payloadFromRecord(record: Record<string, unknown>, expected: string): EditPayload {
-  const locator = parseAddressFields(record, EDIT_KEYS, expected);
-  const matcher = record["matcher"];
-  if (matcher !== undefined && (typeof matcher !== "string" || matcher === "")) {
-    throw new Error(
-      `${expected}; "matcher" must be a non-empty string when present (omit it for a whole-symbol rewrite)`,
-    );
-  }
-  const range = parseRangeField(record, expected);
-  const replacement = record["replacement"];
-  if (typeof replacement !== "string") {
-    throw new Error(`${expected}; "replacement" must be a string`);
-  }
-  return {
-    locator,
-    matcher: matcher === undefined ? null : matcher,
-    range,
-    replacement,
-  };
-}
-
-export function parseEditResponse(content: string): EditPayload {
-  return payloadFromRecord(readJsonObject(content, EDIT_EXPECTED), EDIT_EXPECTED);
-}
-
-/** Batch wrapper key of the opt-in multi-payload protocol (#69). */
-export const MULTI_PAYLOAD_KEY = "payloads";
-
-/**
- * Result of parsing a reply under the opt-in multi-payload protocol (#69): a
- * classic flat payload (`batch: false`) or a `{"payloads": [...]}` batch, or a
- * rejection carrying the payloads that did parse plus the batch-level cause
- * (`multi-protocol` for a malformed wrapper/entry, null for a classic protocol
- * failure). Same-file payloads parse cleanly (#78); their regions are checked
- * for overlap when the batch is applied.
- */
-export type EditPayloadList =
-  | { ok: true; batch: boolean; payloads: EditPayload[] }
-  | {
-      ok: false;
-      cause: "multi-protocol" | null;
-      diagnostics: string;
-      payloads: EditPayload[];
-    };
-
-// `stage: multi` header for every batch-level rejection (#69); the payloads'
-// own diagnostics follow, so a retry can name each failing payload's cause.
-export function multiDiagnostics(message: string): string {
-  return `stage: multi\nthe multi-payload exchange was rejected: ${message}; nothing is written`;
-}
-
-/**
- * Parse one edit reply under the opt-in multi-payload protocol (#69): a flat
- * object stays the classic single payload; an object carrying `payloads` is a
- * batch whose entries are flat payloads. Repeated `path`s are allowed (#78):
- * same-file entries are applied together and their regions checked for overlap
- * at application time. Batch-level errors are typed (`multi-protocol`) and
- * never silently repaired.
- */
-export function parseEditResponseList(content: string): EditPayloadList {
-  let parsed: unknown;
-  try {
-    parsed = extractJsonObject(content);
-  } catch (error) {
-    return {
-      ok: false,
-      cause: null,
-      diagnostics: `stage: protocol\n${EDIT_EXPECTED}; ${errorMessage(error)}`,
-      payloads: [],
-    };
-  }
-  if (!isRecord(parsed)) {
-    return {
-      ok: false,
-      cause: null,
-      diagnostics: `stage: protocol\n${EDIT_EXPECTED}; got a JSON value that is not an object`,
-      payloads: [],
-    };
-  }
-  if (!(MULTI_PAYLOAD_KEY in parsed)) {
-    try {
-      return { ok: true, batch: false, payloads: [parseEditResponse(content)] };
-    } catch (error) {
-      return {
-        ok: false,
-        cause: null,
-        diagnostics: `stage: protocol\n${errorMessage(error)}`,
-        payloads: [],
-      };
-    }
-  }
-  const extra = Object.keys(parsed).filter((key) => key !== MULTI_PAYLOAD_KEY);
-  if (extra.length > 0) {
-    return {
-      ok: false,
-      cause: "multi-protocol",
-      diagnostics: multiDiagnostics(
-        `the batch object carries unexpected key(s) ${extra.map((key) => JSON.stringify(key)).join(", ")}; send only "payloads"`,
-      ),
-      payloads: [],
-    };
-  }
-  const entries = parsed[MULTI_PAYLOAD_KEY];
-  if (!Array.isArray(entries) || entries.length === 0) {
-    return {
-      ok: false,
-      cause: "multi-protocol",
-      diagnostics: multiDiagnostics('"payloads" must be a non-empty array of flat edit objects'),
-      payloads: [],
-    };
-  }
-  const payloads: EditPayload[] = [];
-  for (let index = 0; index < entries.length; index += 1) {
-    const entry = entries[index];
-    if (!isRecord(entry)) {
-      return {
-        ok: false,
-        cause: "multi-protocol",
-        diagnostics: multiDiagnostics(`payload ${index + 1} is not a flat edit object`),
-        payloads,
-      };
-    }
-    try {
-      payloads.push(payloadFromRecord(entry, EDIT_EXPECTED));
-    } catch (error) {
-      return {
-        ok: false,
-        cause: "multi-protocol",
-        diagnostics: multiDiagnostics(`payload ${index + 1}: ${errorMessage(error)}`),
-        payloads,
-      };
-    }
-  }
-  return { ok: true, batch: true, payloads };
-}
-
 // ---------------------------------------------------------------------------
 // Bounded self-verification request (#73)
-
-/** The whitelisted self-check kinds; the model names a kind, never a command. */
-export type SelfCheckKind = "read" | "check" | "test";
-
-/** The one key of the repair-only self-verification request object (#73). */
-const SELF_CHECK_KEY = "request";
-const SELF_CHECK_KINDS: ReadonlySet<string> = new Set(["read", "check", "test"]);
-const SELF_CHECK_EXPECTED = 'expected {"request":"read"|"check"|"test"}';
-
-/** Result of parsing a reply as a self-verification request (#73). */
-export type SelfCheckParse =
-  // Not request-shaped: the caller falls through to the ordinary edit parser.
-  | { kind: "none" }
-  | { kind: "ok"; request: SelfCheckKind }
-  // Request-shaped but malformed or outside the whitelist: a `protocol` rejection.
-  | { kind: "error"; diagnostics: string };
-
-/**
- * Parse a reply as a self-verification request (#73): the distinct object
- * `{"request":"read"|"check"|"test"}` carrying exactly that one key. Anything
- * that is not request-shaped returns `none`, so the caller falls through to the
- * ordinary edit parser; a request-shaped object with an unknown kind or an extra
- * key returns `error`.
- */
-export function parseSelfCheckRequest(content: string): SelfCheckParse {
-  let parsed: unknown;
-  try {
-    parsed = extractJsonObject(content);
-  } catch {
-    return { kind: "none" };
-  }
-  if (!isRecord(parsed) || !(SELF_CHECK_KEY in parsed)) {
-    return { kind: "none" };
-  }
-  const extra = Object.keys(parsed).filter((key) => key !== SELF_CHECK_KEY);
-  if (extra.length > 0) {
-    return {
-      kind: "error",
-      diagnostics: `stage: protocol\n${SELF_CHECK_EXPECTED}; unexpected key(s) ${extra.map((key) => JSON.stringify(key)).join(", ")} (a request carries only "request")`,
-    };
-  }
-  const value = parsed[SELF_CHECK_KEY];
-  if (typeof value !== "string" || !SELF_CHECK_KINDS.has(value)) {
-    return {
-      kind: "error",
-      diagnostics: `stage: protocol\n${SELF_CHECK_EXPECTED}; "request" must be one of "read", "check", "test" (got ${JSON.stringify(value)})`,
-    };
-  }
-  return { kind: "ok", request: value as SelfCheckKind };
-}
 
 /** Result of parsing a standalone edit-dsl self-check command. */
 export type EditDslSelfCheckParse =
@@ -1163,15 +603,6 @@ function clampSelfCheckOutput(output: string): string {
     : trimmed;
 }
 
-/** Bounded current-source rendering for a `read` request (#73). */
-export function renderSelfCheckRead(target: string, source: string): string {
-  if (source === "") {
-    return `Self-check (read): ${target} is empty or does not exist.`;
-  }
-  const lines = splitSourceLines(source).length;
-  return `Self-check (read): ${target} (${lines} line(s), truncated at ${SPEC_FILE_LIMIT} characters).\n\n${numberedSourceBlock(truncateSource(source))}`;
-}
-
 /** Bounded command-result rendering for a `check`/`test` request (#73). */
 export function renderSelfCheckCommand(
   kind: "check" | "test",
@@ -1186,10 +617,6 @@ function addressJson(locator: Locator): string {
   return JSON.stringify({ path: locator.path, symbol: locator.name, kind: locator.kind });
 }
 
-function addressEquals(left: Locator, right: Locator): boolean {
-  return left.path === right.path && left.name === right.name && left.kind === right.kind;
-}
-
 // Canonical pinned-selection label, `{mode, path, symbol, kind}`; rebuilt
 // whenever the pin moves or its mode changes (#48).
 function pinJson(pinned: { mode: SelectionMode; locator: Locator }): string {
@@ -1199,86 +626,6 @@ function pinJson(pinned: { mode: SelectionMode; locator: Locator }): string {
     symbol: pinned.locator.name,
     kind: pinned.locator.kind,
   });
-}
-
-function echoDiagnostics(pinned: Locator, payload: Locator): string {
-  return [
-    "stage: echo",
-    'the payload address does not match the pinned selection; echo the selection exactly in {path, symbol, kind} and do not echo "mode"',
-    `pinned: ${addressJson(pinned)}`,
-    `payload: ${addressJson(payload)}`,
-  ].join("\n");
-}
-
-/**
- * Validate one explicit-targets reply (#81): the first payload must echo the
- * pinned address, every payload must address one of the pending targets, and at
- * most one payload may appear per file (same-file targets are sequenced across
- * exchanges). Returns the covered addresses or a staged diagnostic — never a
- * silent pick.
- */
-function validateTargetsReply(
-  payloads: readonly { locator: Locator }[],
-  pinnedLocator: Locator,
-  queue: readonly Locator[],
-): { ok: true; covered: Locator[] } | { ok: false; diagnostics: string } {
-  const first = payloads[0];
-  if (first === undefined) {
-    return { ok: false, diagnostics: "stage: protocol\nthe reply carried no edit payloads" };
-  }
-  if (!addressEquals(pinnedLocator, first.locator)) {
-    return { ok: false, diagnostics: echoDiagnostics(pinnedLocator, first.locator) };
-  }
-  const pendingJson = new Set(queue.map((target) => addressJson(target)));
-  const activePaths = new Set<string>();
-  const activeJson = new Set<string>();
-  for (const target of queue) {
-    if (activePaths.has(target.path)) {
-      continue;
-    }
-    activePaths.add(target.path);
-    activeJson.add(addressJson(target));
-  }
-  const paths = new Set<string>();
-  const covered: Locator[] = [];
-  for (const payload of payloads) {
-    const key = addressJson(payload.locator);
-    if (!pendingJson.has(key)) {
-      return {
-        ok: false,
-        diagnostics: `stage: address\nthe payload ${key} is not one of the requested pending targets; address only the named targets`,
-      };
-    }
-    if (!activeJson.has(key)) {
-      return {
-        ok: false,
-        diagnostics: `stage: address\nthe payload ${key} is not an active target; address only the first pending target of each file, one per file, and sequence the rest across exchanges`,
-      };
-    }
-    if (paths.has(payload.locator.path)) {
-      return {
-        ok: false,
-        diagnostics: `stage: address\nthis exchange carries two payloads for ${JSON.stringify(payload.locator.path)}; allow at most one target per file per exchange and sequence same-file targets across exchanges`,
-      };
-    }
-    paths.add(payload.locator.path);
-    covered.push(payload.locator);
-  }
-  return { ok: true, covered };
-}
-
-function selectionFromResponse(response: ChatResponse): SelectionResponse {
-  const toolCall = response.toolCalls[0];
-  if (toolCall === undefined) {
-    return parseSelectionResponse(response.content ?? "");
-  }
-  let parsed: unknown;
-  try {
-    parsed = JSON.parse(toolCall.function.arguments);
-  } catch {
-    throw new Error(SELECTION_EXPECTED);
-  }
-  return selectionFromValue(parsed);
 }
 
 export interface ProviderLike {
@@ -1403,20 +750,6 @@ export interface LoopOptions {
   /** Benchmark override: forces this effort on every Edit-loop call, bypassing the default policy (#35). */
   effortOverride?: ReasoningEffort;
   /**
-   * Opt-in multi-payload exchanges (#69/#78): a modify reply may carry
-   * `{"payloads": [...]}` — flat payloads addressing different files and/or
-   * several non-overlapping regions of one file — applied atomically. Default
-   * off keeps the exact single-payload behavior.
-   */
-  multiPayload?: boolean;
-  /**
-   * Edit protocol format (#119): `edit-dsl` (default) makes the `select … end`
-   * syntax the required reply form and the first turn a select clause; `json`
-   * keeps the flat JSON payload. Absent is `edit-dsl`. Explicit-targets mode
-   * (#81) is JSON-only.
-   */
-  protocolFormat?: ProtocolFormat;
-  /**
    * Loop shape (`--mode`): `pinned-repair` (default) is the single-target
    * Edit → Verify loop; `plan-exec` runs the planning/execution/review
    * loop of `docs/plan-exec.md`, where a planner emits a
@@ -1425,13 +758,6 @@ export interface LoopOptions {
    * and maps to pinned-repair.
    */
   agentMode?: AgentMode;
-  /**
-   * Explicit-targets mode (#81): the addresses to edit, one entry per desired
-   * declaration. When non-empty the run skips model selection, forces the
-   * batch shape, names the pending addresses in each edit prompt, and sequences
-   * same-file targets across exchanges. Absent/empty keeps the discovery path.
-   */
-  targets?: readonly Locator[];
 }
 
 /** Outcome of one model exchange inside Edit. */
@@ -1489,7 +815,6 @@ export type RejectionCause =
   | "format"
   | "format-export-duplication"
   | "truncated"
-  | "multi-protocol"
   | "multi-duplicate";
 
 /** Stage of one rejected content exchange, as recorded and classified (#43/#69). */
@@ -1563,30 +888,7 @@ export type RejectionPolicy =
   | { action: "terminate"; reason: "harness-fault" };
 
 const MATCHER_ESCALATION =
-  'This attempt MUST omit "matcher" and return the complete declaration in "replacement".';
-
-// #102: a matcher failure can also be escaped with the #72 `range` selector,
-// whose coordinates pin a contiguous run without a verbatim copy. Off by
-// default — opt in with TC_MATCHER_RANGE_HINT=on (trimmed, lowercased; only
-// on/1/true enable) so the harness keeps the pre-#102 text unless explicitly
-// steered. Read once per rejectionPolicy call so tests can flip it in-process.
-const MATCHER_RANGE_HINT =
-  'When the target is a contiguous run you can pin exactly, you may instead send the optional "range" {"line","column","endLine","endColumn"} selector (all 1-based, end inclusive, inside the declaration): it takes precedence over "matcher" and needs no verbatim copy.';
-
-function matcherRangeHint(): string {
-  const setting = (process.env.TC_MATCHER_RANGE_HINT ?? "").trim().toLowerCase();
-  const enabled = setting === "on" || setting === "1" || setting === "true";
-  return enabled ? MATCHER_RANGE_HINT : "";
-}
-
-// The edit protocol format (#119), replacing the #111/#117 opt-in env var.
-// `json` (default) is the shipped flat
-// `{path, symbol, kind, matcher, replacement}` payload and keeps every prompt and
-// code path byte-identical to the pre-edit-dsl protocol. `edit-dsl` makes the
-// `select … end` syntax (`docs/edit-protocol.md`) the required reply form: the
-// system prompt teaches it, edit-dsl is parsed first, and a JSON edit payload is
-// rejected as a protocol violation. Explicit-targets mode (#81) stays JSON.
-export type ProtocolFormat = "json" | "edit-dsl";
+  "This attempt MUST omit `match` and return the complete declaration in a `select … replace with` clause.";
 
 // Repair-context shrink is opt-in: after a create fails verification the loop
 // enters create→repair mode and re-sends the whole target file on every repair
@@ -1783,12 +1085,6 @@ export interface RejectionLeadContext {
   addressFailures?: number;
   /** The live path/name of the address that kept failing (#24). */
   address?: { path: string; name: string };
-  /**
-   * The edit protocol the run uses (#117/#119): an edit-dsl run re-teaches the
-   * `select … end` form on a `protocol` rejection instead of the JSON payload
-   * the mode rejects. Defaults to `json`.
-   */
-  protocolFormat?: ProtocolFormat;
 }
 
 /**
@@ -1804,9 +1100,8 @@ export function rejectionLead(
   context: RejectionLeadContext = {},
 ): string | null {
   const escalated = streak >= 2;
-  const format = context.protocolFormat ?? "json";
   if (cause === "no-op") {
-    const policy = rejectionPolicy(cause, format);
+    const policy = rejectionPolicy(cause);
     if (policy.action !== "retry") {
       return null;
     }
@@ -1826,29 +1121,20 @@ export function rejectionLead(
   // policy repeats advice the model has already failed to apply.
   if (
     cause === "address" &&
-    format === "edit-dsl" &&
     (context.addressFailures ?? 0) >= 2 &&
     context.address !== undefined &&
     context.address.path !== ""
   ) {
     return repeatedAddressFallback(context.address.path, context.address.name);
   }
-  const policy = rejectionPolicy(cause, format);
+  const policy = rejectionPolicy(cause);
   if (policy.action !== "retry" || policy.correction === null) {
     return null;
   }
   return escalated && policy.escalation !== null ? policy.escalation : policy.correction;
 }
 
-export function rejectionPolicy(
-  cause: RejectionCause,
-  format: ProtocolFormat = "json",
-): RejectionPolicy {
-  // #102: read the toggle once per call; `withRangeHint` no-ops when disabled
-  // so the off render stays byte-identical to the pre-#102 strings.
-  const rangeHint = matcherRangeHint();
-  const withRangeHint = (text: string): string =>
-    rangeHint === "" ? text : `${text} ${rangeHint}`;
+export function rejectionPolicy(cause: RejectionCause): RejectionPolicy {
   switch (cause) {
     case "format-export-duplication":
       return { action: "terminate", reason: "harness-fault" };
@@ -1861,26 +1147,18 @@ export function rejectionPolicy(
         escalation: DUPLICATE_ESCALATION,
       };
     case "protocol":
-      return format === "edit-dsl"
-        ? {
-            action: "retry",
-            correction: EDIT_DSL_PROTOCOL_CORRECTION,
-            escalation: EDIT_DSL_PROTOCOL_ESCALATION,
-          }
-        : {
-            action: "retry",
-            correction:
-              'Return exactly one flat JSON object with the keys "path", "symbol", "kind", "matcher", "range", "replacement" ("matcher" and "range" optional), and no fences.',
-            escalation:
-              'This attempt MUST reply with exactly one flat JSON object carrying "path", "symbol", "kind", "matcher", "range", "replacement" as the entire response: no prose, no markdown fences, no nesting.',
-          };
+      return {
+        action: "retry",
+        correction: EDIT_DSL_PROTOCOL_CORRECTION,
+        escalation: EDIT_DSL_PROTOCOL_ESCALATION,
+      };
     case "echo":
       return {
         action: "retry",
         correction:
           "Echo the pinned address exactly as shown; re-pin only when the diagnostics name another declaration.",
         escalation:
-          'This attempt MUST echo the pinned address exactly as shown — the same "path", "symbol", and "kind" values.',
+          "This attempt MUST echo the pinned address exactly as shown — the same path, symbol, and kind values.",
       };
     case "address":
       return {
@@ -1893,41 +1171,38 @@ export function rejectionPolicy(
     case "matcher-unparseable":
       return {
         action: "retry",
-        correction: withRangeHint(
-          'Copy "matcher" verbatim from the current source as one complete statement, expression, or contiguous run of statements, or omit "matcher" for a whole-symbol rewrite.',
-        ),
-        escalation: withRangeHint(MATCHER_ESCALATION),
+        correction:
+          "Copy the `match` snippet verbatim from the current source as one complete statement, expression, or contiguous run of statements, or omit `match` for a whole-symbol rewrite.",
+        escalation: MATCHER_ESCALATION,
       };
     case "matcher-not-found":
       return {
         action: "retry",
-        correction: withRangeHint(
-          'Copy "matcher" verbatim from the current source, or omit "matcher" for a whole-symbol rewrite.',
-        ),
-        escalation: withRangeHint(MATCHER_ESCALATION),
+        correction:
+          "Copy the `match` snippet verbatim from the current source, or omit `match` for a whole-symbol rewrite.",
+        escalation: MATCHER_ESCALATION,
       };
     case "matcher-ambiguous":
       return {
         action: "retry",
-        correction: withRangeHint(
-          'Extend "matcher" with more surrounding context copied from the current source, or omit "matcher" for a whole-symbol rewrite.',
-        ),
-        escalation: withRangeHint(MATCHER_ESCALATION),
+        correction:
+          "Extend the `match` snippet with more surrounding context copied from the current source, or omit `match` for a whole-symbol rewrite.",
+        escalation: MATCHER_ESCALATION,
       };
     case "regex-invalid":
       return {
         action: "retry",
         correction:
-          "Write a valid ECMA-262 `/regex/` matcher with no flags — escape any literal slash — or copy a verbatim backtick `snippet` from the current source.",
+          "Write a valid ECMA-262 `/regex/` matcher with no flags — escape any literal slash — or copy a verbatim backtick snippet from the current source.",
         escalation: MATCHER_ESCALATION,
       };
     case "range-invalid":
       return {
         action: "retry",
         correction:
-          'The "range" is invalid for the current source: copy the 1-based line and column positions from the numbered current-source block, keep the end inclusive, and keep the range inside the pinned declaration — or omit "range" and use "matcher"/a whole-symbol rewrite.',
+          "The `pick` range is invalid for the current source: copy the 1-based file-absolute line and column positions from the numbered source block, keep the end inclusive, and keep the range inside the pinned declaration — or omit `pick`.",
         escalation:
-          'This attempt MUST address the current source: omit "range" and return the complete declaration (or a verbatim "matcher") rather than repeating invalid coordinates.',
+          "This attempt MUST address the current source: omit `pick` and return the complete declaration (or a verbatim `match`) rather than repeating invalid coordinates.",
       };
     case "no-op":
       return {
@@ -1958,21 +1233,13 @@ export function rejectionPolicy(
         escalation:
           "This attempt MUST emit the smallest complete replacement: drop comments, collapse bodies, and keep it short.",
       };
-    case "multi-protocol":
-      return {
-        action: "retry",
-        correction:
-          'Return either one flat edit object, or a {"payloads": [...]} object whose entries are flat edit objects addressing different files or non-overlapping regions of one file.',
-        escalation:
-          'This attempt MUST return either exactly one flat {"path", "symbol", "kind", "matcher", "range", "replacement"} object or a well-formed {"payloads": [ ... ]} batch: no other keys, no nesting beyond one array level.',
-      };
     case "multi-duplicate":
       return {
         action: "retry",
         correction:
-          "Two payloads of the multi-payload exchange addressed overlapping regions of the same file, so none of them was written. Make every same-file payload address a distinct, non-overlapping declaration or span, or split the edits across exchanges.",
+          "Two clauses of the edit-dsl reply addressed overlapping regions of the same file, so none of them was written. Make every same-file clause address a distinct, non-overlapping declaration or span, or split the edits across replies.",
         escalation:
-          "This attempt MUST give the same file's payloads non-overlapping regions: address distinct declarations or disjoint spans, or batch one edit per file and edit the rest in later exchanges.",
+          "This attempt MUST give the same file's clauses non-overlapping regions: address distinct declarations or disjoint spans.",
       };
   }
 }
@@ -2003,10 +1270,7 @@ export interface LoopRecord {
   payloads?: number;
   /** Provider tool calls in the reply that produced this row (#69); 0 on verification rows. */
   toolCalls?: number;
-  /**
-   * Addresses this applied exchange covered (#81): one per batch payload in
-   * explicit-targets mode, so the result can name every file the exchange wrote.
-   */
+  /** Addresses this applied exchange covered, so the result can name every file. */
   appliedLocators?: Locator[];
   /**
    * Selectors used by the exchange's parsed payloads (#101): one entry per
@@ -2276,11 +1540,6 @@ export interface LoopResult {
    */
   usage?: LoopUsage;
   /**
-   * Explicit-targets mode (#81): every requested address that was applied, in
-   * order. Absent on the default discovery path.
-   */
-  appliedTargets?: Locator[];
-  /**
    * Plan/execute mode: one entry per WorkNode of the final graph, in record
    * order (`typescript-coder-result@3`). Absent on the single-target drivers.
    */
@@ -2506,12 +1765,10 @@ export interface AttemptDigestState {
   attempts: number;
   /** Entry lines evicted by the character bound. */
   dropped: number;
-  /** Edit protocol the run uses, so a `protocol` alternative re-teaches the right form (#117/#119). */
-  format: ProtocolFormat;
 }
 
-export function createAttemptDigestState(format: ProtocolFormat = "json"): AttemptDigestState {
-  return { entries: [], counts: new Map(), cursor: 0, attempts: 0, dropped: 0, format };
+export function createAttemptDigestState(): AttemptDigestState {
+  return { entries: [], counts: new Map(), cursor: 0, attempts: 0, dropped: 0 };
 }
 
 /** One digest detail line is truncated to this many characters, `…` included. */
@@ -2544,7 +1801,6 @@ const REJECTION_CAUSES: ReadonlySet<string> = new Set<RejectionCause>([
   "format",
   "format-export-duplication",
   "truncated",
-  "multi-protocol",
   "multi-duplicate",
 ]);
 
@@ -2625,12 +1881,12 @@ function digestDetail(diagnostics: string): string {
 
 // Reuse the #56 escalation text for rejection causes; tsc/tests get a fixed
 // concrete sentence (#57).
-function digestAlternative(className: string, format: ProtocolFormat): string {
+function digestAlternative(className: string): string {
   if (className === "tsc" || className === "tests") {
     return DIGEST_VERIFICATION_ALTERNATIVE;
   }
   if (REJECTION_CAUSES.has(className)) {
-    const policy = rejectionPolicy(className as RejectionCause, format);
+    const policy = rejectionPolicy(className as RejectionCause);
     if (policy.action === "retry" && policy.escalation !== null) {
       return policy.escalation;
     }
@@ -2641,16 +1897,13 @@ function digestAlternative(className: string, format: ProtocolFormat): string {
 // One `Ruled out` line per class repeated at least DIGEST_RULED_OUT_REPEATS
 // times (#57): most-repeated first, then by class name, so the block is
 // deterministic.
-function digestRuledOutLines(
-  counts: ReadonlyMap<string, number>,
-  format: ProtocolFormat,
-): string[] {
+function digestRuledOutLines(counts: ReadonlyMap<string, number>): string[] {
   return [...counts.entries()]
     .filter(([, count]) => count >= DIGEST_RULED_OUT_REPEATS)
     .sort((left, right) => right[1] - left[1] || comparePaths(left[0], right[0]))
     .map(
       ([className, count]) =>
-        `Ruled out after ${count} repeats: ${className} — ${digestAlternative(className, format)}`,
+        `Ruled out after ${count} repeats: ${className} — ${digestAlternative(className)}`,
     );
 }
 
@@ -2689,7 +1942,7 @@ export function updateAttemptDigest(
  */
 export function renderAttemptDigest(state: AttemptDigestState): string {
   const header = `Prior attempts (${state.attempts}):`;
-  const ruledOut = digestRuledOutLines(state.counts, state.format);
+  const ruledOut = digestRuledOutLines(state.counts);
   for (;;) {
     const omitted = state.dropped === 0 ? [] : [`- (${state.dropped} earlier attempts omitted)`];
     const text = [header, ...omitted, ...state.entries, ...ruledOut].join("\n");
@@ -2887,15 +2140,6 @@ export function readFileIfExists(path: string): string | null {
   return readFileSync(path, "utf8");
 }
 
-function appendText(existing: string, replacement: string): string {
-  const body = replacement.trim();
-  if (existing.trim() === "") {
-    return `${body}\n`;
-  }
-  const base = existing.endsWith("\n") ? existing : `${existing}\n`;
-  return `${base}\n${body}\n`;
-}
-
 export function writeTarget(cwd: string, path: string, source: string): void {
   const target = join(cwd, path);
   mkdirSync(dirname(target), { recursive: true });
@@ -3008,46 +2252,6 @@ export function resolveEditRange(
   return { ok: true, start, end };
 }
 
-// The staged `range-invalid` diagnostic (#72): names the offending range and the
-// declaration's current bounds in the same 1-based coordinate space.
-function rangeInvalidDiagnostics(
-  locator: Locator,
-  target: string,
-  sourceBefore: string,
-  base: number,
-  limit: number,
-  declaration: { start: number; end: number },
-  range: EditRange,
-  detail: string,
-): string {
-  const blockText = sourceBefore.slice(base, limit);
-  const startPos = lineColumnAt(blockText, declaration.start - base);
-  const endPos = lineColumnAt(blockText, declaration.end - base);
-  return [
-    "stage: range",
-    `the "range" (line ${range.line}, column ${range.column} to line ${range.endLine}, column ${range.endColumn}) is invalid for ${locator.kind} ${JSON.stringify(locator.name)} in ${target}: ${detail}`,
-    `the pinned declaration currently spans line ${startPos.line}, column ${startPos.column} to line ${endPos.line}, column ${endPos.column} of the shown current source`,
-    'copy the 1-based line and column positions from the numbered current-source block, keep the end inclusive, and keep the range inside the pinned declaration; or omit "range" and use "matcher"/a whole-symbol rewrite',
-  ].join("\n");
-}
-
-// A `range` is defined against the numbered block the prompt showed, which (for
-// an ordinary modify round) is the pinned declaration alone. A payload that
-// re-pins to another declaration, or a further multi-payload entry in another
-// file, has no shown block of its own, so its coordinates are undefined: refuse
-// rather than splice at a guessed offset inside the target declaration (#72).
-function rangeUnshownDiagnostics(
-  shownLocator: Locator,
-  payloadLocator: Locator,
-  range: EditRange,
-): string {
-  return [
-    "stage: range",
-    `the "range" (line ${range.line}, column ${range.column} to line ${range.endLine}, column ${range.endColumn}) for ${payloadLocator.kind} ${JSON.stringify(payloadLocator.name)} in ${payloadLocator.path} cannot be used: the numbered current-source block shows only ${shownLocator.kind} ${JSON.stringify(shownLocator.name)} in ${shownLocator.path}`,
-    'omit "range" for this payload and use "matcher" or a whole-symbol rewrite, or echo the pinned selection',
-  ].join("\n");
-}
-
 function describeEntry(entry: IndexEntry, sourceByPath: ReadonlyMap<string, string>): string {
   const source = sourceByPath.get(entry.locator.path) ?? "";
   const { line, column } = lineColumnAt(source, entry.node.start);
@@ -3152,7 +2356,7 @@ export type CurrentEntryResolution =
 // Strict-AND resolution of one locator against the current source that would be
 // spliced: no silent first-match pick, no kind coercion, no auto-append. An
 // empty locator kind is the edit-dsl wildcard (path + name only); `space` is the
-// edit-dsl `resolve value|type|namespace` filter and is `null` on the JSON path.
+// edit-dsl `resolve value|type|namespace` filter and is `null` when omitted.
 export function resolveCurrentEntry(
   sourceBefore: string,
   target: string,
@@ -3242,323 +2446,6 @@ export function stripLeadingExport(replacement: string, modifier: string | null)
   return replacement.replace(EXPORT_PATTERN, "");
 }
 
-// One matcher attempt with the leading-`export` tolerance: strip once, only at
-// the very start, and only when the declaration already has a modifier.
-function findMatcherWithModifier(
-  sourceBefore: string,
-  node: Node,
-  matcher: string,
-  modifier: string | null,
-): MatcherResult {
-  const matched = findMatcher(sourceBefore, node, matcher);
-  if ((matched.kind === "not-found" || matched.kind === "unparseable") && modifier !== null) {
-    if (EXPORT_DEFAULT_MODIFIER_PATTERN.test(modifier) && EXPORT_DEFAULT_PATTERN.test(matcher)) {
-      return findMatcher(sourceBefore, node, matcher.replace(EXPORT_DEFAULT_PATTERN, ""));
-    }
-    if (EXPORT_PATTERN.test(matcher)) {
-      return findMatcher(sourceBefore, node, matcher.replace(EXPORT_PATTERN, ""));
-    }
-  }
-  return matched;
-}
-
-// A not-found matcher may actually belong to a different declaration of the
-// same file; when a candidate matches (up to two are named), the diagnostic
-// says which address would re-pin to it (#48).
-function relocationNote(
-  sourceBefore: string,
-  target: string,
-  entry: IndexEntry,
-  matcher: string,
-): string | null {
-  const index = buildIndexTolerant([{ path: target, source: sourceBefore }]).index;
-  const matches: IndexEntry[] = [];
-  for (const candidate of index.entries) {
-    const overlaps = candidate.node.start < entry.node.end && entry.node.start < candidate.node.end;
-    if (overlaps) {
-      continue;
-    }
-    // Each candidate carries its own preceding modifier, not the pinned one.
-    const matched = findMatcherWithModifier(
-      sourceBefore,
-      candidate.node,
-      matcher,
-      precedingExportModifier(sourceBefore, candidate),
-    );
-    if (matched.kind !== "match") {
-      continue;
-    }
-    matches.push(candidate);
-    if (matches.length >= RELOCATION_CANDIDATE_LIMIT) {
-      break;
-    }
-  }
-  if (matches.length === 0) {
-    return null;
-  }
-  if (matches.length === 1) {
-    const candidate = matches[0];
-    if (candidate === undefined) {
-      return null; // Unreachable: matches.length is exactly one here.
-    }
-    return `note: the same snippet matches inside ${candidate.locator.kind} ${JSON.stringify(candidate.locator.name)} in ${candidate.locator.path} — if that is the intended target, return ${addressJson(candidate.locator)} to re-pin`;
-  }
-  const described = matches.map(
-    (candidate) =>
-      `${candidate.locator.kind} ${JSON.stringify(candidate.locator.name)} in ${candidate.locator.path}`,
-  );
-  return `note: the same snippet matches inside ${described.join(" and ")} — return the intended declaration's own {path, symbol, kind} to re-pin`;
-}
-
-// Resolve one edit against an already-resolved entry into the half-open splice
-// span it addresses: a `range` selector when present, otherwise an omitted
-// matcher = whole-symbol rewrite, otherwise the single structural match inside
-// the entry. The per-region no-op guard lives here so every region is checked
-// before a same-file batch is combined (#48, #72, #78).
-type EntrySpliceResolution =
-  | {
-      ok: true;
-      /** Half-open offsets into `sourceBefore`. */
-      start: number;
-      end: number;
-      /** Replacement text (a whole-declaration span strips a duplicate `export`). */
-      text: string;
-      gateStart: number;
-    }
-  | { ok: false; cause: EntrySpliceCause; diagnostics: string };
-
-function resolveEntrySplice(
-  sourceBefore: string,
-  target: string,
-  locator: Locator,
-  entry: IndexEntry,
-  matcher: string | null,
-  replacement: string,
-  range: EditRange | null = null,
-  rangeFileRelative = false,
-): EntrySpliceResolution {
-  const modifier = precedingExportModifier(sourceBefore, entry);
-  let start: number;
-  let end: number;
-  let text: string;
-  if (range !== null) {
-    // Coordinate base (#72): the current source block shown in the prompt. A
-    // declaration-relative block starts at the indexed node (after a wrapping
-    // `export`); a whole-file block (create→repair rounds) starts at offset 0.
-    const base = rangeFileRelative ? 0 : entry.node.start;
-    const limit = rangeFileRelative ? sourceBefore.length : entry.node.end;
-    const declaration = { start: entry.node.start, end: entry.node.end };
-    const located = resolveEditRange(sourceBefore, range, base, limit, declaration);
-    if (!located.ok) {
-      return {
-        ok: false,
-        cause: "range-invalid",
-        diagnostics: rangeInvalidDiagnostics(
-          locator,
-          target,
-          sourceBefore,
-          base,
-          limit,
-          declaration,
-          range,
-          located.detail,
-        ),
-      };
-    }
-    // A range covering the whole indexed declaration gets the same modifier
-    // tolerance as a whole-symbol rewrite; a body-level range must not strip.
-    text =
-      modifier !== null && located.start === entry.node.start
-        ? stripLeadingExport(replacement, modifier)
-        : replacement;
-    start = located.start;
-    end = located.end;
-  } else if (matcher === null) {
-    start = entry.node.start;
-    end = entry.node.end;
-    text = stripLeadingExport(replacement, modifier);
-  } else {
-    const matched = findMatcherWithModifier(sourceBefore, entry.node, matcher, modifier);
-    if (matched.kind === "unparseable") {
-      return {
-        ok: false,
-        cause: "matcher-unparseable",
-        diagnostics: `stage: matcher\nthe matcher could not be parsed as TypeScript: ${matched.message}; a matcher must be a single copied statement or expression, or a contiguous run of statements copied from one block; omitting "matcher" gives a whole-symbol rewrite`,
-      };
-    }
-    if (matched.kind === "not-found") {
-      const { line, column } = lineColumnAt(sourceBefore, entry.node.start);
-      const base = `stage: matcher\nthe matcher was not found inside ${locator.kind} ${JSON.stringify(locator.name)} in ${target} (line ${line}, column ${column}); copy a complete snippet from the current source, or omit "matcher" for a whole-symbol rewrite`;
-      const note = relocationNote(sourceBefore, target, entry, matcher);
-      return {
-        ok: false,
-        cause: "matcher-not-found",
-        diagnostics: note === null ? base : `${base}\n${note}`,
-      };
-    }
-    if (matched.kind === "ambiguous") {
-      const { line, column } = lineColumnAt(sourceBefore, entry.node.start);
-      const listed = matched.spans.slice(0, 8);
-      const more = matched.spans.length - listed.length;
-      const candidates = [
-        "candidates:",
-        ...listed.map((span) => {
-          const at = sourceLineAt(sourceBefore, span.start);
-          return `- ${at.line}:${at.column}  ${at.text.trim()}`;
-        }),
-        ...(more > 0 ? [`- ... and ${more} more`] : []),
-      ];
-      return {
-        ok: false,
-        cause: "matcher-ambiguous",
-        diagnostics: [
-          `stage: matcher\nthe matcher matches ${matched.matches} places inside ${locator.kind} ${JSON.stringify(locator.name)} in ${target} (line ${line}, column ${column}); extend it with more surrounding context`,
-          ...candidates,
-          "use one candidate's line:column in a range, or extend the snippet until it is unique",
-        ].join("\n"),
-      };
-    }
-    // A match over the whole declaration gets the same modifier tolerance as a
-    // whole-symbol rewrite; a body-level match must not strip (#48).
-    text =
-      modifier !== null && matched.start === entry.node.start
-        ? stripLeadingExport(replacement, modifier)
-        : replacement;
-    start = matched.start;
-    end = matched.end;
-  }
-  // A whole-declaration empty fence deletes the declaration (#14): include the
-  // leading `export`/`export default` modifier so the deletion does not leave a
-  // dangling keyword behind. The edit-dsl protocol documents this as the delete
-  // form, and a duplicate is repaired by deleting the indexed copy this way.
-  if (matcher === null && range === null && text.trim() === "" && modifier !== null) {
-    start = entry.node.start - modifier.length;
-  }
-  // Per-region no-op guard (#59): the replacement equals the exact text it
-  // replaces, so this region alone would change nothing.
-  if (text === sourceBefore.slice(start, end)) {
-    return { ok: false, cause: "no-op", diagnostics: NOOP_DIAGNOSTICS };
-  }
-  return { ok: true, start, end, text, gateStart: start };
-}
-
-// Apply one edit to an already-resolved entry and build the whole-file
-// candidate. Shared by the pinned modify branch and verification-repair re-pins
-// (#48); a multi-payload region uses `resolveEntrySplice` directly (#78).
-function spliceEntryEdit(
-  sourceBefore: string,
-  target: string,
-  locator: Locator,
-  entry: IndexEntry,
-  matcher: string | null,
-  replacement: string,
-  range: EditRange | null = null,
-  rangeFileRelative = false,
-): EntrySplice {
-  const resolved = resolveEntrySplice(
-    sourceBefore,
-    target,
-    locator,
-    entry,
-    matcher,
-    replacement,
-    range,
-    rangeFileRelative,
-  );
-  if (!resolved.ok) {
-    return resolved;
-  }
-  return {
-    ok: true,
-    candidate: applyMatcherSplice(sourceBefore, resolved.start, resolved.end, resolved.text),
-    gateStart: resolved.gateStart,
-  };
-}
-
-/** One modify payload resolved to its addressed region against its own file. */
-type PayloadSpan =
-  | { ok: true; entry: IndexEntry; start: number; end: number; text: string; gateStart: number }
-  | {
-      ok: false;
-      stage: "address" | "matcher" | "range" | "no-op";
-      diagnostics: string;
-      matcherCause?: MatcherCause;
-      undeclaredName?: string | null;
-    };
-
-// Resolve one modify payload against the source that would be spliced:
-// strict-AND address resolution, then the range/matcher/no-op rules. Shared by
-// the pinned first payload and each self-addressed batch payload (#69/#78); the
-// caller owns the echo/re-pin policy.
-function resolvePayloadSpan(
-  sourceBefore: string,
-  target: string,
-  payload: EditPayload,
-  rangeFileRelative = false,
-): PayloadSpan {
-  const resolved = resolveCurrentEntry(sourceBefore, target, payload.locator);
-  if (!resolved.ok) {
-    return {
-      ok: false,
-      stage: "address",
-      diagnostics: resolved.diagnostics,
-      undeclaredName: resolved.undeclared ? payload.locator.name : null,
-    };
-  }
-  const restricted = wholeSymbolRestrictionDiagnostics(resolved.entry);
-  if (restricted !== null && payload.matcher === null && payload.range === null) {
-    return { ok: false, stage: "address", diagnostics: restricted };
-  }
-  const spliced = resolveEntrySplice(
-    sourceBefore,
-    target,
-    payload.locator,
-    resolved.entry,
-    payload.matcher,
-    payload.replacement,
-    payload.range,
-    rangeFileRelative,
-  );
-  if (spliced.ok) {
-    return {
-      ok: true,
-      entry: resolved.entry,
-      start: spliced.start,
-      end: spliced.end,
-      text: spliced.text,
-      gateStart: spliced.gateStart,
-    };
-  }
-  if (spliced.cause === "no-op") {
-    return { ok: false, stage: "no-op", diagnostics: spliced.diagnostics };
-  }
-  if (spliced.cause === "range-invalid") {
-    return { ok: false, stage: "range", diagnostics: spliced.diagnostics };
-  }
-  return {
-    ok: false,
-    stage: "matcher",
-    diagnostics: spliced.diagnostics,
-    matcherCause: spliced.cause,
-  };
-}
-
-// One failing payload block inside a rejected batch (#69): names its position,
-// own address, and its own staged diagnostics; the whole exchange is atomic.
-function multiPayloadDiagnostics(
-  index: number,
-  total: number,
-  path: string,
-  locator: Locator,
-  diagnostics: string,
-): string {
-  return [
-    "stage: multi",
-    `payload ${index} of ${total} (${addressJson(locator)} in ${JSON.stringify(path)}) failed; the whole exchange is discarded and nothing is written`,
-    diagnostics,
-  ].join("\n");
-}
-
 // One failing clause inside an edit-dsl reply (#111): names the clause position
 // and its own staged diagnostics. EditDsl replies are atomic across the whole
 // reply (§6), so the header says every clause is discarded and nothing is
@@ -3639,207 +2526,6 @@ export interface ResolvedRegion {
   create: boolean;
 }
 
-// Overlap rejection (#78): two same-file regions share source text, so they
-// cannot both be applied in one pass. Names both positions and their spans; the
-// whole exchange is discarded.
-function multiOverlapDiagnostics(
-  total: number,
-  path: string,
-  earlier: ResolvedRegion,
-  later: ResolvedRegion,
-): string {
-  return [
-    "stage: multi",
-    `payload ${earlier.index + 1} and payload ${later.index + 1} of ${total} both edit ${JSON.stringify(path)} but their regions overlap (offsets ${earlier.start}..${earlier.end} and ${later.start}..${later.end}); the whole exchange is discarded and nothing is written`,
-    `payload ${earlier.index + 1} (${addressJson(earlier.locator)}) and payload ${later.index + 1} (${addressJson(later.locator)}) must address non-overlapping regions, or be split across exchanges`,
-  ].join("\n");
-}
-
-function createExistsDiagnostics(
-  locator: Locator,
-  existing: readonly IndexEntry[],
-  sourceByPath: ReadonlyMap<string, string>,
-): string {
-  const kinds = [
-    ...new Set(existing.flatMap((entry) => grammarKindsForEntryKind(entry.locator.kind))),
-  ];
-  return [
-    "stage: address",
-    `the name ${JSON.stringify(locator.name)} already exists in ${JSON.stringify(locator.path)} as ${kinds
-      .map((kind) => JSON.stringify(kind))
-      .join(", ")}; use mode "modify" to change it instead of "create"`,
-    ...candidateLines(existing, sourceByPath),
-  ].join("\n");
-}
-
-// The index node excludes a wrapping `export`; deleting an exported
-// declaration should not leave a dangling `export` keyword behind. A named
-// member (interface/type literal, enum, object literal) also expands over its
-// `,`/`;` separator so the member splice stays parseable.
-function deleteRange(program: Program, node: Node, source: string): { start: number; end: number } {
-  const memberRange = memberDeletionRange(source, node);
-  if (memberRange !== null) {
-    return memberRange;
-  }
-  for (const statement of program.body) {
-    if (
-      statement.kind !== "ExportNamedDeclaration" &&
-      statement.kind !== "ExportDefaultDeclaration"
-    ) {
-      continue;
-    }
-    const declaration = statement.declaration;
-    if (declaration !== null && declaration.start === node.start && declaration.end === node.end) {
-      return { start: statement.start, end: statement.end };
-    }
-  }
-  return { start: node.start, end: node.end };
-}
-
-interface DeletionInput {
-  options: LoopOptions;
-  provider: ProviderLike;
-  temperature: number | undefined;
-  targetPath: string;
-  locator: Locator;
-  node: Node;
-  /** Run-start source of the target file. */
-  baseSource: string;
-  messages: ChatMessage[];
-  records: LoopRecord[];
-  skipped?: SkippedFile[];
-  iteration: number;
-}
-
-// `delete` carries no edit payload: Edit only picks the target (one exchange),
-// the harness splices the resolved declaration out (range expanded to a
-// wrapping `export`) and runs the syntax gate, format, write, and verification
-// once. Any failure ends the run through the termination matrix (#43): a broken
-// `prev` is `prev-broken`, a gate/format/tsc/test failure is
-// `delete-verification-failed` — each with exactly one summary call.
-async function executeDeletion(input: DeletionInput): Promise<LoopResult> {
-  const { cwd } = input.options;
-  const { targetPath, locator, node, baseSource } = input;
-  const fail = async (
-    reason: TerminationReason,
-    diagnostics: string,
-    outcome: VerificationOutcome,
-    signature: number | null = null,
-  ): Promise<LoopResult> => {
-    input.records.push(
-      recordRow({
-        row: input.records.length + 1,
-        iteration: input.iteration,
-        kind: "verification",
-        exchange: null,
-        locator,
-        replacement: "",
-        diagnostics,
-        outcome,
-        finishReason: null,
-        signature,
-      }),
-    );
-    return {
-      ok: false,
-      mode: "delete",
-      locator,
-      filePath: targetPath,
-      editedSource: null,
-      records: input.records,
-      diagnostics,
-      explanation: await explain(
-        input.provider,
-        input.messages,
-        input.temperature,
-        reason,
-        diagnostics,
-      ),
-      messages: input.messages,
-      skipped: input.skipped,
-      terminationReason: reason,
-      tokens: zeroLoopTokens(),
-    };
-  };
-  const prevCheck = parseCheck(baseSource);
-  if (!prevCheck.ok) {
-    return await fail(
-      "prev-broken",
-      prevBrokenDiagnostics(targetPath, prevCheck.failure),
-      "prev-broken",
-    );
-  }
-  const range = deleteRange(prevCheck.program, node, baseSource);
-  const spliced = applyMatcherSplice(baseSource, range.start, range.end, "");
-  const gate = parseCheck(spliced);
-  if (!gate.ok) {
-    return await fail(
-      "delete-verification-failed",
-      gateDiagnostics(range.start, "", gate.failure),
-      "gate",
-    );
-  }
-  let newSource: string;
-  try {
-    newSource = await formatSource(targetPath, spliced);
-  } catch (error) {
-    return await fail(
-      "delete-verification-failed",
-      `stage: format\n${errorMessage(error)}`,
-      "format",
-    );
-  }
-  writeTarget(cwd, targetPath, newSource);
-  const check = await checkTool(cwd, input.options.checkCommand, input.options.commandTimeoutMs);
-  const test = await runVerificationTests(cwd, targetPath, input.options);
-  if (check.ok && test.ok) {
-    input.records.push(
-      recordRow({
-        row: input.records.length + 1,
-        iteration: input.iteration,
-        kind: "verification",
-        exchange: null,
-        locator,
-        replacement: "",
-        diagnostics: null,
-        outcome: "ok",
-        finishReason: null,
-      }),
-    );
-    return {
-      ok: true,
-      mode: "delete",
-      locator,
-      filePath: targetPath,
-      editedSource: newSource,
-      records: input.records,
-      diagnostics: null,
-      explanation: null,
-      messages: input.messages,
-      skipped: input.skipped,
-      tokens: zeroLoopTokens(),
-    };
-  }
-  const diagnostics = formatDiagnostics({
-    check,
-    test,
-    targetPath,
-    baseSource,
-    newSource,
-    sourceFor: (file) => readFileIfExists(join(cwd, file)),
-  });
-  const signature = check.diagnostics.length + failingTestNames(test.output).length;
-  return await fail(
-    "delete-verification-failed",
-    diagnostics,
-    check.ok ? "tests" : "tsc",
-    signature,
-  );
-}
-
-// Re-resolve the address against the current on-disk source so retry prompts
-// show what is actually there; fall back to the whole file when it no longer
-// resolves to exactly one entry (for example after a corrupting attempt).
 function currentSourceForPrompt(
   mode: "modify" | "create",
   targetPath: string,
@@ -3926,19 +2612,14 @@ async function runVerificationTests(
 // file's current source; `check`/`test` run the same commands Verification runs.
 // The model names a kind, never a command string, so nothing else can run.
 async function executeSelfCheck(
-  kind: SelfCheckKind,
+  kind: "check" | "test",
   context: {
     cwd: string;
-    target: string;
     checkCommand?: string[];
     testCommand?: string[];
     commandTimeoutMs?: number;
   },
 ): Promise<string> {
-  if (kind === "read") {
-    const source = readFileIfExists(join(context.cwd, context.target));
-    return renderSelfCheckRead(context.target, source ?? "");
-  }
   if (kind === "check") {
     const result = await checkTool(context.cwd, context.checkCommand, context.commandTimeoutMs);
     return renderSelfCheckCommand("check", "the check command", result);
@@ -4284,73 +2965,6 @@ export function withEffort(base: ChatOptions | undefined, effort: ReasoningEffor
   return { ...base, reasoningEffort: effort };
 }
 
-type SelectionResolution = { ok: true; selection: Selection } | { ok: false; diagnostic: string };
-
-// One strict-AND resolution for every mode: no silent first-match pick, no kind
-// coercion, no auto-append. `create` additionally guards the target: a safe path
-// whose name is absent under any kind.
-function resolveSelection(
-  cwd: string,
-  index: SymbolIndex,
-  files: readonly SourceFile[],
-  skipped: readonly SkippedFile[],
-  response: SelectionResponse,
-): SelectionResolution {
-  const locator = response.locator;
-  const sourceByPath = new Map(files.map((file) => [file.path, file.source]));
-  if (response.mode === "create") {
-    const path = safeAppendPath(cwd, locator.path);
-    if (path === null) {
-      return {
-        ok: false,
-        diagnostic: `stage: address\nthe path ${JSON.stringify(locator.path)} is not a safe repo-relative target; use a relative path inside the repository without "..", hidden, or build segments`,
-      };
-    }
-    const skippedFile = skipped.find((file) => file.path === locator.path);
-    if (skippedFile !== undefined) {
-      return {
-        ok: false,
-        diagnostic: `stage: address\nthe file ${JSON.stringify(locator.path)} could not be parsed and indexed (${skippedFile.message}); the harness does not append to a file it cannot parse`,
-      };
-    }
-    const existing = index
-      .byName(locator.name)
-      .filter((entry) => entry.locator.path === locator.path);
-    if (existing.length > 0) {
-      return { ok: false, diagnostic: createExistsDiagnostics(locator, existing, sourceByPath) };
-    }
-    return { ok: true, selection: { mode: "create", locator, path } };
-  }
-  const matches = index.lookup(locator);
-  if (matches.length === 0) {
-    const skippedFile = skipped.find((file) => file.path === locator.path);
-    if (skippedFile !== undefined) {
-      return {
-        ok: false,
-        diagnostic: `stage: address\nthe file ${JSON.stringify(locator.path)} could not be parsed and indexed (${skippedFile.message})`,
-      };
-    }
-    return {
-      ok: false,
-      diagnostic: addressMissDiagnostics(locator, index.byName(locator.name), sourceByPath),
-    };
-  }
-  if (matches.length > 1) {
-    return { ok: false, diagnostic: addressAmbiguousDiagnostics(locator, matches, sourceByPath) };
-  }
-  const entry = matches[0];
-  if (entry === undefined) {
-    return { ok: false, diagnostic: addressMissDiagnostics(locator, [], sourceByPath) };
-  }
-  if (response.mode === "delete") {
-    const restriction = wholeSymbolRestrictionDiagnostics(entry);
-    if (restriction !== null) {
-      return { ok: false, diagnostic: restriction };
-    }
-  }
-  return { ok: true, selection: { mode: response.mode, locator, entry } };
-}
-
 // Fallback diagnostic for a run that reaches the end of a driver without a
 // valid edit and without a more specific termination reason. #57 removed the
 // fixed exchange budget, so this names the end state, never a cap.
@@ -4408,1602 +3022,6 @@ function isStopReply(response: ChatResponse): boolean {
   return (response.content ?? "").trim().toUpperCase() === "STOP";
 }
 
-/** One submitted modify payload, for the resubmission guard (#48/#69). */
-interface ModifySubmissionEntry {
-  /** Canonical as-sent `{path, symbol, kind}`. */
-  locatorJson: string;
-  matcher: string | null;
-  /** Canonical `(line,column)` selector (#72), or null. */
-  rangeJson: string | null;
-  replacement: string;
-}
-
-/**
- * Previous modify-mode submission, for the resubmission guard (#48): one entry
- * for a classic payload, N entries for a multi-payload batch (#69); the guard
- * compares the whole submission, so a byte-identical resend of either shape is
- * rejected before any resolution or splice.
- */
-interface ModifySubmission {
-  entries: ModifySubmissionEntry[];
-  /** True when the submission was written; false when it was rejected. */
-  applied: boolean;
-  /** First line of the rejection diagnostic when `applied` is false. */
-  rejectionFirstLine: string | null;
-}
-
-function firstDiagnosticLine(diagnostics: string): string {
-  const newline = diagnostics.indexOf("\n");
-  return newline === -1 ? diagnostics : diagnostics.slice(0, newline);
-}
-
-function submissionOf(
-  payloads: readonly EditPayload[],
-  applied: boolean,
-  rejectionFirstLine: string | null,
-): ModifySubmission {
-  return {
-    entries: payloads.map((payload) => ({
-      locatorJson: addressJson(payload.locator),
-      matcher: payload.matcher,
-      rangeJson: payload.range === null ? null : rangeJson(payload.range),
-      replacement: payload.replacement,
-    })),
-    applied,
-    rejectionFirstLine,
-  };
-}
-
-/** Canonical, comparable form of a `range` selector (#72). */
-function rangeJson(range: EditRange): string {
-  return `${range.line},${range.column},${range.endLine},${range.endColumn}`;
-}
-
-function sameModifySubmission(
-  submission: ModifySubmission,
-  payloads: readonly EditPayload[],
-): boolean {
-  if (submission.entries.length !== payloads.length) {
-    return false;
-  }
-  return payloads.every((payload, index) => {
-    const entry = submission.entries[index];
-    return (
-      entry !== undefined &&
-      entry.locatorJson === addressJson(payload.locator) &&
-      entry.matcher === payload.matcher &&
-      entry.rangeJson === (payload.range === null ? null : rangeJson(payload.range)) &&
-      entry.replacement === payload.replacement
-    );
-  });
-}
-
-// `stage: repeat` (#48): byte-identical resubmission cannot change anything,
-// and the wording distinguishes an already-applied edit from a rejected one.
-function repeatDiagnostics(submission: ModifySubmission): string {
-  if (submission.applied) {
-    return 'stage: repeat\nthis exact edit was already applied and the file already contains its effect; verification still fails, so resending it cannot change the outcome — adjust the replacement, omit "matcher" for a whole-symbol rewrite, or re-pin to a declaration the diagnostics name';
-  }
-  const rejected = submission.rejectionFirstLine ?? "the previous rejection";
-  return `stage: repeat\nthis exact edit was just rejected (${rejected}); resending it verbatim cannot succeed — change the payload`;
-}
-
-async function runJsonLoop(options: LoopOptions): Promise<LoopResult> {
-  const tokenBudget = options.tokenBudget ?? DEFAULT_TOKEN_BUDGET;
-  const tokenBudgetBasis = options.tokenBudgetBasis ?? "raw";
-  const temperature = options.temperature;
-  const chatOptions: ChatOptions | undefined =
-    temperature === undefined ? undefined : { temperature };
-  const cwd = options.cwd;
-  const files = discoverSourceFiles(cwd);
-  const build = buildIndexTolerant(files);
-  const contextYaml = buildContextYaml(files, build);
-  const index = build.index;
-  const skipped = build.skipped;
-  const specFiles = selectSpecFiles(options.issue, files);
-  // Explicit-targets mode (#81): the run edits exactly these addresses and
-  // forces the #69 batch shape so one exchange can cover several files.
-  const targets = options.targets ?? [];
-  const targetsMode = targets.length > 0;
-  const multiPayload = options.multiPayload === true || targetsMode;
-  // JSON driver: explicit-targets mode is JSON by construction.
-  const protocolFormat: ProtocolFormat = "json";
-  // Pending targets (not yet applied), applied targets, and targets that never
-  // resolved to a unique modify-able declaration.
-  const targetQueue: Locator[] = [...targets];
-  const targetFailures: { locator: Locator; diagnostics: string }[] = [];
-  const systemMessage: ChatMessage = {
-    role: "system",
-    content: buildSystemPrompt(multiPayload, protocolFormat),
-  };
-  const issueMessage: ChatMessage = {
-    role: "user",
-    content: buildUserPrompt(options.issue, contextYaml, specFiles),
-  };
-  // Lean issue message (#49): same issue text and project context without the
-  // spec-file section. Rounds opened by a `tsc`-stage verification failure
-  // send it on every content exchange — their repair is driven by the
-  // diagnostics and the current source; all other rounds keep the full message.
-  const leanIssueMessage: ChatMessage = {
-    role: "user",
-    content: buildUserPrompt(options.issue, contextYaml, []),
-  };
-  // Round 1 always starts from the full message; the per-round variant is chosen
-  // at the top of the Run loop and applied on the content-exchange rebuild.
-  const initialMessages: ChatMessage[] = [systemMessage, issueMessage];
-  let messages: ChatMessage[] = initialMessages;
-  const records: LoopRecord[] = [];
-  let consumedTokens = 0;
-  // Component token tally (#80), accumulated alongside `consumedTokens` (which
-  // keeps driving the budget unchanged).
-  const tokens: LoopTokens = zeroLoopTokens();
-  const addTokens = (delta: LoopTokens): void => {
-    addLoopTokens(tokens, delta);
-  };
-
-  // Pinning (#43): the first successful pick fixes {mode, path, symbol, kind}
-  // for the run; later exchanges revise content only and must echo the address.
-  let pinned: { mode: SelectionMode; locator: Locator } | null = null;
-  let pinnedAddressJson = "";
-  // Run-start source of the target file ("" when the file did not exist).
-  let baseSource = "";
-  // First content prompt after a pick; null once a retry prompt takes over.
-  let initialContentPrompt: string | null = null;
-  // Create→repair (#41): once a failed create keeps a parseable file, content
-  // exchanges are modify rounds against the kept file and prompts show it whole.
-  let repair = false;
-  // Verification diagnostics that opened the current Run iteration.
-  let pendingDiagnostics: string | null = null;
-  // Stage of the verification failure that opened the current Run iteration
-  // (#49): `tsc` makes the round's content prompts lean.
-  let pendingVerificationStage: "tsc" | "tests" | null = null;
-  // Consecutive no-progress attempts (#54/#57): incremented at every rejected
-  // exchange (including truncation and viewer-only replies) and at every failed
-  // verification. It schedules the no-progress ask at the #54/#65 milestones
-  // only; it is never a cap. A passing verification ends the run.
-  let stalledAttempts = 0;
-  // The failed-attempt count whose no-progress ask was already shown. A decision
-  // turn or self-check reply does not increment the count, so without this guard
-  // the same milestone would ask twice.
-  let stalledAskShownAt = -1;
-  // Per-cause retry policy (#56): the last rejection cause and the length of
-  // the consecutive-same-cause streak, plus the correction sentence the next
-  // edit retry must carry (the escalation once the streak reaches 2, and the
-  // #65 context: the round's opening diagnostics and an undeclared address
-  // name). An applied edit resets all three; verification failures deliberately
-  // do not.
-  let lastRejectionCause: RejectionCause | null = null;
-  let lastRejectionStreak = 0;
-  let lastCorrection: string | null = null;
-  const registerRejection = (cause: RejectionCause, context: RejectionLeadContext = {}): void => {
-    if (cause === lastRejectionCause) {
-      lastRejectionStreak += 1;
-    } else {
-      lastRejectionCause = cause;
-      lastRejectionStreak = 1;
-    }
-    lastCorrection = rejectionLead(cause, lastRejectionStreak, { ...context, protocolFormat });
-  };
-  const clearRejectionPolicy = (): void => {
-    lastRejectionCause = null;
-    lastRejectionStreak = 0;
-    lastCorrection = null;
-  };
-  // Prior-attempts digest (#57): a bounded, incrementally-updated checkpoint of
-  // the failing chain. It is rendered into the no-progress asks only;
-  // `digestText` advances it over the records the previous prompt has not seen
-  // yet, immediately before rendering.
-  const attemptDigest = createAttemptDigestState(protocolFormat);
-  const digestText = (): string => {
-    updateAttemptDigest(attemptDigest, records);
-    return renderAttemptDigest(attemptDigest);
-  };
-  // Resubmission guard (#48): the last modify-mode payload, kept across
-  // iterations; a byte-identical resend is rejected as `stage: repeat`.
-  let lastModifySubmission: ModifySubmission | null = null;
-  // Repeated-failure fingerprints (#57): a failed reply + diagnostics + source
-  // state seen before is no progress and ends the run. This is the no-cap
-  // termination path; distinct attempts remain bounded by the token budget.
-  const failedFingerprints = new Set<string>();
-  const repeatFailure = (reply: string, diagnostics: string, state: string): boolean => {
-    const key = noProgressFingerprint(reply, diagnostics, state);
-    if (failedFingerprints.has(key)) {
-      return true;
-    }
-    failedFingerprints.add(key);
-    return false;
-  };
-  // The no-progress ask is due once per failed-attempt milestone. It is taken
-  // only when a prompt actually renders it, so a successful pick or a decision
-  // turn cannot consume it without the model seeing it.
-  const takeStalledAsk = (history: FailurePattern | null): StalledAsk | undefined => {
-    if (!isStalledAskMilestone(stalledAttempts) || stalledAskShownAt === stalledAttempts) {
-      return undefined;
-    }
-    stalledAskShownAt = stalledAttempts;
-    return {
-      failedAttempts: stalledAttempts,
-      askNumber: stalledAskNumber(stalledAttempts),
-      history,
-    };
-  };
-
-  // Applied targets (#81): every address an applied exchange covered, in order,
-  // for the result report.
-  const appliedTargets: Locator[] = [];
-  // The active coverable set for one exchange (#81): the first pending target
-  // per file, since same-file targets are sequenced across exchanges.
-  const activeTargets = (): Locator[] => {
-    const seen = new Set<string>();
-    const active: Locator[] = [];
-    for (const target of targetQueue) {
-      if (seen.has(target.path)) {
-        continue;
-      }
-      seen.add(target.path);
-      active.push(target);
-    }
-    return active;
-  };
-  // Resolve and pin the next pending target (#81), skipping any target that
-  // does not resolve to exactly one modify-able declaration — recorded as a
-  // staged diagnostic, never a silent pick. Returns false when none remain.
-  const seedNextTarget = (): boolean => {
-    while (targetQueue.length > 0) {
-      const next = targetQueue[0];
-      if (next === undefined) {
-        break;
-      }
-      const disk = readFileIfExists(join(cwd, next.path)) ?? "";
-      const resolution = resolveSelection(
-        cwd,
-        buildIndexTolerant([{ path: next.path, source: disk }]).index,
-        [{ path: next.path, source: disk }],
-        [],
-        { mode: "modify", locator: next },
-      );
-      if (!resolution.ok || resolution.selection.mode !== "modify") {
-        const diagnostic = resolution.ok
-          ? `stage: address\nthe target ${addressJson(next)} cannot be modified with mode "modify"`
-          : resolution.diagnostic;
-        targetQueue.shift();
-        targetFailures.push({ locator: next, diagnostics: diagnostic });
-        records.push(
-          recordRow({
-            row: records.length + 1,
-            iteration,
-            kind: "exchange",
-            exchange: null,
-            locator: next,
-            replacement: null,
-            diagnostics: diagnostic,
-            outcome: "address",
-            finishReason: null,
-          }),
-        );
-        continue;
-      }
-      const selection = resolution.selection;
-      pinned = { mode: "modify", locator: selection.locator };
-      pinnedAddressJson = pinJson(pinned);
-      baseSource = disk;
-      const symbolSource = disk.slice(selection.entry.node.start, selection.entry.node.end);
-      initialContentPrompt = buildTargetsEditPrompt(
-        addressJson(selection.locator),
-        symbolSource,
-        activeTargets(),
-      );
-      return true;
-    }
-    return false;
-  };
-  // The failure report naming any requested target that was never applied (#81).
-  const targetsDiagnostics = (): string | null => {
-    if (targetQueue.length === 0 && targetFailures.length === 0) {
-      return null;
-    }
-    const lines = ["requested targets not applied:"];
-    for (const failure of targetFailures) {
-      lines.push(`- ${addressJson(failure.locator)}: ${firstDiagnosticLine(failure.diagnostics)}`);
-    }
-    for (const pending of targetQueue) {
-      lines.push(`- ${addressJson(pending)}: never applied`);
-    }
-    return lines.join("\n");
-  };
-  const withTargetsReport = (diagnostics: string | null): string | null => {
-    if (!targetsMode) {
-      return diagnostics;
-    }
-    const report = targetsDiagnostics();
-    if (report === null) {
-      return diagnostics;
-    }
-    if (diagnostics === null || diagnostics.trim() === "") {
-      return report;
-    }
-    return `${diagnostics}\n\n${report}`;
-  };
-
-  const success = (editedSource: string | null): LoopResult => ({
-    ok: true,
-    mode: pinned?.mode,
-    locator: pinned?.locator ?? null,
-    filePath: pinned?.locator.path ?? null,
-    editedSource,
-    records,
-    diagnostics: null,
-    explanation: null,
-    messages,
-    skipped,
-    tokens,
-    appliedTargets: targetsMode ? [...appliedTargets] : undefined,
-  });
-  // Termination step (#43): record rows are already pushed; the only remaining
-  // action is exactly one summary call, then the run stops.
-  const terminate = async (
-    reason: TerminationReason,
-    diagnostics: string | null,
-  ): Promise<LoopResult> => {
-    const reported = withTargetsReport(diagnostics);
-    return {
-      ok: false,
-      mode: pinned?.mode,
-      locator: pinned?.locator ?? null,
-      filePath: pinned?.locator.path ?? null,
-      editedSource: null,
-      records,
-      diagnostics: reported,
-      explanation: await explain(options.provider, messages, temperature, reason, reported),
-      messages,
-      skipped,
-      terminationReason: reason,
-      tokens,
-      appliedTargets: targetsMode ? [...appliedTargets] : undefined,
-    };
-  };
-
-  let iteration = 0;
-  // STOP (#54/#57): the reply to a no-progress ask may end the run; it is
-  // recorded as an exchange row with the dedicated `stopped` outcome, carrying
-  // the diagnostics builder's text.
-  const stopRun = async (
-    exchange: number,
-    response: ChatResponse,
-    diagnostics: string,
-  ): Promise<LoopResult> => {
-    records.push(
-      recordRow({
-        row: records.length + 1,
-        iteration,
-        kind: "exchange",
-        exchange,
-        locator: pinned?.locator ?? EMPTY_LOCATOR,
-        replacement: response.content ?? null,
-        diagnostics,
-        outcome: "stopped",
-        finishReason: response.finishReason,
-        toolCalls: response.toolCalls.length,
-      }),
-    );
-    return await terminate("edit-exhausted", diagnostics);
-  };
-  for (;;) {
-    iteration += 1;
-    initialContentPrompt = null;
-    let verificationFailed = false;
-    let lastDiagnostics: string | null = pendingDiagnostics;
-    let lastFailure: "edit" | "verification" =
-      pendingDiagnostics === null ? "edit" : "verification";
-    // Verification diagnostics that opened this iteration, kept for the
-    // edit-exhausted summary even after edit soft failures overwrite `last`.
-    const iterationOpenedBy: string | null = lastDiagnostics;
-    // Stage that opened this iteration (#49), carried with the diagnostics so a
-    // verification-repair chain keeps its prompt variant.
-    const iterationOpenedByStage: "tsc" | "tests" | null = pendingVerificationStage;
-    pendingDiagnostics = null;
-    pendingVerificationStage = null;
-    // Content prompts of a tsc-stage repair round omit the spec-file section
-    // (#49); every other round keeps the full issue message.
-    const roundIssueMessage = iterationOpenedByStage === "tsc" ? leanIssueMessage : issueMessage;
-    // Previous content rejection within this iteration, for the identical-
-    // retry note (#48); resets every iteration.
-    let lastRejection: string | null = null;
-    // Bounded self-verification request (#73), per Run iteration: `selfCheckUsed`
-    // enforces the at-most-one execution, `pendingSelfCheck` carries the one
-    // result into the next prompt.
-    let selfCheckUsed = false;
-    let pendingSelfCheck: string | null = null;
-    // Decision-only turn (#75), per round: a non-edit reply to a repeated
-    // non-converging ask is clamped into `pendingApproach` and carried into the
-    // next exchange's edit prompt instead of being applied.
-    let pendingApproach: string | null = null;
-    // True when the prompt built at the end of the previous exchange offered
-    // `STOP` (a selection no-progress ask). Content prompts are built and
-    // answered in one exchange, so they set the per-exchange flag directly.
-    let stopOffered = false;
-    const retryDiagnostics = (diagnostics: string): string => {
-      const identical = lastRejection === diagnostics;
-      lastRejection = diagnostics;
-      return identical ? `${IDENTICAL_RETRY_NOTE}\n${diagnostics}` : diagnostics;
-    };
-    // Create→repair transition (#41) at the start of an iteration after a failed
-    // create verification: a kept file that parses becomes a modify repair; an
-    // absent or unparseable kept file is removed and create re-runs.
-    if (pinned !== null && pinned.mode === "create" && lastFailure === "verification") {
-      const keptPath = join(cwd, pinned.locator.path);
-      const kept = readFileIfExists(keptPath);
-      const keptCheck = kept === null ? null : parseCheck(kept);
-      if (kept !== null && keptCheck !== null && keptCheck.ok) {
-        repair = true;
-        pinned.mode = "modify";
-        pinnedAddressJson = pinJson(pinned);
-        baseSource = kept;
-      } else {
-        rmSync(keptPath, { force: true });
-      }
-    }
-
-    // Explicit-targets mode (#81): the target queue drives every round. Seed
-    // (or advance to) the next pending target and name the pending addresses in
-    // its edit prompt. With no pending target left, fall through to the
-    // ordinary repair path.
-    if (targetsMode && targetQueue.length > 0) {
-      if (!seedNextTarget() && pendingDiagnostics === null) {
-        return await terminate("edit-exhausted", null);
-      }
-    }
-
-    // #57: one exchange loop, no fixed exchange budget. A rejection retries or
-    // ends through the no-progress fingerprint/token budget; the loop leaves
-    // only on an applied edit (then verification), success, or termination.
-    for (let exchange = 1; ; exchange += 1) {
-      const pick = pinned === null;
-      // Set when this exchange's prompt is a no-progress ask (the only prompts
-      // that offer `STOP`).
-      let promptOffersStop = stopOffered;
-      stopOffered = false;
-      let decisionTurn = false;
-      // Reasoning policy (#35; revised 2026-10-18 after the effort sweep and
-      // the none/none/max canonical run): every Edit-loop call runs at "none". The
-      // sweep showed reasoning only added cost on the happy path (json/sexp)
-      // and that escalation on verification-repair rounds converted nothing on
-      // minilisp (max rewrites even broke tsc). Retries stay flat until
-      // repair-round convergence improves. An effortOverride forces one effort
-      // on every call for benchmark sweeps.
-      const exchangeOptions =
-        options.effortOverride !== undefined
-          ? withEffort(chatOptions, options.effortOverride)
-          : withEffort(chatOptions, "none");
-
-      if (pick) {
-        let response: ChatResponse;
-        try {
-          response = await options.provider.chat(messages, undefined, exchangeOptions);
-        } catch (error) {
-          const diagnostics = providerErrorDiagnostics(error);
-          return {
-            ok: false,
-            mode: pinned?.mode,
-            locator: null,
-            filePath: null,
-            editedSource: null,
-            records,
-            diagnostics,
-            explanation: await explain(
-              options.provider,
-              messages,
-              temperature,
-              "provider-error",
-              diagnostics,
-            ),
-            messages,
-            skipped,
-            tokens,
-          };
-        }
-        consumedTokens += budgetTokensFromResponse(response, tokenBudgetBasis);
-        addTokens(loopTokensFromResponse(response));
-        if (consumedTokens > tokenBudget) {
-          return await terminate(
-            "token-budget",
-            tokenBudgetDiagnostics(consumedTokens, tokenBudget, tokenBudgetBasis),
-          );
-        }
-        // Only the selection no-progress ask offers STOP (#57).
-        if (promptOffersStop && isStopReply(response)) {
-          return await stopRun(
-            exchange,
-            response,
-            stalledStopDiagnostics(
-              stalledAttempts,
-              combinedDiagnostics(iterationOpenedBy, lastDiagnostics),
-            ),
-          );
-        }
-        let candidate: Locator = EMPTY_LOCATOR;
-        let resolution: SelectionResolution | null = null;
-        let diagnostic: string | null = null;
-        let selectionStage: "protocol" | "address" = "protocol";
-        // EditDsl select-first (#B1): the pick reply is one `select … end`
-        // clause. It pins modify when the address resolves, create when the name
-        // or space is missing, and an editor clause prefetches its own reply for
-        // the content exchange.
-        try {
-          const parsed = selectionFromResponse(response);
-          candidate = parsed.locator;
-          resolution = resolveSelection(cwd, index, files, skipped, parsed);
-        } catch (error) {
-          diagnostic = `stage: protocol\n${errorMessage(error)}`;
-        }
-        if (resolution !== null && !resolution.ok) {
-          diagnostic = resolution.diagnostic;
-          selectionStage = "address";
-        }
-        if (diagnostic !== null) {
-          const cause = classifyRejection({ stage: selectionStage });
-          records.push(
-            recordRow({
-              row: records.length + 1,
-              iteration,
-              kind: "exchange",
-              exchange,
-              locator: candidate,
-              replacement: null,
-              diagnostics: diagnostic,
-              outcome: selectionStage,
-              finishReason: response.finishReason,
-              cause,
-              toolCalls: response.toolCalls.length,
-            }),
-          );
-          registerRejection(cause);
-          const selectionDiagnostics = combinedDiagnostics(iterationOpenedBy, diagnostic);
-          lastDiagnostics = selectionDiagnostics;
-          lastFailure = "edit";
-          stalledAttempts += 1;
-          // #57: a repeated selection reply is no progress and ends the run;
-          // distinct rejections are retried until the token budget or the
-          // no-progress ask cadence.
-          // Only read the candidate's source when it is inside the editable
-          // workspace; a path-escaping address contributes its raw path only.
-          const selectionState =
-            candidate.path === "" || safeMutablePath(cwd, candidate.path) === null
-              ? candidate.path
-              : (readFileIfExists(join(cwd, candidate.path)) ?? "");
-          if (repeatFailure(response.content ?? "", diagnostic, selectionState)) {
-            return await terminate(
-              "edit-exhausted",
-              repeatedNoProgressDiagnostics(selectionDiagnostics),
-            );
-          }
-          messages.push({ role: "assistant", content: response.content ?? "" });
-          const failurePattern = detectFailurePattern(records);
-          const selectionAsk = takeStalledAsk(failurePattern);
-          if (selectionAsk !== undefined) {
-            stopOffered = true;
-            messages.push({
-              role: "user",
-              content: buildSelectionContinuationPrompt({
-                failedAttempts: stalledAttempts,
-                diagnostics: selectionDiagnostics,
-                digest: digestText(),
-                failureHistory: renderFailureHistoryNote(failurePattern),
-              }),
-            });
-          } else {
-            messages.push({
-              role: "user",
-              content: buildSelectionRetryPrompt(diagnostic),
-            });
-          }
-          continue;
-        }
-        const selection = resolution !== null && resolution.ok ? resolution.selection : null;
-        if (selection === null) {
-          // Unreachable: a non-null resolution with an ok=true branch was set.
-          return await terminate(
-            "edit-exhausted",
-            editExhaustedDiagnostics(iterationOpenedBy, diagnostic),
-          );
-        }
-        pinned = { mode: selection.mode, locator: selection.locator };
-        pinnedAddressJson = pinJson(pinned);
-        // A successful pick is progress: the next content prompt is fresh, not a
-        // retry of the rejected selection attempts before it.
-        lastDiagnostics = null;
-        lastFailure = "edit";
-        records.push(
-          recordRow({
-            row: records.length + 1,
-            iteration,
-            kind: "exchange",
-            exchange,
-            locator: selection.locator,
-            replacement: null,
-            diagnostics: null,
-            outcome: "selected",
-            finishReason: response.finishReason,
-            toolCalls: response.toolCalls.length,
-          }),
-        );
-        messages.push({ role: "assistant", content: pinnedAddressJson });
-        if (selection.mode === "delete") {
-          // delete carries no edit payload: the pick exchange is the whole
-          // model exchange and the harness executes the deletion directly.
-          const fileEntry = sourceFileFor(files, selection.locator.path);
-          return await executeDeletion({
-            options,
-            provider: options.provider,
-            temperature,
-            targetPath: selection.locator.path,
-            locator: selection.locator,
-            node: selection.entry.node,
-            baseSource: fileEntry.source,
-            messages,
-            records,
-            skipped,
-            iteration,
-          });
-        }
-        baseSource =
-          selection.mode === "create"
-            ? (readFileIfExists(join(cwd, selection.path)) ?? "")
-            : sourceFileFor(files, selection.locator.path).source;
-        if (selection.mode === "modify") {
-          const symbolSource = baseSource.slice(
-            selection.entry.node.start,
-            selection.entry.node.end,
-          );
-          initialContentPrompt = buildEditPrompt(
-            addressJson(selection.locator),
-            symbolSource,
-            multiPayload,
-            protocolFormat,
-          );
-        } else {
-          initialContentPrompt = buildCreatePrompt(
-            addressJson(selection.locator),
-            selection.path,
-            protocolFormat,
-          );
-        }
-        continue;
-      }
-
-      // Content exchange: revise the pinned target. Soft failures retry with
-      // diagnostics; there is no exchange budget to consume (#57).
-      let pinnedTarget: { mode: SelectionMode; locator: Locator } | null = pinned;
-      if (pinnedTarget === null) {
-        // Unreachable: the pick branch either pins a target or returns.
-        throw new Error("content exchange without a pinned target");
-      }
-      const target = pinnedTarget.locator.path;
-      const diskSource = readFileIfExists(join(cwd, target)) ?? "";
-      let contentPrompt: string;
-      // Repair exchange (#73): an intra-round retry (diagnostics present) or a
-      // no-progress ask — never the fresh post-pick edit prompt. Only a repair
-      // exchange accepts a self-verification request and offers it in the prompt.
-      let repairExchange: boolean;
-      // Failure history (#71): computed for every content retry; the same
-      // pattern feeds the sharpened 2nd+ ask framing (#65). The no-progress ask
-      // (#54/#57) is a cadence and can land on any exchange, including the
-      // first content prompt after a late successful pick.
-      const failurePattern = detectFailurePattern(records);
-      const stalled = targetsMode ? undefined : takeStalledAsk(failurePattern);
-      const failureHistory = renderFailureHistoryNote(failurePattern);
-      // A verification-opened retry may move the pin; the ask names re-pinning
-      // as a concrete alternative, so it may too.
-      let repinAllowed = iterationOpenedBy !== null;
-      if (stalled !== undefined) {
-        promptOffersStop = true;
-        repinAllowed = true;
-        // Decision-only turn (#75): the same repeated-non-converging gating as
-        // the earlier no-progress ask.
-        decisionTurn = isDecisionAsk(stalled);
-      }
-      if (targetsMode && targetQueue.length > 0) {
-        // Explicit-targets mode (#81): every content prompt names the pending
-        // targets (and, after a rejection, the diagnostics) so the model must
-        // emit the batch covering them.
-        const currentSource = currentSourceForPrompt(
-          "modify",
-          target,
-          pinnedTarget.locator,
-          diskSource,
-        );
-        let targetsPrompt = buildTargetsEditPrompt(
-          addressJson(pinnedTarget.locator),
-          truncateSource(currentSource),
-          activeTargets(),
-        );
-        if (lastDiagnostics !== null) {
-          targetsPrompt += `\nThe previous exchange was rejected. Diagnostics:\n\n\`\`\`\n${lastDiagnostics}\n\`\`\`\n`;
-        }
-        contentPrompt = targetsPrompt;
-        repairExchange = lastDiagnostics !== null;
-      } else if (
-        stalled === undefined &&
-        lastDiagnostics === null &&
-        initialContentPrompt !== null
-      ) {
-        contentPrompt = initialContentPrompt;
-        repairExchange = false;
-      } else {
-        const rawPromptDiagnostics = combinedDiagnostics(iterationOpenedBy, lastDiagnostics);
-        const promptDiagnostics =
-          stalled !== undefined && rawPromptDiagnostics === "the previous exchange was rejected"
-            ? "the previous attempts made no progress"
-            : rawPromptDiagnostics;
-        const repairSource = repairContextSource({
-          mode: pinnedTarget.mode === "create" ? "create" : "modify",
-          repair,
-          target,
-          locator: pinnedTarget.locator,
-          diskSource,
-          diagnostics: promptDiagnostics,
-        });
-        const currentSource =
-          repairSource.preRendered !== undefined
-            ? repairSource.source
-            : truncateSource(repairSource.source);
-        // The self-check result is shown exactly once, in the prompt right after
-        // the request was executed (#73).
-        const selfCheck = pendingSelfCheck;
-        pendingSelfCheck = null;
-        contentPrompt = buildRetryPrompt({
-          exchangeNumber: exchange,
-          mode: pinnedTarget.mode === "create" ? "create" : "modify",
-          locatorJson: pinnedAddressJson,
-          currentSource,
-          preRenderedSource: repairSource.preRendered,
-          // A soft edit failure overwrites `lastDiagnostics`; in a repair
-          // iteration keep the verification failure visible too (#48).
-          diagnostics: promptDiagnostics,
-          failure: lastFailure,
-          // The ask names re-pinning as a concrete alternative, so it may move
-          // the pin exactly like a verification-opened retry.
-          repin: repinAllowed && pinnedTarget.mode === "modify",
-          stalled,
-          digest: stalled === undefined ? undefined : digestText(),
-          failureHistory,
-          // The decision reply's stated re-approach (#75) rides the next
-          // exchange's edit prompt so the attempt must follow it.
-          approach: pendingApproach ?? undefined,
-          // Per-cause rejection correction (#56): only edit retries carry the
-          // class-specific lead; verification-repair prompts keep the default.
-          correction: lastFailure === "edit" ? (lastCorrection ?? undefined) : undefined,
-          multiPayload: multiPayload,
-          protocolFormat,
-          selfCheck: selfCheck ?? undefined,
-        });
-        repairExchange = true;
-      }
-      messages = [
-        systemMessage,
-        roundIssueMessage,
-        { role: "assistant", content: pinnedAddressJson },
-        { role: "user", content: contentPrompt },
-      ];
-      let response: ChatResponse;
-      try {
-        response = await options.provider.chat(messages, undefined, exchangeOptions);
-      } catch (error) {
-        const diagnostics = withTargetsReport(providerErrorDiagnostics(error)) ?? "";
-        return {
-          ok: false,
-          mode: pinnedTarget.mode,
-          locator: pinnedTarget.locator,
-          filePath: target,
-          editedSource: null,
-          records,
-          diagnostics,
-          explanation: await explain(
-            options.provider,
-            messages,
-            temperature,
-            "provider-error",
-            diagnostics,
-          ),
-          messages,
-          skipped,
-          tokens,
-        };
-      }
-      consumedTokens += budgetTokensFromResponse(response, tokenBudgetBasis);
-      addTokens(loopTokensFromResponse(response));
-      if (consumedTokens > tokenBudget) {
-        return await terminate(
-          "token-budget",
-          tokenBudgetDiagnostics(consumedTokens, tokenBudget, tokenBudgetBasis),
-        );
-      }
-      // Only a no-progress ask offers STOP (#54/#57).
-      if (promptOffersStop && isStopReply(response)) {
-        return await stopRun(
-          exchange,
-          response,
-          stalledStopDiagnostics(
-            stalledAttempts,
-            combinedDiagnostics(iterationOpenedBy, lastDiagnostics),
-          ),
-        );
-      }
-      // Decision-only turn (#75): STOP was handled above. A reply that still
-      // carries a structurally valid edit payload is a real attempt and flows
-      // through the unchanged guards below; any other reply is the stated
-      // re-approach — clamped and carried into the next exchange's prompt
-      // instead of being parsed as an edit (no cap, no auto-stop).
-      if (
-        decisionTurn &&
-        !isEditPayloadReply(response.content ?? "", multiPayload, protocolFormat)
-      ) {
-        pendingApproach = clampText(response.content ?? "", APPROACH_LIMIT);
-        continue;
-      }
-      const sourceBefore = readFileIfExists(join(cwd, target)) ?? baseSource;
-      const prevCheck = parseCheck(sourceBefore);
-      if (!prevCheck.ok) {
-        const broken = prevBrokenDiagnostics(target, prevCheck.failure);
-        records.push(
-          recordRow({
-            row: records.length + 1,
-            iteration,
-            kind: "exchange",
-            exchange,
-            locator: pinnedTarget.locator,
-            replacement: null,
-            diagnostics: broken,
-            outcome: "prev-broken",
-            finishReason: response.finishReason,
-            toolCalls: response.toolCalls.length,
-          }),
-        );
-        return await terminate("prev-broken", broken);
-      }
-      if (response.finishReason === "length") {
-        const diagnostics =
-          "stage: truncated\nthe completion was cut off at the output limit; emit a shorter, more compact replacement";
-        const cause = classifyRejection({ stage: "truncated" });
-        records.push(
-          recordRow({
-            row: records.length + 1,
-            iteration,
-            kind: "exchange",
-            exchange,
-            locator: pinnedTarget.locator,
-            replacement: response.content ?? null,
-            diagnostics,
-            outcome: "truncated",
-            finishReason: response.finishReason,
-            cause,
-            toolCalls: response.toolCalls.length,
-          }),
-        );
-        registerRejection(cause);
-        lastDiagnostics = retryDiagnostics(diagnostics);
-        lastFailure = "edit";
-        stalledAttempts += 1;
-        // Output-limit strike guard (#98), not an exchange/round cap: the
-        // just-pushed row is counted, so the third consecutive length finish
-        // terminates through the summary path rather than continuing to burn
-        // budget. A non-consecutive truncation is an ordinary failed attempt.
-        if (consecutiveLengthFinishes(records) >= MAX_CONSECUTIVE_LENGTH) {
-          return await terminate(
-            "output-limit",
-            "stage: output-limit\nthe completion hit the output limit on 3 consecutive attempts; ending the run through the summary path",
-          );
-        }
-        // Truncation has its own output-length guard above; do not also feed it
-        // to the reply/source fingerprint before that guard can fire.
-        continue;
-      }
-      const content = response.content ?? "";
-      // Bounded self-verification request (#73): a repair exchange may reply
-      // with the distinct request object instead of an edit payload. At most one
-      // is executed per round; every refusal falls through to the ordinary
-      // protocol path. The exchange loop has no fixed cap (#57), so a request is
-      // never refused for arriving "too late".
-      let requestFailure: string | null = null;
-      if (repairExchange) {
-        const parsedRequest = parseSelfCheckRequest(content);
-        if (parsedRequest.kind === "error") {
-          requestFailure = parsedRequest.diagnostics;
-        } else if (parsedRequest.kind === "ok") {
-          if (selfCheckUsed) {
-            requestFailure =
-              "stage: protocol\nthe round already used its one self-verification request; return an edit payload now (the harness runs at most one request per round)";
-          } else {
-            const result = await executeSelfCheck(parsedRequest.request, {
-              cwd,
-              target,
-              checkCommand: options.checkCommand,
-              testCommand: options.testCommand,
-              commandTimeoutMs: options.commandTimeoutMs,
-            });
-            selfCheckUsed = true;
-            pendingSelfCheck = result;
-            records.push(
-              recordRow({
-                row: records.length + 1,
-                iteration,
-                kind: "exchange",
-                exchange,
-                locator: pinnedTarget.locator,
-                replacement: null,
-                diagnostics: result,
-                outcome: "self-check",
-                finishReason: response.finishReason,
-                payloads: 0,
-                toolCalls: response.toolCalls.length,
-              }),
-            );
-            continue;
-          }
-        }
-      }
-      let payload: EditPayload | null = null;
-      // Explicit-targets mode (#81): the pending targets this exchange covers,
-      // validated before any splice. Empty outside targets mode.
-      let coveredTargets: Locator[] = [];
-      // Opt-in multi-payload variant (#69): the reply may carry a
-      // `{"payloads": [...]}` batch. `batchCarried` keeps every payload that
-      // parsed, even when the batch was rejected at parse time (duplicate
-      // paths, bad entry), so the record still counts what the reply carried.
-      let batch: EditPayload[] | null = null;
-      let batchCarried: EditPayload[] = [];
-      let batchPayloadCount = 0;
-      let batchReplacementChars: number | null = null;
-      // Batch-level rejection cause (#69/#78): `multi-protocol`/`multi-duplicate`
-      // override the stage-derived classification; per-payload failures keep
-      // the failing payload's own stage/cause.
-      let failureCause: RejectionCause | null = null;
-      let candidate: string | null = null;
-      let newSource: string | null = null;
-      let replacement: string | null = null;
-      let gateStart = 0;
-      let gateReplacement = "";
-      let failure: string | null = null;
-      let failureStage: EditFailureStage = "protocol";
-      // A refused self-check request (#73) is an ordinary `protocol` rejection:
-      // skip the edit parser and fall through to the shared rejection record.
-      if (requestFailure !== null) {
-        failure = requestFailure;
-      }
-      // Structured rejection origin (#56): the splice's matcher sub-cause and
-      // the formatter message; never reconstructed from the diagnostics text.
-      let matcherCause: MatcherCause | undefined;
-      let formatMessage: string | undefined;
-      // #65: set when an `address` rejection resolved against a name the
-      // current source does not declare, so the retry lead keeps the add path
-      // open instead of demanding a re-pin that cannot resolve.
-      let addressUndeclaredName: string | null = null;
-      if (failure !== null) {
-        // Refused self-check request: no payload to parse.
-      } else if (multiPayload) {
-        const parsed = parseEditResponseList(content);
-        if (parsed.ok) {
-          if (parsed.batch && pinnedTarget.mode !== "modify") {
-            // Batch replies are modify-only (#69); a create round keeps its
-            // flat shape and the rejection says so.
-            failureCause = "multi-protocol";
-            batchCarried = parsed.payloads;
-            failure = multiDiagnostics(
-              `mode "${pinnedTarget.mode}" carries no edit payload batch; reply with one flat ${pinnedTarget.mode} payload`,
-            );
-          } else if (parsed.batch) {
-            batch = parsed.payloads;
-          } else {
-            payload = parsed.payloads[0] ?? null;
-          }
-        } else {
-          failure = parsed.diagnostics;
-          failureCause = parsed.cause;
-          batchCarried = parsed.payloads;
-        }
-      } else {
-        try {
-          payload = parseEditResponse(content);
-        } catch (error) {
-          failure = `stage: protocol\n${errorMessage(error)}`;
-        }
-      }
-      if (batch !== null) {
-        batchCarried = batch;
-      }
-      if (batchCarried.length > 0) {
-        batchPayloadCount = batchCarried.length;
-        batchReplacementChars = batchCarried.reduce(
-          (sum, entry) => sum + entry.replacement.length,
-          0,
-        );
-        replacement = batchCarried[0]?.replacement ?? null;
-      }
-      // Explicit-targets mode (#81): every payload must address one of the
-      // pending targets, one per file, with the first echoing the pin. A reply
-      // that is not a valid batch is a staged rejection, never a silent pick.
-      if (targetsMode && failure === null) {
-        const replyPayloads = payload !== null ? [payload] : batch !== null ? batch : [];
-        if (replyPayloads.length > 0) {
-          const validated = validateTargetsReply(replyPayloads, pinnedTarget.locator, targetQueue);
-          if (!validated.ok) {
-            failure = validated.diagnostics;
-            failureStage = validated.diagnostics.startsWith("stage: echo") ? "echo" : "address";
-          } else {
-            coveredTargets = validated.covered;
-          }
-        }
-      }
-      if (failure === null && payload !== null) {
-        replacement = payload.replacement;
-        gateReplacement = payload.replacement;
-        if (
-          pinnedTarget.mode === "modify" &&
-          lastModifySubmission !== null &&
-          sameModifySubmission(lastModifySubmission, [payload])
-        ) {
-          // Byte-identical resubmission (#48): reject before any resolution or
-          // splice; the file is not touched.
-          failure = repeatDiagnostics(lastModifySubmission);
-          failureStage = "repeat";
-        } else if (
-          pinnedTarget.mode === "create" &&
-          (payload.matcher !== null || payload.range !== null)
-        ) {
-          failure =
-            'stage: protocol\nmode "create" does not take a "matcher" or "range"; omit them and return the complete declaration';
-        } else if (!addressEquals(pinnedTarget.locator, payload.locator)) {
-          if (repinAllowed && pinnedTarget.mode === "modify") {
-            // Verification-repair re-pin (#48): a round opened by failing
-            // verification may move the pin to another declaration in the same
-            // file; the new address resolves strictly against the current source.
-            if (payload.locator.path !== pinnedTarget.locator.path) {
-              failure = `stage: address\nthe payload may re-pin only to another declaration in the pinned file ${JSON.stringify(target)}; received path ${JSON.stringify(payload.locator.path)}`;
-              failureStage = "address";
-            } else if (payload.range !== null && !repair) {
-              // The shown block is the pinned declaration, so a range cannot
-              // address a different (re-pinned) declaration (#72).
-              failure = rangeUnshownDiagnostics(
-                pinnedTarget.locator,
-                payload.locator,
-                payload.range,
-              );
-              failureStage = "range";
-            } else {
-              const resolved = resolveCurrentEntry(sourceBefore, target, payload.locator);
-              if (!resolved.ok) {
-                failure = resolved.diagnostics;
-                failureStage = "address";
-                addressUndeclaredName = resolved.undeclared ? payload.locator.name : null;
-              } else {
-                pinnedTarget = { mode: "modify", locator: payload.locator };
-                pinned = pinnedTarget;
-                pinnedAddressJson = pinJson(pinnedTarget);
-                const spliced = spliceEntryEdit(
-                  sourceBefore,
-                  target,
-                  pinnedTarget.locator,
-                  resolved.entry,
-                  payload.matcher,
-                  payload.replacement,
-                  payload.range,
-                  repair,
-                );
-                if (spliced.ok) {
-                  candidate = spliced.candidate;
-                  gateStart = spliced.gateStart;
-                } else if (spliced.cause === "no-op") {
-                  failure = spliced.diagnostics;
-                  failureStage = "no-op";
-                } else if (spliced.cause === "range-invalid") {
-                  failure = spliced.diagnostics;
-                  failureStage = "range";
-                } else {
-                  failure = spliced.diagnostics;
-                  failureStage = "matcher";
-                  matcherCause = spliced.cause;
-                }
-              }
-            }
-          } else {
-            failure = echoDiagnostics(pinnedTarget.locator, payload.locator);
-            failureStage = "echo";
-          }
-        } else if (pinnedTarget.mode === "create") {
-          const body = payload.replacement.trim();
-          candidate = appendText(sourceBefore, payload.replacement);
-          gateStart = candidate.indexOf(body);
-          gateReplacement = body;
-        } else {
-          // Strict-AND resolution against the source that would be spliced: no
-          // silent first-match pick, no kind coercion, no auto-append.
-          const resolved = resolveCurrentEntry(sourceBefore, target, pinnedTarget.locator);
-          if (!resolved.ok) {
-            failure = resolved.diagnostics;
-            failureStage = "address";
-            addressUndeclaredName = resolved.undeclared ? pinnedTarget.locator.name : null;
-          } else {
-            const spliced = spliceEntryEdit(
-              sourceBefore,
-              target,
-              pinnedTarget.locator,
-              resolved.entry,
-              payload.matcher,
-              payload.replacement,
-              payload.range,
-              repair,
-            );
-            if (spliced.ok) {
-              candidate = spliced.candidate;
-              gateStart = spliced.gateStart;
-            } else if (spliced.cause === "no-op") {
-              failure = spliced.diagnostics;
-              failureStage = "no-op";
-            } else if (spliced.cause === "range-invalid") {
-              failure = spliced.diagnostics;
-              failureStage = "range";
-            } else {
-              failure = spliced.diagnostics;
-              failureStage = "matcher";
-              matcherCause = spliced.cause;
-            }
-          }
-        }
-      }
-      // Opt-in multi-payload exchanges (#69/#78): payloads are grouped by
-      // file. Every payload runs its own address/matcher/range/no-op guard
-      // against its file's current source; each file's resolved regions are
-      // combined in one pass. Any failure — a per-region guard or an
-      // overlapping pair — rejects the whole exchange naming each failing
-      // region, and nothing is written; the record's outcome and cause stay
-      // those of the first failure.
-      const batchWrites: { path: string; source: string }[] = [];
-      if (failure === null && batch !== null) {
-        const first = batch[0];
-        if (first === undefined) {
-          // Unreachable: the parser guarantees a non-empty payload list.
-          failure = multiDiagnostics("the payloads array carries no payload");
-          failureCause = "multi-protocol";
-        } else if (
-          lastModifySubmission !== null &&
-          sameModifySubmission(lastModifySubmission, batch)
-        ) {
-          // Byte-identical resubmission (#48): the whole batch, rejected before
-          // any resolution or splice; no file is touched.
-          failure = repeatDiagnostics(lastModifySubmission);
-          failureStage = "repeat";
-        } else {
-          const blocks: string[] = [];
-          let firstStage: EditFailureStage | null = null;
-          let firstMatcherCause: MatcherCause | undefined;
-          let firstFormatMessage: string | undefined;
-          let firstUndeclared: string | null = null;
-          const noteFailure = (
-            index: number,
-            path: string,
-            locator: Locator,
-            stage: EditFailureStage,
-            diagnostics: string,
-            origin: {
-              matcherCause?: MatcherCause;
-              formatMessage?: string;
-              undeclaredName?: string | null;
-            } = {},
-          ): void => {
-            if (firstStage === null) {
-              firstStage = stage;
-              firstMatcherCause = origin.matcherCause;
-              firstFormatMessage = origin.formatMessage;
-              firstUndeclared = origin.undeclaredName ?? null;
-            }
-            blocks.push(
-              multiPayloadDiagnostics(index + 1, batch.length, path, locator, diagnostics),
-            );
-          };
-          // One source per file, resolved once: the pinned file is the current
-          // in-memory source and every other file is read from disk once, so
-          // same-file payloads combine in one pass instead of overwriting each
-          // other sequentially (#78).
-          const fileSource = new Map<string, string>();
-          const fileSourceOf = (path: string): string => {
-            if (path === target) {
-              return sourceBefore;
-            }
-            const cached = fileSource.get(path);
-            if (cached !== undefined) {
-              return cached;
-            }
-            const source = readFileIfExists(join(cwd, path)) ?? "";
-            fileSource.set(path, source);
-            return source;
-          };
-          // Resolve every payload to its addressed region. The first payload
-          // keeps the classic echo/re-pin policy; every further payload
-          // self-addresses its own declaration in its own file (same file
-          // allowed), resolved strictly against that file's current source.
-          const regions: ResolvedRegion[] = [];
-          for (let index = 0; index < batch.length; index += 1) {
-            const entryPayload = batch[index];
-            if (entryPayload === undefined) {
-              continue;
-            }
-            const path = entryPayload.locator.path;
-            const payloadSource = fileSourceOf(path);
-            let span: PayloadSpan | null = null;
-            if (index === 0) {
-              // The first payload keeps the classic pin semantics: it echoes
-              // the pinned address, and only a verification-repair round may
-              // move the pin to another declaration in the pinned file.
-              const locator = entryPayload.locator;
-              if (addressEquals(pinnedTarget.locator, locator)) {
-                span = resolvePayloadSpan(sourceBefore, target, entryPayload, repair);
-              } else if (repinAllowed) {
-                if (locator.path !== target) {
-                  noteFailure(
-                    index,
-                    path,
-                    locator,
-                    "address",
-                    `stage: address\nthe payload may re-pin only to another declaration in the pinned file ${JSON.stringify(target)}; received path ${JSON.stringify(locator.path)}`,
-                  );
-                } else if (entryPayload.range !== null && !repair) {
-                  // The shown block is the pinned declaration, so a range cannot
-                  // address a different (re-pinned) declaration (#72).
-                  noteFailure(
-                    index,
-                    path,
-                    locator,
-                    "range",
-                    rangeUnshownDiagnostics(pinnedTarget.locator, locator, entryPayload.range),
-                  );
-                } else {
-                  span = resolvePayloadSpan(sourceBefore, target, entryPayload, repair);
-                  if (span.ok) {
-                    pinnedTarget = { mode: "modify", locator };
-                    pinned = pinnedTarget;
-                    pinnedAddressJson = pinJson(pinnedTarget);
-                  }
-                }
-              } else {
-                noteFailure(
-                  index,
-                  path,
-                  locator,
-                  "echo",
-                  echoDiagnostics(pinnedTarget.locator, locator),
-                );
-              }
-            } else if (entryPayload.range !== null) {
-              // A further multi-payload entry addresses a declaration the
-              // numbered block never showed, so a range has no block to
-              // address (#72).
-              noteFailure(
-                index,
-                path,
-                entryPayload.locator,
-                "range",
-                rangeUnshownDiagnostics(
-                  pinnedTarget.locator,
-                  entryPayload.locator,
-                  entryPayload.range,
-                ),
-              );
-            } else {
-              // Self-addressed payloads (#69/#78): each names its own
-              // declaration, which resolves strictly in its own file.
-              span = resolvePayloadSpan(payloadSource, path, entryPayload);
-            }
-            if (span === null) {
-              continue;
-            }
-            if (!span.ok) {
-              noteFailure(index, path, entryPayload.locator, span.stage, span.diagnostics, {
-                matcherCause: span.matcherCause,
-                undeclaredName: span.undeclaredName,
-              });
-              continue;
-            }
-            regions.push({
-              index,
-              path,
-              locator: entryPayload.locator,
-              start: span.start,
-              end: span.end,
-              text: span.text,
-              replacement: entryPayload.replacement,
-              stage: stageOf(entryPayload),
-              matcherKind: matcherKindOf(entryPayload),
-              create: false,
-            });
-          }
-          batchWrites.push(
-            ...(await applyResolvedRegions({
-              regions,
-              fileSourceOf,
-              target,
-              prevCheck,
-              noteFailure: (note) => {
-                noteFailure(
-                  note.region.index,
-                  note.path,
-                  note.region.locator,
-                  note.stage,
-                  note.diagnostics,
-                  { matcherCause: note.matcherCause, formatMessage: note.formatMessage },
-                );
-              },
-              noteOverlap: (path, earlier, later) => {
-                failureCause = "multi-duplicate";
-                blocks.push(multiOverlapDiagnostics(batch.length, path, earlier, later));
-              },
-            })),
-          );
-          if (blocks.length > 0) {
-            failure = blocks.join("\n\n");
-            if (firstStage !== null) {
-              failureStage = firstStage;
-            }
-            matcherCause = firstMatcherCause;
-            formatMessage = firstFormatMessage;
-            addressUndeclaredName = firstUndeclared;
-          } else {
-            newSource = batchWrites[0]?.source ?? null;
-          }
-        }
-      }
-      // Syntax gate (highest-priority invariant): prev parses ⇒ after must parse.
-      if (failure === null && candidate !== null) {
-        const gate = parseCheck(candidate);
-        if (!gate.ok) {
-          failure = gateDiagnostics(gateStart, gateReplacement, gate.failure);
-          failureStage = "gate";
-        } else {
-          // Duplicate-declaration guard (#48): adding another top-level copy
-          // of a (kind, name) TypeScript rejects on duplicates is discarded.
-          const duplicate = duplicateDeclarationDiagnostics(
-            sourceBefore,
-            target,
-            prevCheck.program,
-            gate.program,
-          );
-          if (duplicate !== null) {
-            failure = duplicate;
-            failureStage = "duplicate";
-          }
-        }
-      }
-      if (failure === null && candidate !== null) {
-        try {
-          newSource = await formatSource(target, candidate);
-        } catch (error) {
-          failure = `stage: format\n${errorMessage(error)}`;
-          failureStage = "format";
-          formatMessage = errorMessage(error);
-        }
-      }
-      // Formatter-normalized no-op (#59 follow-up): a candidate that differs
-      // only by formatting (e.g. the replacement re-included the matched
-      // span's copied leading indentation) formats back to the current source.
-      // Rejected with the byte-exact no-op's stage and diagnostics: no write,
-      // no verification, same cause and retry policy.
-      if (batch === null && failure === null && newSource !== null) {
-        if (await sameAfterFormatting(target, sourceBefore, newSource)) {
-          failure = NOOP_DIAGNOSTICS;
-          failureStage = "no-op";
-        }
-      }
-      if (failure !== null || newSource === null) {
-        const diagnostics = failure ?? "stage: protocol\nmodel did not return replacement text";
-        const cause =
-          failureCause ?? classifyRejection({ stage: failureStage, matcherCause, formatMessage });
-        records.push(
-          recordRow({
-            row: records.length + 1,
-            iteration,
-            kind: "exchange",
-            exchange,
-            locator: pinnedTarget.locator,
-            replacement,
-            diagnostics,
-            outcome: failureStage,
-            finishReason: response.finishReason,
-            cause,
-            payloads: batch !== null ? batch.length : payload !== null ? 1 : batchPayloadCount,
-            toolCalls: response.toolCalls.length,
-            replacementChars: batchReplacementChars ?? undefined,
-            // #101: a batch rejected at parse time keeps `batch` null but still
-            // carries the entries that parsed; classify those so every entry is
-            // counted (the `payloads` field already counts `batchCarried`).
-            selectors:
-              selectorsOf(payload, batch) ??
-              (batchCarried.length > 0 ? batchCarried.map(selectorOf) : undefined),
-            stages:
-              stagesOf(payload, batch) ??
-              (batchCarried.length > 0 ? batchCarried.map(stageOf) : undefined),
-            matcherKinds:
-              matcherKindsOf(payload, batch) ??
-              (batchCarried.length > 0 ? batchCarried.map(matcherKindOf) : undefined),
-          }),
-        );
-        // Resubmission guard (#48): remember every modify-mode payload with its
-        // outcome so a byte-identical resend is rejected before any splice. A
-        // batch is remembered whole, so only an identical batch repeats (#69).
-        if (batch !== null) {
-          lastModifySubmission = submissionOf(batch, false, firstDiagnosticLine(diagnostics));
-        } else if (payload !== null && pinnedTarget.mode === "modify") {
-          lastModifySubmission = submissionOf([payload], false, firstDiagnosticLine(diagnostics));
-        }
-        // Harness-fault fast-exit (#56): a formatter failure whose signature is
-        // the splice duplicating a modifier is not a model mistake; replying
-        // with corrected instructions cannot help, so the run ends through the
-        // termination matrix with the full diagnostics and one summary call.
-        if (cause === "format-export-duplication") {
-          return await terminate("harness-fault", diagnostics);
-        }
-        registerRejection(cause, {
-          pendingDiagnostics: iterationOpenedBy,
-          undeclaredName: addressUndeclaredName ?? undefined,
-        });
-        lastDiagnostics = retryDiagnostics(diagnostics);
-        lastFailure = "edit";
-        stalledAttempts += 1;
-        // #57: distinct rejected edits retry without a fixed exchange cap; a
-        // repeated reply/source/diagnostics fingerprint is no progress and ends
-        // the run instead of looping until the budget.
-        if (repeatFailure(response.content ?? "", diagnostics, sourceBefore)) {
-          return await terminate(
-            "edit-exhausted",
-            repeatedNoProgressDiagnostics(combinedDiagnostics(iterationOpenedBy, lastDiagnostics)),
-          );
-        }
-        continue;
-      }
-      if (batch !== null) {
-        // Atomic apply (#69/#111): every payload/clause passed its own guard
-        // above, so the prepared sources are written together; a single failure
-        // wrote nothing.
-        for (const write of batchWrites) {
-          writeTarget(cwd, write.path, write.source);
-        }
-      } else {
-        writeTarget(cwd, target, newSource);
-      }
-      // An applied edit ends the rejection chain (#56): the next rejection
-      // starts a fresh streak regardless of the verification outcome below.
-      clearRejectionPolicy();
-      // Explicit-targets mode (#81): retire the targets this exchange covered
-      // and remember them for the result.
-      if (targetsMode) {
-        for (const covered of coveredTargets) {
-          const coveredJson = addressJson(covered);
-          const index = targetQueue.findIndex((target) => addressJson(target) === coveredJson);
-          if (index >= 0) {
-            targetQueue.splice(index, 1);
-          }
-          appliedTargets.push(covered);
-        }
-      }
-      // Resubmission guard (#48): an applied modify submission is remembered
-      // so the next iteration cannot re-apply the identical payload/batch.
-      if (batch !== null) {
-        lastModifySubmission = submissionOf(batch, true, null);
-      } else if (payload !== null && pinnedTarget.mode === "modify") {
-        lastModifySubmission = submissionOf([payload], true, null);
-      }
-      records.push(
-        recordRow({
-          row: records.length + 1,
-          iteration,
-          kind: "exchange",
-          exchange,
-          locator: pinnedTarget.locator,
-          replacement,
-          diagnostics: null,
-          outcome: "applied",
-          finishReason: response.finishReason,
-          payloads: batch !== null ? batch.length : payload !== null ? 1 : 0,
-          toolCalls: response.toolCalls.length,
-          replacementChars: batchReplacementChars ?? undefined,
-          appliedLocators: targetsMode ? coveredTargets : undefined,
-          selectors: selectorsOf(payload, batch),
-          stages: stagesOf(payload, batch),
-          matcherKinds: matcherKindsOf(payload, batch),
-        }),
-      );
-      // Same-file sequencing (#81): a path-independent batch covers at most one
-      // target per file, so apply the next pending target in the next exchange
-      // of this round before verifying. There is no exchange cap (#57).
-      if (targetsMode && targetQueue.length > 0) {
-        if (seedNextTarget()) {
-          continue;
-        }
-      }
-      // Verification: tsc + test once per iteration, no model exchange.
-      const check = await checkTool(cwd, options.checkCommand, options.commandTimeoutMs);
-      const test = await runVerificationTests(cwd, target, options);
-      if (check.ok && test.ok) {
-        records.push(
-          recordRow({
-            row: records.length + 1,
-            iteration,
-            kind: "verification",
-            exchange: null,
-            locator: pinnedTarget.locator,
-            replacement,
-            diagnostics: null,
-            outcome: "ok",
-            finishReason: response.finishReason,
-          }),
-        );
-        if (targetsMode && (targetQueue.length > 0 || targetFailures.length > 0)) {
-          // Not every requested target was applied: never claim success. The
-          // queue is normally empty here (the sequencing block above seeds every
-          // remaining target), so this reports the unresolved targets through
-          // the termination step.
-          return await terminate("edit-exhausted", null);
-        }
-        return success(newSource);
-      }
-      // No rollback (#30): the attempted state stays on disk for the next
-      // iteration to refine. A failure just starts the next iteration; #57
-      // removed the fixed exchange/round budget.
-      const diagnostics = formatDiagnostics({
-        check,
-        test,
-        targetPath: target,
-        baseSource: sourceBefore,
-        newSource,
-        sourceFor: (file) => readFileIfExists(join(cwd, file)),
-      });
-      const signature = check.diagnostics.length + failingTestNames(test.output).length;
-      records.push(
-        recordRow({
-          row: records.length + 1,
-          iteration,
-          kind: "verification",
-          exchange: null,
-          locator: pinnedTarget.locator,
-          replacement,
-          diagnostics,
-          outcome: check.ok ? "tests" : "tsc",
-          finishReason: response.finishReason,
-          signature,
-        }),
-      );
-      pendingDiagnostics = diagnostics;
-      pendingVerificationStage = check.ok ? "tests" : "tsc";
-      stalledAttempts += 1;
-      // #57: a failed verification is one more failed attempt; a repeated
-      // reply/source/diagnostics state is no progress. The round still ends so
-      // the next prompt opens with the verification failure, but nothing
-      // terminates it for reaching a fixed round count.
-      if (repeatFailure(response.content ?? "", diagnostics, newSource)) {
-        return await terminate(
-          "edit-exhausted",
-          repeatedNoProgressDiagnostics(combinedDiagnostics(iterationOpenedBy, diagnostics)),
-        );
-      }
-      verificationFailed = true;
-      break;
-    }
-
-    // The exchange loop leaves only on a failed verification (the next round
-    // opens with its diagnostics) or on success/termination. #57 has no fixed
-    // exchange or round cap and no round-continuation budget: the token budget,
-    // the repeated no-progress fingerprint, and the no-progress ask are the
-    // only termination paths for a failed loop.
-    if (verificationFailed) {
-      continue;
-    }
-    // Unreachable: every other exchange path returns, retries, or breaks after
-    // a failed verification.
-    return await terminate(
-      "edit-exhausted",
-      editExhaustedDiagnostics(iterationOpenedBy, lastDiagnostics),
-    );
-  }
-}
-
 async function runEditDslLoop(options: LoopOptions): Promise<LoopResult> {
   const tokenBudget = options.tokenBudget ?? DEFAULT_TOKEN_BUDGET;
   const tokenBudgetBasis = options.tokenBudgetBasis ?? "raw";
@@ -6016,10 +3034,6 @@ async function runEditDslLoop(options: LoopOptions): Promise<LoopResult> {
   const index = build.index;
   const skipped = build.skipped;
   const specFiles = selectSpecFiles(options.issue, files);
-  const multiPayload = options.multiPayload === true;
-  // Edit-dsl driver: the dispatcher sends explicit-targets mode to the JSON
-  // driver, so this path never runs in targets mode.
-  const protocolFormat: ProtocolFormat = "edit-dsl";
   // B1: the edit-dsl symbol index is a select-line list, not YAML.
   const editDslIndexText = buildEditDslSymbolIndex(index);
   const makeMultiEditorDeps = (cache = new Map<string, string>()): MultiEditorDeps => ({
@@ -6042,7 +3056,7 @@ async function runEditDslLoop(options: LoopOptions): Promise<LoopResult> {
   });
   const systemMessage: ChatMessage = {
     role: "system",
-    content: buildSystemPrompt(multiPayload, protocolFormat),
+    content: buildSystemPrompt(),
   };
   const issueMessage: ChatMessage = {
     role: "user",
@@ -6074,7 +3088,7 @@ async function runEditDslLoop(options: LoopOptions): Promise<LoopResult> {
   let pinned: { mode: SelectionMode; locator: Locator } | null = null;
   let pinnedAddressJson = "";
   // EditDsl select-first: the model's own `select … end` reply is the
-  // assistant turn shown in the content exchange (JSON keeps the canonical pin).
+  // assistant turn shown in the content exchange.
   let pinnedAssistantContent: string | null = null;
   // A first-turn edit-dsl editor already carries its `replace`; its reply is
   // applied in the content branch without a second provider call.
@@ -6132,7 +3146,6 @@ async function runEditDslLoop(options: LoopOptions): Promise<LoopResult> {
     }
     lastCorrection = rejectionLead(cause, lastRejectionStreak, {
       ...context,
-      protocolFormat,
       addressFailures,
     });
   };
@@ -6146,7 +3159,7 @@ async function runEditDslLoop(options: LoopOptions): Promise<LoopResult> {
   // the failing chain. It is rendered into the no-progress asks only;
   // `digestText` advances it over the records the previous prompt has not seen
   // yet, immediately before rendering.
-  const attemptDigest = createAttemptDigestState(protocolFormat);
+  const attemptDigest = createAttemptDigestState();
   const digestText = (): string => {
     updateAttemptDigest(attemptDigest, records);
     return renderAttemptDigest(attemptDigest);
@@ -6266,10 +3279,8 @@ async function runEditDslLoop(options: LoopOptions): Promise<LoopResult> {
     // Previous content rejection within this iteration, for the identical-
     // retry note (#48); resets every iteration.
     let lastRejection: string | null = null;
-    // Bounded self-verification request (#73), per Run iteration: `selfCheckUsed`
-    // enforces the at-most-one execution, `pendingSelfCheck` carries the one
-    // result into the next prompt.
-    let selfCheckUsed = false;
+    // Edit-dsl self-check: `pendingSelfCheck` carries the one result into the
+    // next prompt.
     let pendingSelfCheck: string | null = null;
     // Decision-only turn (#75), per round: a non-edit reply to a repeated
     // non-converging ask is clamped into `pendingApproach` and carried into the
@@ -6786,10 +3797,6 @@ async function runEditDslLoop(options: LoopOptions): Promise<LoopResult> {
       const target = pinnedTarget.locator.path;
       const diskSource = readFileIfExists(join(cwd, target)) ?? "";
       let contentPrompt: string;
-      // Repair exchange (#73): an intra-round retry (diagnostics present) or a
-      // A no-progress ask — never the fresh post-pick edit prompt. Only a repair
-      // exchange accepts a self-verification request and offers it in the prompt.
-      let repairExchange: boolean;
       // Failure history (#71): computed for every content retry; the same
       // pattern feeds the sharpened 2nd+ ask framing (#65). The no-progress ask
       // (#54/#57) is a cadence and can land on any exchange, including the first
@@ -6799,9 +3806,6 @@ async function runEditDslLoop(options: LoopOptions): Promise<LoopResult> {
       // prompt the model saw; do not consume a no-progress ask for it.
       const stalled = prefetchedReply === null ? takeStalledAsk(failurePattern) : undefined;
       const failureHistory = renderFailureHistoryNote(failurePattern);
-      // A verification-opened retry may move the pin; the ask names re-pinning
-      // as a concrete alternative, so it may too.
-      const repinAllowed = iterationOpenedBy !== null || stalled !== undefined;
       if (stalled !== undefined) {
         promptOffersStop = true;
         // Decision-only turn (#75): the same repeated-non-converging gating as
@@ -6810,7 +3814,6 @@ async function runEditDslLoop(options: LoopOptions): Promise<LoopResult> {
       }
       if (stalled === undefined && lastDiagnostics === null && initialContentPrompt !== null) {
         contentPrompt = initialContentPrompt;
-        repairExchange = false;
       } else {
         const rawPromptDiagnostics = combinedDiagnostics(iterationOpenedBy, lastDiagnostics);
         const promptDiagnostics =
@@ -6836,7 +3839,6 @@ async function runEditDslLoop(options: LoopOptions): Promise<LoopResult> {
         contentPrompt = buildRetryPrompt({
           exchangeNumber: exchange,
           mode: pinnedTarget.mode === "create" ? "create" : "modify",
-          locatorJson: pinnedAddressJson,
           currentSource,
           preRenderedSource: repairSource.preRendered,
           // A soft edit failure overwrites `lastDiagnostics`; in a repair
@@ -6845,7 +3847,6 @@ async function runEditDslLoop(options: LoopOptions): Promise<LoopResult> {
           failure: lastFailure,
           // The ask names re-pinning as a concrete alternative, so it may move
           // the pin exactly like a verification-opened retry.
-          repin: repinAllowed && pinnedTarget.mode === "modify",
           stalled,
           digest: stalled === undefined ? undefined : digestText(),
           failureHistory,
@@ -6855,8 +3856,6 @@ async function runEditDslLoop(options: LoopOptions): Promise<LoopResult> {
           // Per-cause rejection correction (#56): only edit retries carry the
           // class-specific lead; verification-repair prompts keep the default.
           correction: lastFailure === "edit" ? (lastCorrection ?? undefined) : undefined,
-          multiPayload: multiPayload,
-          protocolFormat,
           selfCheck: selfCheck ?? undefined,
           editDslContext: {
             issue: options.issue,
@@ -6870,7 +3869,6 @@ async function runEditDslLoop(options: LoopOptions): Promise<LoopResult> {
             ),
           },
         });
-        repairExchange = true;
       }
       messages = [
         systemMessage,
@@ -6938,10 +3936,7 @@ async function runEditDslLoop(options: LoopOptions): Promise<LoopResult> {
       // through the unchanged guards below; any other reply is the stated
       // re-approach — clamped and carried into the next exchange's prompt
       // instead of being parsed as an edit (no cap, no auto-stop).
-      if (
-        decisionTurn &&
-        !isEditPayloadReply(response.content ?? "", multiPayload, protocolFormat)
-      ) {
+      if (decisionTurn && !isEditDslReply(response.content ?? "")) {
         pendingApproach = clampText(response.content ?? "", APPROACH_LIMIT);
         continue;
       }
@@ -7004,9 +3999,9 @@ async function runEditDslLoop(options: LoopOptions): Promise<LoopResult> {
       }
       const content = response.content ?? "";
       // Edit-dsl self-check turn: a standalone `check end` / `test end` runs
-      // the configured command without writing. It is deliberately separate
-      // from the JSON #73 request and has no fixed count; repeated identical
-      // results are surfaced as no progress, while the token budget is the stop.
+      // the configured command without writing. It has no fixed count; repeated
+      // identical results are surfaced as no progress, while the token budget is
+      // the stop.
       const editDslSelfCheck = parseEditDslSelfCheck(content);
       if (editDslSelfCheck.kind !== "none") {
         if (editDslSelfCheck.kind === "error") {
@@ -7035,7 +4030,6 @@ async function runEditDslLoop(options: LoopOptions): Promise<LoopResult> {
         }
         const result = await executeSelfCheck(editDslSelfCheck.request, {
           cwd,
-          target,
           checkCommand: options.checkCommand,
           testCommand: options.testCommand,
           commandTimeoutMs: options.commandTimeoutMs,
@@ -7070,48 +4064,6 @@ async function runEditDslLoop(options: LoopOptions): Promise<LoopResult> {
         );
         continue;
       }
-      // Bounded self-verification request (#73): a repair exchange may reply
-      // with the distinct request object instead of an edit payload. At most one
-      // is executed per round, and only when a later exchange exists to return
-      // its result; every refusal falls through to the ordinary protocol path.
-      let requestFailure: string | null = null;
-      if (repairExchange) {
-        const parsedRequest = parseSelfCheckRequest(content);
-        if (parsedRequest.kind === "error") {
-          requestFailure = parsedRequest.diagnostics;
-        } else if (parsedRequest.kind === "ok") {
-          if (selfCheckUsed) {
-            requestFailure =
-              "stage: protocol\nthe round already used its one self-verification request; return an edit payload now (the harness runs at most one request per round)";
-          } else {
-            const result = await executeSelfCheck(parsedRequest.request, {
-              cwd,
-              target,
-              checkCommand: options.checkCommand,
-              testCommand: options.testCommand,
-              commandTimeoutMs: options.commandTimeoutMs,
-            });
-            selfCheckUsed = true;
-            pendingSelfCheck = result;
-            records.push(
-              recordRow({
-                row: records.length + 1,
-                iteration,
-                kind: "exchange",
-                exchange,
-                locator: pinnedTarget.locator,
-                replacement: null,
-                diagnostics: result,
-                outcome: "self-check",
-                finishReason: response.finishReason,
-                payloads: 0,
-                toolCalls: response.toolCalls.length,
-              }),
-            );
-            continue;
-          }
-        }
-      }
       // Batch-level rejection cause (#69/#78): `multi-protocol`/`multi-duplicate`
       // override the stage-derived classification; per-payload failures keep
       // the failing payload's own stage/cause.
@@ -7123,11 +4075,6 @@ async function runEditDslLoop(options: LoopOptions): Promise<LoopResult> {
       let gateReplacement = "";
       let failure: string | null = null;
       let failureStage: EditFailureStage = "protocol";
-      // A refused self-check request (#73) is an ordinary `protocol` rejection:
-      // skip the edit parser and fall through to the shared rejection record.
-      if (requestFailure !== null) {
-        failure = requestFailure;
-      }
       // Structured rejection origin (#56): the splice's matcher sub-cause and
       // the formatter message; never reconstructed from the diagnostics text.
       let matcherCause: MatcherCause | undefined;
@@ -7540,6 +4487,7 @@ async function runEditDslLoop(options: LoopOptions): Promise<LoopResult> {
         for (const deletion of editDslDeletes) {
           rmSync(join(cwd, deletion.path), { force: true });
         }
+        replacement = editDslAppliedRegions.map((region) => region.text).join("\n\n");
       } else {
         writeTarget(cwd, target, newSource);
       }
@@ -7751,9 +4699,5 @@ export async function runLoop(options: LoopOptions): Promise<LoopResult> {
     const { runTaskLoop } = await import("./task-loop");
     return runTaskLoop(options);
   }
-  const targetsMode = (options.targets ?? []).length > 0;
-  const protocolFormat: ProtocolFormat = targetsMode
-    ? "json"
-    : (options.protocolFormat ?? "edit-dsl");
-  return protocolFormat === "edit-dsl" ? runEditDslLoop(options) : runJsonLoop(options);
+  return runEditDslLoop(options);
 }

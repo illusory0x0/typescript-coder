@@ -68,9 +68,6 @@ interface CliArgs {
   replayDir: string | null;
   tokenBudget: number | null;
   effort: ReasoningEffort | null;
-  multiPayload: boolean;
-  /** Edit protocols (#119) to measure on the tc side; `edit-dsl` is the default. */
-  protocolFormats: ProtocolFormat[];
   /** tc loop modes to measure; `pinned-repair` is the default. */
   agentModes: AgentMode[];
   help: boolean;
@@ -377,8 +374,6 @@ interface RunContext {
   readonly runRoot: string;
   readonly replayDir: string | null;
   readonly tokenBudget: number | null;
-  /** Opt-in multi-payload exchanges (#69) forwarded to the tc side; off by default. */
-  readonly multiPayload: boolean;
   /** Selected tc protocol variants (#16); used to keep multi-variant run names unique. */
   readonly protocols: readonly ProtocolFormat[];
   /** Selected tc loop modes; used to keep multi-variant run names unique. */
@@ -541,13 +536,6 @@ Options:
                                              is not budgeted (default: 120000)
   --effort <none|low|high|max>               force this reasoning_effort on every tc-side
                                              model call (default: none)
-  --multi-payload                            opt in to multi-payload exchanges (#69) on the
-                                             tc side: a modify reply may batch path-independent
-                                             edits in one {"payloads": [...]} object
-                                             (default: off, one flat payload per exchange)
-  --protocol-format edit-dsl                 edit protocol for the tc side (only edit-dsl;
-                                             json is frozen).
-                                             compact is a deprecated alias for edit-dsl
   --agent-mode pinned-repair|plan-exec|both
                                              tc loop mode(s); pinned-repair is the default.
                                              Use both to measure pinned-repair and
@@ -597,36 +585,8 @@ function parseEffort(value: string): ReasoningEffort {
   failUsage(`invalid --effort value: ${value}`);
 }
 
-// Canonical display/iteration order: `json` before `edit-dsl`, so
-// `edit-dsl,json` and `json,edit-dsl` select the same matrix and report.
-const PROTOCOL_ORDER: readonly ProtocolFormat[] = ["json", "edit-dsl"];
-
-/**
- * Parse `--protocol-format`: one value or a comma-separated list (#16). Each
- * element accepts the deprecated `compact` alias, duplicates collapse, and the
- * result is canonicalized so input order never changes the matrix.
- */
-export function parseProtocolFormats(value: string): ProtocolFormat[] {
-  const selected = new Set<ProtocolFormat>();
-  for (const raw of value.split(",")) {
-    const element = raw.trim();
-    if (element === "json" || element === "edit-dsl") {
-      selected.add(element);
-    } else if (element === "compact") {
-      // `compact` is the deprecated input alias for `edit-dsl`; normalize it so
-      // reports and recorded bundles only ever carry `edit-dsl`.
-      selected.add("edit-dsl");
-    } else {
-      // Throw (rather than exit) so the parser stays unit-testable; `parseArgs`
-      // turns it into the same usage error.
-      throw new Error(`invalid --protocol-format value: ${element === "" ? raw : element}`);
-    }
-  }
-  if (selected.size === 0) {
-    throw new Error("missing value for --protocol-format");
-  }
-  return PROTOCOL_ORDER.filter((protocol) => selected.has(protocol));
-}
+/** The single model reply protocol measured by the benchmark. */
+const PROTOCOLS: readonly ProtocolFormat[] = ["edit-dsl"];
 
 /** Canonical mode order: `pinned-repair` before `plan-exec`. */
 const AGENT_MODE_ORDER: readonly AgentMode[] = ["pinned-repair", "plan-exec"];
@@ -671,23 +631,15 @@ function parseSide(value: string): SideSelection {
 }
 
 /**
- * Frozen dimensions: the oc side is a stored reference point and the legacy
- * json protocol is frozen for historical/replay compatibility. Re-running
- * either would break the frozen reference or replay contract, so the benchmark
- * refuses both outright (see AGENTS.md). Returned as a message rather than
- * thrown so tests can cover it without the process-exiting usage path.
+ * Frozen dimensions: the oc side is a stored reference point. Re-running it
+ * would move the reference point, so the benchmark refuses it outright (see
+ * AGENTS.md). Returned as a message rather than thrown so tests can cover it
+ * without the process-exiting usage path.
  */
-export function frozenDimensionError(
-  side: SideSelection,
-  protocolFormats: readonly ProtocolFormat[],
-): string | null {
-  if (side !== "tc") {
-    return "the oc side is frozen (benchmark/results/oc-baseline.json); benchmark only runs --side tc";
-  }
-  if (protocolFormats.includes("json")) {
-    return "the json protocol is frozen; benchmark only runs --protocol-format edit-dsl";
-  }
-  return null;
+export function frozenDimensionError(side: SideSelection): string | null {
+  return side === "tc"
+    ? null
+    : "the oc side is frozen (benchmark/results/oc-baseline.json); benchmark only runs --side tc";
 }
 
 function parseTask(value: string): TaskName {
@@ -713,8 +665,6 @@ export function parseArgs(argv: string[]): CliArgs {
     replayDir: null,
     tokenBudget: null,
     effort: null,
-    multiPayload: false,
-    protocolFormats: ["edit-dsl"],
     agentModes: [DEFAULT_AGENT_MODE],
     help: false,
   };
@@ -831,10 +781,6 @@ export function parseArgs(argv: string[]): CliArgs {
         index += 1;
         break;
       }
-      case "--multi-payload": {
-        args.multiPayload = true;
-        break;
-      }
       case "--agent-mode": {
         const value = argv[index + 1];
         if (value === undefined || value.startsWith("-")) {
@@ -842,19 +788,6 @@ export function parseArgs(argv: string[]): CliArgs {
         }
         try {
           args.agentModes = parseAgentModes(value);
-        } catch (error) {
-          failUsage(errorMessage(error));
-        }
-        index += 1;
-        break;
-      }
-      case "--protocol-format": {
-        const value = argv[index + 1];
-        if (value === undefined || value.startsWith("-")) {
-          failUsage("missing value for --protocol-format");
-        }
-        try {
-          args.protocolFormats = parseProtocolFormats(value);
         } catch (error) {
           failUsage(errorMessage(error));
         }
@@ -875,11 +808,11 @@ export function parseArgs(argv: string[]): CliArgs {
   if (args.ocModel === "") {
     failUsage("--oc-model must not be empty");
   }
-  // Frozen dimensions: the oc side and the legacy json protocol are measured
-  // once and stored under benchmark/results/. Re-running either would move the
-  // reference point, so the benchmark refuses both outright (see AGENTS.md).
+  // Frozen dimension: the oc side is measured once and stored under
+  // benchmark/results/. Re-running it would move the reference point, so the
+  // benchmark refuses it outright (see AGENTS.md).
   if (!args.help) {
-    const frozen = frozenDimensionError(args.side, args.protocolFormats);
+    const frozen = frozenDimensionError(args.side);
     if (frozen !== null) {
       failUsage(frozen);
     }
@@ -1093,7 +1026,6 @@ class RecordingProvider implements ProviderLike {
  */
 async function warmStablePrefixes(options: {
   model: string;
-  multiPayload: boolean;
   protocols: readonly ProtocolFormat[];
   agentModes: readonly AgentMode[];
 }): Promise<WarmupRecord[]> {
@@ -1104,7 +1036,7 @@ async function warmStablePrefixes(options: {
         entries.push({
           agentMode,
           kind: "edit",
-          prompt: buildSystemPrompt(options.multiPayload, protocol),
+          prompt: buildSystemPrompt(),
         });
       }
       continue;
@@ -1208,10 +1140,6 @@ async function runTypescriptCoderSide(options: {
   replayPath: string | null;
   tokenBudget: number | null;
   effort: ReasoningEffort | null;
-  /** Opt-in multi-payload exchanges (#69); forwarded to the loop. */
-  multiPayload: boolean;
-  /** Edit protocol (#119); forwarded to the loop. */
-  protocolFormat: ProtocolFormat;
   /** Loop mode (`--agent-mode`); forwarded to the loop. */
   agentMode: AgentMode;
   /** Repo root receiving failure artifacts under `failures/` (#43). */
@@ -1244,8 +1172,6 @@ async function runTypescriptCoderSide(options: {
       // the core CLI keeps its historical raw provider-token safety cap.
       tokenBudgetBasis: "cache-excluded",
       effortOverride: options.effort ?? undefined,
-      multiPayload: options.multiPayload,
-      protocolFormat: options.protocolFormat,
       agentMode: options.agentMode,
     });
   } catch (caught) {
@@ -1334,7 +1260,6 @@ async function runTypescriptCoderSide(options: {
       model: options.model,
       issue: options.issue,
       fixture: options.fixture,
-      protocolFormat: options.protocolFormat,
       agentMode: options.agentMode,
     });
     writeFile(options.replayPath, `${JSON.stringify(bundle, null, 2)}\n`);
@@ -1697,8 +1622,6 @@ async function runOnce(job: BenchmarkJob, context: RunContext): Promise<RunRecor
       replayPath,
       tokenBudget: context.tokenBudget,
       effort: context.effort,
-      multiPayload: context.multiPayload,
-      protocolFormat: protocol,
       agentMode,
       failureRoot: context.repoRoot,
     });
@@ -2476,7 +2399,7 @@ export function writeMarkdownReport(
   const protocolLine =
     protocolFormats.length > 1
       ? `- protocol-formats: ${protocolFormats.join(", ")} (#119)`
-      : `- protocol-format: ${protocolFormats[0] ?? report.protocolFormat ?? "json"} (#119)`;
+      : `- protocol-format: ${protocolFormats[0] ?? report.protocolFormat ?? "edit-dsl"} (#119)`;
   const agentModes = canonicalModeList(report.agentModes);
   const modeLine =
     agentModes.length > 1 || agentModes[0] !== DEFAULT_AGENT_MODE
@@ -3007,7 +2930,7 @@ async function main(): Promise<number> {
   const tasks = args.task === null ? TASKS.map((task) => task.name) : [args.task];
   const sides: Side[] = args.side === "both" ? ["tc", "oc"] : [args.side];
   const reps = args.pilot ? PILOT_REPS : args.reps;
-  const protocols = args.protocolFormats;
+  const protocols = PROTOCOLS;
 
   const jobs = buildJobs(tasks, sides, reps, protocols, args.agentModes);
   const jobGroups = scheduleJobGroups(jobs);
@@ -3020,13 +2943,11 @@ async function main(): Promise<number> {
 
   // #66/#16: pin the measured inputs per variant, so a multi-variant report can
   // be checked against the prompt each ledger row actually measured.
-  const provenanceFor = (protocol: ProtocolFormat, agentMode: AgentMode): RecordedProvenance => ({
+  const provenanceFor = (_protocol: ProtocolFormat, agentMode: AgentMode): RecordedProvenance => ({
     ...currentInputHashes(repoRoot, {
       tasks,
       taskIssues: TASK_SPECS,
       model: args.model,
-      multiPayload: args.multiPayload,
-      protocolFormat: protocol,
       agentMode,
       effort: args.effort,
       reps,
@@ -3064,11 +2985,11 @@ async function main(): Promise<number> {
     model: args.model,
     ocModel: args.ocModel === null || args.ocModel === args.model ? null : args.ocModel,
     effort: args.effort,
-    multiPayload: args.multiPayload,
+    multiPayload: false,
     // Scalar for today's single-protocol shape; null when variants are pooled
     // into no row, with the full selection in `protocolFormats` (#16).
     protocolFormat: singleProtocol ?? null,
-    protocolFormats: protocols,
+    protocolFormats: [...protocols],
     agentModes: args.agentModes,
     tokenBudget: args.tokenBudget,
     bunVersion: Bun.version,
@@ -3114,7 +3035,6 @@ async function main(): Promise<number> {
   if (sides.includes("tc")) {
     report.warmups = await warmStablePrefixes({
       model: args.model,
-      multiPayload: args.multiPayload,
       protocols,
       agentModes: args.agentModes,
     });
@@ -3144,7 +3064,6 @@ async function main(): Promise<number> {
     runRoot,
     replayDir,
     tokenBudget: args.tokenBudget,
-    multiPayload: args.multiPayload,
     protocols,
     agentModes: args.agentModes,
   };

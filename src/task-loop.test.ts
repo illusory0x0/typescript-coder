@@ -245,7 +245,6 @@ describe("runLoop dispatch", () => {
     ]);
     const result = await runLoop({
       ...baseOptions(dir, provider),
-      protocolFormat: "edit-dsl",
     });
     expect(result.ok).toBe(true);
     expect(result.nodes?.map((entry) => entry.status)).toEqual(["passed"]);
@@ -261,7 +260,6 @@ describe("runLoop dispatch", () => {
       cwd: dir,
       issue: "make the failing test pass",
       provider,
-      protocolFormat: "edit-dsl",
       checkCommand: TSC,
       testCommand: ["bun", "test"],
     });

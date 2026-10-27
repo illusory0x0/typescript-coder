@@ -3,13 +3,10 @@
  * (`docs/edit-protocol.md`). It turns a parsed `Selection[]` into the edit
  * regions the loop applies, the candidate occurrences a **viewer** returns, and
  * the typed failures each clause produced — keeping the cascade's stage
- * vocabulary (#110) so both the JSON and edit-dsl paths record the same metric.
+ * vocabulary (#110).
  *
- * This module is reached under the edit-dsl edit protocol
- * (`--protocol-format=edit-dsl`); the loop parses `select … end` clauses first
- * and a JSON payload is rejected. The address stage is delegated to the
- * loop's `resolveCurrentEntry` so the echo/kind rules stay identical on both
- * paths.
+ * The loop parses `select … end` clauses and rejects a JSON payload. The
+ * address stage is delegated to the loop's `resolveCurrentEntry`.
  */
 import { resolveCascade, resolveCascadeViewer } from "./cascade";
 import type { CascadeCause, SelectionStage } from "./cascade";

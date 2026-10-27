@@ -9,11 +9,9 @@ Each task has one frozen spec under `benchmark/specs/<task>.md`, loaded as `TASK
 
 `results/consumption.md` is the canonical before/after efficiency view across the
 series (USD per success; the dated reports keep the token columns). Every row
-carries its edit protocol: the edit-dsl protocol (#119; stored as `compact` in
-bundles recorded before the #15 rename) is the measured protocol from the
-2026-10-21 compact-era baseline onward, and the JSON-era rows (deleted by the
-cleanup commit) are a **different protocol** — not like-for-like comparable to
-an edit-dsl row.
+carries its edit protocol: edit-dsl is the measured protocol from the
+2026-10-21 baseline onward; older rows keep their historical labels and are not
+like-for-like comparable to an edit-dsl row.
 
 ## Usage
 
@@ -31,9 +29,7 @@ rep<n>.json`; off by default), `--token-budget <n>` (tc side only: abort a run
 once accumulated **cache-excluded** loop tokens exceed n; the final termination
 summary call is not budgeted; default 120000, see "Run budget" below), `--effort <none|low|high|max>` (tc side only: force this reasoning_effort
 on every Edit-loop call, overriding the default described below),
-`--protocol-format edit-dsl` (the only allowed value; `json` is frozen and
-`compact` is a deprecated alias for `edit-dsl`), `--agent-mode
-pinned-repair|plan-exec|both` (the tc loop; `pinned-repair` is the
+`--agent-mode pinned-repair|plan-exec|both` (the tc loop; `pinned-repair` is the
 default, `both` measures the pinned-repair and plan-exec loops in one
 report, and `edit` remains the deprecated input alias), `--help`.
 Non-pilot results default to `benchmark/results/<date>.json`.
@@ -50,12 +46,10 @@ against `benchmark/specs/` (4 tasks × 3 reps):
 - `benchmark/results/oc-baseline.json` — `--side oc`, `deepseek/deepseek-flash`.
 
 It is a reference point, not a development loop: the benchmark **rejects**
-`--side oc` and `--protocol-format json` outright under normal operation, so a
-change can never move the baseline. The json protocol stays frozen for
-historical/replay compatibility; its comparison baseline was retired. A
-baseline update requires explicit human approval and a deliberate, temporary
-bypass of the guard; restore the guard after the approved matrix. tc reports
-run `--side tc` with the default `edit-dsl` protocol.
+`--side oc` outright under normal operation, so a change can never move the
+baseline. A baseline update requires explicit human approval and a deliberate,
+temporary bypass of the guard; restore the guard after the approved matrix. tc
+reports run `--side tc` with the edit-dsl protocol.
 
 The oc baseline measures the ambient OpenCode configuration, including its
 registered skills; keep `.opencode/skills` and other OpenCode-level inputs
@@ -155,9 +149,8 @@ reported in each row's `Notes` and never as a tuned column.
   (`exchange` or `verification`), `exchange` (1-based index inside the Run
   iteration; informational only, because pinned-repair has no fixed exchange
   budget; null for verification rows), `outcome`
-  (exchanges: `selected`, `applied`, `stopped`, `protocol`, `address`, `echo`,
-  `matcher`, `no-op`, `repeat`, `duplicate`, `gate`, `format`, `truncated`,
-  `prev-broken`; verifications: `ok`, `tsc`, `tests`, `gate`, `format`,
+  (exchanges: `selected`, `applied`, `stopped`, `protocol`, `address`,
+  `matcher`, `no-op`, `duplicate`, `gate`, `format`, `truncated`, `prev-broken`; verifications: `ok`, `tsc`, `tests`, `gate`, `format`,
   `prev-broken`), the typed rejection `cause` (#56; null on success and
   verification rows), a bounded `diagnosticsHead` (≤200 chars, whitespace
   collapsed), `replacementChars`, and the provider `finishReason`; null for the
@@ -179,14 +172,11 @@ reported in each row's `Notes` and never as a tuned column.
   never rotate.
 - Replay bundles (`--replay-dir`): versioned JSON (`format` =
   `typescript-coder-replay@1`) with the task issue, fixture path, the recorded
-  edit protocol (`protocolFormat`: `"json"` or `"edit-dsl"`; legacy bundles
-  recorded before the #15 rename carry `"compact"`, which reads as `"edit-dsl"`),
-  the loop mode (`agentMode`: `"pinned-repair"` or `"plan-exec"`; absent
+  edit protocol (`protocolFormat`: `"edit-dsl"`; old/unknown values are
+  rejected), the loop mode (`agentMode`: `"pinned-repair"` or `"plan-exec"`; absent
   reads as `"pinned-repair"`, and legacy `"edit"` values read through the
   alias), and the ordered
-  chat calls (request messages, response content, finishReason, usage). In a
-  multi-variant run the bundle name carries the protocol
-  (`<task>-tc-<protocol>-rep<n>.json`) so both variants can be replayed;
+  chat calls (request messages, response content, finishReason, usage);
   consumed offline by the replay runner.
 - `durationMs`: model work only (the judge runs afterwards and is not counted).
 - `startedAt` / `finishedAt`: ISO wall clock of that same model work; the window
@@ -249,50 +239,27 @@ new accounting applies to new runs.
 
 ## Edit protocol (tc side)
 
-A selection is one composite address (`path` × `symbol` × `kind`) plus a mode
-(`modify`, `create`, `delete`; default `modify`). The address must match exactly
-one indexed declaration: a miss or an ambiguity is a staged `address` failure
-listing candidates, never a silent first-match pick. An edit is one flat
-payload (`{"path","symbol","kind","matcher"?,"range"?,"replacement"}`) whose
-address must echo the pinned selection — except in a verification-repair round
-(a round opened by failing verification), where the payload may re-pin to
-another declaration in the same file (the new address must resolve uniquely
-against the current source, and the pin moves); `matcher` is an optional
-structural snippet matched inside the symbol (exactly one match) and omitted
-means a whole-symbol rewrite; `range` `{line, column, endLine, endColumn}` (#72)
-is an optional 1-based inclusive span against the numbered current-source block
-the prompt shows (it must sit inside the declaration, and it takes precedence
-over `matcher`).
-The splice is gated: an edit whose result does not parse is discarded with a
-`gate` failure and nothing is written; a payload identical to the previous
-modify submission is discarded as `repeat`, and a candidate adding a duplicate
-top-level function/class/type name as `duplicate`. Then `oxfmt` formats and tsc
-
-- tests verify. `create` rejects a `matcher` or `range`, requires a safe parseable path,
-  and appends the complete declaration; a failed create whose kept file parses
-  continues as a `modify` repair round, and an unparseable kept file is removed
-  before the create re-runs. `delete` needs no payload and splices the resolved
-  declaration out directly.
-
-With `--multi-payload` (default off; #69/#78) a `modify` reply may instead carry
-a batch `{"payloads": [ … ]}` of flat payloads: the first entry echoes the
-pinned address (or the verification-repair re-pin), and every further entry
-names its own declaration, in the same file or another. Same-file entries must
-address non-overlapping regions: the payloads are grouped by file, each region
-is resolved against that file's current source, and the file's regions are
-spliced in one pass (from the end, like `applyEdits`). The exchange is atomic —
-if any entry fails its own guard or two same-file regions overlap, nothing is
-written and the rejection (`stage: multi`) names every failing entry. A single
-edit may still be sent as one flat object; `create`/`delete` never batch. With
-the flag off a `{"payloads": …}` reply is a classic `stage: protocol` rejection.
+The only model reply protocol is **edit-dsl**. A selection is one
+`select … end` clause naming a declaration with `(path, symbol, kind)`; the
+address must resolve exactly once, and a miss or ambiguity is a staged
+`address` failure listing candidates, never a silent first-match pick. An edit
+is one or more clauses with an optional `match` snippet or `/regex/`, an
+optional `pick` range, and a `replace with` fence; a bare viewer locates without
+writing. Resolved clauses apply atomically across the reply, and a candidate
+that adds a duplicate top-level function/class/type name is rejected as
+`duplicate`. Then `oxfmt` formats and tsc/tests verify. `create` adds one named
+declaration or member; an absent-symbol `select … replace` creates implicitly,
+and an empty body deletes. After a target is pinned, standalone `check end` and
+`test end` turns run the configured commands without writing. The full grammar
+and resolution rules are owned by `docs/edit-protocol.md`.
 
 ## Run budget (tc side)
 
 The tc loop nests Run and Edit (#43): each Run iteration repeats Edit →
 Verification. There is no fixed exchange or iteration cap: target picking and
 content revision keep retrying while distinct attempts make progress, and soft
-failures (protocol, address, echo, matcher, range-invalid, no-op, repeat,
-duplicate, gate, format, truncated) re-ask with staged diagnostics. Each soft
+failures (protocol, address, matcher, range-invalid, no-op, duplicate, gate,
+format, truncated) re-ask with staged diagnostics. Each soft
 failure is classified into a typed cause (#56) and the retry prompt's lead
 sentence is that cause's concrete correction; consecutive same-cause rejections
 accumulate in a run-scope streak (reset by an applied edit) that escalates from
@@ -336,10 +303,9 @@ unaffected.
 
 Replays a recorded bundle (`--replay-dir`, above) through the current loop in a
 fresh copy of the bundle's fixture under `tmp/replay/<stamp>/`, with no network
-calls. Each bundle replays under the protocol and loop mode it was recorded with
-(`protocolFormat`, `agentMode`). Backward compatibility: this is still `@1`, so an `@1`
-bundle written before the field existed — or one carrying an unknown value —
-replays as `json`, the protocol all older bundles used. The summary reports the
+calls. Each bundle replays under the loop mode it was recorded with (`agentMode`) using
+edit-dsl. Only edit-dsl bundles are accepted: an old JSON, `compact`, missing, or
+unknown `protocolFormat` is rejected. The summary reports the
 calls consumed against the recorded count, per-record outcomes and diagnostics,
 prompt mismatches against the recorded requests, the termination reason when the
 run stopped through the matrix, and where the loop stopped; exit codes: 0 = loop
@@ -446,12 +412,9 @@ Every result JSON carries a top-level `provenance` block:
 written by `benchmark/run.ts` via `currentInputHashes` so the record pins the
 same tree the runs read). Text pieces are newline-normalized to `\n`; object
 pieces go through a stable, recursively key-sorted JSON encoding, so insertion
-order never changes a hash. A single-protocol report keeps the scalar
-`provenance` block above. A multi-variant report (`--protocol-format
-json,edit-dsl`) carries `protocolFormats: [...]` and a `provenanceByProtocol`
-map keyed by variant, so each ledger row is checked against the prompt its
-protocol actually measured; `protocolFormat` is null for such a report, while
-legacy scalar reports and `"compact"` values stay readable. A multi-mode report
+order never changes a hash. A report keeps the scalar `provenance` block above
+with `protocolFormat: "edit-dsl"`; historical scalar reports and legacy
+protocol labels stay readable for ledger checks. A multi-mode report
 (`--agent-mode pinned-repair,plan-exec`) instead carries
 `agentModes: [...]` and a `provenanceByAgentMode` map; the plan-exec block
 hashes the planning+execution prompts and the `planExec: "work-dag"` loop
@@ -459,14 +422,14 @@ protocol marker, while the pinned-repair block keeps the historical edit-loop
 hash. The ledger has no mode column yet, so a multi-mode row is not selected by
 `check` until that column lands.
 
-| Digest         | What it covers                                                                                                                                                                                                                                          | Computation point                                                         |
-| -------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | ------------------------------------------------------------------------- |
-| `model`        | the gateway model id                                                                                                                                                                                                                                    | `report.model`                                                            |
-| `taskIssue`    | the task spec text of every task in the report, keyed by task                                                                                                                                                                                           | `TASK_SPECS` (`benchmark/specs/<task>.md`)                                |
-| `fixture`      | the on-disk content of `benchmark/fixtures/<task>/`, keyed by task and relative path                                                                                                                                                                    | current tree                                                              |
-| `systemPrompt` | the model-facing system + protocol text (plan-exec hashes planning+execution prompts)                                                                                                                                                                   | `buildSystemPrompt` / task prompts (`src/loop.ts`, `src/prompts/task.ts`) |
-| `loopConfig`   | token budget, the no-progress ask cadence, `effort`, `reps`, `multiPayload`, and pinned-repair's `scheduling: "token-budget+no-progress"` (no fixed exchange/round caps); plan-exec adds `planExec: "work-dag"` and keeps its historical literal fields | loop constants + run flags                                                |
-| `pricing`      | the peak/off-peak rate table plus `PRICING_FETCHED_ON`                                                                                                                                                                                                  | `src/benchmark-pricing.ts`                                                |
+| Digest         | What it covers                                                                                                                                                                                                                                          | Computation point                                                                     |
+| -------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | ------------------------------------------------------------------------------------- |
+| `model`        | the gateway model id                                                                                                                                                                                                                                    | `report.model`                                                                        |
+| `taskIssue`    | the task spec text of every task in the report, keyed by task                                                                                                                                                                                           | `TASK_SPECS` (`benchmark/specs/<task>.md`)                                            |
+| `fixture`      | the on-disk content of `benchmark/fixtures/<task>/`, keyed by task and relative path                                                                                                                                                                    | current tree                                                                          |
+| `systemPrompt` | the model-facing system + protocol text (plan-exec hashes planning+execution prompts)                                                                                                                                                                   | `buildSystemPrompt` / task prompts (`src/prompts/edit-dsl.ts`, `src/prompts/task.ts`) |
+| `loopConfig`   | token budget, the no-progress ask cadence, `effort`, `reps`, `multiPayload`, and pinned-repair's `scheduling: "token-budget+no-progress"` (no fixed exchange/round caps); plan-exec adds `planExec: "work-dag"` and keeps its historical literal fields | loop constants + run flags                                                            |
+| `pricing`      | the peak/off-peak rate table plus `PRICING_FETCHED_ON`                                                                                                                                                                                                  | `src/benchmark-pricing.ts`                                                            |
 
 `inputHash` is sha256 over the stable JSON of that digest object. A change to
 the fixture text, the prompt, the loop config, or the pricing table changes the

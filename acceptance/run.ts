@@ -301,7 +301,6 @@ async function runScenario(
         issue: scenario.issue,
         provider,
         temperature: live ? 0 : undefined,
-        protocolFormat: scenario.protocolFormat,
         agentMode: scenario.agentMode,
         checkCommand: context.checkCommand,
         testCommand: context.testCommand,

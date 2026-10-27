@@ -1,4 +1,4 @@
-import type { EditPayload, EditRange } from "./loop";
+import type { EditRange } from "./loop";
 import type { Locator, SymbolSpace } from "./utility";
 import { positionAtOffset, renderDslIssues } from "./dsl-diagnostics";
 import type { DslIssue, DslParseResult } from "./dsl-diagnostics";
@@ -20,10 +20,7 @@ export interface RenameSpec {
 }
 
 /**
- * One parsed `select … end` clause. It is equivalent to the JSON payload edit
- * model (`docs/edit-protocol.md`) only while `space` is null; a clause that
- * names a symbol space has no JSON form (see `toEditPayload`).
- * `replacement === null` is a **viewer** (no `replace`); `matcher === null`
+ * One parsed `select … end` clause. `replacement === null` is a **viewer** (no `replace`); `matcher === null`
  * means no `match`; `pick === null` means no `pick`. A parsed `pick` always has
  * a `replace`: `pick` without a `replace` is a syntax error. `rename` is the
  * replacer's alternative (`rename <from> to <to>`), absent when the clause has
@@ -1874,38 +1871,4 @@ export function serializeMultiEditor(statements: readonly EditStatement[]): stri
         : serializeFileStatement(statement.statement),
     )
     .join("\n\n");
-}
-
-/**
- * The explicit bridge to the shipped JSON payload
- * (`docs/edit-protocol.md` §1). Returns an `EditPayload` only for the subset the
- * payload can express: a `snippet` or no matcher, no `pick` or a single range,
- * and an editor (a `replace`). Regex matchers, a multi-range `pick`, viewers,
- * and renames have no payload form and return `null`.
- */
-export function toEditPayload(selection: Selection): EditPayload | null {
-  if (selection.replacement === null) {
-    return null;
-  }
-  if (selection.locator.kind === "file" && selection.locator.name === "") {
-    return null;
-  }
-  if (selection.rename !== undefined && selection.rename !== null) {
-    return null;
-  }
-  if (selection.space !== null) {
-    return null;
-  }
-  if (selection.matcher !== null && selection.matcher.kind !== "snippet") {
-    return null;
-  }
-  if (selection.pick !== null && selection.pick.length !== 1) {
-    return null;
-  }
-  return {
-    locator: selection.locator,
-    matcher: selection.matcher === null ? null : selection.matcher.value,
-    range: selection.pick === null ? null : (selection.pick[0] ?? null),
-    replacement: selection.replacement,
-  };
 }

@@ -3,8 +3,8 @@ import type { ChatMessage, ChatResponse, ToolCall } from "../src/openai";
 
 export const REPLAY_BUNDLE_FORMAT = "typescript-coder-replay@1";
 
-/** The edit protocol a bundle was recorded under. */
-export type ReplayProtocolFormat = "json" | "edit-dsl";
+/** The edit protocol a bundle was recorded under (edit-dsl only). */
+export type ReplayProtocolFormat = "edit-dsl";
 
 export interface ReplayCall {
   readonly messages: ChatMessage[];
@@ -21,11 +21,6 @@ export interface ReplayBundleMeta {
   readonly issue: string;
   readonly fixture: string;
   /**
-   * Optional for old callers; the recorder writes `json` when omitted. New
-   * edit-dsl bundles pass `edit-dsl` explicitly.
-   */
-  readonly protocolFormat?: ReplayProtocolFormat;
-  /**
    * Canonical loop mode recorded for the bundle; omitted means pinned-repair.
    * Legacy `edit` bundles are normalized on read.
    */
@@ -35,7 +30,7 @@ export interface ReplayBundleMeta {
 export interface ReplayBundle extends ReplayBundleMeta {
   readonly format: string;
   readonly side: "tc";
-  /** Recorded edit protocol; required on bundles written/parsed here. */
+  /** Recorded edit protocol; only `edit-dsl` bundles are supported. */
   readonly protocolFormat: ReplayProtocolFormat;
   /** Recorded loop mode; legacy bundles read as canonical `pinned-repair`. */
   readonly agentMode?: AgentMode;
@@ -99,7 +94,7 @@ export class ReplayRecorder {
       model: meta.model,
       issue: meta.issue,
       fixture: meta.fixture,
-      protocolFormat: meta.protocolFormat ?? "json",
+      protocolFormat: "edit-dsl",
       // Literal avoids a runtime cycle with `loop.ts`, which imports
       // `usageFromRaw` from this module; the canonical default is pinned-repair.
       agentMode: meta.agentMode ?? "pinned-repair",

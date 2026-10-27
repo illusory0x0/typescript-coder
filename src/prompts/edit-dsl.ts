@@ -11,10 +11,9 @@ import {
   TEST_FILE_SUFFIX,
 } from "./shared";
 
-// #119 edit-dsl protocol (`--protocol-format=edit-dsl`, formerly the #117 forced
-// mode): the system prompt teaches `select … end` clauses in place of the JSON
-// edit rule, and the pick turn itself is a single select clause. The `json`
-// format never uses these paragraphs.
+// The edit-dsl protocol (formerly the #117/#119 opt-in mode): the system prompt
+// teaches `select … end` clauses and the pick turn itself is a single select
+// clause. It is the only model reply protocol.
 export const EDIT_DSL_SELECT_SYSTEM_PARAGRAPH =
   "First you will be asked to select the target or act on files directly. Reply with ONLY one `select <symbol> in <path> [ resolve <value|type|namespace> ] end` clause naming one symbol-index entry, or with one file-level `select file <path> … replace with <fence> end` clause for an import/export statement, or with one or more raw file commands (`create`, `delete`, `read`, `write`). A select clause is a viewer unless it carries `replace` or `rename`, and a viewer leads to a `# details` prompt before the edit. Do not mix a select clause and file commands in this first reply. Keep the reply to those statements with no prose and no JSON.";
 export const EDIT_DSL_EDIT_SYSTEM_PARAGRAPH =
@@ -59,7 +58,7 @@ export const EDIT_DSL_FOLD_HINT =
 export const EDIT_DSL_ROUNDS_SYSTEM_PARAGRAPH =
   "There is no fixed exchange or round cap: the run continues while it makes progress and ends when an edit verifies, when the token budget is spent, or when the same reply/source/diagnostics repeats with no progress. When verification fails, the next attempt shows the current source and the failing diagnostics, and it may either revise the pinned declaration or re-pin to a different declaration in the same file by naming it in the clause's own `select` (the new address must resolve uniquely in the current source). A rejected or failing attempt is retried with its diagnostics and a correction; at a no-progress milestone the next attempt asks you to change the failing cause, or to reply `STOP` to end the run.";
 
-export function buildEditDslSystemPrompt(multiPayload = false): string {
+export function buildEditDslSystemPrompt(): string {
   return assembleSystemPrompt(
     {
       select: EDIT_DSL_SELECT_SYSTEM_PARAGRAPH,
@@ -67,7 +66,6 @@ export function buildEditDslSystemPrompt(multiPayload = false): string {
       createDelete: `${EDIT_DSL_CREATE_DELETE_SYSTEM_PARAGRAPH}\n\n${EDIT_DSL_FS_SYSTEM_PARAGRAPH}\n\n${EDIT_DSL_FOLD_DETAIL}\n\n${EDIT_DSL_WORKFLOW_SUMMARY}`,
       rounds: EDIT_DSL_ROUNDS_SYSTEM_PARAGRAPH,
     },
-    multiPayload,
     EDIT_DSL_ROLE,
     [EDIT_DSL_AT_A_GLANCE, EDIT_DSL_MOTIVATION, EDIT_DSL_OUTPUT_CONTRACT],
   );
@@ -252,15 +250,13 @@ export function buildEditDslModifiedPrompt(
   return appendEditDslSpecFiles(prompt, specFiles);
 }
 
-// #111: the few-shot examples the fresh edit and modify-retry prompts carry
-// under the edit-dsl protocol (`--protocol-format=edit-dsl`). They show the §2
-// forms of `docs/edit-protocol.md` — a `resolve value` viewer, a bare
+// #111: the few-shot examples the fresh edit and modify-retry prompts carry.
+// They show the §2 forms of `docs/edit-protocol.md` — a `resolve value` viewer, a bare
 // declaration replace, a `match` + `pick` edit, a `match` + `replace` rewrite,
 // a create (#117), and a viewer-then-editor multi-clause reply whose clauses
 // target different declarations (#117/#41) — built with `serializeSelections`
 // so the grammar stays the single source of truth.
-// Each form is labelled so the examples are unambiguously separate. The block
-// never appears under the `json` format.
+// Each form is labelled so the examples are unambiguously separate.
 export type EditDslExampleForm =
   | { label: string; selections: EditDslSelection[] }
   | { label: string; raw: string };
@@ -431,8 +427,8 @@ export function renderEditDslExamples(): string {
 }
 
 /**
- * The edit-dsl edit instruction (#111): replaces the JSON instruction in the
- * fresh edit prompt and the modify retry prompt under the edit-dsl format. It
+ * The edit-dsl edit instruction (#111): used by the fresh edit prompt and the
+ * modify retry prompt. It
  * states the reply shape and clause semantics, shows the §2 examples (#117 adds
  * the create and viewer-then-editor forms; #25 adds fold expansion and the
  * whole-file `write` fallback), then teaches the ordered micro-operation

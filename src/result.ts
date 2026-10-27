@@ -14,7 +14,7 @@ export interface ResultTokens {
   cacheRead: number;
 }
 
-/** One target the run was asked to address (#81, echoed as `[]` for now). */
+/** Reserved target list in the result schema; always empty now. */
 export interface ResultTarget {
   path: string;
   symbol: string;
@@ -54,15 +54,14 @@ function zeroResultTokens(): ResultTokens {
 /**
  * Build the sub-agent result from a finished run (#80): `verified` mirrors
  * `result.ok`; `files` is the de-duplicated set of declarations an applied
- * exchange addressed (an explicit-targets batch row may cover several, #81);
- * `records` is the raw record count. `targets` echoes the requested addresses
- * (empty for the default path-independent mode) and `tokens` defaults to zeros.
+ * exchange addressed (a plan-exec row may cover several); `records` is the raw
+ * record count. `targets` stays an empty schema field and `tokens` defaults to
+ * zeros.
  * A plan/execute run also carries `nodes`, whose ids are string graph node ids
  * in `typescript-coder-result@3` (#28).
  */
 export function buildSubagentResult(input: {
   result: LoopResult;
-  targets?: ResultTarget[];
   tokens?: ResultTokens;
 }): SubagentResult {
   const { result } = input;
@@ -72,8 +71,8 @@ export function buildSubagentResult(input: {
     if (record.kind !== "exchange" || record.outcome !== "applied") {
       continue;
     }
-    // Explicit-targets mode (#81): one applied row can cover several addresses;
-    // fall back to the row's own locator for the classic single-payload path.
+    // A plan-exec applied row can cover several addresses; fall back to the
+    // row's own locator for the single-target driver.
     for (const locator of record.appliedLocators ?? [record.locator]) {
       const { path, name, kind } = locator;
       const key = `${path}\u0000${name}\u0000${kind}`;
@@ -89,7 +88,7 @@ export function buildSubagentResult(input: {
     status: result.ok ? "ok" : "failed",
     verified: result.ok,
     files,
-    targets: input.targets ?? [],
+    targets: [],
     records: result.records.length,
     tokens: input.tokens ?? zeroResultTokens(),
     terminationReason: result.terminationReason ?? null,

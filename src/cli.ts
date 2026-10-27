@@ -1,19 +1,11 @@
-import { readFileSync } from "node:fs";
 import { canonicalAgentMode, DEFAULT_AGENT_MODE } from "./loop";
-import type { AgentMode, ProtocolFormat } from "./loop";
-import type { Locator } from "./utility";
+import type { AgentMode } from "./loop";
 
 export interface CliOptions {
   help: boolean;
   model: string;
   /** Loop shape: pinned-repair (default) or plan-exec. */
   agentMode?: AgentMode;
-  /** Opt-in multi-payload exchanges (#69); default off. */
-  multiPayload: boolean;
-  /** Edit protocol format (#119): `json` or the `edit-dsl` syntax (default). */
-  protocolFormat: ProtocolFormat;
-  /** Explicit addresses to edit (#81); null = the default discovery path. */
-  targets: Locator[] | null;
   /** stdout format (#80): `text` (default) or the machine-readable `json` result. */
   format: "text" | "json";
   /** Hard raw provider-token budget (#80); null = the loop default. */
@@ -74,90 +66,10 @@ function parseTimeout(value: string): number {
   return parsed;
 }
 
-function isRecord(value: unknown): value is Record<string, unknown> {
-  return typeof value === "object" && value !== null && !Array.isArray(value);
-}
-
-// One `--targets` entry: a non-empty string triple, mapped to a Locator with
-// `symbol` renamed to `name` (#81). Never silently drops an entry.
-function locatorFromTarget(value: unknown, index: number, file: string): Locator {
-  const where = `--targets entry ${index + 1} of ${JSON.stringify(file)}`;
-  if (!isRecord(value)) {
-    throw new Error(`${where} must be an object {"path": ..., "symbol": ..., "kind": ...}`);
-  }
-  const fields: readonly [string, unknown][] = [
-    ["path", value["path"]],
-    ["symbol", value["symbol"]],
-    ["kind", value["kind"]],
-  ];
-  for (const [key, field] of fields) {
-    if (typeof field !== "string" || field.trim() === "") {
-      throw new Error(`${where} must carry a non-empty string "${key}"`);
-    }
-  }
-  return {
-    path: value["path"] as string,
-    name: value["symbol"] as string,
-    kind: value["kind"] as string,
-  };
-}
-
-/**
- * Read the `--targets <file.json>` address list (#81): either a top-level array
- * or `{"targets": [...]}`, each entry a `{path, symbol, kind}` string triple.
- * Throws a clear error for a missing file, invalid JSON, or a malformed entry.
- */
-export function readTargetsFile(file: string): Locator[] {
-  let text: string;
-  try {
-    text = readFileSync(file, "utf8");
-  } catch (error) {
-    throw new Error(
-      `--targets could not read ${JSON.stringify(file)}: ${error instanceof Error ? error.message : String(error)}`,
-    );
-  }
-  let parsed: unknown;
-  try {
-    parsed = JSON.parse(text);
-  } catch (error) {
-    throw new Error(
-      `--targets file ${JSON.stringify(file)} is not valid JSON: ${error instanceof Error ? error.message : String(error)}`,
-    );
-  }
-  const entries = Array.isArray(parsed)
-    ? parsed
-    : isRecord(parsed) && Array.isArray(parsed["targets"])
-      ? (parsed["targets"] as unknown[])
-      : null;
-  if (entries === null) {
-    throw new Error(
-      `--targets file ${JSON.stringify(file)} must be a JSON array or an object with a "targets" array`,
-    );
-  }
-  if (entries.length === 0) {
-    throw new Error(`--targets file ${JSON.stringify(file)} lists no targets`);
-  }
-  const locators = entries.map((entry, index) => locatorFromTarget(entry, index, file));
-  const seen = new Set<string>();
-  for (const locator of locators) {
-    const key = `${locator.path}\u0000${locator.name}\u0000${locator.kind}`;
-    if (seen.has(key)) {
-      throw new Error(
-        `--targets file ${JSON.stringify(file)} lists {path: ${JSON.stringify(locator.path)}, symbol: ${JSON.stringify(locator.name)}, kind: ${JSON.stringify(locator.kind)}} more than once`,
-      );
-    }
-    seen.add(key);
-  }
-  return locators;
-}
-
 export function parseArgs(argv: string[]): CliOptions {
   let help = false;
   let model = DEFAULT_MODEL;
   let agentMode: AgentMode = DEFAULT_AGENT_MODE;
-  let multiPayload = false;
-  let protocolFormat: ProtocolFormat = "edit-dsl";
-  let targets: Locator[] | null = null;
   let format: "text" | "json" = "text";
   let tokenBudget: number | null = null;
   let checkCommand: string[] | null = null;
@@ -171,23 +83,6 @@ export function parseArgs(argv: string[]): CliOptions {
     }
     if (arg === "-h" || arg === "--help") {
       help = true;
-      continue;
-    }
-    if (arg === "--multi-payload" || arg === "--multiPayload") {
-      multiPayload = true;
-      continue;
-    }
-    if (arg === "--protocol-format" || arg.startsWith("--protocol-format=")) {
-      const { value, next } = flagValue(argv, index, "--protocol-format");
-      if (value !== "json" && value !== "edit-dsl" && value !== "compact") {
-        throw new Error(
-          `--protocol-format must be "json" or "edit-dsl" (got ${JSON.stringify(value)})`,
-        );
-      }
-      // `compact` is the deprecated input alias for `edit-dsl`; output and
-      // internals only use `edit-dsl`.
-      protocolFormat = value === "compact" ? "edit-dsl" : value;
-      index = next;
       continue;
     }
     if (
@@ -218,12 +113,6 @@ export function parseArgs(argv: string[]): CliOptions {
     if (arg === "--model" || arg.startsWith("--model=")) {
       const { value, next } = flagValue(argv, index, "--model");
       model = value;
-      index = next;
-      continue;
-    }
-    if (arg === "--targets" || arg.startsWith("--targets=")) {
-      const { value, next } = flagValue(argv, index, "--targets");
-      targets = readTargetsFile(value);
       index = next;
       continue;
     }
@@ -268,25 +157,10 @@ export function parseArgs(argv: string[]): CliOptions {
     }
     throw new Error(`unknown argument: ${arg}`);
   }
-  if (agentMode === "plan-exec") {
-    if (targets !== null) {
-      throw new Error(
-        "--targets edits explicit addresses through the single-target pinned-repair loop; it cannot be combined with --mode plan-exec",
-      );
-    }
-    if (protocolFormat === "json") {
-      throw new Error(
-        "--mode plan-exec executes tasks with the edit-dsl protocol; --protocol-format json cannot be combined with it",
-      );
-    }
-  }
   return {
     help,
     model,
     agentMode,
-    multiPayload,
-    protocolFormat,
-    targets,
     format,
     tokenBudget,
     checkCommand,
@@ -301,8 +175,8 @@ export function helpText(): string {
     "typescript-coder — read an issue on stdin and apply a verified LLM edit",
     "",
     "Usage:",
-    "  tc [--model <id>] [--mode <pinned-repair|plan-exec>] [--format <text|json>] [--protocol-format <json|edit-dsl>] [--token-budget <n>] [--multi-payload] [--targets <file>] < issue.txt",
-    "  bun run src/main.ts [--model <id>] [--mode <pinned-repair|plan-exec>] [--format <text|json>] [--protocol-format <json|edit-dsl>] [--token-budget <n>] [--multi-payload] [--targets <file>] < issue.txt",
+    "  tc [--model <id>] [--mode <pinned-repair|plan-exec>] [--format <text|json>] [--token-budget <n>] < issue.txt",
+    "  bun run src/main.ts [--model <id>] [--mode <pinned-repair|plan-exec>] [--format <text|json>] [--token-budget <n>] < issue.txt",
     "",
     "Options:",
     "  --model <id>       model id for the OpenAI-compatible provider (default: deepseek-v4.1-flash)",
@@ -325,18 +199,6 @@ export function helpText(): string {
     "  --cwd <dir>        working directory for the run (default: the process cwd)",
     "  --timeout <ms>     timeout for each check/test command in milliseconds",
     "                     (default: 120000)",
-    "  --multi-payload    opt in to multi-payload exchanges (#69): a modify reply may",
-    '                     batch path-independent edits in one {"payloads": [...]} object',
-    "                     (default: off, one flat payload per exchange)",
-    "  --protocol-format <json|edit-dsl>",
-    "                     edit protocol (default: edit-dsl); json keeps the flat",
-    "                     JSON payload, edit-dsl requires the `select … end` syntax",
-    "                     (#119; explicit-targets mode stays json); `compact` is a",
-    "                     deprecated alias for edit-dsl",
-    "  --targets <file>   edit an explicit address list from a JSON file (#81); the",
-    '                     file is an array or {"targets": [...]} of {"path","symbol",',
-    '                     "kind"} entries; each file is edited once per exchange and',
-    "                     same-file targets are sequenced across exchanges",
     "  -h, --help         show this help and exit",
     "",
     "Environment:",

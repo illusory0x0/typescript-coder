@@ -7,10 +7,7 @@ import {
   buildEditDslModifiedPrompt,
   buildEditDslSymbolIndex,
   buildEditDslUserPrompt,
-  buildContextYaml,
-  buildEditPrompt,
   buildSystemPrompt,
-  buildUserPrompt,
   discoverSourceFiles,
   selectSpecFiles,
 } from "./loop";
@@ -20,36 +17,13 @@ import { serializeSelections } from "./selection";
 import { buildIndexTolerant } from "./utility";
 import type { LoopRecord, LoopResult } from "./loop";
 import type { ChatMessage } from "./openai";
-import type { ReplayBundle, ReplayCall, ReplayProtocolFormat } from "./replay-format";
+import type { ReplayBundle, ReplayCall } from "./replay-format";
 import type { ReplayRun } from "./replay-runner";
 
 const TSC_BIN = new URL("../node_modules/typescript/bin/tsc", import.meta.url).pathname;
 const ISSUE = "make the answer test pass";
 const LOCATOR = { path: "src/helper.ts", name: "answer", kind: "function" };
-const ADDRESS_JSON = JSON.stringify({
-  path: LOCATOR.path,
-  symbol: LOCATOR.name,
-  kind: LOCATOR.kind,
-});
-const SELECTION_JSON = JSON.stringify({
-  mode: "modify",
-  path: LOCATOR.path,
-  symbol: LOCATOR.name,
-  kind: LOCATOR.kind,
-});
 const ORIGINAL_HELPER = "export function answer(): number {\n  return 1;\n}\n";
-// The index records the declaration without the `export` modifier, so the
-// edit prompt shows the bare declaration.
-const ANSWER_DECLARATION = "function answer(): number {\n  return 1;\n}";
-// The v2 edit payload is one flat object: address + optional matcher + replacement.
-const FIXED_EDIT = JSON.stringify({
-  path: LOCATOR.path,
-  symbol: LOCATOR.name,
-  kind: LOCATOR.kind,
-  matcher: "return 1;",
-  replacement: "return 2;",
-});
-
 const tempDirs: string[] = [];
 
 function tempDir(): string {
@@ -97,37 +71,6 @@ function fixtureRepo(): { repoRoot: string; fixtureDir: string } {
   return { repoRoot, fixtureDir };
 }
 
-function recordedCalls(fixtureDir: string): ReplayCall[] {
-  const files = discoverSourceFiles(fixtureDir);
-  const initial: ChatMessage[] = [
-    { role: "system", content: buildSystemPrompt() },
-    {
-      role: "user",
-      content: buildUserPrompt(ISSUE, buildContextYaml(files), selectSpecFiles(ISSUE, files)),
-    },
-  ];
-  return [
-    {
-      messages: initial,
-      content: SELECTION_JSON,
-      toolCalls: [],
-      finishReason: "stop",
-      usage: null,
-    },
-    {
-      messages: [
-        ...initial,
-        { role: "assistant", content: SELECTION_JSON },
-        { role: "user", content: buildEditPrompt(ADDRESS_JSON, ANSWER_DECLARATION) },
-      ],
-      content: FIXED_EDIT,
-      toolCalls: [],
-      finishReason: "stop",
-      usage: null,
-    },
-  ];
-}
-
 // EditDsl is the default protocol, so the recorded prompts are the Goal/index
 // user prompt, then the `# details` prompt after the viewer pick. The edit-dsl
 // edit reply is serialized by the grammar itself, mirroring what the loop
@@ -138,7 +81,7 @@ function editDslRecordedCalls(fixtureDir: string): ReplayCall[] {
   const specFiles = selectSpecFiles(ISSUE, files);
   const systemMessage: ChatMessage = {
     role: "system",
-    content: buildSystemPrompt(false, "edit-dsl"),
+    content: buildSystemPrompt(),
   };
   const userMessage: ChatMessage = {
     role: "user",
@@ -198,11 +141,7 @@ function editDslRecordedCalls(fixtureDir: string): ReplayCall[] {
   ];
 }
 
-function syntheticBundle(
-  fixture: string,
-  calls: ReplayCall[],
-  protocolFormat: ReplayProtocolFormat = "json",
-): ReplayBundle {
+function syntheticBundle(fixture: string, calls: ReplayCall[]): ReplayBundle {
   return {
     format: REPLAY_BUNDLE_FORMAT,
     side: "tc",
@@ -211,7 +150,7 @@ function syntheticBundle(
     model: "fake",
     issue: ISSUE,
     fixture,
-    protocolFormat,
+    protocolFormat: "edit-dsl",
     calls,
   };
 }
@@ -239,29 +178,13 @@ describe("parseReplayBundle", () => {
     expect(bundle.side).toBe("tc");
   });
 
-  test("defaults a missing or unknown protocol to json and preserves edit-dsl", () => {
-    // JSON.stringify drops the undefined field, so this is a legacy @1 bundle
-    // recorded before the protocol field existed.
-    const legacy = JSON.stringify({
-      ...syntheticBundle("project", [], "edit-dsl"),
-      protocolFormat: undefined,
-    });
-    expect(parseReplayBundle(legacy).protocolFormat).toBe("json");
-    const unknown = JSON.stringify({
-      ...syntheticBundle("project", []),
-      protocolFormat: "yaml",
-    });
-    expect(parseReplayBundle(unknown).protocolFormat).toBe("json");
-    const editDsl = JSON.stringify(syntheticBundle("project", [], "edit-dsl"));
-    expect(parseReplayBundle(editDsl).protocolFormat).toBe("edit-dsl");
-  });
-
-  test("normalizes the legacy `compact` bundle value to edit-dsl (#15)", () => {
-    const legacy = JSON.stringify({
-      ...syntheticBundle("project", [], "edit-dsl"),
-      protocolFormat: "compact",
-    });
-    expect(parseReplayBundle(legacy).protocolFormat).toBe("edit-dsl");
+  test("rejects old JSON, compact, missing, and unknown replay protocols", () => {
+    const base = syntheticBundle("project", []);
+    for (const protocol of ["json", "compact", "yaml", undefined]) {
+      const bundle = JSON.stringify({ ...base, protocolFormat: protocol });
+      expect(() => parseReplayBundle(bundle)).toThrow("unsupported replay protocol");
+    }
+    expect(parseReplayBundle(JSON.stringify(base)).protocolFormat).toBe("edit-dsl");
   });
 
   test("maps legacy agent modes and defaults to canonical pinned-repair (#34)", () => {
@@ -311,7 +234,7 @@ describe("runReplay", () => {
   test("replays in-order calls through the loop and reports the ok attempt", async () => {
     const { repoRoot, fixtureDir } = fixtureRepo();
     const bundle = parseReplayBundle(
-      JSON.stringify(syntheticBundle("project", recordedCalls(fixtureDir))),
+      JSON.stringify(syntheticBundle("project", editDslRecordedCalls(fixtureDir))),
     );
     const run = await runReplay({
       bundle,
@@ -321,25 +244,29 @@ describe("runReplay", () => {
       keep: true,
     });
     expect(run.result.ok).toBe(true);
-    expect(run.callsConsumed).toBe(2);
-    expect(run.callsTotal).toBe(2);
+    expect(run.callsConsumed).toBe(3);
+    expect(run.callsTotal).toBe(3);
     expect(run.exhaustion).toBeNull();
     expect(run.promptMismatches).toEqual([]);
     expect(run.result.records.map((record) => record.outcome)).toEqual([
       "selected",
       "applied",
       "ok",
+      "confirmed",
     ]);
     expect(run.workspace.startsWith(join(repoRoot, "tmp", "replay"))).toBe(true);
     expect(readFileSync(join(run.workspace, "src", "helper.ts"), "utf8")).toContain("return 2;");
     const summary = summarizeReplay(run);
     expect(summary).toContain("result: ok");
-    expect(summary).toContain("calls: 2/2");
+    expect(summary).toContain("calls: 3/3");
     expect(summary).toContain("prompt mismatches: none");
     expect(summary).toContain(
       "record 1: kind=exchange outcome=selected exchange=1 diagnostics=none",
     );
     expect(summary).toContain("record 3: kind=verification outcome=ok exchange=- diagnostics=none");
+    expect(summary).toContain(
+      "record 4: kind=exchange outcome=confirmed exchange=2 diagnostics=none",
+    );
   }, 60000);
 
   test("replays an edit-dsl bundle under its recorded protocol and consumes every call", async () => {
@@ -363,7 +290,6 @@ describe("runReplay", () => {
           model: "fake",
           issue: ISSUE,
           fixture: "project",
-          protocolFormat: "edit-dsl",
         }),
       ),
     );
@@ -387,7 +313,7 @@ describe("runReplay", () => {
 
   test("reports exhaustion and removes the workspace by default", async () => {
     const { repoRoot, fixtureDir } = fixtureRepo();
-    const calls = recordedCalls(fixtureDir).slice(0, 1);
+    const calls = editDslRecordedCalls(fixtureDir).slice(0, 1);
     const bundle = parseReplayBundle(JSON.stringify(syntheticBundle("project", calls)));
     const run = await runReplay({
       bundle,

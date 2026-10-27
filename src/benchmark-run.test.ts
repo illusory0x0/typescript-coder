@@ -108,7 +108,6 @@ interface RunModule {
     concurrency: number,
     run: (job: Job, index: number) => Promise<Result>,
   ): Promise<Result[]>;
-  parseProtocolFormats(value: string): string[];
   parseAgentModes(value: string): string[];
   cacheBalanceWarning(rows: readonly AggregateLike[]): string | null;
   tokenMultiplierSentence(
@@ -685,19 +684,7 @@ describe("oc model override (--oc-model)", () => {
   });
 });
 
-describe("edit protocol override (--protocol-format) (#119)", () => {
-  test.skipIf(!runModulePresent)("parses --protocol-format and defaults to edit-dsl", async () => {
-    const { parseArgs } = await loadRunModule();
-    expect(parseArgs([]).protocolFormats).toEqual(["edit-dsl"]);
-    expect(parseArgs(["--multi-payload"]).protocolFormats).toEqual(["edit-dsl"]);
-    expect(parseArgs(["--protocol-format", "edit-dsl"]).protocolFormats).toEqual(["edit-dsl"]);
-    expect(parseArgs(["--protocol-format", "compact"]).protocolFormats).toEqual(["edit-dsl"]);
-    const { frozenDimensionError } = await loadRunModule();
-    expect(frozenDimensionError("tc", ["json"])).toContain(
-      "the json protocol is frozen; benchmark only runs --protocol-format edit-dsl",
-    );
-  });
-
+describe("report protocol label (#119)", () => {
   test.skipIf(!runModulePresent)("the report renders the selected protocol format", async () => {
     const { computeAggregates, writeMarkdownReport } = await loadRunModule();
     const runs = sampleRuns();
@@ -736,7 +723,7 @@ describe("edit protocol override (--protocol-format) (#119)", () => {
         computedAt: "2026-10-20T00:00:00.000Z",
       },
     };
-    const dir = mkdtempSync(join(tmpdir(), "run-protocol-format-"));
+    const dir = mkdtempSync(join(tmpdir(), "run-protocol-label-"));
     try {
       const md = join(dir, "edit-dsl.md");
       writeMarkdownReport(md, report);
@@ -756,26 +743,6 @@ describe("concurrent protocol variants (#16)", () => {
     makeRun("json-parser", "tc", { input: 400, output: 200 }, null, "edit-dsl"),
     makeRun("json-parser", "oc", { input: 900, output: 400 }),
   ];
-
-  test.skipIf(!runModulePresent)(
-    "parses comma lists in either order, de-duplicates, and normalizes the compact alias",
-    async () => {
-      const { parseProtocolFormats, frozenDimensionError } = await loadRunModule();
-      expect(parseProtocolFormats("json")).toEqual(["json"]);
-      expect(parseProtocolFormats("edit-dsl")).toEqual(["edit-dsl"]);
-      expect(parseProtocolFormats("json,edit-dsl")).toEqual(["json", "edit-dsl"]);
-      // Order-independent: canonical order is json then edit-dsl.
-      expect(parseProtocolFormats("edit-dsl,json")).toEqual(["json", "edit-dsl"]);
-      expect(parseProtocolFormats("json,json,compact")).toEqual(["json", "edit-dsl"]);
-      expect(frozenDimensionError("tc", ["json", "edit-dsl"])).toContain(
-        "the json protocol is frozen; benchmark only runs --protocol-format edit-dsl",
-      );
-      expect(() => parseProtocolFormats("json,yaml")).toThrow(
-        "invalid --protocol-format value: yaml",
-      );
-      expect(() => parseProtocolFormats("json,")).toThrow("invalid --protocol-format value");
-    },
-  );
 
   test.skipIf(!runModulePresent)(
     "buildJobs expands tc once per protocol and oc once per task/rep",

@@ -5,9 +5,8 @@ import { runLoop } from "./loop";
 import { RESULT_FORMAT, buildSubagentResult, serializeSubagentResult } from "./result";
 import { OpenAIProvider, readConfigFromEnv } from "./openai";
 import type { CliOptions } from "./cli";
-import type { AgentMode, LoopResult, ProviderLike, ProtocolFormat } from "./loop";
+import type { AgentMode, LoopResult, ProviderLike } from "./loop";
 import type { SubagentResult } from "./result";
-import type { Locator } from "./utility";
 
 export interface MainIo {
   out: (line: string) => void;
@@ -19,14 +18,8 @@ export interface RunMainOptions {
   cwd: string;
   provider: ProviderLike;
   io?: MainIo;
-  /** Opt-in multi-payload exchanges (#69); default off. */
-  multiPayload?: boolean;
   /** Loop shape (`--mode`); default "pinned-repair". */
   agentMode?: AgentMode;
-  /** Edit protocol format (#119); default "json". */
-  protocolFormat?: ProtocolFormat;
-  /** Explicit addresses to edit (#81); absent = the default discovery path. */
-  targets?: Locator[];
   /** stdout format (#80); default "text". */
   format?: "text" | "json";
   /** Hard raw provider-token budget (#80); defaults to the loop's own default. */
@@ -101,7 +94,7 @@ function emitTextResult(io: MainIo, cwd: string, result: LoopResult): number {
 
 // JSON path (#80): exactly one result object on stdout; every other line
 // (failure artifact, diagnostics, explanation) goes to stderr.
-function emitJsonResult(io: MainIo, cwd: string, result: LoopResult, targets?: Locator[]): number {
+function emitJsonResult(io: MainIo, cwd: string, result: LoopResult): number {
   if (!result.ok) {
     const artifactPath = writeFailureArtifact({ rootDir: cwd, result });
     if (artifactPath !== null) {
@@ -122,11 +115,6 @@ function emitJsonResult(io: MainIo, cwd: string, result: LoopResult, targets?: L
           total: result.tokens.total,
           cacheRead: result.tokens.cacheRead,
         },
-        targets: targets?.map((target) => ({
-          path: target.path,
-          symbol: target.name,
-          kind: target.kind,
-        })),
       }),
     ),
   );
@@ -153,10 +141,7 @@ export async function runMain(options: RunMainOptions): Promise<number> {
       cwd: options.cwd,
       issue,
       provider: options.provider,
-      multiPayload: options.multiPayload === true,
       agentMode: options.agentMode,
-      protocolFormat: options.protocolFormat,
-      targets: options.targets,
       tokenBudget: options.tokenBudget,
       checkCommand: options.checkCommand,
       testCommand: options.testCommand,
@@ -173,7 +158,7 @@ export async function runMain(options: RunMainOptions): Promise<number> {
     return 1;
   }
   return format === "json"
-    ? emitJsonResult(io, options.cwd, result, options.targets)
+    ? emitJsonResult(io, options.cwd, result)
     : emitTextResult(io, options.cwd, result);
 }
 
@@ -240,10 +225,7 @@ if (import.meta.main) {
     cwd: cli.cwd ?? process.cwd(),
     provider,
     io,
-    multiPayload: cli.multiPayload,
     agentMode: cli.agentMode,
-    protocolFormat: cli.protocolFormat,
-    targets: cli.targets ?? undefined,
     format: cli.format,
     tokenBudget: cli.tokenBudget ?? undefined,
     checkCommand: cli.checkCommand ?? undefined,

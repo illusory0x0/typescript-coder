@@ -8,8 +8,7 @@
  * the coarser result, and nothing is ever guessed: zero or several candidates
  * at the finest supplied stage fail with a typed cause.
  *
- * This module is additive: it is built alongside `resolveEntrySplice` and is not
- * wired into the JSON path, prompts, or the loop yet (#111 does that).
+ * The edit-dsl loop wires this resolver into the prompts and application path.
  */
 import { findMatcherMatches, findRegexMatches } from "./matcher";
 import { sourceLineAt } from "./dsl-diagnostics";

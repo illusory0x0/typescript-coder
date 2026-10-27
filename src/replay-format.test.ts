@@ -49,7 +49,7 @@ describe("ReplayRecorder", () => {
     });
     expect(bundle.format).toBe(REPLAY_BUNDLE_FORMAT);
     expect(bundle.side).toBe("tc");
-    expect(bundle.protocolFormat).toBe("json");
+    expect(bundle.protocolFormat).toBe("edit-dsl");
     expect(bundle.agentMode).toBe("pinned-repair");
     expect(bundle.task).toBe("json-parser");
     expect(bundle.rep).toBe(2);
@@ -60,7 +60,6 @@ describe("ReplayRecorder", () => {
       model: "deepseek-v4.1-flash",
       issue: "issue text",
       fixture: "benchmark/fixtures/json-parser",
-      protocolFormat: "edit-dsl",
       agentMode: "plan-exec",
     });
     expect(editDsl.protocolFormat).toBe("edit-dsl");

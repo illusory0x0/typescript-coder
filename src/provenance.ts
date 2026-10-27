@@ -11,8 +11,8 @@
 // provenance"):
 // - Per-input sha256 hex digests: `model`, `taskIssue` (the frozen task spec text,
 //   keyed by task), `fixture` (the fixture's on-disk content, keyed by task and
-//   relative path), `systemPrompt` (`buildSystemPrompt(multiPayload, format)`),
-//   `loopConfig` (budgets/caps/effort/reps/multiPayload), and `pricing` (the
+//   relative path), `systemPrompt` (`buildSystemPrompt()`), `loopConfig`
+//   (budgets/effort/reps), and `pricing` (the
 //   rate table plus `PRICING_FETCHED_ON`).
 // - Text pieces are newline-normalized to `\n`; object pieces are serialized
 //   through a stable (recursively key-sorted) JSON encoding.
@@ -39,7 +39,7 @@ import {
   buildSystemPrompt,
   canonicalAgentMode,
 } from "./loop";
-import type { AgentMode, ProtocolFormat } from "./loop";
+import type { AgentMode } from "./loop";
 import { buildTaskExecutionSystemPrompt, buildTaskPlanningSystemPrompt } from "./prompts/task";
 
 /** Frozen task names the benchmark measures. */
@@ -116,9 +116,6 @@ export interface CurrentInputOptions {
   /** Frozen task spec text per task (`TASK_SPECS` in `benchmark/run.ts`). */
   readonly taskIssues: Readonly<Record<string, string>>;
   readonly model: string;
-  readonly multiPayload: boolean;
-  /** Edit protocol format (#119); absent is `json`. */
-  readonly protocolFormat?: ProtocolFormat;
   /** Forced reasoning effort, or null for the default policy. */
   readonly effort: string | null;
   readonly reps: number;
@@ -173,7 +170,6 @@ export function loopConfigHashInput(options: {
   tokenBudget?: number | null;
   effort: string | null;
   reps: number;
-  multiPayload: boolean;
   agentMode?: AgentMode;
 }): LoopConfig {
   const base: LoopConfig = {
@@ -181,7 +177,7 @@ export function loopConfigHashInput(options: {
     maxStalledRounds: MAX_STALLED_ROUNDS,
     effort: options.effort ?? "none",
     reps: options.reps,
-    multiPayload: options.multiPayload,
+    multiPayload: false,
   };
   // Canonicalize the option and write the plan-exec literal into the hash so
   // recorded provenance stays byte-identical across the rename (#34). Plan-exec
@@ -254,12 +250,11 @@ export function currentInputHashes(root: string, options: CurrentInputOptions): 
     fixture: stableStringify(fixtures),
     systemPrompt: planning
       ? `${buildTaskPlanningSystemPrompt()}\n\n---\n\n${buildTaskExecutionSystemPrompt()}`
-      : buildSystemPrompt(options.multiPayload, options.protocolFormat ?? "edit-dsl"),
+      : buildSystemPrompt(),
     loopConfig: loopConfigHashInput({
       tokenBudget: options.tokenBudget ?? null,
       effort: options.effort,
       reps: options.reps,
-      multiPayload: options.multiPayload,
       agentMode: options.agentMode,
     }),
     pricing: pricingTable(),

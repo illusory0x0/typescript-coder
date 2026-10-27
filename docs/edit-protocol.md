@@ -1,7 +1,7 @@
 # The edit protocol
 
-Canonical ownership: this document owns the edit-action reply language and both
-wire formats — the JSON payload and edit-dsl. It also owns the sentinel fence,
+Canonical ownership: this document owns the edit-action reply language
+(edit-dsl). It also owns the sentinel fence,
 the select clause and file command grammar/BNF, resolution/cascade, the
 viewer/editor split, edit failure stages, application/gating, repair feedback,
 and the resolver/gate skeleton. [`feedback-loop.md`](feedback-loop.md) owns the
@@ -18,71 +18,20 @@ and the checks that run before a byte reaches disk. The Edit → Verify loop aro
 it is [`feedback-loop.md`](feedback-loop.md); the plan-exec execution contract is
 [`plan-exec.md`](plan-exec.md).
 
-Two reply formats exist, selected by `--protocol-format` (default `edit-dsl`):
+## 1. Reply format
 
-- **edit-dsl**: the default. One or more statements, on the same resolver but
-  with richer locators (regex, multi-range `pick`) and atomic multi-clause
-  replies. The same reply language also carries file commands (`create`,
-  `delete`, `read`, `write`). After a target is pinned, a reply may instead be
-  the standalone control turn `check end` or `test end`: it runs the task's
-  configured check/test command, writes nothing, and returns bounded output. A
-  JSON payload in this mode is a protocol rejection.
-- **JSON payload**: opt-in, one flat object per exchange. Explicit-targets mode
-  (`--targets`) always uses it.
+The only reply format is **edit-dsl**: one or more statements on one resolver,
+with regex matchers, multi-range `pick`, and atomic multi-clause replies. The
+same reply language also carries file commands (`create`, `delete`, `read`,
+`write`). After a target is pinned, a reply may instead be the standalone control
+turn `check end` or `test end`: it runs the task's configured check/test
+command, writes nothing, and returns bounded output. A JSON edit payload is a
+protocol rejection.
 
-Implementation: `parseEditResponse` and `resolveEditRange` in `src/loop.ts`, the
-clause grammar in `src/selection.ts`, the cascade in `src/cascade.ts`, the reply
-resolver in `src/edit-dsl.ts`, structural/regex matching in `src/matcher.ts`, the
-splice and format gate in `src/editor.ts`.
-
-## 1. The JSON payload
-
-The JSON payload is opt-in and is one flat object per exchange:
-
-```json
-{
-  "path": "src/a.ts",
-  "symbol": "clamp",
-  "kind": "function",
-  "matcher": "return Math.min(1, x);",
-  "replacement": "return Math.max(0, Math.min(1, x));"
-}
-```
-
-The fields, in resolution order:
-
-- **Address**: `path`, `symbol`, `kind`. All are strings, and `kind` is
-  required, not a wildcard. The composite address must match exactly one indexed
-  declaration. A name that resolves to two declarations, or that the file does
-  not declare, is a staged `address` failure, never a silent first match.
-- **`matcher`** (optional): a snippet copied from the current source. Absent
-  (or `null`) rewrites the whole declaration. An empty string is rejected.
-- **`range`** (optional): `{line, column, endLine, endColumn}`, 1-based and
-  **inclusive** at both ends, in the coordinate space of the numbered
-  current-source block shown in the prompt. When both `range` and `matcher` are
-  sent, **`range` wins**.
-- **`replacement`** (required): a string replacing exactly the addressed span,
-  so `""` deletes the span.
-
-Only these keys are admitted. An unexpected key is a `protocol` rejection that
-names it, with targeted hints for the v1 spellings (`name` for `symbol`, and an
-`edits` array, which v2 replaces with one flat object per exchange).
-
-The reply is read tolerantly: a whole-text Markdown wrapper is accepted (the
-outer-wrapper rule in §2 is separate from the edit-action sentinel fence), and
-the first brace-matched object inside surrounding prose is found by scanning
-with string-literal and escape awareness. Prose around the object is fine; no
-object is not.
-
-**Batched replies.** Under the opt-in `--multi-payload` batch, one
-`{"payloads": [...]}` object carries several flat payloads, editing different
-files and/or several non-overlapping regions of one file. The first payload
-echoes the pinned address; every later payload names its own declaration, which
-must resolve uniquely in its file's current source. Batches are `modify`-only,
-the wrapper admits no key but `payloads`, and a batch is **atomic**: if any
-payload fails its guards or two same-file regions overlap, nothing is written
-and every failing payload is named. The edit-dsl format does not use this
-wrapper; it batches by sending more statements.
+Implementation: `resolveEditRange` in `src/loop.ts`, the clause grammar in
+`src/selection.ts`, the cascade in `src/cascade.ts`, the reply resolver in
+`src/edit-dsl.ts`, structural/regex matching in `src/matcher.ts`, the splice and
+format gate in `src/editor.ts`.
 
 ## 2. The edit-dsl statement grammar
 
@@ -124,7 +73,7 @@ A select clause is never a file command. A select clause with `replace` or
 - **`resolve`**: optional, after the path. `resolve value`, `resolve type`, or
   `resolve namespace` filters the address to that TypeScript symbol space; it is
   the disambiguator when the same name is declared more than once. Omitted, any
-  space is accepted; the JSON payload path has no space form.
+  space is accepted.
 - **`within`**: optional viewer-only slice, after `resolve`. It uses the same
   1-based inclusive file-absolute ranges as `read ... within`. The viewer returns
   exactly those lines from the declaration, unfolded. It cannot be combined with
@@ -243,30 +192,30 @@ selector. **Owner + selector** means select the class/interface/type-alias/
 object/enum owner first; **rejected-with-candidates** means the address or
 matcher fails and names every candidate, never the first.
 
-| Form/owner | Address | Supported selectors/create | Notes/limits |
-| ---------- | ------- | -------------------------- | ------------ |
-| Top-level function | `select function NAME in PATH` (kind optional) | whole-symbol; `match`; `/regex/`; `pick`; `create function NAME` | The declaration is appended at the file end; a body-level edit needs a selector. |
-| Top-level `const`/`let`/`var`/`using` | `select const NAME`, `select let NAME`, or `select var NAME`; `using` uses an omitted kind (`select NAME`) | whole-symbol; `match`; `/regex/`; `pick`; `create const`, `create let`, `create var`, or `create using` | `const`/`let`/`var` are the grammar's variable kinds; `select using NAME` is an **expected syntax failure**. Body-only create is accepted for these kinds. |
-| Top-level class, interface, type alias, enum, namespace | `select <kind> NAME` with `class`, `interface`, `type`, `enum`, or `namespace` (kind optional) | whole-symbol; `match`; `/regex/`; `pick`; `create` the same declaration kind | Class and enum occupy value and type spaces, interface/type alias type, namespace namespace. Create appends exactly one declaration. |
-| Class method/property | `select Widget.render`; `select Widget.count` (omitted kind) | whole-symbol; `match`; `/regex/`; `pick`; `create method Widget.render`; `create property Widget.count` (optional `static`) | The indexed span is the member; an empty-fence delete also removes its separator. |
-| Class getter/setter | `select Widget.value` when only one accessor exists | whole-symbol; `match`; `/regex/`; `pick`; `create getter`, `create setter`, or `create accessor Widget.value` | A getter/setter **pair shares the name**, so the address is ambiguous; select the class owner and `match`/`pick` one accessor. `accessor` create accepts a get or set fence; the pair is legal. |
-| Class constructor | Owner only: `select class Widget` | Owner + `match`/`/regex/`/`pick`; `create constructor Widget` | No name address: the constructor has no index entry. |
-| Class static block, computed member, index signature, constructor parameter property | Owner only: `select class Widget` | Owner + `match`/`/regex/`/`pick`; no create | Not name-addressable. Static blocks and computed names are reached through the class-member context; index signatures and parameter properties are anonymous. |
-| Class auto-accessor (`accessor value = 1`) | Owner only: `select class Widget` | Owner + `/regex/` or `pick`; no create | **Expected failure** for a structural or named-member edit: the parser does not model the form. `create accessor` emits a get/set pair, not this syntax. |
-| Interface or type-literal named method/property | `select Cell.getValue`; `select Snapshot.value`; nested literal members keep the owner path (`Interface.property.member`) | whole-symbol; `match`; `/regex/`; `pick`; `create method` or `create property` with an interface owner | Type-literal member create is deferred. Interface/type-literal named members are renameable. |
-| Interface or type-literal call/construct/index signature | Owner only: `select interface Cell` or `select type Fn` | Owner + `match`/`/regex/`/`pick`; create deferred | Anonymous signatures have no name address; anonymous signature create is out of scope. |
-| Namespace member | `select function Util.helper`; nested `A.B.member` with the declared kind | whole-symbol; `match`; `/regex/`; `pick`; `create <declaration-kind> Util.helper` | The owner must already exist; a dotted create never creates its owner. |
-| Enum member | `select Color.Red` (omitted kind) | whole-symbol; `match`; `/regex/`; `pick`; `create enum-member Color.Red` | Enum-member create requires an existing enum owner. |
-| Object-literal property/method | `select config.timeout`; `select config.run` | whole-symbol; `match`; `/regex/`; `pick`; create deferred | Indexed only when the literal is assigned to a declared variable or class field; an anonymous literal stays owner + selector. Object-literal members are not renameable. |
-| Object-literal getter/setter | A pair shares `select config.value` and is ambiguous; a single accessor may resolve | Owner + `match`/`/regex/`/`pick` (for example `select const config`); create deferred | **Expected address ambiguity** for the pair; pick one accessor through the owner. |
-| Named default export | Declared name: `select function boot`; `select class App` | whole-symbol; `match`; `/regex/`; `pick`; `create export` for a new statement | Only a named default export has a declaration address. |
-| Anonymous default export | File owner: `select file PATH` | File-level `match`/`/regex/`/`pick`; `create export` | File-level editor only; no declaration address and no file-level rename. |
-| Imports: named, default, namespace, type-only, side-effect, `import = require` | File owner: `select file PATH` | File-level `match`/`/regex/`/`pick`; `create import` | One candidate is required; a whole statement or one specifier can be deleted; file-level rename is rejected. |
-| Exports: named, star, re-export, `export =`, export declaration | File owner: `select file PATH`; a declaration export also keeps its declaration address (`export function f` is `select function f`) | File-level `match`/`/regex/`/`pick`; `create export` | An anonymous default export is file-level only; file-level rename is rejected. |
-| Overloads | `select function parse` (or another kind) | rejected-with-candidates; no whole-symbol target | Every overload declaration is a candidate. Overloads share a kind, so no kind token disambiguates; never a silent first match. |
-| Declaration merges | `select class Owner` or `select interface Owner`; an omitted kind is ambiguous | whole-symbol; `match`; `/regex/`; `pick` on the kind-disambiguated declaration | An omitted kind over a merge is rejected-with-candidates; an explicit kind disambiguates a cross-space merge. |
-| Multi-declarator or destructuring binding | `select const first`; `select const a` | Per-binding `match`/`/regex/`/`pick`; whole-symbol replace/delete **rejected** | **Expected failure** for a whole-symbol edit: it would rewrite a sibling binding. Target a narrower span. |
-| Ambiguous or unsupported structural match | Any declaration or owner above | Ambiguous `match` is rejected-with-candidates, then `pick` or a longer snippet; a bare decorator is reached through its owner with a member-inclusive `match`, `/regex/`, or `pick` | **Expected failure** for an ambiguous `match` and for a standalone decorator; the diagnostic lists the candidates or attempted owner contexts. |
+| Form/owner                                                                           | Address                                                                                                                              | Supported selectors/create                                                                                                                                                          | Notes/limits                                                                                                                                                                                    |
+| ------------------------------------------------------------------------------------ | ------------------------------------------------------------------------------------------------------------------------------------ | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| Top-level function                                                                   | `select function NAME in PATH` (kind optional)                                                                                       | whole-symbol; `match`; `/regex/`; `pick`; `create function NAME`                                                                                                                    | The declaration is appended at the file end; a body-level edit needs a selector.                                                                                                                |
+| Top-level `const`/`let`/`var`/`using`                                                | `select const NAME`, `select let NAME`, or `select var NAME`; `using` uses an omitted kind (`select NAME`)                           | whole-symbol; `match`; `/regex/`; `pick`; `create const`, `create let`, `create var`, or `create using`                                                                             | `const`/`let`/`var` are the grammar's variable kinds; `select using NAME` is an **expected syntax failure**. Body-only create is accepted for these kinds.                                      |
+| Top-level class, interface, type alias, enum, namespace                              | `select <kind> NAME` with `class`, `interface`, `type`, `enum`, or `namespace` (kind optional)                                       | whole-symbol; `match`; `/regex/`; `pick`; `create` the same declaration kind                                                                                                        | Class and enum occupy value and type spaces, interface/type alias type, namespace namespace. Create appends exactly one declaration.                                                            |
+| Class method/property                                                                | `select Widget.render`; `select Widget.count` (omitted kind)                                                                         | whole-symbol; `match`; `/regex/`; `pick`; `create method Widget.render`; `create property Widget.count` (optional `static`)                                                         | The indexed span is the member; an empty-fence delete also removes its separator.                                                                                                               |
+| Class getter/setter                                                                  | `select Widget.value` when only one accessor exists                                                                                  | whole-symbol; `match`; `/regex/`; `pick`; `create getter`, `create setter`, or `create accessor Widget.value`                                                                       | A getter/setter **pair shares the name**, so the address is ambiguous; select the class owner and `match`/`pick` one accessor. `accessor` create accepts a get or set fence; the pair is legal. |
+| Class constructor                                                                    | Owner only: `select class Widget`                                                                                                    | Owner + `match`/`/regex/`/`pick`; `create constructor Widget`                                                                                                                       | No name address: the constructor has no index entry.                                                                                                                                            |
+| Class static block, computed member, index signature, constructor parameter property | Owner only: `select class Widget`                                                                                                    | Owner + `match`/`/regex/`/`pick`; no create                                                                                                                                         | Not name-addressable. Static blocks and computed names are reached through the class-member context; index signatures and parameter properties are anonymous.                                   |
+| Class auto-accessor (`accessor value = 1`)                                           | Owner only: `select class Widget`                                                                                                    | Owner + `/regex/` or `pick`; no create                                                                                                                                              | **Expected failure** for a structural or named-member edit: the parser does not model the form. `create accessor` emits a get/set pair, not this syntax.                                        |
+| Interface or type-literal named method/property                                      | `select Cell.getValue`; `select Snapshot.value`; nested literal members keep the owner path (`Interface.property.member`)            | whole-symbol; `match`; `/regex/`; `pick`; `create method` or `create property` with an interface owner                                                                              | Type-literal member create is deferred. Interface/type-literal named members are renameable.                                                                                                    |
+| Interface or type-literal call/construct/index signature                             | Owner only: `select interface Cell` or `select type Fn`                                                                              | Owner + `match`/`/regex/`/`pick`; create deferred                                                                                                                                   | Anonymous signatures have no name address; anonymous signature create is out of scope.                                                                                                          |
+| Namespace member                                                                     | `select function Util.helper`; nested `A.B.member` with the declared kind                                                            | whole-symbol; `match`; `/regex/`; `pick`; `create <declaration-kind> Util.helper`                                                                                                   | The owner must already exist; a dotted create never creates its owner.                                                                                                                          |
+| Enum member                                                                          | `select Color.Red` (omitted kind)                                                                                                    | whole-symbol; `match`; `/regex/`; `pick`; `create enum-member Color.Red`                                                                                                            | Enum-member create requires an existing enum owner.                                                                                                                                             |
+| Object-literal property/method                                                       | `select config.timeout`; `select config.run`                                                                                         | whole-symbol; `match`; `/regex/`; `pick`; create deferred                                                                                                                           | Indexed only when the literal is assigned to a declared variable or class field; an anonymous literal stays owner + selector. Object-literal members are not renameable.                        |
+| Object-literal getter/setter                                                         | A pair shares `select config.value` and is ambiguous; a single accessor may resolve                                                  | Owner + `match`/`/regex/`/`pick` (for example `select const config`); create deferred                                                                                               | **Expected address ambiguity** for the pair; pick one accessor through the owner.                                                                                                               |
+| Named default export                                                                 | Declared name: `select function boot`; `select class App`                                                                            | whole-symbol; `match`; `/regex/`; `pick`; `create export` for a new statement                                                                                                       | Only a named default export has a declaration address.                                                                                                                                          |
+| Anonymous default export                                                             | File owner: `select file PATH`                                                                                                       | File-level `match`/`/regex/`/`pick`; `create export`                                                                                                                                | File-level editor only; no declaration address and no file-level rename.                                                                                                                        |
+| Imports: named, default, namespace, type-only, side-effect, `import = require`       | File owner: `select file PATH`                                                                                                       | File-level `match`/`/regex/`/`pick`; `create import`                                                                                                                                | One candidate is required; a whole statement or one specifier can be deleted; file-level rename is rejected.                                                                                    |
+| Exports: named, star, re-export, `export =`, export declaration                      | File owner: `select file PATH`; a declaration export also keeps its declaration address (`export function f` is `select function f`) | File-level `match`/`/regex/`/`pick`; `create export`                                                                                                                                | An anonymous default export is file-level only; file-level rename is rejected.                                                                                                                  |
+| Overloads                                                                            | `select function parse` (or another kind)                                                                                            | rejected-with-candidates; no whole-symbol target                                                                                                                                    | Every overload declaration is a candidate. Overloads share a kind, so no kind token disambiguates; never a silent first match.                                                                  |
+| Declaration merges                                                                   | `select class Owner` or `select interface Owner`; an omitted kind is ambiguous                                                       | whole-symbol; `match`; `/regex/`; `pick` on the kind-disambiguated declaration                                                                                                      | An omitted kind over a merge is rejected-with-candidates; an explicit kind disambiguates a cross-space merge.                                                                                   |
+| Multi-declarator or destructuring binding                                            | `select const first`; `select const a`                                                                                               | Per-binding `match`/`/regex/`/`pick`; whole-symbol replace/delete **rejected**                                                                                                      | **Expected failure** for a whole-symbol edit: it would rewrite a sibling binding. Target a narrower span.                                                                                       |
+| Ambiguous or unsupported structural match                                            | Any declaration or owner above                                                                                                       | Ambiguous `match` is rejected-with-candidates, then `pick` or a longer snippet; a bare decorator is reached through its owner with a member-inclusive `match`, `/regex/`, or `pick` | **Expected failure** for an ambiguous `match` and for a standalone decorator; the diagnostic lists the candidates or attempted owner contexts.                                                  |
 
 **Create limits.** `create` covers named top-level declaration kinds and named
 members of an existing class, interface, namespace, or enum, plus `create import`
@@ -767,24 +716,22 @@ export function parse(input: string): string {
 
 ## 3. Resolution: the cascade
 
-Both formats reduce to the same narrowing, one stage at a time.
+The edit-dsl reply reduces to the same narrowing, one stage at a time.
 
-1. **Address.** `select` (or the JSON payload `path`/`symbol`/`kind`) must land
-   on exactly one declaration. In edit-dsl, the optional `resolve
-   value|type|namespace` filters the index to that TypeScript symbol space; an
-   omitted space accepts every space, and an empty `kind` is a path + name
-   wildcard. A `class` or `enum` occupies both the value and type spaces (its
+1. **Address.** `select` must land on exactly one declaration. The optional
+   `resolve value|type|namespace` filters the index to that TypeScript symbol
+   space; an omitted space accepts every space, and an empty `kind` is a path +
+   name wildcard. A `class` or `enum` occupies both the value and type spaces (its
    declaration kind is authoritative); a function or variable occupies value,
    an interface or type alias occupies type, and a namespace declaration
    occupies the namespace space. A space miss names the available spaces and
-   never falls back to another one; the JSON payload path passes no space.
-   Dotted member addresses follow the rules above (`Cell.getValue`,
+   never falls back to another one. Dotted member addresses follow the rules above (`Cell.getValue`,
    `Color.Red`, `config.timeout`, a named default export's name). Overloaded,
    merged, or duplicate declarations stay separate candidates; an address
    matching more than one is rejected with every candidate named.
-   Re-pinning is expressed, in edit-dsl, by naming a different declaration in
-   the clause's own `select`; the new address faces the same unique-resolution
-   rule against the current source.
+   Re-pinning is expressed by naming a different declaration in the clause's own
+   `select`; the new address faces the same unique-resolution rule against the
+   current source.
 2. **Match.** The locator matches _inside_ the declaration's span only.
    - A **snippet** is parsed as TypeScript and compared **structurally**: its
      AST must equal a candidate's AST, ignoring spans, raw text, and trivia. The
@@ -816,7 +763,7 @@ Both formats reduce to the same narrowing, one stage at a time.
    | class member             | `class __Matcher { <fragment> }`            | method, property, getter, setter, constructor, decorated member, static block               |
    | interface/type member    | `interface __Matcher { <fragment> }`        | interface and type-literal methods/properties, call/construct/index signatures              |
    | object-literal member    | `const __matcher = { <fragment> };`         | property, method, getter/setter                                                             |
-   | function-body statement  | `function __matcher() { <fragment> }`       | `return`, `throw`, `if`, `for`, `while`, `try`, local declarations                         |
+   | function-body statement  | `function __matcher() { <fragment> }`       | `return`, `throw`, `if`, `for`, `while`, `try`, local declarations                          |
    | loop body                | `while (true) { <fragment> }`               | standalone `break`/`continue`                                                               |
    | switch case              | `switch (0) { case 0: <fragment> }`         | `break`/`continue` in a case                                                                |
    | generator body           | `function* __matcher() { <fragment> }`      | `yield`/`yield*`                                                                            |
@@ -896,9 +843,7 @@ Both formats reduce to the same narrowing, one stage at a time.
 The policy is total, and nothing is guessed: exactly one candidate at the finest
 supplied stage is the target, zero is `matcher-not-found`, and more than one is
 `matcher-ambiguous` (after a `pick`, the diagnostic says the ranges still leave
-more than one). Each applied clause records its stage (`whole-symbol`, `match`,
-or `pick`); the JSON payload path records the equivalent `whole-symbol` /
-`matcher` / `range` selector, with `range` winning over `matcher`.
+more than one). Each applied clause records its stage (`whole-symbol`, `match`, or `pick`).
 
 These guards run before any gate:
 
@@ -957,20 +902,20 @@ next diagnostics. The feedback ends by asking for an editor select clause: add
 
 ## 5. Failure stages
 
-Every rejection carries a `stage:` tag and costs one exchange. Both formats share
-the vocabulary so metrics compare.
+Every rejection carries a `stage:` tag and costs one exchange. The vocabulary is
+shared by every reply path so metrics compare.
 
-| Stage                  | Cause                                                                                                                             |
-| ---------------------- | --------------------------------------------------------------------------------------------------------------------------------- |
-| `syntax`               | Edit-dsl only: the reply does not parse as a statement (`select … end` or a file command), including a fence or terminator error. |
-| `protocol`             | The JSON payload object is malformed, carries an unexpected key, or a JSON payload arrives under edit-dsl.                        |
-| `echo` / `address`     | The address does not echo the pinned selection, or does not resolve uniquely.                                                     |
-| `matcher`              | `matcher-unparseable`, `matcher-not-found`, `matcher-ambiguous`, or `regex-invalid`.                                              |
-| `range`                | A `range`/`pick` that is out of bounds, empty, inverted, or outside the declaration.                                              |
-| `no-op`                | The replacement equals the text it replaces; ignored when another clause in the reply applies, otherwise a rejection.             |
-| `repeat` / `duplicate` | A byte-identical resubmission; a repeated resolved target; a duplicate top-level declaration or create.                           |
-| `gate`                 | The file parsed before and does not parse after.                                                                                  |
-| `format`               | oxfmt rejected the result, or the formatted source equals the pre-edit source.                                                    |
+| Stage       | Cause                                                                                                                             |
+| ----------- | --------------------------------------------------------------------------------------------------------------------------------- |
+| `syntax`    | Edit-dsl only: the reply does not parse as a statement (`select … end` or a file command), including a fence or terminator error. |
+| `protocol`  | The reply is not edit-dsl, including a JSON edit payload.                                                                         |
+| `address`   | The address does not resolve uniquely.                                                                                            |
+| `matcher`   | `matcher-unparseable`, `matcher-not-found`, `matcher-ambiguous`, or `regex-invalid`.                                              |
+| `range`     | A `range`/`pick` that is out of bounds, empty, inverted, or outside the declaration.                                              |
+| `no-op`     | The replacement equals the text it replaces; ignored when another clause in the reply applies, otherwise a rejection.             |
+| `duplicate` | A repeated resolved target; a duplicate top-level declaration or create.                                                          |
+| `gate`      | The file parsed before and does not parse after.                                                                                  |
+| `format`    | oxfmt rejected the result, or the formatted source equals the pre-edit source.                                                    |
 
 When an edit-dsl statement fails at any stage other than `no-op`, its
 diagnostic names the statement, its position in the reply (`clause N of M`), its
@@ -993,32 +938,26 @@ parse), the **duplicate-declaration guard** (a top-level `function`, `class`, or
 no-op check** (a candidate that differs only by formatting is rejected as a
 no-op). A failing gate writes nothing and reports its stage.
 
-The formats differ in what a batch means:
-
-- **JSON payloads and batches are atomic.** A file's regions are spliced from
-  the end so earlier offsets stay valid, and if any guard fails the whole
-  exchange is discarded. Overlapping same-file regions discard the exchange and
-  name both regions.
-- **Edit-dsl replies are atomic across the editing statements.** Every statement
-  resolves against its file's current source. Before any matcher runs, each
-  select clause (viewer, editor, or rename) and each implicit create claims its
-  resolved target; a repeated `(path, symbol, kind)` is a `stage: duplicate`
-  rejection that names both statements and the address and discards the reply.
-  If any editing statement fails resolution at a non-`no-op` stage, or the apply
-  pipeline reports any non-`no-op` guard/overlap failure, the whole reply is
-  discarded and nothing is written — no file, including creates, deletes, and
-  writes. A reply whose only failures are `no-op` clauses keeps its other
-  changes: when at least one region, create, delete, or write still applies, the
-  inert clause(s) are ignored (with a warning) and the rest write every resolved
-  region and file command. A reply whose changes are all inert is a `no-op`
-  rejection. Multiple creates that append at the same end offset are applied in
-  statement order; duplicate creates of the same declaration still fail at the
-  duplicate guard. A failed `read` is the one exception: it writes nothing by
-  construction, so its error rides the next prompt without discarding the other
-  statements. A mixed viewer+editor reply that fails writes nothing but still
-  carries the viewer feedback. A failing reply is a retry-driving rejection, and
-  the retry must carry the full corrected reply (there is no "already applied"
-  list).
+Edit-dsl replies are **atomic across the editing statements**. Every statement
+resolves against its file's current source. Before any matcher runs, each
+select clause (viewer, editor, or rename) and each implicit create claims its
+resolved target; a repeated `(path, symbol, kind)` is a `stage: duplicate`
+rejection that names both statements and the address and discards the reply.
+If any editing statement fails resolution at a non-`no-op` stage, or the apply
+pipeline reports any non-`no-op` guard/overlap failure, the whole reply is
+discarded and nothing is written — no file, including creates, deletes, and
+writes. A reply whose only failures are `no-op` clauses keeps its other
+changes: when at least one region, create, delete, or write still applies, the
+inert clause(s) are ignored (with a warning) and the rest write every resolved
+region and file command. A reply whose changes are all inert is a `no-op`
+rejection. Multiple creates that append at the same end offset are applied in
+statement order; duplicate creates of the same declaration still fail at the
+duplicate guard. A failed `read` is the one exception: it writes nothing by
+construction, so its error rides the next prompt without discarding the other
+statements. A mixed viewer+editor reply that fails writes nothing but still
+carries the viewer feedback. A failing reply is a retry-driving rejection, and
+the retry must carry the full corrected reply (there is no "already applied"
+list).
 
 A reply whose statements all fail writes nothing; one whose statements all apply
 goes to verification. A failed verification does **not** roll back: the attempted
@@ -1054,9 +993,7 @@ The fence body is validated before it is appended:
 
 A name declared in the requested space (including a kind miss), an ambiguous
 name, an empty fence, and a viewer keep the address failure and create nothing.
-The JSON payload path creates only through a `create` selection and deletes only
-through a `delete` selection; the edit-dsl path creates implicitly and deletes
-with an empty fence.
+The edit-dsl path creates implicitly and deletes with an empty fence.
 
 **Edit-dsl confirmation.** When an edit-dsl edit passes verification, the harness
 sends one `# modified text` prompt containing the goal, the symbol index, and
@@ -1067,22 +1004,19 @@ exchange loop and is applied without another model call; every other reply —
 confirms success and ends the run. If the verified edit consumed the last exchange of the round, an
 editor reply still ends successfully rather than losing the verified state. The
 confirmation itself records a `confirmed` row, not an applied or rejected
-exchange. The JSON payload format has no confirmation turn.
+exchange.
 
 ## 7. Repair feedback
 
 A rejection is never a give-up; it is a retry with better information. The next
 prompt carries the stage-tagged diagnostic, and from the second consecutive
-rejection of the same cause, an escalation. The format-specific corrections are:
+rejection of the same cause, an escalation. The corrections are:
 
-- Under edit-dsl, a `protocol` rejection re-teaches the `select … end` form.
-  Restating the JSON payload rule would drive the model back to the JSON payload
-  this mode rejects.
+- A `protocol` rejection re-teaches the `select … end` form.
 - Edit-dsl edit retries and round continuations keep the select-first shape:
   `# Goal`, the select-line `# Symbol index`, and `# details` with the numbered
-  current declaration. They never carry the JSON `Pinned selection` block.
-  A rejected selection retry or selection continuation asks for exactly one
-  `select … end` clause naming a symbol-index entry.
+  current declaration. A rejected selection retry or selection continuation asks
+  for exactly one `select … end` clause naming a symbol-index entry.
 - A viewer's occurrences ride the next prompt as located candidates, so the
   model can disambiguate instead of guessing.
 
@@ -1094,7 +1028,7 @@ fails" apart from what the model can pick next.
 The essential resolver, stripped of diagnostics and metric plumbing:
 
 ```ts
-// One parsed select clause: both formats reduce to this shape.
+// One parsed select clause.
 interface Selection {
   locator: Locator; // {path, name, kind}; empty kind = wildcard
   space: SymbolSpace | null; // `resolve value|type|namespace`; null = any
@@ -1178,8 +1112,7 @@ function gate(source: string, spliced: string): Stage | null {
 ### What the skeleton leaves out
 
 - **Per-file application policy.** The edit-dsl reply's document-order,
-  independently-guarded splice with an offset delta, versus the JSON payload
-  batch's all-or-nothing splice (§6).
+  independently-guarded splice with an offset delta (§6).
 - **Unique-target claims.** The resolver's per-reply `(path, symbol, kind)` set
   across viewers, editors, renames, and implicit creates, and its `duplicate`
   diagnostic (§6).

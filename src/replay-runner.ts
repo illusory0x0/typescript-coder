@@ -72,13 +72,13 @@ export function parseReplayBundle(json: string): ReplayBundle {
   if (!Array.isArray(calls) || !calls.every(isReplayCall)) {
     throw new Error("replay bundle calls must be an array of recorded calls");
   }
-  // Backward compatibility: @1 bundles recorded before the protocol field are
-  // JSON; `compact` is the deprecated legacy name for `edit-dsl` and is
-  // normalized on read; unknown values also replay as JSON rather than failing.
-  const protocolFormat: ReplayBundle["protocolFormat"] =
-    parsed["protocolFormat"] === "edit-dsl" || parsed["protocolFormat"] === "compact"
-      ? "edit-dsl"
-      : "json";
+  // Old/unknown bundles are rejected: only the edit-dsl protocol replays.
+  if (parsed["protocolFormat"] !== "edit-dsl") {
+    throw new Error(
+      `unsupported replay protocol: ${JSON.stringify(parsed["protocolFormat"])} (expected "edit-dsl")`,
+    );
+  }
+  const protocolFormat: ReplayBundle["protocolFormat"] = "edit-dsl";
   // Loop modes were renamed (#34): legacy `edit` bundles map to pinned-repair;
   // a missing or unknown mode reads as pinned-repair.
   const agentMode: ReplayBundle["agentMode"] =
@@ -219,9 +219,6 @@ export async function runReplay(options: ReplayRunOptions): Promise<ReplayRun> {
       issue: options.bundle.issue,
       provider,
       temperature: 0,
-      // Replay under the protocol recorded in the bundle; legacy/unknown
-      // bundles normalized to JSON in `parseReplayBundle`.
-      protocolFormat: options.bundle.protocolFormat,
       agentMode: options.bundle.agentMode ?? DEFAULT_AGENT_MODE,
       checkCommand: ["bun", options.tscBin, "--noEmit"],
       testCommand: ["bun", "test"],

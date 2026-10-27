@@ -2,7 +2,7 @@ import { cpSync, existsSync, mkdirSync, readFileSync, rmSync } from "node:fs";
 import { isAbsolute, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 import { canonicalAgentMode, DEFAULT_AGENT_MODE } from "../src/loop";
-import { checkLedger, currentInputHashes, normalizeProtocolFormat } from "../src/provenance";
+import { checkLedger, currentInputHashes } from "../src/provenance";
 import { TASK_SPECS } from "./run";
 
 interface FixtureTask {
@@ -119,27 +119,13 @@ function checkLedgerFile(ledgerPath: string, repoRoot: string): LedgerOutcome {
         return null;
       }
     },
-    currentFor: (json, rowProtocol) => {
+    currentFor: (json) => {
       const tasks = Array.isArray(json["tasks"])
         ? (json["tasks"] as unknown[]).filter((task): task is string => typeof task === "string")
         : [];
       const model = typeof json["model"] === "string" ? json["model"] : "";
       const reps = typeof json["reps"] === "number" ? json["reps"] : 1;
       const effort = typeof json["effort"] === "string" ? json["effort"] : null;
-      const multiPayload = json["multiPayload"] === true;
-      // #16: a multi-variant report is checked against the protocol the ledger
-      // row names. Legacy rows (no Protocol column) fall back to the report's
-      // scalar `protocolFormat`; `compact` normalizes to `edit-dsl`.
-      const formats = Array.isArray(json["protocolFormats"])
-        ? (json["protocolFormats"] as unknown[]).map((value) => normalizeProtocolFormat(value))
-        : [];
-      const reportProtocol =
-        normalizeProtocolFormat(json["protocolFormat"]) ??
-        (formats.length === 1 ? (formats[0] ?? null) : null);
-      const protocolFormat = rowProtocol ?? reportProtocol;
-      if (protocolFormat === null) {
-        return null;
-      }
       // A single-mode report names its loop; a multi-mode report's ledger rows
       // do not yet carry a mode column, so they check against pinned-repair.
       // Historical `edit` values map through the same alias.
@@ -157,8 +143,6 @@ function checkLedgerFile(ledgerPath: string, repoRoot: string): LedgerOutcome {
           tasks,
           taskIssues: TASK_SPECS,
           model,
-          multiPayload,
-          protocolFormat,
           agentMode,
           effort,
           reps,

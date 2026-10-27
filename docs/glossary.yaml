@@ -121,8 +121,7 @@ categories:
       - term: scenario
         definition: >-
           One acceptance case: id, title, fixture, optional slow/live flags,
-          protocolFormat, issue, scripted responses, optional prepare hook, and
-          assertions.
+          issue, scripted responses, optional prepare hook, and assertions.
       - term: ScriptedProvider
         definition: >-
           Fake ProviderLike that replies from a fixed response list and records
@@ -228,9 +227,8 @@ categories:
       - term: ExchangeOutcome
         definition: >-
           `selected`, `applied`, `stopped`, `self-check`, `viewer`, `confirmed`,
-          plus rejection stages `protocol`, `address`, `echo`, `matcher`,
-          `range`, `no-op`, `repeat`, `duplicate`, `gate`, `format`, `truncated`,
-          `prev-broken`. Rejection stages are canonical in
+          plus rejection stages `protocol`, `address`, `matcher`, `range`,
+          `no-op`, `duplicate`, `gate`, `format`, `truncated`, `prev-broken`. Rejection stages are canonical in
           `docs/edit-protocol.md` §5.
       - term: VerificationOutcome
         definition: "`ok`, `tsc`, `tests`, `gate`, `format`, `prev-broken`."
@@ -247,11 +245,10 @@ categories:
       - term: RejectionCause
         definition: >-
           One class per rejection so retry policy and records never string-sniff
-          diagnostics: `protocol`, `echo`, `address`, `matcher-unparseable`,
+          diagnostics: `protocol`, `address`, `matcher-unparseable`,
           `matcher-not-found`, `matcher-ambiguous`, `regex-invalid`,
-          `range-invalid`, `no-op`, `repeat`, `duplicate`, `gate`, `format`,
-          `format-export-duplication`, `truncated`, `multi-protocol`,
-          `multi-duplicate`. The stage table is in `docs/edit-protocol.md` §5;
+          `range-invalid`, `no-op`, `duplicate`, `gate`, `format`,
+          `format-export-duplication`, `truncated`, `multi-duplicate`. The stage table is in `docs/edit-protocol.md` §5;
           retry policy is in `docs/feedback-loop.md`.
       - term: classifyRejection
         definition: Maps a structured stage plus matcher cause and formatter message to one RejectionCause.
@@ -383,8 +380,7 @@ categories:
       - term: benchmark --replay-dir
         definition: >-
           tc side only: writes one replay bundle per run to
-          `<path>/<task>-tc-rep<n>.json` (or with the protocol in the name for a
-          multi-variant run).
+          `<path>/<task>-tc-rep<n>.json`.
       - term: benchmark --token-budget
         definition: >-
           tc side only: aborts a run once accumulated cache-excluded loop tokens
@@ -394,14 +390,6 @@ categories:
         definition: >-
           tc side only: forces `reasoning_effort` on every Edit-loop call,
           overriding the default `none`.
-      - term: benchmark --protocol-format
-        definition: >-
-          tc side: one value or a comma-separated list of `json` and
-          `edit-dsl`; order is canonicalized and duplicates collapse. Both
-          formats are defined in `docs/edit-protocol.md`; the vocabulary is in
-          `docs/README.md`.
-      - term: benchmark --multi-payload
-        definition: Opt-in batched JSON payloads on the tc side; see `docs/edit-protocol.md` §1.
       - term: report mode
         definition: "`pilot` or `full`, recorded in the report."
       - term: pilot reference
@@ -531,9 +519,7 @@ categories:
           `docs/edit-protocol.md` §2.
       - term: payloads
         definition: >-
-          Number of payload objects an exchange carried: 1 for a classic edit,
-          N for a batch, 0 for none. The JSON payload and batch rules are in
-          `docs/edit-protocol.md` §1.
+          Number of edit-dsl clauses an exchange carried; 0 when none.
       - term: toolCalls
         definition: Provider tool calls in the reply that produced the row.
       - term: creates
@@ -656,9 +642,8 @@ categories:
         definition: tc-side totals across all four tasks, including the held-out task.
       - term: Protocol column
         definition: >-
-          The tc edit protocol the row measured (`compact` or `json`
-          historically, `edit-dsl` going forward); different values are not
-          comparable. Protocol vocabulary is canonical in `docs/README.md`.
+          The tc edit protocol the row measured; historical rows keep their
+          `compact`/`json` labels, new rows are `edit-dsl`. Protocol vocabulary is canonical in `docs/README.md`.
       - term: Source column
         definition: Repository-relative path of the result JSON the row was copied from.
       - term: Notes column
@@ -730,17 +715,15 @@ categories:
       - term: replay bundle
         definition: >-
           Versioned JSON written by `--replay-dir`, one per run, named
-          `<task>-tc-rep<n>.json` or with the protocol inserted for a
-          multi-variant run.
+          `<task>-tc-rep<n>.json`.
       - term: typescript-coder-replay@1
         definition: The replay bundle format version string.
       - term: bundle side
         definition: Bundles are tc-only; older bundles may carry the legacy side label `ts`.
       - term: bundle protocolFormat
         definition: >-
-          The protocol recorded with the bundle (`json` or `edit-dsl`); an
-          absent or unknown value replays as `json`. Both formats are defined in
-          `docs/edit-protocol.md`.
+          The protocol recorded with the bundle; only `edit-dsl` is supported,
+          and old JSON or unknown bundles are rejected.
       - term: ReplayRecorder
         definition: Records request messages, response content, tool calls, finishReason, and usage per call.
       - term: ReplayCall
@@ -756,10 +739,6 @@ categories:
           prompts.
       - term: replay exit codes
         definition: 0 loop ok, 1 loop failed, 2 usage or IO error.
-      - term: replay backward compatibility
-        definition: >-
-          Legacy `@1` bundles without the protocol field, or with an unknown
-          value, replay under `json`.
 
   - id: report-artifacts
     title: Reports, checks, and generated artifacts

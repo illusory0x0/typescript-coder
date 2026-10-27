@@ -30,7 +30,6 @@ covered in [Live checks](#live-checks).
 | live-fix-answer        | real model makes the failing test pass                                                    | no   | yes  |
 | keep-progress-retry    | type-invalid replacement stays and the next iteration builds on it                        | no   | no   |
 | persistent-failure     | repeated no-progress keeps the attempted state and explains                               | no   | no   |
-| context-correctness    | context YAML exposes dotted signatures                                                    | no   | no   |
 | check-test-propagation | test-only failure feeds back diagnostics                                                  | no   | no   |
 | self-host              | agent edits its own sources and the copied suite stays green                              | yes  | no   |
 

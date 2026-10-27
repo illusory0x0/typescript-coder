@@ -99,7 +99,7 @@ describe("buildSubagentResult", () => {
     ]);
   });
 
-  test("names every address an applied targets row covered (#81)", () => {
+  test("names every address an applied row covered", () => {
     const other = { path: "src/other.ts", name: "greet", kind: "function" };
     const result = buildSubagentResult({
       result: resultOf({
@@ -112,15 +112,10 @@ describe("buildSubagentResult", () => {
     ]);
   });
 
-  test("echoes the passed targets and tokens", () => {
+  test("keeps the empty targets schema and echoes tokens", () => {
     const tokens = { input: 10, output: 4, total: 14, cacheRead: 2 };
-    const targets = [{ path: "src/helper.ts", symbol: "answer", kind: "function" }];
-    const result = buildSubagentResult({
-      result: resultOf(),
-      targets,
-      tokens,
-    });
-    expect(result.targets).toBe(targets);
+    const result = buildSubagentResult({ result: resultOf(), tokens });
+    expect(result.targets).toEqual([]);
     expect(result.tokens).toBe(tokens);
   });
 
@@ -162,7 +157,6 @@ describe("serializeSubagentResult", () => {
         terminationReason: "delete-verification-failed",
         records: [recordOf({ outcome: "applied" })],
       }),
-      targets: [{ path: "src/helper.ts", symbol: "answer", kind: "function" }],
       tokens: { input: 1, output: 2, total: 3, cacheRead: 0 },
     });
     const text = serializeSubagentResult(built);
@@ -172,7 +166,7 @@ describe("serializeSubagentResult", () => {
       status: "failed",
       verified: false,
       files: [{ path: "src/helper.ts", symbol: "answer", kind: "function", outcome: "applied" }],
-      targets: [{ path: "src/helper.ts", symbol: "answer", kind: "function" }],
+      targets: [],
       records: 1,
       tokens: { input: 1, output: 2, total: 3, cacheRead: 0 },
       terminationReason: "delete-verification-failed",

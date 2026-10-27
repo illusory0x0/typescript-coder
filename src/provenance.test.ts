@@ -85,7 +85,6 @@ describe("currentInputHashes", () => {
           minilisp: "lisp issue",
         },
         model: "deepseek-v4.1-flash",
-        multiPayload: false,
         effort: null,
         reps: 3,
       };
@@ -93,17 +92,8 @@ describe("currentInputHashes", () => {
       const second = currentInputHashes(root, base);
       expect(first).toEqual(second);
 
-      const multipayload = currentInputHashes(root, { ...base, multiPayload: true });
-      expect(multipayload.inputs.systemPrompt).not.toBe(first.inputs.systemPrompt);
-      expect(multipayload.inputs.loopConfig).not.toBe(first.inputs.loopConfig);
-
-      // #119/B1: edit-dsl is the default system-prompt digest; selecting json
-      // changes it without changing the loop config hash.
-      const editDsl = currentInputHashes(root, { ...base, protocolFormat: "edit-dsl" });
-      expect(editDsl.inputs.systemPrompt).toBe(first.inputs.systemPrompt);
-      const json = currentInputHashes(root, { ...base, protocolFormat: "json" });
-      expect(json.inputs.systemPrompt).not.toBe(first.inputs.systemPrompt);
-      expect(json.inputs.loopConfig).toBe(first.inputs.loopConfig);
+      // Edit-dsl is the only protocol, so the prompt digest is deterministic.
+      expect(currentInputHashes(root, base).inputs.systemPrompt).toBe(first.inputs.systemPrompt);
 
       const effort = currentInputHashes(root, { ...base, effort: "high" });
       expect(effort.inputs.loopConfig).not.toBe(first.inputs.loopConfig);

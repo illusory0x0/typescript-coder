@@ -1,6 +1,8 @@
 import { cpSync, symlinkSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
-import type { AgentMode, LoopResult, ProtocolFormat, ProviderLike } from "../src/loop";
+import type { AgentMode, LoopResult, ProviderLike } from "../src/loop";
+import { serializeSelections } from "../src/selection";
+import type { Selection } from "../src/selection";
 import type { ChatMessage, ChatResponse, ToolDefinition } from "../src/openai";
 
 export interface ScriptedToolCall {
@@ -58,8 +60,6 @@ export interface Scenario {
   slow?: boolean;
   /** Live scenarios call the real model and run only with --live. */
   live?: boolean;
-  /** Edit protocol the scenario drives; omitted means the shipped `json` form. */
-  protocolFormat?: ProtocolFormat;
   /** Loop shape; omitted means the single-target pinned-repair loop. */
   agentMode?: AgentMode;
   issue: string;
@@ -309,64 +309,52 @@ export function diagnosticsContains(needle: string): ScenarioAssertion {
 
 const ADDRESS = { path: "src/helper.ts", symbol: "answer", kind: "function" };
 
-// A v2 edit payload: one flat object with the pinned address, an optional
-// matcher, and the replacement.
-function editResponse(
+function selection(
+  locator: { path: string; symbol: string; kind: string },
+  replacement: string | null,
+  matcher: string | null = null,
+): Selection {
+  return {
+    locator: { path: locator.path, name: locator.symbol, kind: locator.kind },
+    space: null,
+    matcher: matcher === null ? null : { kind: "snippet", value: matcher },
+    pick: null,
+    replacement,
+  };
+}
+
+function editDslReply(
   matcher: string | null,
   replacement: string,
   address: { path: string; symbol: string; kind: string } = ADDRESS,
 ): string {
-  const payload: Record<string, string> = { ...address };
-  if (matcher !== null) {
-    payload["matcher"] = matcher;
-  }
-  payload["replacement"] = replacement;
-  return JSON.stringify(payload);
+  return serializeSelections([selection(address, replacement, matcher)]);
 }
 
-const LOCATOR_JSON = JSON.stringify(ADDRESS);
-const BAD_EDIT = editResponse("return 1;", 'return "no";');
-const RECOVER_EDIT = editResponse('return "no";', "return 2;");
-const TEST_PROPAGATION_EDIT = editResponse("return 1;", "return 3;");
-const TEST_PROPAGATION_RECOVER_EDIT = editResponse("return 3;", "return 2;");
-const GOOD_EDIT = editResponse("return 1;", "return 2;");
 const TEST_ISSUE = "make the failing test pass";
 
-// An edit-dsl select-first viewer (`resolve value`, no `replace`) and a
-// `match` + whole-line `pick 2` editor with the sentinel fence, mirroring the
-// §8 examples the model sees. Multi-line replies are assembled from arrays for
-// readability.
-const EDIT_DSL_VIEWER = ["select answer in src/helper.ts resolve value", "end"].join("\n");
-const EDIT_DSL_PICK_EDIT = [
-  "select answer in src/helper.ts resolve value",
-  "match `return 1;`",
-  "pick 2",
-  "replace with",
-  "<<<TC_EDIT_BEGIN>>>",
-  "return 2;",
-  "<<<TC_EDIT_END>>>",
-  "end",
-].join("\n");
+const EDIT_DSL_VIEWER = serializeSelections([selection(ADDRESS, null)]);
+const EDIT_DSL_PICK_EDIT = editDslReply("return 1;", "return 2;");
 const EDIT_DSL_CONFIRMATION = "Great! I resolve this problem!";
-const EDIT_DSL_RENAME_SELECT = ["select answer in src/helper.ts resolve value", "end"].join("\n");
-const EDIT_DSL_RENAME_EDIT = [
-  "select answer in src/helper.ts resolve value",
-  "rename answer to result",
-  "end",
-].join("\n");
+const EDIT_DSL_RENAME_SELECT = serializeSelections([selection(ADDRESS, null)]);
+const EDIT_DSL_RENAME_EDIT = serializeSelections([
+  {
+    ...selection(ADDRESS, null),
+    rename: { from: "answer", to: "result" },
+  },
+]);
 
 export const scenarios: Scenario[] = [
   {
     id: "fix-answer",
     title: "failing test becomes green",
     fixture: "fix-answer",
-    protocolFormat: "json",
     issue: TEST_ISSUE,
-    responses: [LOCATOR_JSON, GOOD_EDIT],
+    responses: [EDIT_DSL_VIEWER, EDIT_DSL_PICK_EDIT, EDIT_DSL_CONFIRMATION],
     assertions: [
       hasOk(true),
-      hasRecords(3),
-      recordOutcomes(["selected", "applied", "ok"]),
+      hasRecords(4),
+      recordOutcomes(["selected", "applied", "ok", "confirmed"]),
       fileContains("src/helper.ts", "return 2;"),
       fileEqualsOriginal("src/helper.test.ts"),
     ],
@@ -458,7 +446,6 @@ finish`,
     title: "edit-dsl select viewer opens details then an edit lands",
     fixture: "fix-answer",
     issue: TEST_ISSUE,
-    protocolFormat: "edit-dsl",
     responses: [EDIT_DSL_VIEWER, EDIT_DSL_PICK_EDIT, EDIT_DSL_CONFIRMATION],
     assertions: [
       hasOk(true),
@@ -477,7 +464,6 @@ finish`,
     title: "edit-dsl rename updates a declaration and its references",
     fixture: "edit-dsl-rename",
     issue: TEST_ISSUE,
-    protocolFormat: "edit-dsl",
     responses: [EDIT_DSL_RENAME_SELECT, EDIT_DSL_RENAME_EDIT, EDIT_DSL_CONFIRMATION],
     assertions: [
       hasOk(true),
@@ -498,7 +484,6 @@ finish`,
     title: "real model makes the failing test pass",
     fixture: "fix-answer",
     live: true,
-    protocolFormat: "json",
     issue: TEST_ISSUE,
     responses: [],
     assertions: [
@@ -512,14 +497,18 @@ finish`,
     id: "keep-progress-retry",
     title: "type-invalid replacement stays on disk and the next iteration builds on it",
     fixture: "keep-progress-retry",
-    protocolFormat: "json",
     issue: TEST_ISSUE,
-    responses: [LOCATOR_JSON, BAD_EDIT, RECOVER_EDIT],
+    responses: [
+      EDIT_DSL_VIEWER,
+      editDslReply("return 1;", 'return "no";'),
+      editDslReply('return "no";', "return 2;"),
+      EDIT_DSL_CONFIRMATION,
+    ],
     assertions: [
       hasOk(true),
-      hasRecords(5),
-      recordOutcomes(["selected", "applied", "tsc", "applied", "ok"]),
-      hasCallCount(3),
+      hasRecords(6),
+      recordOutcomes(["selected", "applied", "tsc", "applied", "ok", "confirmed"]),
+      hasCallCount(4),
       messageContains(2, "not assignable"),
       fileContains("src/helper.ts", "return 2;"),
     ],
@@ -528,14 +517,13 @@ finish`,
     id: "persistent-failure",
     title: "a failed verification plus a repeated rejection fingerprint ends with one summary",
     fixture: "persistent-failure",
-    protocolFormat: "json",
     issue: TEST_ISSUE,
     responses: [
-      LOCATOR_JSON,
-      BAD_EDIT,
+      EDIT_DSL_VIEWER,
+      editDslReply("return 1;", 'return "no";'),
       // The same rejected reply twice is a repeated no-progress fingerprint.
-      "not json",
-      "not json",
+      "not an edit clause",
+      "not an edit clause",
       "The replacement could not satisfy the type checker; the next step is to review the return type.",
     ],
     assertions: [
@@ -554,71 +542,21 @@ finish`,
     ],
   },
   {
-    id: "context-correctness",
-    title: "context YAML exposes dotted signatures",
-    fixture: "context-correctness",
-    protocolFormat: "json",
-    issue: TEST_ISSUE,
-    responses: [
-      '{"path":"src/lexer.ts","symbol":"lexer.make","kind":"function"}',
-      editResponse("return 1;", "return 10;", {
-        path: "src/lexer.ts",
-        symbol: "lexer.make",
-        kind: "function",
-      }),
-    ],
-    assertions: [
-      hasOk(true),
-      hasRecords(3),
-      hasCallCount(2),
-      {
-        name: "context yaml exposes the dotted signature",
-        check: ({ calls }) => {
-          if (calls === undefined) {
-            return { ok: false, detail: "provider calls are not captured for this scenario" };
-          }
-          const call = calls[0];
-          if (call === undefined) {
-            return { ok: false, detail: "no provider call at index 0" };
-          }
-          const message = call[1];
-          if (message === undefined) {
-            return { ok: false, detail: "provider call 0 has no second message" };
-          }
-          const content = message.content ?? "";
-          const needles = [
-            "```yaml",
-            'name: "lexer.make"',
-            'kind: "function"',
-            'signature: "function make(): number"',
-          ];
-          const missing = needles.filter((needle) => !content.includes(needle));
-          if (missing.length === 0) {
-            return { ok: true };
-          }
-          return {
-            ok: false,
-            detail: `provider call 0 second message is missing ${missing
-              .map((needle) => JSON.stringify(needle))
-              .join(", ")}; actual: ${truncate(content)}`,
-          };
-        },
-      },
-      fileContains("src/lexer.ts", "return 10;"),
-    ],
-  },
-  {
     id: "check-test-propagation",
     title: "test-only failure feeds back diagnostics",
     fixture: "check-test-propagation",
-    protocolFormat: "json",
     issue: TEST_ISSUE,
-    responses: [LOCATOR_JSON, TEST_PROPAGATION_EDIT, TEST_PROPAGATION_RECOVER_EDIT],
+    responses: [
+      EDIT_DSL_VIEWER,
+      editDslReply("return 1;", "return 3;"),
+      editDslReply("return 3;", "return 2;"),
+      EDIT_DSL_CONFIRMATION,
+    ],
     assertions: [
       hasOk(true),
-      hasRecords(5),
-      recordOutcomes(["selected", "applied", "tests", "applied", "ok"]),
-      hasCallCount(3),
+      hasRecords(6),
+      recordOutcomes(["selected", "applied", "tests", "applied", "ok", "confirmed"]),
+      hasCallCount(4),
       messageContains(2, "tests failed:"),
       fileContains("src/helper.ts", "return 2;"),
     ],
@@ -628,7 +566,6 @@ finish`,
     title: "agent edits its own sources and the copied suite stays green",
     fixture: null,
     slow: true,
-    protocolFormat: "json",
     issue:
       "Rewrite greet to store the greeting in a local variable, keeping its behavior identical.",
     prepare: (dir: string, repoRoot: string) => {
@@ -640,12 +577,15 @@ finish`,
       writeFileSync(join(dir, ".nested-smoke"), "acceptance self-host copy\n");
     },
     responses: [
-      '{"path":"src/index.ts","symbol":"greet","kind":"function"}',
-      editResponse(
+      serializeSelections([
+        selection({ path: "src/index.ts", symbol: "greet", kind: "function" }, null),
+      ]),
+      editDslReply(
         "function greet(subject: string): string {\n  return `hello, ${subject}`;\n}",
         "function greet(subject: string): string {\n  const greeting = `hello, ${subject}`;\n  return greeting;\n}",
         { path: "src/index.ts", symbol: "greet", kind: "function" },
       ),
+      EDIT_DSL_CONFIRMATION,
     ],
     assertions: [hasOk(true), fileContains("src/index.ts", "const greeting")],
   },
