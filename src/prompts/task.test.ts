@@ -64,6 +64,29 @@ describe("planning prompts", () => {
     expect(buildTaskPlanningSystemPrompt()).toContain(TASK_PLANNING_WORKFLOW);
   });
 
+  test("the workflow suggests an early test checkpoint without forcing a shape", () => {
+    expect(TASK_PLANNING_WORKFLOW).toContain("consider an early `verify test` checkpoint");
+    expect(TASK_PLANNING_WORKFLOW).toContain(
+      "after the scaffold/contract phase, once a compiling skeleton exists",
+    );
+    expect(TASK_PLANNING_WORKFLOW).toContain(
+      "test feedback can arrive before most behavior is written",
+    );
+    expect(TASK_PLANNING_WORKFLOW).toContain("End with a final `test` node marked by `finish`");
+    expect(TASK_PLANNING_WORKFLOW).toContain("still the plan's success condition");
+    expect(TASK_PLANNING_WORKFLOW).toContain("advice, not a required shape");
+    expect(TASK_PLANNING_WORKFLOW).toContain("may have only the final test node");
+    expect(TASK_PLANNING_WORKFLOW).not.toContain("Do not defer");
+    expect(TASK_PLANNING_WORKFLOW).not.toContain("place an early");
+    expect(buildTaskPlanningSystemPrompt()).toContain(
+      "often benefits from a compiling scaffold node",
+    );
+    expect(buildTaskPlanningSystemPrompt()).toContain(
+      "consider an early `verify test` checkpoint after that scaffold/contract phase",
+    );
+    expect(buildTaskPlanningSystemPrompt()).not.toContain("needs a compiling scaffold node");
+  });
+
   test("planner inspection allows multiple read-only viewers", () => {
     expect(TASK_PLANNER_VIEW).toContain("one or more read-only viewer requests");
     expect(TASK_PLANNER_VIEW).toContain("Each viewer consumes the run token budget");
@@ -124,6 +147,9 @@ describe("execution prompts", () => {
     expect(prompt).toContain("hints and approach are advice");
     expect(TASK_EDITING_TECHNIQUES).toContain("whole-file");
     expect(TASK_EDITING_TECHNIQUES).toContain("scaffold");
+    expect(TASK_EDITING_TECHNIQUES).toContain("one whole-file `write`");
+    expect(TASK_EDITING_TECHNIQUES).toContain("dozens of separate `create` clauses");
+    expect(TASK_EDITING_TECHNIQUES).toContain("later additions fit targeted edits or `create`");
     expect(TASK_EDITING_TECHNIQUES).toContain("xxV1");
     expect(TASK_EDITING_TECHNIQUES).toContain("no technique is a gate");
     expect(prompt).toContain("Editing techniques");
@@ -156,6 +182,9 @@ describe("execution prompts", () => {
     expect(TASK_EDIT_STRATEGY_GUIDE).toContain("advice you may override");
     expect(TASK_EDIT_STRATEGY_GUIDE).toContain("Small requirement on a small file");
     expect(TASK_EDIT_STRATEGY_GUIDE).toContain("large module");
+    expect(TASK_EDIT_STRATEGY_GUIDE).toContain("one whole-file `write` scaffold");
+    expect(TASK_EDIT_STRATEGY_GUIDE).toContain("not dozens of separate `create` clauses");
+    expect(TASK_EDIT_STRATEGY_GUIDE).toContain("A small file can still be one whole-file write");
     expect(TASK_EDIT_STRATEGY_GUIDE).toContain("Add or edit an import/export statement");
     expect(TASK_EDIT_STRATEGY_GUIDE).toContain("no whole-file write is required");
   });

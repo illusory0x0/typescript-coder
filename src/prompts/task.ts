@@ -32,10 +32,11 @@ export const TASK_PLANNING_WORKFLOW = `Workflow guidance (inspect -> contract ->
 1. Inspect the requirement, symbol index, and any source you need.
 2. Settle the public contract: types, signatures, and data shapes.
 3. For a large module, scaffold exported declarations and stub bodies first.
-4. Implement behavior in nodes whose gates can pass meaningfully.
-5. End with a final \`test\` node marked by \`finish\`.
+4. When a visible test suite exists, consider an early \`verify test\` checkpoint after the scaffold/contract phase, once a compiling skeleton exists, so test feedback can arrive before most behavior is written. The graph shape is yours; a final \`test\` node is still the plan's success condition.
+5. Implement behavior in nodes whose gates can pass meaningfully, using early test feedback when it exists.
+6. End with a final \`test\` node marked by \`finish\`.
 
-The graph shape is yours. A single node, a linear chain, and a branching DAG are all valid; do not force a fixed workflow.`;
+A single node, a linear chain, and a branching DAG are all valid; do not force a fixed workflow. The early checkpoint is advice, not a required shape: a single-node task, or one with no visible test suite, may have only the final test node.`;
 
 export const TASK_PLANNER_VIEW = `Read-only inspection:
 Before a Plan or patch, you may reply with one or more read-only viewer requests:
@@ -68,7 +69,7 @@ export const TASK_FUNCTIONAL_STYLE = `Prefer ML-style functional TypeScript:
  */
 export const TASK_EDITING_TECHNIQUES = `Editing techniques (advice, not rules; compose or ignore them from the source):
 1. Small requirement on a small file -> one whole-file \`write\` is often the cheapest correct change.
-2. Large module -> scaffold the exported types, signatures, and stub bodies first, then fill bodies with targeted edits.
+2. Large module -> scaffold the exported types, signatures, and stub bodies first, then fill bodies with targeted edits. When the module is new, seed that scaffold with one whole-file \`write\`; dozens of separate \`create\` clauses for the initial file cost more and are easy to break, while later additions fit targeted edits or \`create\`.
 3. Complex refactor -> introduce a parallel \`xxV1\` implementation, copy the existing behavior, test it, switch the call sites, then remove the old path.
 Later techniques can be added; no technique is a gate.`;
 
@@ -86,7 +87,7 @@ export const TASK_FAILED_WRITE_REPAIR_ADVICE = `After a failed or unhelpful whol
  * source; a planner `approach` is advice it may override.
  */
 export const TASK_EDIT_STRATEGY_GUIDE = `How to choose an edit (advice, not rules; decide from the source you can see):
-- New file or skeleton: \`write\` the whole file, or \`create\` it and add the top-level declarations.
+- New file or skeleton: \`write\` the whole file, or \`create\` it and add the top-level declarations. For a new large file or module, one whole-file \`write\` scaffold with the public types, signatures, and stub bodies is usually cheapest; add later declarations with targeted edits or \`create\`, not dozens of separate \`create\` clauses for the initial file. A small file can still be one whole-file write.
 - Local edit in an existing file: prefer a \`match\`/\`pick\` or a single-declaration \`select … replace\`; a whole-file rewrite discards unchanged code.
 - Several related declarations in one file: edit each declaration, splitting replies when one declaration would repeat; a small, tightly coupled file may still be clearest as one whole-file write.
 - Large declaration rewrite: rewrite only that declaration and leave the file's other declarations untouched.
@@ -172,11 +173,11 @@ const TASK_PLAN_FIELDS = `- The initial reply is the flat Plan DSL. Start with t
 - A trailing \`finish\` line marks the last node final. It is valid only as the last line, and only when that node verifies \`test\`. A plan without \`finish\` may end in a \`tsc\` node, but the run cannot succeed until a final \`test\` node is marked and passes.`;
 
 const TASK_PLAN_RULES = `Rules:
-1. Choose the smallest graph that keeps each gate meaningful. One node is valid when its change is cohesive; a large greenfield module needs a compiling scaffold node before behavior is filled in.
+1. Choose the smallest graph that keeps each gate meaningful. One node is valid when its change is cohesive; a large greenfield module often benefits from a compiling scaffold node before behavior is filled in. When a visible test suite exists, consider an early \`verify test\` checkpoint after that scaffold/contract phase so test feedback can arrive before most behavior is written; a final \`test\` node remains the success condition.
 2. Use \`after\` only for a real prerequisite. Independent work may be ready at the same time; do not invent edges to force a favorite order.
 3. Prefer top-level functions with explicit types. Extract a helper when it makes the code easier to read; keep the caller thin.
 4. Hints identify likely targets, not every file the instruction may touch. The executor may edit outside them when the instruction requires it; review sees those edits.
-5. \`approach\` may recommend a whole-file write for a small change, scaffold-then-fill for a large module, or a parallel implementation for a risky refactor. Never make a technique mandatory.
+5. \`approach\` may recommend a whole-file write for a small change or a new-file scaffold, scaffold-then-fill for a large existing module, or a parallel implementation for a risky refactor. Never make a technique mandatory.
 6. A \`create\` adds one named declaration or member. A top-level kind without a dot creates a new declaration; a member kind with a dotted \`Owner.name\` adds to an existing class/interface/namespace/enum, whose owner must already exist. A \`create\` never creates the owner itself.
 7. Do not target *.test.ts unless the requirement explicitly changes tests; copy required behavior into the instruction.
 8. End the run with a \`test\` node and a trailing \`finish\`. If the current last test node has passed, a bare \`patch\` + \`finish\` is enough.

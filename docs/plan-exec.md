@@ -131,8 +131,10 @@ hint. The executor may override it from the current source. Validation and revie
 do not require adherence. Canonical examples:
 
 - a small requirement on a small file may justify one whole-file write;
-- a large greenfield module should scaffold top-level declarations and stub
-  bodies first, then fill bodies with targeted edits;
+- a new large greenfield module is often cheapest as one whole-file `write`
+  scaffold of top-level declarations and stub bodies, then targeted edits or
+  `create` for later additions; dozens of separate initial `create` clauses cost
+  more and are easy to break;
 - an existing large file often needs targeted edits, though a whole-file rewrite
   remains valid when the change is broad or a targeted edit would be riskier.
 
@@ -148,6 +150,10 @@ merely for its size or shape.
 
 - **New file or skeleton:** write the whole file, or create it and add the
   top-level declarations with `create <kind> <name> in <path> with <fence> end`.
+  For a new large file or module, one whole-file `write` scaffold with the
+  public types, signatures, and stub bodies is usually cheapest; add later
+  declarations with targeted edits or `create` rather than dozens of separate
+  initial `create` clauses. A small file can still be one whole-file write.
 - **Local edit in an existing file:** prefer a `match`/`pick` or a
   single-declaration `select … replace`; a whole-file rewrite discards unchanged
   code.
@@ -270,12 +276,17 @@ verify**:
 
 - inspect the requirement, index, and source;
 - settle the public contract (types, signatures, data shapes);
-- scaffold declarations and stub bodies for a large module;
+- scaffold declarations and stub bodies for a large module when useful;
+- when a visible test suite exists, consider an early `verify test` checkpoint
+  after the scaffold/contract phase, once a compiling skeleton exists, so test
+  feedback can arrive before most behavior is written;
 - implement behavior in node-sized work;
-- finish with a `test` node marked by `finish`.
+- finish with a final `test` node marked by `finish`.
 
 This is guidance. A one-node plan is valid when its gate can pass; a branching
-DAG is valid when two pieces of work are genuinely independent.
+DAG is valid when two pieces of work are genuinely independent. The early test
+checkpoint is guidance too: a single-node task, or a task with no visible test
+suite, may have only the final test node.
 
 The planner may end the run by planning a final `test` node and emitting
 `finish`. `finish` marks the last node as `finalNodeId`; that node must verify
