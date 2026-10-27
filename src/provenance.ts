@@ -35,8 +35,6 @@ import {
 import type { TokenBuckets } from "./benchmark-pricing";
 import {
   DEFAULT_TOKEN_BUDGET,
-  MAX_EDIT_EXCHANGES,
-  MAX_RUN_ITERATIONS,
   MAX_STALLED_ROUNDS,
   buildSystemPrompt,
   canonicalAgentMode,
@@ -81,12 +79,17 @@ export interface MeasuredInput {
 
 export interface LoopConfig {
   readonly tokenBudget: number;
-  readonly maxEditExchanges: number;
-  readonly maxRunIterations: number;
   readonly maxStalledRounds: number;
   readonly effort: string;
   readonly reps: number;
   readonly multiPayload: boolean;
+  /**
+   * Pinned-repair termination model (#57). Pinned-repair no longer has fixed
+   * exchange/round caps: it ends on success, the token budget, a repeated
+   * no-progress fingerprint, or a no-progress STOP. The literal makes that
+   * scheduling change visible in provenance.
+   */
+  readonly scheduling?: "token-budget+no-progress";
   /**
    * Hash literal for the plan/execute loop (#34). The canonical `plan-exec`
    * writes this string so recorded plan-exec provenance identifies the driver.
@@ -98,6 +101,13 @@ export interface LoopConfig {
    * WorkNode driver, which has no fixed exchange/round caps.
    */
   readonly planExec?: "work-dag";
+  /**
+   * Historical pinned-repair provenance literals, retained only so plan-exec's
+   * loop-config hash stays byte-identical to earlier records. They never
+   * described plan-exec scheduling and are not read by any driver.
+   */
+  readonly maxEditExchanges?: number;
+  readonly maxRunIterations?: number;
 }
 
 export interface CurrentInputOptions {
@@ -158,7 +168,7 @@ export function pricingTable(): unknown {
   };
 }
 
-/** Loop budgets/caps/effort/reps (#66): the knobs that make a run comparable. */
+/** Loop budget/effort/reps (#66): the knobs that make a run comparable. */
 export function loopConfigHashInput(options: {
   tokenBudget?: number | null;
   effort: string | null;
@@ -168,22 +178,24 @@ export function loopConfigHashInput(options: {
 }): LoopConfig {
   const base: LoopConfig = {
     tokenBudget: options.tokenBudget ?? DEFAULT_TOKEN_BUDGET,
-    maxEditExchanges: MAX_EDIT_EXCHANGES,
-    maxRunIterations: MAX_RUN_ITERATIONS,
     maxStalledRounds: MAX_STALLED_ROUNDS,
     effort: options.effort ?? "none",
     reps: options.reps,
     multiPayload: options.multiPayload,
   };
   // Canonicalize the option and write the plan-exec literal into the hash so
-  // recorded provenance stays byte-identical across the rename (#34).
+  // recorded provenance stays byte-identical across the rename (#34). Plan-exec
+  // keeps the historical pinned cap fields only as provenance literals; they
+  // are not scheduling knobs and keep old plan-exec hashes comparable.
   return canonicalAgentMode(options.agentMode) === "plan-exec"
     ? {
         ...base,
+        maxEditExchanges: 3,
+        maxRunIterations: 32,
         agentMode: "plan-exec",
         planExec: "work-dag",
       }
-    : base;
+    : { ...base, scheduling: "token-budget+no-progress" };
 }
 
 /** Hash the measured pieces into per-input digests plus the derived `inputHash`. */

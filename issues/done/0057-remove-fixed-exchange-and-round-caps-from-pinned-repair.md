@@ -1,7 +1,7 @@
 ---
 id: 57
 title: "Remove fixed exchange and round caps from pinned-repair"
-status: todo
+status: done
 priority: medium
 milestone: null
 parent: 55
@@ -45,3 +45,5 @@ git diff --check
 - Depends on the pinned prompt/contract child to avoid conflicting edits in `src/prompts/edit-dsl.ts`.
 - Do not import the plan-exec WorkNode DAG, final-test-node validation, or early test checkpoint into pinned-repair.
 - A controlled pinned-repair smoke is human-gated and not part of this issue's offline closure.
+- Starting: replace pinned-repair's fixed 3-exchange/32-round hard termination with token-budget + repeated/no-progress termination; update pinned prompt/continuation diagnostics and tests; keep correctness guards and MAX_STALLED_ROUNDS/MAX_CONSECUTIVE_LENGTH semantics.
+- Resolved: removed pinned-repair's MAX_EDIT_EXCHANGES=3 and MAX_RUN_ITERATIONS=32 hard termination. Both pinned drivers now run unbounded exchange/round loops and stop on success, provider error, token budget, STOP, or a repeated no-progress fingerprint. MAX_STALLED_ROUNDS remains a no-progress ask cadence; MAX_CONSECUTIVE_LENGTH remains an output-length guard. Prompts/docs/provenance/tests updated; 8-rejected-exchange and 34-round tests prove no old caps. Verified: typecheck, 1665 tests pass, accept 9/9, diff check. No live; no baseline change.

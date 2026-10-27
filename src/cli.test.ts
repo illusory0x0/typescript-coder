@@ -398,18 +398,9 @@ describe("runMain", () => {
     const dir = fixtureDir();
     const bad = editResponse("return 1;", 'return "no";');
     const explanation = "the symbol cannot satisfy the test without a larger refactor";
-    // Iteration 1: a verified-failing edit. Iteration 2: the shared ≤3 budget
-    // runs out on protocol failures; the STOP reply ends the run and the
-    // summary is the final call.
-    const provider = new ScriptedProvider([
-      LOCATOR,
-      bad,
-      "junk",
-      "junk",
-      "junk",
-      "STOP",
-      explanation,
-    ]);
+    // Iteration 1: a verified-failing edit. The repeated "junk" reply then
+    // trips the no-progress fingerprint, and the summary is the final call.
+    const provider = new ScriptedProvider([LOCATOR, bad, "junk", "junk", explanation]);
     const captured = captureIo();
     const code = await runMain({
       issue: "make the answer test pass",
@@ -478,9 +469,8 @@ describe("runMain", () => {
     const broken = '{"path":"src/broken.ts","symbol":"broken","kind":"function"}';
     const provider = new ScriptedProvider([
       broken,
+      // The identical rejected selection trips the no-progress fingerprint.
       broken,
-      broken,
-      "STOP",
       "the broken file cannot be selected",
     ]);
     const captured = captureIo();
@@ -568,15 +558,7 @@ describe("runMain", () => {
     const dir = fixtureDir();
     const bad = editResponse("return 1;", 'return "no";');
     const explanation = "the symbol cannot satisfy the test without a larger refactor";
-    const provider = new ScriptedProvider([
-      LOCATOR,
-      bad,
-      "junk",
-      "junk",
-      "junk",
-      "STOP",
-      explanation,
-    ]);
+    const provider = new ScriptedProvider([LOCATOR, bad, "junk", "junk", explanation]);
     const captured = captureIo();
     const code = await runMain({
       issue: "make the answer test pass",

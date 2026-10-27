@@ -12,7 +12,6 @@ import {
   buildEditDslSelectionRetryPrompt,
   buildEditDslSymbolIndex,
   buildEditDslUserPrompt,
-  buildContinuationPrompt,
   buildCreatePrompt,
   buildEditPrompt,
   buildRetryPrompt,
@@ -37,8 +36,6 @@ import {
   FAILURE_STATE_LIMIT,
   formatDiagnostics,
   isStalledAskMilestone,
-  MAX_EDIT_EXCHANGES,
-  MAX_RUN_ITERATIONS,
   MAX_STALLED_ROUNDS,
   MAX_CONSECUTIVE_LENGTH,
   loopTokensFromResponse,
@@ -920,7 +917,6 @@ describe("prompt builders", () => {
     const diagnostics = "src/a.ts(2,3): error TS2322: Type 'string' is not assignable";
     const prompt = buildRetryPrompt({
       exchangeNumber: 2,
-      maxExchanges: 3,
       mode: "modify",
       locatorJson,
       currentSource,
@@ -928,8 +924,7 @@ describe("prompt builders", () => {
       failure: "verification",
       repin: true,
     });
-    expect(prompt).toContain("Edit exchange 2 of 3 failed verification.");
-    expect(prompt).toContain("1 exchange(s) remain in this iteration");
+    expect(prompt).toContain("Edit exchange 2 failed verification.");
     expect(prompt).toContain("Make minimal corrective changes to the current source");
     expect(prompt).toContain("one flat JSON object");
     expect(prompt).toContain("omit it for a whole-symbol rewrite");
@@ -956,7 +951,6 @@ describe("prompt builders", () => {
     const diagnostics = 'stage: protocol\nmode "create" does not take a "matcher"';
     const prompt = buildRetryPrompt({
       exchangeNumber: 1,
-      maxExchanges: 3,
       mode: "create",
       locatorJson,
       currentSource,
@@ -964,7 +958,7 @@ describe("prompt builders", () => {
       failure: "edit",
       repin: false,
     });
-    expect(prompt).toContain("Edit exchange 1 of 3 failed.");
+    expect(prompt).toContain("Edit exchange 1 failed.");
     expect(prompt).not.toContain("failed verification");
     expect(prompt).toContain("COMPLETE corrected declaration");
     expect(prompt).toContain("No markdown fences and no explanations");
@@ -978,7 +972,6 @@ describe("prompt builders", () => {
     const diagnostics = "stage: matcher\nthe matcher was not found";
     const prompt = buildRetryPrompt({
       exchangeNumber: 2,
-      maxExchanges: 3,
       mode: "modify",
       locatorJson,
       currentSource,
@@ -993,7 +986,6 @@ describe("prompt builders", () => {
     // The no-progress ask (#54) still wins over the correction.
     const stalled = buildRetryPrompt({
       exchangeNumber: 1,
-      maxExchanges: 3,
       mode: "modify",
       locatorJson,
       currentSource,
@@ -1001,7 +993,7 @@ describe("prompt builders", () => {
       failure: "edit",
       repin: false,
       correction: "Copy the matcher verbatim from the current source.",
-      stalled: { failedRounds: 8, round: 2, maxRounds: 32 },
+      stalled: { failedAttempts: 8 },
     });
     expect(stalled).toContain("Concretely: change the matcher shape");
     expect(stalled).not.toContain("Copy the matcher verbatim from the current source.");
@@ -1009,7 +1001,6 @@ describe("prompt builders", () => {
     // Create mode takes the same override in place of its own default lead.
     const create = buildRetryPrompt({
       exchangeNumber: 2,
-      maxExchanges: 3,
       mode: "create",
       locatorJson: '{"mode":"create","path":"src/a.ts","symbol":"make","kind":"function"}',
       currentSource: "",
@@ -1027,9 +1018,7 @@ describe("prompt builders", () => {
       "edit-exhausted",
       "stage: protocol\nno JSON object found in the response",
     );
-    expect(prompt).toContain(
-      "The run is over: the edit budget was exhausted without a valid edit.",
-    );
+    expect(prompt).toContain("The run is over: the run ended without a verified edit.");
     expect(prompt).toContain("Diagnostics:");
     expect(prompt).toContain("stage: protocol");
     // The wrap-up turn (#58) demands fixed labeled sections, never prose.
@@ -1079,7 +1068,6 @@ describe("prompt builders", () => {
     const diagnostics = "stage: matcher\nthe matcher was not found";
     const input = {
       exchangeNumber: 1,
-      maxExchanges: 3,
       mode: "modify" as const,
       locatorJson,
       currentSource: "export function make(): number {\n  return 1;\n}",
@@ -1095,24 +1083,9 @@ describe("prompt builders", () => {
     expect(diagnosticsAt).toBeGreaterThan(-1);
     expect(withDigest.indexOf("Prior attempts")).toBeGreaterThan(diagnosticsAt);
     expect(withDigest).toContain(digest);
-    // The continuation builder forwards the digest too.
-    const continuation = buildContinuationPrompt({
-      round: 1,
-      maxRounds: 32,
-      mode: "modify",
-      locatorJson,
-      currentSource: input.currentSource,
-      diagnostics,
-      repin: false,
-      digest,
-    });
-    expect(continuation).toContain(digest);
-    expect(continuation.indexOf("Prior attempts")).toBeGreaterThan(
-      continuation.indexOf("Diagnostics:"),
-    );
+    // The selection no-progress ask forwards the digest too.
     const selection = buildSelectionContinuationPrompt({
-      round: 1,
-      maxRounds: 32,
+      failedAttempts: 8,
       diagnostics,
       digest,
     });
@@ -1532,7 +1505,6 @@ describe("failure history (#71)", () => {
   test("renders the note between the diagnostics fence and the digest", () => {
     const input = {
       exchangeNumber: 1,
-      maxExchanges: 3,
       mode: "modify" as const,
       locatorJson: '{"mode":"modify","path":"src/a.ts","symbol":"make","kind":"function"}',
       currentSource: "export function make(): number {\n  return 1;\n}",
@@ -1551,29 +1523,16 @@ describe("failure history (#71)", () => {
     expect(withNote.indexOf("Prior attempts")).toBeGreaterThan(
       withNote.indexOf("Failure history:"),
     );
-    // The #52 continuation builders forward the note too.
-    const continuation = buildContinuationPrompt({
-      round: 1,
-      maxRounds: 32,
-      mode: "modify",
-      locatorJson: input.locatorJson,
-      currentSource: input.currentSource,
-      diagnostics: input.diagnostics,
-      repin: false,
-      failureHistory: note,
-    });
-    expect(continuation).toContain(note);
+    // The selection no-progress ask forwards the note too.
     const selection = buildSelectionContinuationPrompt({
-      round: 1,
-      maxRounds: 32,
+      failedAttempts: 8,
       diagnostics: input.diagnostics,
       failureHistory: note,
     });
     expect(selection).toContain(note);
     expect(
       buildSelectionContinuationPrompt({
-        round: 1,
-        maxRounds: 32,
+        failedAttempts: 8,
         diagnostics: input.diagnostics,
       }),
     ).not.toContain("Failure history:");
@@ -2478,7 +2437,6 @@ describe("self-verification request (#73)", () => {
     const locatorJson = '{"mode":"modify","path":"src/a.ts","symbol":"make","kind":"function"}';
     const retry = buildRetryPrompt({
       exchangeNumber: 2,
-      maxExchanges: 3,
       mode: "modify",
       locatorJson,
       currentSource: "function make() {\n  return 1;\n}",
@@ -2499,7 +2457,6 @@ describe("self-verification request (#73)", () => {
   test("renders the self-check result section only when passed", () => {
     const input = {
       exchangeNumber: 2,
-      maxExchanges: 3,
       mode: "modify" as const,
       locatorJson: '{"mode":"modify","path":"src/a.ts","symbol":"make","kind":"function"}',
       currentSource: "function make() {\n  return 1;\n}",
@@ -2519,22 +2476,22 @@ describe("self-verification request (#73)", () => {
     );
   });
 
-  test("the #52 continuation keeps its header and the #71 note rides alongside", () => {
+  test("the no-progress ask keeps its header and the #71 note rides alongside", () => {
     const locatorJson = '{"mode":"modify","path":"src/a.ts","symbol":"make","kind":"function"}';
-    const continuation = buildContinuationPrompt({
-      round: 1,
-      maxRounds: 32,
+    const continuation = buildRetryPrompt({
+      exchangeNumber: 1,
       mode: "modify",
       locatorJson,
       currentSource: "function make() {\n  return 1;\n}",
       diagnostics: "stage: protocol",
+      failure: "edit",
       repin: false,
+      stalled: { failedAttempts: 8 },
     });
-    expect(continuation).toContain("exhausted its 3-exchange edit budget");
+    expect(continuation).toContain("No progress: 8 consecutive failed attempts.");
     expect(continuation).toContain('{"request":"read"}');
     const withHistory = buildRetryPrompt({
       exchangeNumber: 2,
-      maxExchanges: 3,
       mode: "modify",
       locatorJson,
       currentSource: "function make() {\n  return 1;\n}",
@@ -2691,7 +2648,7 @@ describe("self-verification request (#73)", () => {
     expect(exchangeStats(result.records).selfChecks).toBe(0);
   }, 30000);
 
-  test("refuses a request at the final exchange of a round", async () => {
+  test("a request after several rejections is still executed", async () => {
     const dir = fixtureDir();
     const provider = new ScriptedProvider([
       selectionResponse(ANSWER, "modify"),
@@ -2715,33 +2672,33 @@ describe("self-verification request (#73)", () => {
       "tsc",
       "matcher",
       "matcher",
-      "protocol",
+      "self-check",
       "applied",
       "ok",
     ]);
-    const refused = result.records[5];
-    expect(refused?.diagnostics).toContain("no exchange left");
-    expect(exchangeStats(result.records).selfChecks).toBe(0);
+    // #57 removed the final-exchange refusal: an unbounded exchange loop always
+    // has a later prompt to return the bounded result in.
+    expect(result.records[5]?.outcome).toBe("self-check");
+    expect(exchangeStats(result.records).selfChecks).toBe(1);
   }, 30000);
 });
 
 describe("sharpened repeated no-progress ask (#65)", () => {
   const stalledInput = (over: Partial<StalledAsk> = {}): RetryPromptInput => ({
     exchangeNumber: 1,
-    maxExchanges: 3,
     mode: "modify",
     locatorJson: '{"mode":"modify","path":"src/a.ts","symbol":"answer","kind":"function"}',
     currentSource: "export function answer(): number {\n  return 1;\n}",
     diagnostics: "src/a.ts(2,3): error TS2322: Type 'string' is not assignable to type 'number'.",
     failure: "verification",
     repin: true,
-    stalled: { failedRounds: 8, round: 9, maxRounds: 32, ...over },
+    stalled: { failedAttempts: 8, ...over },
   });
 
   test("the first ask keeps the original wording byte-for-byte", () => {
     const prompt = buildRetryPrompt(stalledInput());
     expect(prompt).toContain(
-      "No progress: 8 consecutive failed rounds. This is round 9 of 32. Reply exactly `STOP` to end the run now, but only if the failures cannot be resolved; otherwise take a materially different approach rather than another minimal attempt.",
+      "No progress: 8 consecutive failed attempts. Reply exactly `STOP` to end the run now, but only if the failures cannot be resolved; otherwise take a materially different approach rather than another minimal attempt.",
     );
     expect(prompt).not.toContain("repeated ask");
   });
@@ -2750,7 +2707,7 @@ describe("sharpened repeated no-progress ask (#65)", () => {
     const prompt = buildRetryPrompt(
       stalledInput({ askNumber: 2, history: { kind: "unchanged", rounds: 6 } }),
     );
-    expect(prompt).toContain("No progress: 8 consecutive failed rounds. This is round 9 of 32.");
+    expect(prompt).toContain("No progress: 8 consecutive failed attempts.");
     expect(prompt).toContain("repeated ask 2");
     expect(prompt).toContain("the failing set is unchanged across the last 6 verification rounds");
     expect(prompt).toContain("directly address that unchanged failing set");
@@ -2792,28 +2749,24 @@ describe("sharpened repeated no-progress ask (#65)", () => {
     expect(changing).toContain("the failing set has not converged");
   });
 
-  test("the sharpened ask rides a #52 continuation round", () => {
-    const prompt = buildContinuationPrompt({
-      round: 8,
-      maxRounds: 32,
+  test("the sharpened ask rides a repair retry", () => {
+    const prompt = buildRetryPrompt({
+      exchangeNumber: 1,
       mode: "modify",
       locatorJson: '{"mode":"modify","path":"src/a.ts","symbol":"answer","kind":"function"}',
       currentSource: "export function answer(): number {\n  return 1;\n}",
       diagnostics: "stage: protocol",
+      failure: "edit",
       repin: true,
       stalled: {
-        failedRounds: 16,
-        round: 17,
-        maxRounds: 32,
+        failedAttempts: 16,
         askNumber: 2,
         history: { kind: "unchanged", rounds: 10 },
       },
     });
-    expect(prompt).toContain("No progress: 16 consecutive failed rounds. This is round 17 of 32.");
+    expect(prompt).toContain("No progress: 16 consecutive failed attempts.");
     expect(prompt).toContain("repeated ask 2");
     expect(prompt).toContain("the failing set is unchanged across the last 10 verification rounds");
-    // The ask still replaces the continuation's own round-exhausted header.
-    expect(prompt).not.toContain("exhausted its 3-exchange edit budget");
   });
 
   test("the decision-point cadence shortens after the first ask", () => {
@@ -2842,14 +2795,13 @@ describe("sharpened repeated no-progress ask (#65)", () => {
     });
     expect(result.ok).toBe(true);
     const firstAsk = provider.calls[9]?.at(-1)?.content ?? "";
-    expect(firstAsk).toContain(`No progress: ${MAX_STALLED_ROUNDS} consecutive failed rounds.`);
+    expect(firstAsk).toContain(`No progress: ${MAX_STALLED_ROUNDS} consecutive failed attempts.`);
     expect(firstAsk).not.toContain("repeated ask");
     // The second ask arrives four failed rounds later (streak 12, round 13).
     const secondAsk = provider.calls[13]?.at(-1)?.content ?? "";
     expect(secondAsk).toContain(
-      `No progress: ${MAX_STALLED_ROUNDS + STALLED_ASK_INTERVAL} consecutive failed rounds.`,
+      `No progress: ${MAX_STALLED_ROUNDS + STALLED_ASK_INTERVAL} consecutive failed attempts.`,
     );
-    expect(secondAsk).toContain("This is round 13 of 32.");
     expect(secondAsk).toContain("repeated ask 2");
     expect(secondAsk).toContain("the failing set is unchanged across the last");
     expect(secondAsk).toContain("directly address that unchanged failing set");
@@ -2857,8 +2809,9 @@ describe("sharpened repeated no-progress ask (#65)", () => {
     expect(secondAsk).toContain("Failure history: the failing set is unchanged");
     // The third ask recurs at the next shortened interval (streak 16, round 17).
     const thirdAsk = provider.calls[17]?.at(-1)?.content ?? "";
-    expect(thirdAsk).toContain(`No progress: ${MAX_STALLED_ROUNDS * 2} consecutive failed rounds.`);
-    expect(thirdAsk).toContain("This is round 17 of 32.");
+    expect(thirdAsk).toContain(
+      `No progress: ${MAX_STALLED_ROUNDS * 2} consecutive failed attempts.`,
+    );
     expect(thirdAsk).toContain("repeated ask 3");
     // A decision point, not a cap: the model continues and the run recovers.
     expect(helperSource(dir)).toContain("return 18;");
@@ -2887,12 +2840,11 @@ describe("sharpened repeated no-progress ask (#65)", () => {
     );
     expect(asks).toHaveLength(2);
     const firstAsk = provider.calls[9]?.at(-1)?.content ?? "";
-    expect(firstAsk).toContain(`No progress: ${MAX_STALLED_ROUNDS} consecutive failed rounds.`);
+    expect(firstAsk).toContain(`No progress: ${MAX_STALLED_ROUNDS} consecutive failed attempts.`);
     expect(firstAsk).not.toContain("repeated ask");
     // The second (sharpened) ask fired at streak 12, round 13 — before the
     // budget ended the run around round 15.
     const secondAsk = provider.calls[13]?.at(-1)?.content ?? "";
-    expect(secondAsk).toContain("This is round 13 of 32.");
     expect(secondAsk).toContain("repeated ask 2");
     expect(secondAsk).toContain("the failing set is unchanged across the last");
   }, 30000);
@@ -2920,7 +2872,7 @@ describe("sharpened repeated no-progress ask (#65)", () => {
     expect(stopped?.exchange).toBe(1);
     // STOP's meaning is unchanged at the sharpened ask: one summary, stalled text.
     expect(stopped?.diagnostics).toContain(
-      `edit-exhausted: the model replied STOP after ${MAX_STALLED_ROUNDS * 2} consecutive failed rounds`,
+      `edit-exhausted: the model replied STOP after ${MAX_STALLED_ROUNDS * 2} consecutive failed attempts`,
     );
     expect(provider.calls.at(-1)?.at(-1)?.content ?? "").toContain("The run is over");
   }, 30000);
@@ -2929,7 +2881,6 @@ describe("sharpened repeated no-progress ask (#65)", () => {
 describe("decision-only turn (#75)", () => {
   const stalledInput = (over: Partial<StalledAsk> = {}): RetryPromptInput => ({
     exchangeNumber: 1,
-    maxExchanges: 3,
     mode: "modify",
     locatorJson: '{"mode":"modify","path":"src/a.ts","symbol":"answer","kind":"function"}',
     currentSource: "export function answer(): number {\n  return 1;\n}",
@@ -2937,9 +2888,7 @@ describe("decision-only turn (#75)", () => {
     failure: "verification",
     repin: true,
     stalled: {
-      failedRounds: 8,
-      round: 9,
-      maxRounds: 32,
+      failedAttempts: 8,
       askNumber: 2,
       history: { kind: "unchanged", rounds: 6 },
       ...over,
@@ -2977,7 +2926,7 @@ describe("decision-only turn (#75)", () => {
       failureHistory: renderFailureHistoryNote({ kind: "unchanged", rounds: 6 }),
     });
     // The decision framing and STOP semantics are unchanged.
-    expect(prompt).toContain("No progress: 8 consecutive failed rounds. This is round 9 of 32.");
+    expect(prompt).toContain("No progress: 8 consecutive failed attempts.");
     expect(prompt).toContain("repeated ask 2");
     expect(prompt).toContain("This is a decision turn");
     expect(prompt).toContain("Reply exactly `STOP` to end the run now");
@@ -3047,25 +2996,22 @@ describe("decision-only turn (#75)", () => {
     expect(firstChanging).toContain("Pinned selection:");
   });
 
-  test("rides a #52 continuation round", () => {
-    const prompt = buildContinuationPrompt({
-      round: 8,
-      maxRounds: 32,
+  test("rides a repair retry", () => {
+    const prompt = buildRetryPrompt({
+      exchangeNumber: 1,
       mode: "modify",
       locatorJson: '{"mode":"modify","path":"src/a.ts","symbol":"answer","kind":"function"}',
       currentSource: "export function answer(): number {\n  return 1;\n}",
       diagnostics: "stage: protocol",
+      failure: "edit",
       repin: true,
       stalled: {
-        failedRounds: 16,
-        round: 17,
-        maxRounds: 32,
+        failedAttempts: 16,
         askNumber: 2,
         history: { kind: "unchanged", rounds: 10 },
       },
     });
     expect(prompt).toContain("This is a decision turn");
-    expect(prompt).not.toContain("exhausted its 3-exchange edit budget");
     expect(prompt).not.toContain("Output ONLY one flat JSON object");
   });
 
@@ -3073,7 +3019,6 @@ describe("decision-only turn (#75)", () => {
     const approach = "Replace the whole declaration instead of patching the return type.";
     const prompt = buildRetryPrompt({
       exchangeNumber: 2,
-      maxExchanges: 3,
       mode: "modify",
       locatorJson: '{"mode":"modify","path":"src/a.ts","symbol":"answer","kind":"function"}',
       currentSource: "export function answer(): number {\n  return 1;\n}",
@@ -3174,7 +3119,7 @@ describe("decision-only turn (#75)", () => {
     expect(stopped?.iteration).toBe(13);
     expect(stopped?.exchange).toBe(1);
     expect(stopped?.diagnostics).toContain(
-      `edit-exhausted: the model replied STOP after 12 consecutive failed rounds`,
+      `edit-exhausted: the model replied STOP after 12 consecutive failed attempts`,
     );
     // The decision prompt fired, not the edit template.
     const decision = provider.calls[13]?.at(-1)?.content ?? "";
@@ -3277,10 +3222,10 @@ function chainedEdits(count: number): string[] {
   );
 }
 
-// One plain `not json` reply, i.e. a `stage: protocol` rejection; a storm is a
-// run of them, three per round below the cap (#60).
+// A storm of distinct `stage: protocol` rejections. Distinct text keeps the
+// repeated no-progress fingerprint from preempting the intended cadence (#57).
 function protocolRejections(count: number): string[] {
-  return Array.from({ length: count }, () => "not json");
+  return Array.from({ length: count }, (_, index) => `not json ${index}`);
 }
 
 function fixtureDir(extraExclude: string[] = []): string {
@@ -3539,7 +3484,7 @@ describe("runLoop", () => {
     expect(provider.toolsArgs).toEqual([undefined, undefined]);
   }, 30000);
 
-  test("shares one ≤3 budget between picking and content revision", async () => {
+  test("picking and content revision share one unbounded exchange sequence", async () => {
     const dir = fixtureDir();
     const provider = new ScriptedProvider([
       "not json",
@@ -3553,7 +3498,7 @@ describe("runLoop", () => {
       checkCommand: TSC,
       testCommand: ["bun", "test"],
     });
-    // Two exchanges picked the target, the third wrote the edit: 3 exchanges.
+    // One rejected selection, one successful pick, and the edit: no budget cut.
     expect(result.ok).toBe(true);
     expect(result.records.map((record) => record.outcome)).toEqual([
       "protocol",
@@ -3615,13 +3560,17 @@ describe("runLoop", () => {
     expect(helperSource(dir)).toContain("return 2;");
   }, 30000);
 
-  test("soft failures consume the round budget and a continuation STOP ends the run", async () => {
+  test("soft failures retry past three exchanges; the no-progress ask offers STOP", async () => {
     const dir = fixtureDir();
+    // Distinct replies so the repeated-fingerprint stop does not fire first.
+    const rejections = Array.from(
+      { length: MAX_STALLED_ROUNDS },
+      (_, index) => `not json ${index}`,
+    );
     const provider = new ScriptedProvider([
-      "not json",
-      '{"path":"src/helper.ts","symbol":"answer","kind":"function"}',
-      "still not json",
-      "STOP",
+      selectionResponse(ANSWER, "modify"),
+      ...rejections,
+      "  Stop\n",
       "the model could not produce an edit",
     ]);
     const result = await runLoop({
@@ -3633,30 +3582,27 @@ describe("runLoop", () => {
     });
     expect(result.ok).toBe(false);
     expect(result.terminationReason).toBe("edit-exhausted");
+    // Eight rejected content exchanges in one round: no 3-exchange cut, and the
+    // next prompt is the no-progress ask.
     expect(result.records.map((record) => record.outcome)).toEqual([
-      "protocol",
       "selected",
-      "protocol",
+      ...Array<"protocol">(MAX_STALLED_ROUNDS).fill("protocol"),
       "stopped",
     ]);
-    expect(result.records.map((record) => record.exchange)).toEqual([1, 2, 3, 1]);
-    expect(result.records.map((record) => record.iteration)).toEqual([1, 1, 1, 2]);
-    expect(result.locator).toEqual({ path: "src/helper.ts", name: "answer", kind: "function" });
-    expect(result.filePath).toBe("src/helper.ts");
-    expect(result.editedSource).toBeNull();
-    expect(result.diagnostics).toContain("edit-exhausted");
-    expect(result.diagnostics).toContain("stage: protocol");
-    expect(result.diagnostics).toContain("the model replied STOP after 2 rounds");
-    // The continuation prompt carries the round framing and the STOP option,
-    // never the verification-failure header.
-    const continuationPrompt = provider.calls[3]?.at(-1)?.content ?? "";
-    expect(continuationPrompt).toContain("Round 1 of 32 exhausted its 3-exchange edit budget");
-    expect(continuationPrompt).toContain("Reply STOP to end the run");
-    expect(continuationPrompt).not.toContain("failed verification");
-    expect(continuationPrompt).toContain("stage: protocol");
-    // Exactly one summary call as the final action.
-    expect(provider.calls.length).toBe(5);
-    const summaryPrompt = provider.calls[4]?.at(-1)?.content ?? "";
+    expect(result.records.filter((record) => record.outcome === "protocol")).toHaveLength(
+      MAX_STALLED_ROUNDS,
+    );
+    expect(result.records.every((record) => record.iteration === 1)).toBe(true);
+    const ask = provider.calls[9]?.at(-1)?.content ?? "";
+    expect(ask).toContain(`No progress: ${MAX_STALLED_ROUNDS} consecutive failed attempts.`);
+    expect(ask).toContain("Reply exactly `STOP` to end the run now");
+    expect(ask).not.toContain("failed verification");
+    expect(result.diagnostics).toContain(
+      `the model replied STOP after ${MAX_STALLED_ROUNDS} consecutive failed attempts`,
+    );
+    // Selection + 8 rejections + the ask (answered STOP) + one summary call.
+    expect(provider.calls.length).toBe(11);
+    const summaryPrompt = provider.calls[10]?.at(-1)?.content ?? "";
     expect(summaryPrompt).toContain("The run is over");
     expectStructuredSummaryPrompt(summaryPrompt);
     expect(result.explanation).toBe("the model could not produce an edit");
@@ -3664,58 +3610,12 @@ describe("runLoop", () => {
     expect(helperSource(dir)).toContain("return 1;");
   }, 30000);
 
-  test("continues a round whose successful pick consumed the last exchange", async () => {
+  test("a successful pick after several rejections opens the edit in the same round", async () => {
     const dir = fixtureDir();
     const provider = new ScriptedProvider([
       "not json",
       "still not json",
-      '{"path":"src/helper.ts","symbol":"answer","kind":"function"}',
-      "STOP",
-      "the selection came too late",
-    ]);
-    const result = await runLoop({
-      cwd: dir,
-      issue: "make the answer test pass",
-      provider,
-      checkCommand: TSC,
-      testCommand: ["bun", "test"],
-    });
-    expect(result.ok).toBe(false);
-    expect(result.terminationReason).toBe("edit-exhausted");
-    expect(result.records.map((record) => record.outcome)).toEqual([
-      "protocol",
-      "protocol",
-      "selected",
-      "stopped",
-    ]);
-    expect(result.records.map((record) => record.iteration)).toEqual([1, 1, 1, 2]);
-    expect(result.diagnostics).toContain("edit-exhausted");
-    expect(result.diagnostics).toContain("the model replied STOP after 2 rounds");
-    // The continuation prompt is edit-shaped: pinned selection + current source.
-    const continuationCall = provider.calls[3] ?? [];
-    const continuationPrompt = continuationCall.at(-1)?.content ?? "";
-    expect(continuationPrompt).toContain("Round 1 of 32 exhausted its 3-exchange edit budget");
-    expect(continuationPrompt).toContain("return a corrected edit");
-    expect(continuationPrompt).toContain("Pinned selection:");
-    expect(continuationCall.map((message) => message.role)).toEqual([
-      "system",
-      "user",
-      "assistant",
-      "user",
-    ]);
-    expect(continuationCall[2]?.content).toBe(selectionResponse(ANSWER, "modify"));
-    expect(provider.calls.length).toBe(5);
-    expect(result.explanation).toBe("the selection came too late");
-    // Nothing was applied.
-    expect(helperSource(dir)).toContain("return 1;");
-  }, 30000);
-
-  test("continues an exhausted round with the 32-round framing, then passes", async () => {
-    const dir = fixtureDir();
-    const provider = new ScriptedProvider([
       selectionResponse(ANSWER, "modify"),
-      "not json",
-      "not json",
       editResponse("return 1;", "return 2;"),
     ]);
     const result = await runLoop({
@@ -3727,33 +3627,24 @@ describe("runLoop", () => {
     });
     expect(result.ok).toBe(true);
     expect(result.records.map((record) => record.outcome)).toEqual([
+      "protocol",
+      "protocol",
       "selected",
-      "protocol",
-      "protocol",
       "applied",
       "ok",
     ]);
-    expect(result.records.map((record) => record.iteration)).toEqual([1, 1, 1, 2, 2]);
-    expect(result.records.map((record) => record.exchange)).toEqual([1, 2, 3, 1, null]);
-    // The first exchange of round 2 is the continuation reply.
-    const continuationCall = provider.calls[3] ?? [];
-    const continuationPrompt = continuationCall.at(-1)?.content ?? "";
-    expect(continuationPrompt).toContain("Round 1 of 32 exhausted its 3-exchange edit budget");
-    expect(continuationPrompt).toContain("Reply STOP to end the run, or return a corrected edit");
-    expect(continuationPrompt).not.toContain("failed verification");
-    expect(continuationPrompt).toContain("Current source:");
-    expect(continuationPrompt).toContain("stage: protocol");
-    expect(continuationCall.map((message) => message.role)).toEqual([
-      "system",
-      "user",
-      "assistant",
-      "user",
-    ]);
-    expect(continuationCall[2]?.content).toBe(selectionResponse(ANSWER, "modify"));
+    // No round boundary: every exchange belongs to the first round.
+    expect(result.records.map((record) => record.iteration)).toEqual([1, 1, 1, 1, 1]);
+    expect(result.records.map((record) => record.exchange)).toEqual([1, 2, 3, 4, null]);
+    // The post-pick prompt is the fresh edit prompt, not an exhausted-round
+    // continuation.
+    const contentPrompt = provider.calls[3]?.at(-1)?.content ?? "";
+    expect(contentPrompt).toContain("Output ONE flat JSON object");
+    expect(contentPrompt).not.toContain("No progress:");
     expect(helperSource(dir)).toContain("return 2;");
   }, 30000);
 
-  test("rejects an identical resend at the continuation; a later STOP ends the run", async () => {
+  test("repeated identical rejections stop on the no-progress fingerprint", async () => {
     const dir = fixtureDir();
     const rejected = editResponse("return 99;", "return 2;");
     const provider = new ScriptedProvider([
@@ -3762,8 +3653,6 @@ describe("runLoop", () => {
       rejected,
       rejected,
       rejected,
-      rejected,
-      "  Stop\n",
       "the edits never verify",
     ]);
     const result = await runLoop({
@@ -3775,131 +3664,86 @@ describe("runLoop", () => {
     });
     expect(result.ok).toBe(false);
     expect(result.terminationReason).toBe("edit-exhausted");
+    // The first resend is rejected by the resubmission guard; the repeat of the
+    // resulting fingerprint ends the run without waiting for a fixed cap.
     expect(result.records.map((record) => record.outcome)).toEqual([
       "selected",
       "matcher",
       "repeat",
       "repeat",
       "repeat",
-      "repeat",
-      "stopped",
     ]);
-    expect(result.records.map((record) => record.iteration)).toEqual([1, 1, 1, 2, 2, 2, 3]);
-    // The first exchange of round 2 is the continuation reply; the identical
-    // resend is rejected before any splice.
-    const continuationRepeat = result.records[3];
-    expect(continuationRepeat?.diagnostics).toContain("stage: repeat");
-    expect(continuationRepeat?.diagnostics).toContain("was just rejected (stage: repeat)");
-    const continuationPrompt = provider.calls[3]?.at(-1)?.content ?? "";
-    expect(continuationPrompt).toContain("Round 1 of 32 exhausted its 3-exchange edit budget");
-    expect(continuationPrompt).toContain("Reply STOP to end the run");
-    // A case-insensitive STOP on the next continuation ends the run with
-    // exactly one summary call.
-    expect(provider.calls.length).toBe(8);
-    const summaryPrompt = provider.calls[7]?.at(-1)?.content ?? "";
+    expect(result.diagnostics).toContain("no progress");
+    expect(result.diagnostics).toContain("same reply/source/diagnostics fingerprint repeated");
+    expect(result.diagnostics).toContain("no fixed exchange or round cap applies");
+    // Selection + 4 rejected exchanges + one summary call.
+    expect(provider.calls.length).toBe(6);
+    const summaryPrompt = provider.calls[5]?.at(-1)?.content ?? "";
     expect(summaryPrompt).toContain("The run is over");
     expectStructuredSummaryPrompt(summaryPrompt);
     expect(result.explanation).toBe("the edits never verify");
-    expect(result.diagnostics).toContain("the model replied STOP after 3 rounds");
     expect(result.messages.at(-1)?.content).toContain("The run is over");
     // The rejected matcher edit was never written.
     expect(helperSource(dir)).toContain("return 1;");
   }, 30000);
 
-  test("terminates naming the cap when a failing provider reaches 32 rounds", async () => {
+  test("a run is not cut at 32 rounds; a later verification passes", async () => {
     const dir = fixtureDir();
-    const rejected = editResponse("return 99;", "return 2;");
-    const calls: ChatMessage[][] = [];
-    const provider: ProviderLike = {
-      async chat(messages) {
-        calls.push(structuredClone(messages));
-        if (calls.length === 1) {
-          return {
-            content: selectionResponse(ANSWER, "modify"),
-            toolCalls: [],
-            finishReason: "stop",
-            raw: {},
-          };
-        }
-        if (calls.length === MAX_EDIT_EXCHANGES * MAX_RUN_ITERATIONS + 1) {
-          return {
-            content: "the cap was reached without a verified edit",
-            toolCalls: [],
-            finishReason: "stop",
-            raw: {},
-          };
-        }
-        return { content: rejected, toolCalls: [], finishReason: "stop", raw: {} };
-      },
-    };
-    const result = await runLoop({
-      cwd: dir,
-      issue: "make the answer test pass",
-      provider,
-      checkCommand: TSC,
-      testCommand: ["bun", "test"],
-    });
-    expect(result.ok).toBe(false);
-    expect(result.terminationReason).toBe("edit-exhausted");
-    expect(result.diagnostics).toContain("the 32-round cap was reached without a verified edit");
-    // 32 rounds × 3 exchanges, then exactly one summary call.
-    expect(calls.length).toBe(MAX_EDIT_EXCHANGES * MAX_RUN_ITERATIONS + 1);
-    const summaryPrompt = calls.at(-1)?.at(-1)?.content ?? "";
-    expect(summaryPrompt).toContain("The run is over");
-    expectStructuredSummaryPrompt(summaryPrompt);
-    expect(result.explanation).toBe("the cap was reached without a verified edit");
-    expect(result.records).toHaveLength(MAX_EDIT_EXCHANGES * MAX_RUN_ITERATIONS);
-    expect(result.records[0]?.outcome).toBe("selected");
-    expect(result.records[1]?.outcome).toBe("matcher");
-    expect(result.records[2]?.outcome).toBe("repeat");
-    const last = result.records.at(-1);
-    expect(last?.iteration).toBe(MAX_RUN_ITERATIONS);
-    expect(last?.exchange).toBe(MAX_EDIT_EXCHANGES);
-    expect(last?.outcome).toBe("repeat");
-    expect(result.records.every((record) => record.kind === "exchange")).toBe(true);
-  }, 30000);
-
-  test("the round cap also terminates from the outer loop after a failed final verification", async () => {
-    const dir = fixtureDir();
-    // Every round applies its chained edit and fails verification, so the 32nd
-    // iteration falls through to the outer cap check instead of an in-exchange
-    // termination.
     const provider = new ScriptedProvider([
       selectionResponse(ANSWER, "modify"),
-      ...chainedEdits(MAX_RUN_ITERATIONS),
-      "the cap was reached with the verification still failing",
+      ...chainedEdits(34),
     ]);
     const result = await runLoop({
       cwd: dir,
       issue: "make the answer test pass",
       provider,
+      checkCommand: stallingCheckCommand(dir, 33),
+      testCommand: passingCommand,
+    });
+    expect(result.ok).toBe(true);
+    const applied = result.records.filter((record) => record.outcome === "applied");
+    expect(applied).toHaveLength(34);
+    expect(result.records.filter((record) => record.outcome === "tsc")).toHaveLength(33);
+    expect(result.records.at(-1)?.outcome).toBe("ok");
+    // A round past the old 32-round cap was applied, so no fixed cut exists.
+    expect(applied.some((record) => (record.iteration ?? 0) > 32)).toBe(true);
+    // One selection + 34 content edits; success needs no summary call.
+    expect(provider.calls).toHaveLength(35);
+    // Keep-progress: the final edit stays on disk.
+    expect(helperSource(dir)).toContain("return 35;");
+  }, 60000);
+
+  test("the token budget stops a long failing content loop", async () => {
+    const dir = fixtureDir();
+    const provider = new UsageProvider(
+      [selectionResponse(ANSWER, "modify"), ...chainedEdits(2), "the budget ran out"],
+      [{ total_tokens: 40 }, { total_tokens: 40 }, { total_tokens: 40 }, { total_tokens: 1 }],
+    );
+    const result = await runLoop({
+      cwd: dir,
+      issue: "make the answer test pass",
+      provider,
+      tokenBudget: 100,
       checkCommand: failingCommand,
       testCommand: passingCommand,
     });
     expect(result.ok).toBe(false);
-    expect(result.terminationReason).toBe("edit-exhausted");
+    expect(result.terminationReason).toBe("token-budget");
     expect(result.diagnostics).toContain(
-      `edit-exhausted: the ${MAX_RUN_ITERATIONS}-round cap was reached without a verified edit`,
+      "token-budget: accumulated 120 tokens exceeded the 100 token budget",
     );
-    expect(result.records).toHaveLength(MAX_RUN_ITERATIONS * 2 + 1);
-    expect(result.records[0]?.outcome).toBe("selected");
-    expect(result.records.filter((record) => record.outcome === "applied")).toHaveLength(
-      MAX_RUN_ITERATIONS,
-    );
-    expect(result.records.at(-1)?.outcome).toBe("tsc");
-    // 1 selection + 32 content edits, then exactly one summary call.
-    expect(provider.calls).toHaveLength(MAX_RUN_ITERATIONS + 2);
-    const summaryPrompt = provider.calls.at(-1)?.at(-1)?.content ?? "";
-    expect(summaryPrompt).toContain(
-      "The run is over: the edit budget was exhausted without a valid edit.",
-    );
+    // Selection (40) + one applied content edit (80) fit; the second content
+    // response crosses the budget before it can be applied.
+    expect(result.records.map((record) => record.outcome)).toEqual(["selected", "applied", "tsc"]);
+    // Selection + two content calls + exactly one summary call.
+    expect(provider.calls).toHaveLength(4);
+    const summaryPrompt = provider.calls[3]?.at(-1)?.content ?? "";
+    expect(summaryPrompt).toContain("The run is over");
     expectStructuredSummaryPrompt(summaryPrompt);
-    expect(result.explanation).toBe("the cap was reached with the verification still failing");
-    // Keep-progress: the last chained edit stays on disk.
-    expect(helperSource(dir)).toContain("return 33;");
+    expect(result.explanation).toBe("the budget ran out");
   }, 30000);
 
-  test("treats a bare STOP outside a continuation prompt as a protocol failure", async () => {
+  test("treats a bare STOP outside a no-progress ask as a protocol failure", async () => {
     const dir = fixtureDir();
     const provider = new ScriptedProvider([
       selectionResponse(ANSWER, "modify"),
@@ -3923,12 +3767,12 @@ describe("runLoop", () => {
     expect(result.records[1]?.diagnostics?.startsWith("stage: protocol\n")).toBe(true);
     // The STOP is answered with the ordinary exchange retry prompt.
     const retryPrompt = (provider.calls[2] ?? []).at(-1)?.content ?? "";
-    expect(retryPrompt).toContain("Edit exchange 3 of 3 failed.");
+    expect(retryPrompt).toContain("Edit exchange 3 failed.");
     expect(retryPrompt).toContain("stage: protocol");
     expect(helperSource(dir)).toContain("return 2;");
   }, 30000);
 
-  test("asks for a decision after 8 consecutive failed rounds and passes when the model continues", async () => {
+  test("asks for a decision after 8 consecutive failed attempts and passes when the model continues", async () => {
     const dir = fixtureDir();
     const provider = new ScriptedProvider([
       selectionResponse(ANSWER, "modify"),
@@ -3947,14 +3791,13 @@ describe("runLoop", () => {
     expect(result.records.at(-1)?.outcome).toBe("ok");
     // Round 8 (7 failed rounds) still opens with the ordinary verification retry.
     const ordinary = provider.calls[8]?.at(-1)?.content ?? "";
-    expect(ordinary).toContain("Edit exchange 1 of 3 failed verification.");
-    expect(ordinary).not.toContain("consecutive failed rounds");
+    expect(ordinary).toContain("Edit exchange 1 failed verification.");
+    expect(ordinary).not.toContain("consecutive failed attempts");
     // Round 9 (8 failed rounds) opens with the no-progress ask; because the #71
     // pattern is already unchanged, the first ask is a decision-only turn.
     const ask = provider.calls[9]?.at(-1)?.content ?? "";
     expect(MAX_STALLED_ROUNDS).toBe(8);
-    expect(ask).toContain(`No progress: ${MAX_STALLED_ROUNDS} consecutive failed rounds.`);
-    expect(ask).toContain("This is round 9 of 32.");
+    expect(ask).toContain(`No progress: ${MAX_STALLED_ROUNDS} consecutive failed attempts.`);
     expect(ask).toContain("Reply exactly `STOP` to end the run now");
     expect(ask).toContain("This is a decision turn");
     expect(ask).toContain("Do not send a JSON edit payload on this turn");
@@ -3963,7 +3806,7 @@ describe("runLoop", () => {
     expect(ask).toContain("Failure history: the failing set is unchanged");
     expect(ask).not.toContain("Output ONLY one flat JSON object");
     expect(ask).not.toContain("Pinned selection:");
-    expect(ask).not.toContain("Edit exchange 1 of 3 failed verification.");
+    expect(ask).not.toContain("Edit exchange 1 failed verification.");
     // A valid edit reply on the decision turn is still a real attempt and
     // continues through the unchanged guards.
     expect(helperSource(dir)).toContain("return 10;");
@@ -3991,16 +3834,16 @@ describe("runLoop", () => {
     expect(stopped?.iteration).toBe(9);
     expect(stopped?.exchange).toBe(1);
     expect(stopped?.replacement).toBe("  stop\n");
-    // The stalled stop names the consecutive failed rounds, distinct from #52's
+    // The stalled stop names the consecutive failed attempts, distinct from #52's
     // exhausted-round text, and carries the diagnostics shown in the ask.
     expect(stopped?.diagnostics).toContain(
-      `edit-exhausted: the model replied STOP after ${MAX_STALLED_ROUNDS} consecutive failed rounds`,
+      `edit-exhausted: the model replied STOP after ${MAX_STALLED_ROUNDS} consecutive failed attempts`,
     );
     // Distinct from #52's continuation-round STOP text.
     expect(stopped?.diagnostics).not.toContain("replied STOP after 8 rounds");
     expect(stopped?.diagnostics).toContain("stage: tsc");
     expect(result.diagnostics).toContain(
-      `the model replied STOP after ${MAX_STALLED_ROUNDS} consecutive failed rounds`,
+      `the model replied STOP after ${MAX_STALLED_ROUNDS} consecutive failed attempts`,
     );
     // Exactly one summary call, as the final action.
     expect(provider.calls.length).toBe(11);
@@ -4009,12 +3852,12 @@ describe("runLoop", () => {
     expectStructuredSummaryPrompt(summaryPrompt);
     expect(result.explanation).toBe("the failures could not be resolved");
     const ask = provider.calls[9]?.at(-1)?.content ?? "";
-    expect(ask).toContain(`No progress: ${MAX_STALLED_ROUNDS} consecutive failed rounds.`);
+    expect(ask).toContain(`No progress: ${MAX_STALLED_ROUNDS} consecutive failed attempts.`);
     // Keep-progress: the last applied edit stays on disk.
     expect(helperSource(dir)).toContain("return 9;");
   }, 30000);
 
-  test("repeats the no-progress ask at 16 consecutive failed rounds with the updated count", async () => {
+  test("repeats the no-progress ask at 16 consecutive failed attempts with the updated count", async () => {
     const dir = fixtureDir();
     const provider = new ScriptedProvider([
       selectionResponse(ANSWER, "modify"),
@@ -4031,11 +3874,10 @@ describe("runLoop", () => {
     expect(result.records.filter((record) => record.outcome === "tsc")).toHaveLength(16);
     // Round 16 (15 failed rounds) is ordinary; round 17 (16 failed) asks again.
     const ordinary = provider.calls[16]?.at(-1)?.content ?? "";
-    expect(ordinary).toContain("Edit exchange 1 of 3 failed verification.");
-    expect(ordinary).not.toContain("consecutive failed rounds");
+    expect(ordinary).toContain("Edit exchange 1 failed verification.");
+    expect(ordinary).not.toContain("consecutive failed attempts");
     const ask = provider.calls[17]?.at(-1)?.content ?? "";
-    expect(ask).toContain(`No progress: ${MAX_STALLED_ROUNDS * 2} consecutive failed rounds.`);
-    expect(ask).toContain("This is round 17 of 32.");
+    expect(ask).toContain(`No progress: ${MAX_STALLED_ROUNDS * 2} consecutive failed attempts.`);
     expect(helperSource(dir)).toContain("return 18;");
   }, 30000);
 
@@ -4055,7 +3897,7 @@ describe("runLoop", () => {
     expect(result.ok).toBe(true);
     // Round 8 (7 failed rounds) keeps the ordinary verification retry header.
     const round8 = provider.calls[8]?.at(-1)?.content ?? "";
-    expect(round8).toContain("Edit exchange 1 of 3 failed verification.");
+    expect(round8).toContain("Edit exchange 1 failed verification.");
     for (const call of provider.calls) {
       expect(call.at(-1)?.content ?? "").not.toContain("No progress:");
     }
@@ -4078,48 +3920,18 @@ describe("runLoop", () => {
     });
     expect(result.ok).toBe(true);
     const ask = provider.calls[9]?.at(-1)?.content ?? "";
-    expect(ask).toContain(`No progress: ${MAX_STALLED_ROUNDS} consecutive failed rounds.`);
+    expect(ask).toContain(`No progress: ${MAX_STALLED_ROUNDS} consecutive failed attempts.`);
     expect(ask).toContain("This is a decision turn");
     // The non-edit reply is the stated re-approach, not a protocol failure; the
     // ask shapes only the first content prompt of the round, so the soft-failure
     // retry is an ordinary exchange retry carrying the approach.
     const retry = provider.calls[10]?.at(-1)?.content ?? "";
-    expect(retry).toContain("Edit exchange 2 of 3 failed verification.");
+    expect(retry).toContain("Edit exchange 2 failed verification.");
     expect(retry).toContain("Approach to apply:");
     expect(retry).toContain("not json");
     expect(retry).not.toContain("No progress:");
     expect(result.records.filter((record) => record.outcome === "protocol")).toHaveLength(0);
     expect(helperSource(dir)).toContain("return 10;");
-  }, 30000);
-
-  test("does not carry the no-progress ask on a #52 continuation round", async () => {
-    const dir = fixtureDir();
-    const provider = new ScriptedProvider([
-      selectionResponse(ANSWER, "modify"),
-      ...chainedEdits(8),
-      "not json",
-      "not json",
-      "not json",
-      editResponse("return 9;", "return 10;"),
-    ]);
-    const result = await runLoop({
-      cwd: dir,
-      issue: "make the answer test pass",
-      provider,
-      checkCommand: stallingCheckCommand(dir, MAX_STALLED_ROUNDS),
-      testCommand: passingCommand,
-    });
-    expect(result.ok).toBe(true);
-    // Round 9's first exchange carried the ask...
-    const ask = provider.calls[9]?.at(-1)?.content ?? "";
-    expect(ask).toContain(`No progress: ${MAX_STALLED_ROUNDS} consecutive failed rounds.`);
-    // ...its exchanges 2-3 soft-failed and exhausted the round, so round 10
-    // opens through the #52 continuation prompt, which already offers STOP.
-    const continuation = provider.calls[12]?.at(-1)?.content ?? "";
-    expect(continuation).toContain("Round 9 of 32 exhausted its 3-exchange edit budget");
-    expect(continuation).toContain("Reply STOP to end the run");
-    expect(continuation).not.toContain("No progress:");
-    expect(result.records.find((record) => record.iteration === 10)?.outcome).toBe("applied");
   }, 30000);
 
   test("rejects a byte-identical resubmission at the no-progress ask as stage: repeat", async () => {
@@ -4141,7 +3953,7 @@ describe("runLoop", () => {
     });
     expect(result.ok).toBe(true);
     const ask = provider.calls[9]?.at(-1)?.content ?? "";
-    expect(ask).toContain(`No progress: ${MAX_STALLED_ROUNDS} consecutive failed rounds.`);
+    expect(ask).toContain(`No progress: ${MAX_STALLED_ROUNDS} consecutive failed attempts.`);
     // The guard keeps precedence at the ask exchange: the identical resend is
     // rejected before any splice and consumes the first exchange.
     const repeat = result.records.find((record) => record.outcome === "repeat");
@@ -4152,15 +3964,17 @@ describe("runLoop", () => {
     expect(helperSource(dir)).toContain("return 10;");
   }, 30000);
 
-  test("counts a rejection-exhausted round toward the no-progress streak (#60)", async () => {
+  test("a rejected exchange counts toward the same no-progress streak (#60)", async () => {
     const dir = fixtureDir();
-    // Seven failed verification rounds (streak 7), then one round that rejects
-    // all three exchanges: the rejection-only round crosses the threshold, so
-    // the streak reads 8 and the next round asks.
+    // Seven failed verifications (streak 7), then one rejected exchange (streak
+    // 8): the next prompt is the decision-only ask, even inside the round.
     const provider = new ScriptedProvider([
       selectionResponse(ANSWER, "modify"),
       ...chainedEdits(7),
-      ...protocolRejections(3),
+      ...protocolRejections(1),
+      // The decision turn's non-edit reply is the stated re-approach, not a
+      // protocol failure, so it does not advance the streak.
+      "not json",
       editResponse("return 8;", "return 9;"),
     ]);
     const result = await runLoop({
@@ -4172,34 +3986,27 @@ describe("runLoop", () => {
     });
     expect(result.ok).toBe(true);
     expect(result.records.filter((record) => record.outcome === "tsc")).toHaveLength(7);
-    expect(result.records.filter((record) => record.outcome === "protocol")).toHaveLength(3);
-    // Round 8 (7 failed verifications) still opens with the ordinary retry in
-    // verification-retry shape...
-    const round8 = provider.calls[8]?.at(-1)?.content ?? "";
-    expect(round8).toContain("Edit exchange 1 of 3 failed verification.");
-    expect(round8).not.toContain("No progress:");
-    // ...the rejection-only round 8 advances the same streak, so round 9 asks.
-    const ask = provider.calls[11]?.at(-1)?.content ?? "";
-    expect(ask).toContain(`No progress: ${MAX_STALLED_ROUNDS} consecutive failed rounds.`);
-    expect(ask).toContain("This is round 9 of 32.");
-    // The digest mixes both no-progress shapes: 7 verifications + 3 rejections.
-    expect(ask).toContain("Prior attempts (10):");
+    // The first rejection is recorded; the decision reply is not.
+    expect(result.records.filter((record) => record.outcome === "protocol")).toHaveLength(1);
+    const ask = provider.calls[9]?.at(-1)?.content ?? "";
+    expect(ask).toContain(`No progress: ${MAX_STALLED_ROUNDS} consecutive failed attempts.`);
+    expect(ask).toContain("This is a decision turn");
+    // The digest mixes both no-progress shapes: 7 verifications + 1 rejection.
+    expect(ask).toContain("Prior attempts (8):");
     expect(ask).toContain(
       "tsc: replacement line 1: TS2322: synthetic 0 — in declaration `answer` (function)",
     );
     expect(ask).toContain("- #8 protocol: expected");
-    // The ask replaces the round-exhausted header of the #52 continuation.
-    expect(ask).not.toContain("exhausted its 3-exchange edit budget");
     expect(helperSource(dir)).toContain("return 9;");
   }, 30000);
 
-  test("fires the no-progress ask in a rejection storm at 8 rejected rounds (#60)", async () => {
+  test("fires the no-progress ask after 8 rejected exchanges (#60)", async () => {
     const dir = fixtureDir();
-    // Round 1 spends exchange 1 picking; each round then rejects its remaining
-    // exchanges: 2 + 7 * 3 = 23 protocol rejections before the round-9 ask.
+    // Eight distinct rejections reach the first milestone; the ask is an offer,
+    // and the next edit applies and verifies.
     const provider = new ScriptedProvider([
       selectionResponse(ANSWER, "modify"),
-      ...protocolRejections(23),
+      ...protocolRejections(MAX_STALLED_ROUNDS),
       editResponse("return 1;", "return 2;"),
     ]);
     const result = await runLoop({
@@ -4210,110 +4017,39 @@ describe("runLoop", () => {
       testCommand: ["bun", "test"],
     });
     expect(result.ok).toBe(true);
-    expect(result.records.filter((record) => record.outcome === "protocol")).toHaveLength(23);
-    // The ask fires exactly once, in rejection rounds exactly as in
+    expect(result.records.filter((record) => record.outcome === "protocol")).toHaveLength(
+      MAX_STALLED_ROUNDS,
+    );
+    // The ask fires exactly once, in rejection cycles exactly as in
     // verification-failure cycles.
     const asks = provider.calls.filter((call) =>
       (call.at(-1)?.content ?? "").includes("No progress:"),
     );
     expect(asks).toHaveLength(1);
-    const ask = provider.calls[24]?.at(-1)?.content ?? "";
-    expect(ask).toContain(`No progress: ${MAX_STALLED_ROUNDS} consecutive failed rounds.`);
-    expect(ask).toContain("This is round 9 of 32.");
+    const ask = provider.calls[9]?.at(-1)?.content ?? "";
+    expect(ask).toContain(`No progress: ${MAX_STALLED_ROUNDS} consecutive failed attempts.`);
     expect(ask).toContain("Reply exactly `STOP` to end the run now");
     expect(ask).toContain("only if the failures cannot be resolved");
     expect(ask).toContain("materially different approach rather than another minimal attempt");
     expect(ask).toContain("Concretely: change the matcher shape");
     expect(ask).toContain("re-pin to a declaration the diagnostics name");
     // The digest is carried with the rejection classes and the ruled-out block.
-    expect(ask).toContain("Prior attempts (23):");
-    expect(ask).toContain("- #23 protocol: expected");
+    expect(ask).toContain(`Prior attempts (${MAX_STALLED_ROUNDS}):`);
+    expect(ask).toContain(`- #${MAX_STALLED_ROUNDS} protocol: expected`);
     expect(ask).toContain(
-      "Ruled out after 23 repeats: protocol — This attempt MUST reply with exactly one flat JSON object",
+      `Ruled out after ${MAX_STALLED_ROUNDS} repeats: protocol — This attempt MUST reply with exactly one flat JSON object`,
     );
     // The retry shape is kept: pinned selection, current source, diagnostics,
-    // JSON output shape; the #52 continuation header is replaced.
+    // JSON output shape, and no fixed-budget wording.
     expect(ask).toContain("Pinned selection:");
     expect(ask).toContain("Current source:");
     expect(ask).toContain("Diagnostics:");
     expect(ask).toContain(
       'Output ONLY one flat JSON object {"path": ..., "symbol": ..., "kind": ..., "matcher": ..., "replacement": ...}',
     );
-    expect(ask).not.toContain("exhausted its 3-exchange edit budget");
     // Continue-through: the ask is an offer, and the edit applies and verifies.
     expect(result.records.at(-2)?.outcome).toBe("applied");
     expect(result.records.at(-1)?.outcome).toBe("ok");
-    expect(helperSource(dir)).toContain("return 2;");
-  }, 30000);
-
-  test("a recovering rejection cycle continues past the ask and succeeds (#60)", async () => {
-    const dir = fixtureDir();
-    // Ten rejection-exhausted rounds: the ask fires at round 9, the cycle keeps
-    // going, and the model recovers at round 11 (the rep1 storm shape); the
-    // counter reaching a milestone is no cap.
-    const provider = new ScriptedProvider([
-      selectionResponse(ANSWER, "modify"),
-      ...protocolRejections(29),
-      editResponse("return 1;", "return 2;"),
-    ]);
-    const result = await runLoop({
-      cwd: dir,
-      issue: "make the answer test pass",
-      provider,
-      checkCommand: TSC,
-      testCommand: ["bun", "test"],
-    });
-    expect(result.ok).toBe(true);
-    expect(result.records.filter((record) => record.outcome === "protocol")).toHaveLength(29);
-    const asks = provider.calls.filter((call) =>
-      (call.at(-1)?.content ?? "").includes("No progress:"),
-    );
-    expect(asks).toHaveLength(1);
-    expect(provider.calls[24]?.at(-1)?.content ?? "").toContain(
-      `No progress: ${MAX_STALLED_ROUNDS} consecutive failed rounds.`,
-    );
-    // Round 10 (streak 9) opens through an ordinary #52 continuation again.
-    const round10 = provider.calls[27]?.at(-1)?.content ?? "";
-    expect(round10).toContain("Round 9 of 32 exhausted its 3-exchange edit budget");
-    expect(round10).not.toContain("No progress:");
-    expect(helperSource(dir)).toContain("return 2;");
-  }, 30000);
-
-  test("recurs the no-progress ask in a rejection cycle at 16 with the updated count (#60)", async () => {
-    const dir = fixtureDir();
-    // Rounds 1-16 reject every exchange: the ask fires at round 9 (streak 8),
-    // round 13 (streak 12), and round 17 (streak 16) under the shortened
-    // cadence (#65); the round-17 edit then recovers.
-    const provider = new ScriptedProvider([
-      selectionResponse(ANSWER, "modify"),
-      ...protocolRejections(2 + 15 * 3),
-      editResponse("return 1;", "return 2;"),
-    ]);
-    const result = await runLoop({
-      cwd: dir,
-      issue: "make the answer test pass",
-      provider,
-      checkCommand: TSC,
-      testCommand: ["bun", "test"],
-    });
-    expect(result.ok).toBe(true);
-    const asks = provider.calls.filter((call) =>
-      (call.at(-1)?.content ?? "").includes("No progress:"),
-    );
-    expect(asks).toHaveLength(3);
-    const first = provider.calls[24]?.at(-1)?.content ?? "";
-    expect(first).toContain(`No progress: ${MAX_STALLED_ROUNDS} consecutive failed rounds.`);
-    expect(first).not.toContain("repeated ask");
-    const second = provider.calls[36]?.at(-1)?.content ?? "";
-    expect(second).toContain(
-      `No progress: ${MAX_STALLED_ROUNDS + STALLED_ASK_INTERVAL} consecutive failed rounds.`,
-    );
-    expect(second).toContain("This is round 13 of 32.");
-    expect(second).toContain("repeated ask 2");
-    const third = provider.calls[48]?.at(-1)?.content ?? "";
-    expect(third).toContain(`No progress: ${MAX_STALLED_ROUNDS * 2} consecutive failed rounds.`);
-    expect(third).toContain("This is round 17 of 32.");
-    expect(third).toContain("repeated ask 3");
     expect(helperSource(dir)).toContain("return 2;");
   }, 30000);
 
@@ -4321,7 +4057,7 @@ describe("runLoop", () => {
     const dir = fixtureDir();
     const provider = new ScriptedProvider([
       selectionResponse(ANSWER, "modify"),
-      ...protocolRejections(23),
+      ...protocolRejections(MAX_STALLED_ROUNDS),
       "  stop\n",
       "the rejection storm could not be resolved",
     ]);
@@ -4334,25 +4070,22 @@ describe("runLoop", () => {
     });
     expect(result.ok).toBe(false);
     expect(result.terminationReason).toBe("edit-exhausted");
-    expect(result.records).toHaveLength(25);
+    expect(result.records).toHaveLength(MAX_STALLED_ROUNDS + 2);
     const stopped = result.records.at(-1);
     expect(stopped?.outcome).toBe("stopped");
-    expect(stopped?.iteration).toBe(9);
-    expect(stopped?.exchange).toBe(1);
+    expect(stopped?.iteration).toBe(1);
+    expect(stopped?.exchange).toBe(MAX_STALLED_ROUNDS + 2);
     expect(stopped?.replacement).toBe("  stop\n");
-    // The stalled STOP names the consecutive failed rounds, distinct from
-    // #52's exhausted-round text, and keeps the ask's chain diagnostics.
+    // The stalled STOP names the consecutive failed attempts and keeps the
+    // ask's chain diagnostics.
     expect(stopped?.diagnostics).toContain(
-      `edit-exhausted: the model replied STOP after ${MAX_STALLED_ROUNDS} consecutive failed rounds`,
-    );
-    expect(stopped?.diagnostics).not.toContain(
-      `the model replied STOP after ${MAX_STALLED_ROUNDS} rounds`,
+      `edit-exhausted: the model replied STOP after ${MAX_STALLED_ROUNDS} consecutive failed attempts`,
     );
     expect(stopped?.diagnostics).toContain("stage: protocol");
     expect(stopped?.diagnostics).toContain("no JSON object found in the response");
     // Exactly one summary call, as the final action.
-    expect(provider.calls).toHaveLength(26);
-    const summaryPrompt = provider.calls[25]?.at(-1)?.content ?? "";
+    expect(provider.calls).toHaveLength(MAX_STALLED_ROUNDS + 3);
+    const summaryPrompt = provider.calls[MAX_STALLED_ROUNDS + 2]?.at(-1)?.content ?? "";
     expect(summaryPrompt).toContain("The run is over");
     expectStructuredSummaryPrompt(summaryPrompt);
     expect(result.explanation).toBe("the rejection storm could not be resolved");
@@ -4360,19 +4093,18 @@ describe("runLoop", () => {
     const artifact = renderFailureArtifact({ rootDir: dir, result });
     expect(artifact).toContain("edit-exhausted");
     expect(artifact).toContain(
-      `the model replied STOP after ${MAX_STALLED_ROUNDS} consecutive failed rounds`,
+      `the model replied STOP after ${MAX_STALLED_ROUNDS} consecutive failed attempts`,
     );
   }, 30000);
 
-  test("continuation prompts carry an updated prior-attempts digest (#57)", async () => {
+  test("the no-progress ask carries an updated prior-attempts digest (#57)", async () => {
     const dir = fixtureDir();
+    const attempts = Array.from({ length: MAX_STALLED_ROUNDS }, (_, index) =>
+      editResponse(`return ${90 + index};`, "return 2;"),
+    );
     const provider = new ScriptedProvider([
       selectionResponse(ANSWER, "modify"),
-      editResponse("return 90;", "return 2;"),
-      editResponse("return 91;", "return 2;"),
-      editResponse("return 92;", "return 2;"),
-      editResponse("return 93;", "return 2;"),
-      editResponse("return 94;", "return 2;"),
+      ...attempts,
       "STOP",
       "the matcher failures could not be resolved",
     ]);
@@ -4387,51 +4119,35 @@ describe("runLoop", () => {
     expect(result.terminationReason).toBe("edit-exhausted");
     expect(result.records.map((record) => record.outcome)).toEqual([
       "selected",
-      "matcher",
-      "matcher",
-      "matcher",
-      "matcher",
-      "matcher",
+      ...Array<"matcher">(MAX_STALLED_ROUNDS).fill("matcher"),
       "stopped",
     ]);
-    // Round 2's continuation prompt lists the two attempts of round 1.
-    const round2 = provider.calls[3]?.at(-1)?.content ?? "";
-    expect(round2).toContain("Round 1 of 32 exhausted its 3-exchange edit budget");
-    expect(round2).toContain("Prior attempts (2):");
-    expect(round2).toContain(
+    // The ordinary retry before the milestone carries no digest.
+    const ordinary = provider.calls[8]?.at(-1)?.content ?? "";
+    expect(ordinary).not.toContain("Prior attempts");
+    // The ask carries the whole failing chain, numbered from the first attempt.
+    const ask = provider.calls[9]?.at(-1)?.content ?? "";
+    expect(ask).toContain(`No progress: ${MAX_STALLED_ROUNDS} consecutive failed attempts.`);
+    expect(ask).toContain(`Prior attempts (${MAX_STALLED_ROUNDS}):`);
+    expect(ask).toContain(
       '- #1 matcher-not-found: the matcher was not found inside function "answer" in src/helper.ts (line 1, column 8)',
     );
-    expect(round2).toContain("- #2 matcher-not-found:");
-    expect(round2).not.toContain("Ruled out after");
-    // Round 3 keeps the earlier entries (they are not regenerated), adds the
-    // round-2 attempts, and rules the repeated class out.
-    const round3 = provider.calls[6]?.at(-1)?.content ?? "";
-    expect(round3).toContain("Prior attempts (5):");
-    expect(round3).toContain("- #1 matcher-not-found:");
-    expect(round3).toContain("- #5 matcher-not-found:");
-    expect([...round3.matchAll(/- #(\d+) /g)].map((match) => match[1])).toEqual([
-      "1",
-      "2",
-      "3",
-      "4",
-      "5",
-    ]);
-    expect(round3).toContain(
-      'Ruled out after 5 repeats: matcher-not-found — This attempt MUST omit "matcher" and return the complete declaration in "replacement".',
+    expect(ask).toContain(`- #${MAX_STALLED_ROUNDS} matcher-not-found:`);
+    expect(ask).toContain(
+      `Ruled out after ${MAX_STALLED_ROUNDS} repeats: matcher-not-found — This attempt MUST omit "matcher" and return the complete declaration in "replacement".`,
     );
     // The repeated matcher failures never touched the file.
     expect(helperSource(dir)).toContain("return 1;");
   }, 30000);
 
-  test("the continuation digest rules out a class after three repeats (#57)", async () => {
+  test("the no-progress digest rules out a class after three repeats (#57)", async () => {
     const dir = fixtureDir();
     const provider = new ScriptedProvider([
       selectionResponse(ANSWER, "modify"),
       editResponse("return 80;", "return 2;"),
       editResponse("return 81;", "return 2;"),
       editResponse("return 82;", "return 2;"),
-      "not json",
-      "not json",
+      ...Array.from({ length: 5 }, (_, index) => `not json ${index}`),
       "STOP",
       "the failures came in classes",
     ]);
@@ -4451,27 +4167,24 @@ describe("runLoop", () => {
       "matcher",
       "protocol",
       "protocol",
+      "protocol",
+      "protocol",
+      "protocol",
       "stopped",
     ]);
-    const round2 = provider.calls[3]?.at(-1)?.content ?? "";
-    expect(round2).toContain("Prior attempts (2):");
-    expect(round2).not.toContain("Ruled out after");
-    const round3 = provider.calls[6]?.at(-1)?.content ?? "";
-    expect(round3).toContain("Prior attempts (5):");
-    expect(round3).toContain(
+    const ask = provider.calls[9]?.at(-1)?.content ?? "";
+    expect(ask).toContain(`Prior attempts (${MAX_STALLED_ROUNDS}):`);
+    expect(ask).toContain(
       'Ruled out after 3 repeats: matcher-not-found — This attempt MUST omit "matcher" and return the complete declaration in "replacement".',
     );
-    // The protocol attempts are listed but stay below the ruled-out threshold.
-    expect(round3).toContain("- #4 protocol:");
-    expect(round3).not.toContain("Ruled out after 2 repeats: protocol");
+    expect(ask).toContain("Ruled out after 5 repeats: protocol —");
+    expect(ask).toContain("- #4 protocol:");
   }, 30000);
 
-  test("the selection continuation carries the digest and its class counts (#57)", async () => {
+  test("the selection no-progress ask carries the digest and its class counts (#57)", async () => {
     const dir = fixtureDir();
     const provider = new ScriptedProvider([
-      "not json",
-      "not json",
-      "not json",
+      ...Array.from({ length: MAX_STALLED_ROUNDS }, (_, index) => `not json ${index}`),
       "STOP",
       "the selection never came",
     ]);
@@ -4485,17 +4198,17 @@ describe("runLoop", () => {
     expect(result.ok).toBe(false);
     expect(result.terminationReason).toBe("edit-exhausted");
     expect(result.records.map((record) => record.outcome)).toEqual([
-      "protocol",
-      "protocol",
-      "protocol",
+      ...Array<"protocol">(MAX_STALLED_ROUNDS).fill("protocol"),
       "stopped",
     ]);
-    const continuation = provider.calls[3]?.at(-1)?.content ?? "";
-    expect(continuation).toContain("Round 1 of 32 exhausted its 3-exchange selection budget");
-    expect(continuation).toContain("Prior attempts (3):");
-    expect(continuation).toContain("- #1 protocol:");
-    expect(continuation).toContain(
-      'Ruled out after 3 repeats: protocol — This attempt MUST reply with exactly one flat JSON object carrying "path", "symbol", "kind", "matcher", "range", "replacement" as the entire response: no prose, no markdown fences, no nesting.',
+    const ask = provider.calls[8]?.at(-1)?.content ?? "";
+    expect(ask).toContain(
+      `No progress: ${MAX_STALLED_ROUNDS} consecutive failed selection attempts; no fixed selection budget applies.`,
+    );
+    expect(ask).toContain(`Prior attempts (${MAX_STALLED_ROUNDS}):`);
+    expect(ask).toContain("- #1 protocol:");
+    expect(ask).toContain(
+      `Ruled out after ${MAX_STALLED_ROUNDS} repeats: protocol — This attempt MUST reply with exactly one flat JSON object carrying "path", "symbol", "kind", "matcher", "range", "replacement" as the entire response: no prose, no markdown fences, no nesting.`,
     );
   }, 30000);
 
@@ -4515,11 +4228,11 @@ describe("runLoop", () => {
     expect(result.ok).toBe(true);
     // The ordinary verification retry of round 8 stays digest-free.
     const ordinary = provider.calls[8]?.at(-1)?.content ?? "";
-    expect(ordinary).toContain("Edit exchange 1 of 3 failed verification.");
+    expect(ordinary).toContain("Edit exchange 1 failed verification.");
     expect(ordinary).not.toContain("Prior attempts");
     // The round-9 ask carries the whole failing chain.
     const ask = provider.calls[9]?.at(-1)?.content ?? "";
-    expect(ask).toContain(`No progress: ${MAX_STALLED_ROUNDS} consecutive failed rounds.`);
+    expect(ask).toContain(`No progress: ${MAX_STALLED_ROUNDS} consecutive failed attempts.`);
     expect(ask).toContain(`Prior attempts (${MAX_STALLED_ROUNDS}):`);
     expect(ask).toContain(
       "- #1 tsc: replacement line 1: TS2322: synthetic 0 — in declaration `answer` (function)",
@@ -4533,13 +4246,15 @@ describe("runLoop", () => {
     expect(helperSource(dir)).toContain("return 10;");
   }, 30000);
 
-  test("the digest never leaks replacement text and rides only continuation prompts (#57)", async () => {
+  test("the digest never leaks replacement text and rides only no-progress asks (#57)", async () => {
     const dir = fixtureDir();
     const marker = "NO_LEAK_MARKER_57";
+    const gateReplies = Array.from({ length: MAX_STALLED_ROUNDS }, (_, index) =>
+      editResponse(null, `function answer(): number {\n  return ${index + 2};) ${marker}\n}`),
+    );
     const provider = new ScriptedProvider([
       selectionResponse(ANSWER, "modify"),
-      editResponse(null, `function answer(): number {\n  return 2;) ${marker}\n}`),
-      editResponse(null, `function answer(): number {\n  return 3;) ${marker}\n}`),
+      ...gateReplies,
       "STOP",
       "the edits never parsed",
     ]);
@@ -4554,19 +4269,18 @@ describe("runLoop", () => {
     expect(result.terminationReason).toBe("edit-exhausted");
     expect(result.records.map((record) => record.outcome)).toEqual([
       "selected",
-      "gate",
-      "gate",
+      ...Array<"gate">(MAX_STALLED_ROUNDS).fill("gate"),
       "stopped",
     ]);
-    const continuation = provider.calls[3]?.at(-1)?.content ?? "";
-    const digestAt = continuation.indexOf("Prior attempts");
+    const ask = provider.calls[9]?.at(-1)?.content ?? "";
+    const digestAt = ask.indexOf("Prior attempts");
     expect(digestAt).toBeGreaterThan(-1);
     // The prompt before the digest carries the gate code frame with the raw
     // replacement text...
-    expect(continuation.slice(0, digestAt)).toContain(marker);
+    expect(ask.slice(0, digestAt)).toContain(marker);
     // ...the digest section keeps only the chosen diagnostics line.
-    const digest = continuation.slice(digestAt);
-    expect(digest).toContain("Prior attempts (2):");
+    const digest = ask.slice(digestAt);
+    expect(digest).toContain(`Prior attempts (${MAX_STALLED_ROUNDS}):`);
     expect(digest).toContain(
       "- #1 gate: the edit was discarded because the resulting source does not parse; nothing was written",
     );
@@ -4623,8 +4337,8 @@ describe("runLoop", () => {
     ]);
     expect(retryCall[2]?.content).toBe(selectionResponse(ANSWER, "modify"));
     const retryPrompt = retryCall[3]?.content ?? "";
-    expect(retryPrompt).toContain("Edit exchange 1 of 3 failed verification.");
-    expect(retryPrompt).toContain("2 exchange(s) remain in this iteration");
+    expect(retryPrompt).toContain("Edit exchange 1 failed verification.");
+
     expect(retryPrompt).toContain("not assignable");
     expect(retryPrompt).toContain("Current source:");
   }, 30000);
@@ -4705,7 +4419,7 @@ describe("runLoop", () => {
     expect(provider.calls[2]?.[1]?.content).toContain("# Spec files");
   }, 30000);
 
-  test("keeps a tsc-repair #52 continuation round lean", async () => {
+  test("keeps a tsc-repair retry lean", async () => {
     const dir = fixtureDir();
     const issue = "make the answer test pass";
     const files = discoverSourceFiles(dir);
@@ -4735,9 +4449,10 @@ describe("runLoop", () => {
       "applied",
       "ok",
     ]);
-    expect(result.records.map((record) => record.iteration)).toEqual([1, 1, 1, 2, 2, 2, 3, 3]);
-    // Every content exchange of the tsc-opened round and of the continuation
-    // round that continues its chain is lean.
+    // #57 has no round continuation: every retry of the tsc-opened chain stays
+    // in iteration 2.
+    expect(result.records.map((record) => record.iteration)).toEqual([1, 1, 1, 2, 2, 2, 2, 2]);
+    // Every content exchange of the tsc-opened chain is lean.
     const leanPrompt = buildUserPrompt(issue, buildContextYaml(files), []);
     for (const call of [
       provider.calls[2],
@@ -4747,9 +4462,7 @@ describe("runLoop", () => {
     ]) {
       expect(call?.[1]?.content).toBe(leanPrompt);
     }
-    expect(provider.calls[5]?.at(-1)?.content).toContain(
-      "Round 2 of 32 exhausted its 3-exchange edit budget",
-    );
+    expect(provider.calls[5]?.at(-1)?.content).toContain("Edit exchange 4 failed.");
     expect(helperSource(dir)).toContain("return 2;");
   }, 30000);
 
@@ -4783,8 +4496,8 @@ describe("runLoop", () => {
     // response text only reappears as reformatted current source in the prompt.
     expect(retryCall.some((message) => message.content === badEdit)).toBe(false);
     const retryPrompt = retryCall[3]?.content ?? "";
-    expect(retryPrompt).toContain("Edit exchange 1 of 3 failed verification.");
-    expect(retryPrompt).toContain("2 exchange(s) remain in this iteration");
+    expect(retryPrompt).toContain("Edit exchange 1 failed verification.");
+
     expect(retryPrompt).toContain("not assignable");
     expect(retryPrompt).toContain("Current source:");
     expect(retryPrompt).toContain('return "nope";');
@@ -4864,7 +4577,7 @@ describe("runLoop", () => {
     expect(content).toContain("export function other(): number {\n  return 2;\n}");
     // The repair prompt shows the modify pin plus the re-pin instruction.
     const repairPrompt = (provider.calls[2] ?? []).at(-1)?.content ?? "";
-    expect(repairPrompt).toContain("Edit exchange 1 of 3 failed verification.");
+    expect(repairPrompt).toContain("Edit exchange 1 failed verification.");
     expect(repairPrompt).toContain('"mode":"modify"');
     expect(repairPrompt).toContain("to re-pin and edit it");
   }, 30000);
@@ -5432,8 +5145,10 @@ describe("runLoop", () => {
     const provider = new ScriptedProvider([
       selectionResponse(ANSWER, "modify"),
       editResponse(null, "function answer(): number {\n  return 2;\n}"),
+      // Different replies produce the same protocol diagnostic, so the second
+      // prompt gets the identical-rejection note without a fingerprint stop.
       "not json",
-      "not json",
+      "still not json",
       editResponse(null, "function answer(): number {\n  return 7;\n}"),
     ]);
     const result = await runLoop({
@@ -5469,13 +5184,12 @@ describe("runLoop", () => {
     const original = helperSource(dir);
     const badEdit = editResponse("return 1;", 'return "nope";');
     const secondBadEdit = editResponse('return "nope";', 'return "nope!";');
+    const badProtocol = Array.from({ length: 6 }, (_, index) => `bad ${index}`);
     const provider = new ScriptedProvider([
       selectionResponse(ANSWER, "modify"),
       badEdit,
       secondBadEdit,
-      "bad",
-      "bad",
-      "bad",
+      ...badProtocol,
       "STOP",
       "the replacement never verifies",
     ]);
@@ -5494,23 +5208,23 @@ describe("runLoop", () => {
       "tsc",
       "applied",
       "tsc",
-      "protocol",
-      "protocol",
-      "protocol",
+      ...Array<"protocol">(6).fill("protocol"),
       "stopped",
     ]);
     // No rollback (#30): the last attempted text is what stays on disk.
     const finalSource = helperSource(dir);
     expect(finalSource).toContain('return "nope!";');
     expect(finalSource).not.toBe(original);
-    // The summary carries the diagnostics that opened the continued round and
-    // the last edit failure.
+    // The summary carries the diagnostics that opened the repair chain and the
+    // last edit failure.
     expect(result.diagnostics).toContain("edit-exhausted");
     expect(result.diagnostics).toContain("stage: tsc");
     expect(result.diagnostics).toContain("stage: protocol");
-    expect(result.diagnostics).toContain("the model replied STOP after 4 rounds");
-    expect(provider.calls.length).toBe(8);
-    const summaryPrompt = provider.calls[7]?.at(-1)?.content ?? "";
+    expect(result.diagnostics).toContain(
+      `the model replied STOP after ${MAX_STALLED_ROUNDS} consecutive failed attempts`,
+    );
+    expect(provider.calls.length).toBe(11);
+    const summaryPrompt = provider.calls[10]?.at(-1)?.content ?? "";
     expect(summaryPrompt).toContain("The run is over");
     expectStructuredSummaryPrompt(summaryPrompt);
     expect(result.explanation).toBe("the replacement never verifies");
@@ -5522,9 +5236,7 @@ describe("runLoop", () => {
       selectionResponse(ANSWER, "modify"),
       editResponse("return 1;", 'return "nope";'),
       editResponse('return "nope";', 'return "nope!";'),
-      "bad",
-      "bad",
-      "bad",
+      ...Array.from({ length: 6 }, (_, index) => `bad ${index}`),
       "STOP",
       "the signature stalls",
     ]);
@@ -5541,7 +5253,7 @@ describe("runLoop", () => {
     expect(verificationRows.map((record) => record.outcome)).toEqual(["tsc", "tsc"]);
     // Signatures are an observation only: the model's STOP ends the run.
     expect(verificationRows.map((record) => record.signature)).toEqual([3, 2]);
-    expect(result.records.filter((record) => record.kind === "exchange")).toHaveLength(7);
+    expect(result.records.filter((record) => record.kind === "exchange")).toHaveLength(10);
   }, 30000);
 
   test("token budget: cache-excluded basis ignores cached prompt tokens", () => {
@@ -5991,7 +5703,7 @@ describe("runLoop", () => {
     // The repair prompt shows the whole kept file plus the diagnostics.
     const repairCall = provider.calls[2] ?? [];
     const repairPrompt = repairCall.at(-1)?.content ?? "";
-    expect(repairPrompt).toContain("Edit exchange 1 of 3 failed verification.");
+    expect(repairPrompt).toContain("Edit exchange 1 failed verification.");
     expect(repairPrompt).toContain("Make minimal corrective changes");
     expect(repairPrompt).toContain("export function make(): number");
     expect(repairPrompt).toContain("not assignable");
@@ -6045,7 +5757,7 @@ describe("runLoop", () => {
     expect(content).toContain("return 1;");
     const retryPrompt = scripted.calls[2]?.at(-1)?.content ?? "";
     expect(retryPrompt).toContain("COMPLETE corrected declaration");
-    expect(retryPrompt).toContain("Edit exchange 1 of 3 failed verification.");
+    expect(retryPrompt).toContain("Edit exchange 1 failed verification.");
   }, 30000);
 
   test("create: rejects a matcher and appends on the retry", async () => {
@@ -6085,11 +5797,14 @@ describe("runLoop", () => {
     const escaped = join(dir, "..", escapedName);
     const absolute = join(dir, "..", `escape-absolute-${basename(dir)}.ts`);
     const inside = join(dir, "escape-inside.ts");
+    const outsideReply = `{"mode":"create","path":"../${escapedName}","symbol":"greet","kind":"function"}`;
     const provider = new ScriptedProvider([
-      `{"mode":"create","path":"../${escapedName}","symbol":"greet","kind":"function"}`,
+      outsideReply,
       `{"mode":"create","path":${JSON.stringify(absolute)},"symbol":"greet","kind":"function"}`,
       '{"mode":"create","path":"src/../escape-inside.ts","symbol":"greet","kind":"function"}',
-      "STOP",
+      // Repeating the first rejected selection is the same reply/source/
+      // diagnostics fingerprint: no-progress termination without a fixed cap.
+      outsideReply,
       "cannot write outside the project",
     ]);
     const result = await runLoop({
@@ -6105,19 +5820,15 @@ describe("runLoop", () => {
       "address",
       "address",
       "address",
-      "stopped",
+      "address",
     ]);
-    for (const record of result.records.slice(0, 3)) {
+    for (const record of result.records) {
       expect(record.outcome).toBe("address");
       expect(record.kind).toBe("exchange");
       expect(record.diagnostics).toContain("stage: address");
     }
-    // The exhausted selection round continues with a pick-shaped prompt.
-    const continuationPrompt = provider.calls[3]?.at(-1)?.content ?? "";
-    expect(continuationPrompt).toContain(
-      "Round 1 of 32 exhausted its 3-exchange selection budget without a valid pick",
-    );
-    expect(continuationPrompt).toContain("Reply STOP to end the run");
+    expect(result.diagnostics).toContain("no progress");
+    expect(provider.calls).toHaveLength(5);
     expect(existsSync(escaped)).toBe(false);
     expect(existsSync(absolute)).toBe(false);
     expect(existsSync(inside)).toBe(false);
@@ -6159,11 +5870,11 @@ describe("runLoop", () => {
       join(dir, "src", "helper.ts"),
       "export class C {\n  m(): number {\n    return 1;\n  }\n}\n\nexport class C {\n  m(): number {\n    return 2;\n  }\n}\n",
     );
+    const ambiguous = '{"path":"src/helper.ts","symbol":"C.m","kind":"method"}';
     const provider = new ScriptedProvider([
-      '{"path":"src/helper.ts","symbol":"C.m","kind":"method"}',
-      '{"path":"src/helper.ts","symbol":"C.m","kind":"method"}',
-      '{"path":"src/helper.ts","symbol":"C.m","kind":"method"}',
-      "STOP",
+      ambiguous,
+      // The same ambiguous reply is a repeated no-progress fingerprint.
+      ambiguous,
       "two methods share the address; pick one by its path/symbol/kind",
     ]);
     const result = await runLoop({
@@ -6175,12 +5886,8 @@ describe("runLoop", () => {
     });
     expect(result.ok).toBe(false);
     expect(result.terminationReason).toBe("edit-exhausted");
-    expect(result.records.map((record) => record.outcome)).toEqual([
-      "address",
-      "address",
-      "address",
-      "stopped",
-    ]);
+    expect(result.records.map((record) => record.outcome)).toEqual(["address", "address"]);
+    expect(result.diagnostics).toContain("no progress");
     const failed = result.records[0];
     expect(failed?.diagnostics).toContain("stage: address");
     expect(failed?.diagnostics).toContain("matches 2 declarations");
@@ -6558,7 +6265,9 @@ describe("runLoop", () => {
       selectionResponse(),
       gateEdit,
       secondGateEdit,
-      "STOP",
+      // Repeating the first broken payload repeats its reply/diagnostics
+      // fingerprint: no-progress termination without a fixed cap.
+      gateEdit,
       "the edit never parsed",
     ]);
     const result = await runLoop({
@@ -6574,8 +6283,9 @@ describe("runLoop", () => {
       "selected",
       "gate",
       "gate",
-      "stopped",
+      "gate",
     ]);
+    expect(result.diagnostics).toContain("no progress");
     const failed = result.records[1];
     expect(failed?.diagnostics?.startsWith("stage: gate\n")).toBe(true);
     expect(failed?.diagnostics).toContain("nothing was written");
@@ -6639,7 +6349,7 @@ describe("runLoop", () => {
     const retryPrompt = retryCall[3]?.content ?? "";
     expect(retryPrompt).toContain("stage: truncated");
     expect(retryPrompt).toContain("shorter, more compact replacement");
-    expect(retryPrompt).toContain("Edit exchange 3 of 3 failed.");
+    expect(retryPrompt).toContain("Edit exchange 3 failed.");
   }, 30000);
 
   describe("output-limit strike cap (#98)", () => {
@@ -7459,13 +7169,13 @@ describe("runLoop", () => {
     expect(helperSource(dir)).toContain("return 2;");
   }, 30000);
 
-  test("classifies empty outputs as protocol failures and a continuation STOP ends the run", async () => {
+  test("classifies empty outputs as protocol failures and stops on the repeated fingerprint", async () => {
     const dir = fixtureDir();
     const provider = new ScriptedProvider([
       selectionResponse(),
       "",
+      // The identical empty reply repeats the failure fingerprint.
       "",
-      "STOP",
       "the model returned nothing",
     ]);
     const result = await runLoop({
@@ -7477,12 +7187,14 @@ describe("runLoop", () => {
     });
     expect(result.ok).toBe(false);
     expect(result.terminationReason).toBe("edit-exhausted");
+    // The second identical rejection is recorded, then ends the run.
     expect(result.records.map((record) => record.outcome)).toEqual([
       "selected",
       "protocol",
       "protocol",
-      "stopped",
     ]);
+    expect(result.diagnostics).toContain("no progress");
+    expect(result.explanation).toBe("the model returned nothing");
   }, 30000);
 
   test("runs the sibling test file first and short-circuits on its failure", async () => {
@@ -7566,16 +7278,15 @@ describe("runLoop", () => {
       testCommand: ["bun", "test"],
     });
     expect(longResult.ok).toBe(false);
-    expect(longResult.records).toHaveLength(4);
-    for (const record of longResult.records.slice(0, 3)) {
+    // The second identical locator is the repeated no-progress fingerprint.
+    expect(longResult.records).toHaveLength(2);
+    for (const record of longResult.records) {
       expect(record.outcome).toBe("address");
       expect(record.replacementChars).toBeNull();
       expect(record.diagnosticsHead).not.toBeNull();
       expect(record.diagnosticsHead?.length).toBeLessThanOrEqual(200);
     }
-    const stoppedLong = longResult.records[3];
-    expect(stoppedLong?.outcome).toBe("stopped");
-    expect(stoppedLong?.diagnosticsHead?.length).toBeLessThanOrEqual(200);
+    expect(longResult.diagnostics).toContain("no progress");
   }, 30000);
 
   test("runs every Edit-loop exchange at none", async () => {
@@ -7599,9 +7310,9 @@ describe("runLoop", () => {
       testCommand: failingCommand,
     });
     expect(result.ok).toBe(false);
+    // Selection, two applied edits, the repeated "bad" fingerprint stop, then
+    // the summary call at the default effort.
     expect(provider.optionCalls).toEqual([
-      { temperature: 0, reasoningEffort: "none" },
-      { temperature: 0, reasoningEffort: "none" },
       { temperature: 0, reasoningEffort: "none" },
       { temperature: 0, reasoningEffort: "none" },
       { temperature: 0, reasoningEffort: "none" },
@@ -7638,8 +7349,6 @@ describe("runLoop", () => {
     const provider = new ScriptedProvider([
       "not json",
       "not json",
-      "not json",
-      "STOP",
       "the symbol does not exist in the project",
     ]);
     const result = await runLoop({
@@ -7650,9 +7359,9 @@ describe("runLoop", () => {
     });
     expect(result.ok).toBe(false);
     expect(result.terminationReason).toBe("edit-exhausted");
+    // Selection, two identical "not json" replies (fingerprint stop), then the
+    // summary call at the default effort.
     expect(provider.optionCalls).toEqual([
-      { temperature: 0, reasoningEffort: "none" },
-      { temperature: 0, reasoningEffort: "none" },
       { temperature: 0, reasoningEffort: "none" },
       { temperature: 0, reasoningEffort: "none" },
       { temperature: 0 },
@@ -7697,11 +7406,11 @@ describe("runLoop with unparseable files", () => {
     const dir = brokenFixtureDir();
     const brokenPath = join(dir, "src", "broken.ts");
     const original = readFileSync(brokenPath, "utf8");
+    const skippedReply = '{"path":"src/broken.ts","symbol":"broken","kind":"function"}';
     const provider = new ScriptedProvider([
-      '{"path":"src/broken.ts","symbol":"broken","kind":"function"}',
-      '{"path":"src/broken.ts","symbol":"broken","kind":"function"}',
-      '{"path":"src/broken.ts","symbol":"broken","kind":"function"}',
-      "STOP",
+      skippedReply,
+      // The identical rejected selection repeats the no-progress fingerprint.
+      skippedReply,
       "the broken file cannot be selected",
     ]);
     const result = await runLoop({
@@ -7714,19 +7423,14 @@ describe("runLoop with unparseable files", () => {
     expect(result.ok).toBe(false);
     expect(result.terminationReason).toBe("edit-exhausted");
     expect(result.locator).toBeNull();
-    expect(result.records.map((record) => record.outcome)).toEqual([
-      "address",
-      "address",
-      "address",
-      "stopped",
-    ]);
+    expect(result.records.map((record) => record.outcome)).toEqual(["address", "address"]);
     expect(result.records[0]?.diagnostics).toContain("stage: address");
     expect(result.records[0]?.diagnostics).toContain("src/broken.ts");
     expect(result.records[0]?.diagnostics).toContain("unexpected end of input");
-    expect(result.diagnostics).toContain("edit-exhausted");
+    expect(result.diagnostics).toContain("no progress");
     expect(readFileSync(brokenPath, "utf8")).toBe(original);
     expect(result.explanation).toBe("the broken file cannot be selected");
-    expect(provider.calls).toHaveLength(5);
+    expect(provider.calls).toHaveLength(3);
   }, 30000);
 
   test("keeps create mode for a missing file while another file is skipped", async () => {
@@ -7948,13 +7652,13 @@ describe("failure history wiring (#71)", () => {
     expect(provider.calls[3]?.at(-1)?.content ?? "").not.toContain("Failure history:");
     // Round 4 (three identical failures) is an ordinary retry and carries it.
     const third = provider.calls[4]?.at(-1)?.content ?? "";
-    expect(third).toContain("Edit exchange 1 of 3 failed verification.");
+    expect(third).toContain("Edit exchange 1 failed verification.");
     expect(third).toContain(
       "Failure history: the failing set is unchanged across the last 3 verification rounds.",
     );
     // The #54 ask at round 9 carries the longer-chain count plus the digest.
     const ask = provider.calls[9]?.at(-1)?.content ?? "";
-    expect(ask).toContain(`No progress: ${MAX_STALLED_ROUNDS} consecutive failed rounds.`);
+    expect(ask).toContain(`No progress: ${MAX_STALLED_ROUNDS} consecutive failed attempts.`);
     const note =
       "Failure history: the failing set is unchanged across the last 8 verification rounds.";
     expect(ask).toContain(note);
@@ -8858,10 +8562,11 @@ describe("edit-dsl protocol (#111/#119)", () => {
       'import { expect, test } from "bun:test";\nimport { MAX_TOKENS } from "./lisp";\n\ntest("max tokens", () => {\n  expect(MAX_TOKENS).toBe(20);\n});\n',
     );
     const provider = new ScriptedProvider([
-      // Two wrong-kind re-pins of a `const`: `function` cannot match the
-      // internal `variable` entry, so both are address failures.
+      // Two distinct wrong-kind re-pins of a `const`: neither `function` nor
+      // `interface` can match the internal `variable` entry, so both are
+      // address failures without being an identical reply.
       editDslSelect("MAX_TOKENS", "src/lisp.ts", null, "function"),
-      editDslSelect("MAX_TOKENS", "src/lisp.ts", null, "function"),
+      editDslSelect("MAX_TOKENS", "src/lisp.ts", null, "interface"),
       // Recover through the offered bare select (kind omitted).
       editDslSelect("MAX_TOKENS", "src/lisp.ts"),
       editDslReply({
@@ -8985,6 +8690,35 @@ describe("edit-dsl protocol (#111/#119)", () => {
     expect(helperSource(dir)).toContain("function result");
     expect(helperSource(dir)).toContain("return result();");
     expect(provider.calls).toHaveLength(2);
+  }, 30000);
+
+  test("edit-dsl retries past three rejected exchanges in one round", async () => {
+    const dir = fixtureDir();
+    const repeatedMisses = Array.from({ length: MAX_STALLED_ROUNDS }, (_, index) =>
+      editDslReply(answerEditor("return 2;", { kind: "snippet", value: `return ${900 + index};` })),
+    );
+    const provider = new ScriptedProvider([
+      editDslSelect("answer", "src/helper.ts", "value"),
+      ...repeatedMisses,
+      editDslReply(answerEditor("return 2;", { kind: "snippet", value: "return 1;" })),
+      "Great! I resolve this problem!",
+    ]);
+    const result = await runLoopBase({
+      cwd: dir,
+      issue: "make the answer test pass",
+      provider,
+      checkCommand: TSC,
+      testCommand: ["bun", "test"],
+    });
+    expect(result.ok).toBe(true);
+    // Eight matcher rejections in one round: no 3-exchange cut.
+    expect(result.records.filter((record) => record.outcome === "matcher")).toHaveLength(
+      MAX_STALLED_ROUNDS,
+    );
+    const applied = result.records.find((record) => record.outcome === "applied");
+    expect(applied?.iteration).toBe(1);
+    expect(applied?.exchange).toBe(MAX_STALLED_ROUNDS + 2);
+    expect(helperSource(dir)).toContain("return 2;");
   }, 30000);
 
   test("a mixed rename/write reply applies both when the rename succeeds", async () => {
@@ -9326,7 +9060,6 @@ describe("edit-dsl protocol (#111/#119)", () => {
     const source = Array.from({ length: 10 }, (_, index) => `line ${index + 1}`).join("\n");
     const prompt = buildRetryPrompt({
       exchangeNumber: 2,
-      maxExchanges: 3,
       mode: "modify",
       locatorJson: '{"path":"src/a.ts","symbol":"huge","kind":"function"}',
       currentSource: source,
@@ -9354,7 +9087,6 @@ describe("edit-dsl protocol (#111/#119)", () => {
     const marker = "... // content folded, src/a.ts: 4-7L";
     const retryInput: RetryPromptInput = {
       exchangeNumber: 2,
-      maxExchanges: 3,
       mode: "modify",
       locatorJson: '{"path":"src/a.ts","symbol":"huge","kind":"function"}',
       currentSource: source,
@@ -9490,7 +9222,6 @@ describe("edit-dsl protocol (#111/#119)", () => {
   test("an edit-dsl retry prompt uses Goal, index, and details without the JSON block", () => {
     const prompt = buildRetryPrompt({
       exchangeNumber: 2,
-      maxExchanges: 3,
       mode: "modify",
       locatorJson: '{"mode":"modify","path":"src/helper.ts","symbol":"answer","kind":"function"}',
       currentSource: "function answer(): number {\n  return 1;\n}",
@@ -9523,7 +9254,6 @@ describe("edit-dsl protocol (#111/#119)", () => {
   test("an edit-dsl retry keeps the JSON self-check offer out while JSON keeps it byte-identical", () => {
     const input: RetryPromptInput = {
       exchangeNumber: 2,
-      maxExchanges: 3,
       mode: "modify",
       locatorJson: '{"mode":"modify","path":"src/helper.ts","symbol":"answer","kind":"function"}',
       currentSource: "function answer(): number {\n  return 1;\n}",
@@ -9549,7 +9279,7 @@ describe("edit-dsl protocol (#111/#119)", () => {
     expect(json).toContain("Pinned selection:");
   });
 
-  test("edit-dsl selection retry and continuation prompts use the select-first shape", () => {
+  test("edit-dsl selection retry and no-progress ask use the select-first shape", () => {
     const retry = buildEditDslSelectionRetryPrompt(
       "make the answer test pass",
       "select answer in src/helper.ts resolve value",
@@ -9564,15 +9294,14 @@ describe("edit-dsl protocol (#111/#119)", () => {
     expect(retry).not.toContain('{"request":"read"}');
 
     const continuation = buildEditDslSelectionContinuationPrompt({
-      round: 2,
-      maxRounds: 32,
+      failedAttempts: 8,
       issue: "make the answer test pass",
       indexText: "select answer in src/helper.ts resolve value",
       diagnostics: "stage: protocol\nthe reply must be one clause",
       failureHistory: "failure history",
       digest: "attempt digest",
     });
-    expect(continuation).toContain("Round 2 of 32 exhausted its 3-exchange selection budget");
+    expect(continuation).toContain("No progress: 8 consecutive failed selection attempts");
     expect(continuation).toContain(
       "Reply STOP to end the run, or return one `select … end` clause",
     );
@@ -9625,8 +9354,7 @@ describe("edit-dsl protocol (#111/#119)", () => {
     const modifierNote =
       "A leading `export` matching the declaration's existing modifier is accepted.";
     const modifyLead = "Make minimal corrective changes to the current source below.";
-    const status =
-      "Edit exchange 2 of 3 failed verification. 1 exchange(s) remain in this iteration. ";
+    const status = "Edit exchange 2 failed verification. ";
     const instruction = `${modifyLead} ${status}Output ONLY one flat JSON object {"path": ..., "symbol": ..., "kind": ..., "matcher": ..., "replacement": ...}: echo the pinned selection in the address. "matcher" is optional: a snippet copied from the current source, or omit it for a whole-symbol rewrite; "replacement" replaces the matched range (empty removes it). ${RANGE_SELECTOR_NOTE} ${modifierNote} No markdown fences and no explanations.`;
     const expected = [
       instruction,
@@ -9656,7 +9384,6 @@ describe("edit-dsl protocol (#111/#119)", () => {
     ].join("\n");
     const input: RetryPromptInput = {
       exchangeNumber: 2,
-      maxExchanges: 3,
       mode: "modify",
       locatorJson,
       currentSource,
@@ -9689,7 +9416,6 @@ describe("edit-dsl protocol (#111/#119)", () => {
     expect(edit).toContain("select function clamp in src/x.ts");
     const retry = buildRetryPrompt({
       exchangeNumber: 2,
-      maxExchanges: 3,
       mode: "modify",
       locatorJson: '{"mode":"modify","path":"src/a.ts","symbol":"make","kind":"function"}',
       currentSource: "const x = 1;\n",
@@ -10130,7 +9856,7 @@ describe("edit-dsl protocol (#111/#119)", () => {
     expect(helperSource(dir)).toContain("const value = 2;");
   }, 30000);
 
-  test("under edit-dsl a confirmation editor after the last exchange opens a fresh round", async () => {
+  test("under edit-dsl a confirmation editor continues in the same round", async () => {
     const dir = fixtureDir();
     const provider = new ScriptedProvider([
       editDslSelect("answer", "src/helper.ts", "value"),
@@ -10173,11 +9899,12 @@ describe("edit-dsl protocol (#111/#119)", () => {
       "ok",
       "confirmed",
     ]);
-    // The carried edit is the first exchange of the next round; the record
-    // order keeps the confirmed row before it.
+    // #57 removed the fixed exchange boundary, so the carried edit is simply
+    // the next exchange of the same round; the record order keeps the
+    // confirmed row before it.
     const carried = result.records[5];
-    expect(carried?.iteration).toBe(2);
-    expect(carried?.exchange).toBe(1);
+    expect(carried?.iteration).toBe(1);
+    expect(carried?.exchange).toBe(4);
     expect(helperSource(dir)).toContain("const value = 2;");
   }, 30000);
 
@@ -11118,7 +10845,6 @@ describe("edit-dsl protocol (#111/#119)", () => {
     expect(create).not.toContain("Output ONE flat JSON object");
     const retry = buildRetryPrompt({
       exchangeNumber: 2,
-      maxExchanges: 3,
       mode: "create",
       locatorJson: '{"mode":"create","path":"src/new.ts","symbol":"make","kind":"function"}',
       currentSource: "",
@@ -11142,7 +10868,6 @@ describe("edit-dsl protocol (#111/#119)", () => {
     expect(create).not.toContain("does not take `match` or `pick`");
     const retry = buildRetryPrompt({
       exchangeNumber: 2,
-      maxExchanges: 3,
       mode: "create",
       locatorJson: '{"mode":"create","path":"src/new.ts","symbol":"make","kind":"function"}',
       currentSource: "",
@@ -11666,7 +11391,7 @@ describe("edit-dsl protocol (#111/#119)", () => {
       "",
       'A "create" selection asks for the COMPLETE declaration in "replacement"; the harness appends it to the target file, creating the file and any parent directories when needed. A "delete" selection carries no edit payload: the harness removes the declaration. To remove only part of a declaration, use "modify" with an empty "replacement". The syntax gate discards any edit that leaves the file unparseable and writes nothing.',
       "",
-      "A round allows at most 3 exchanges: picking the target, writing the edit, and re-asking after a rejected edit share that budget. When an edit verifies, the run is done; when verification fails, the next round shows the current source and the failing diagnostics, and it may either revise the pinned declaration or re-pin to a different declaration in the same file by returning that declaration's own {path, symbol, kind} (the new address must resolve uniquely in the current source). A round that exhausts its 3 exchanges without a valid edit continues through a continuation prompt: reply `STOP` to end the run, or return a corrected edit (or, when no target is pinned, a corrected selection) to open a fresh round with a new 3-exchange budget; the run is capped at 32 rounds, after which it ends with the failure summary.",
+      "There is no fixed exchange or round cap: the run continues while it makes progress and ends when an edit verifies, when the token budget is spent, or when the same reply/source/diagnostics repeats with no progress. When verification fails, the next attempt shows the current source and the failing diagnostics, and it may either revise the pinned declaration or re-pin to a different declaration in the same file by returning that declaration's own {path, symbol, kind} (the new address must resolve uniquely in the current source). A rejected or failing attempt is retried with its diagnostics and a correction; at a no-progress milestone the next attempt asks you to change the failing cause, or to reply `STOP` to end the run.",
       "",
     ].join("\n");
     expect(buildSystemPrompt(false)).toBe(expected);
@@ -11943,8 +11668,7 @@ describe("repair-context shrink", () => {
     const modifierNote =
       "A leading `export` matching the declaration's existing modifier is accepted.";
     const modifyLead = "Make minimal corrective changes to the current source below.";
-    const status =
-      "Edit exchange 1 of 3 failed verification. 2 exchange(s) remain in this iteration. ";
+    const status = "Edit exchange 1 failed verification. ";
     const instruction = `${modifyLead} ${status}Output ONLY one flat JSON object {"path": ..., "symbol": ..., "kind": ..., "matcher": ..., "replacement": ...}: echo the pinned selection in the address. "matcher" is optional: a snippet copied from the current source, or omit it for a whole-symbol rewrite; "replacement" replaces the matched range (empty removes it). ${RANGE_SELECTOR_NOTE} ${modifierNote} No markdown fences and no explanations.`;
     const expected = [
       instruction,
@@ -11974,7 +11698,6 @@ describe("repair-context shrink", () => {
     ].join("\n");
     const input: RetryPromptInput = {
       exchangeNumber: 1,
-      maxExchanges: 3,
       mode: "modify",
       locatorJson,
       currentSource,
@@ -11997,7 +11720,6 @@ describe("repair-context shrink", () => {
       " 12 | function isClosure(v: LispValue): boolean {\n// … [omitted: filler0] …";
     const prompt = buildRetryPrompt({
       exchangeNumber: 1,
-      maxExchanges: 3,
       mode: "modify",
       locatorJson: '{"mode":"modify","path":"src/lisp.ts","symbol":"isClosure","kind":"function"}',
       currentSource: source,
@@ -12015,16 +11737,16 @@ describe("repair-context shrink", () => {
     expect(prompt).not.toContain("return x + 50;");
   });
 
-  test("buildContinuationPrompt forwards the pre-rendered block", () => {
+  test("buildRetryPrompt forwards the pre-rendered block", () => {
     const preRendered = "  1 | type LispValue = number;";
-    const prompt = buildContinuationPrompt({
-      round: 1,
-      maxRounds: 32,
+    const prompt = buildRetryPrompt({
+      exchangeNumber: 1,
       mode: "modify",
       locatorJson: '{"mode":"modify","path":"src/lisp.ts","symbol":"isClosure","kind":"function"}',
       currentSource: source,
       preRenderedSource: preRendered,
       diagnostics,
+      failure: "edit",
       repin: true,
     });
     expect(prompt).toContain(preRendered);

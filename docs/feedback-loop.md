@@ -74,8 +74,9 @@ count toward the budget. Recovered parser warnings are on
    flag). Test files, plus any file the issue names inline, are attached whole
    as read-only spec files. One system prompt and one user prompt (goal +
    index/context) open the run.
-2. **Round.** A round has a budget of **3 exchanges** shared by selecting a
-   target, writing an edit, and any retries after a rejection.
+2. **Round.** A round is one selection/repair cycle and has **no fixed
+   exchange budget**: selecting a target, writing an edit, and every retry after
+   a rejection stay in the same round until an edit is applied or the run stops.
 3. **Select/pick.** Under edit-dsl, the first reply is one `select … end` clause
    naming a symbol-index entry, or file commands that pin their target. A
    viewer pins the declaration and the harness sends a `# details` prompt with
@@ -135,31 +136,35 @@ give-up:
 
 - **Rejection retry** — the same round, with the failure class (`protocol`,
   `address`, `matcher`, `gate`, `format`, `no-op`, `repeat`, …) turned into a
-  correction sentence. The same class repeated escalates. Edit-dsl retries and
-  continuations reuse the select-first `# Goal` + `# Symbol index` + `# details`
-  shape; JSON keeps its pinned-selection block. The format-specific correction
-  text is owned by [`edit-protocol.md`](edit-protocol.md) §7.
+  correction sentence. The same class repeated escalates. Edit-dsl retries reuse
+  the select-first `# Goal` + `# Symbol index` + `# details` shape; JSON keeps
+  its pinned-selection block. The format-specific correction text is owned by
+  [`edit-protocol.md`](edit-protocol.md) §7. There is no fixed retry count: a
+  distinct failure is retried until the token budget or a no-progress stop.
 - **Before editing, a repair exchange may ask one bounded self-check** —
   `{"request":"read" | "check" | "test"}` — to see the current source or run
   the task's commands itself. It does not write anything.
-- **Round continuation** — a round that spends its 3 exchanges without a valid
-  edit does not end the run. A continuation prompt carries the checkpoint
-  (prior attempts, failure history) and offers `STOP`, or a corrected reply that
-  opens a fresh round with a new budget.
-- **No-progress ask** — after 8 consecutive failed rounds (then every 4), the
+- **Repeated no-progress fingerprint** — a failed reply repeated against the
+  same source and diagnostics is no progress and ends the run with
+  `edit-exhausted`; a cycle that keeps producing distinct replies is bounded by
+  the token budget instead. This replaces the old fixed exchange/round caps.
+- **No-progress ask** — after 8 consecutive failed attempts (then every 4), the
   model is told the failing set has not converged and must either change the
   cause or reply `STOP`. From the second such ask (or when the failing set is
   already unchanged/cycling), the turn becomes decision-only: the model states a
-  re-approach, which the next edit prompt requires it to follow.
-- **Hard caps (pinned-repair)** — 32 rounds, 3 consecutive output-length
-  truncations, and a 120k default token budget. Any of them ends the run through
-  the termination path: one summary prompt producing Accomplished / Failed and
-  why / Remaining / Next step, plus a `TerminationReason` on the result. The
+  re-approach, which the next edit prompt requires it to follow. A selection
+  cycle gets the same `STOP` offer on its own no-progress ask.
+- **Termination (pinned-repair)** — the 120k default token budget, the repeated
+  no-progress fingerprint, and a no-progress `STOP` end the run through the
+  termination path: one summary prompt producing Accomplished / Failed and why /
+  Remaining / Next step, plus a `TerminationReason` on the result. The
   termination matrix emits `token-budget`, `edit-exhausted`,
   `delete-verification-failed`, `prev-broken`, `harness-fault`, `output-limit`,
-  or (plan-exec) `task-exhausted`. Plan-exec shares only the token budget; it has
-  no fixed round, exchange, viewer, review, or output-limit cap and is bounded by
-  the token budget and repeated/no-progress fingerprints
+  or (plan-exec) `task-exhausted`. The only remaining output-length guard is the
+  three-consecutive-truncation strike (`MAX_CONSECUTIVE_LENGTH`); it is not an
+  exchange/round cap. Plan-exec shares the same model; it has no fixed round,
+  exchange, viewer, review, or output-limit cap and is bounded by the token
+  budget and repeated/no-progress fingerprints
   ([`plan-exec.md`](plan-exec.md) §9).
 
 ## Algorithm core (skeleton)
@@ -172,21 +177,25 @@ async function runLoop(options: LoopOptions): Promise<LoopResult> {
   const context = buildContextYaml(files);
   let messages = [systemPrompt(options), userPrompt(options.issue, context)];
   let pinned: Selection | null = null; // first successful pick
-  let diagnostics: string | null = null; // failure that opens the next round
-  let stalledRounds = 0;
-  let continuation: { pick: boolean; diagnostics: string } | null = null;
+  let diagnostics: string | null = null; // failure that opens the next attempt
+  let stalledAttempts = 0; // drives the no-progress ask cadence only
+  const failedFingerprints = new Set<string>();
 
-  for (let round = 1; round <= MAX_RUN_ITERATIONS; round += 1) {
-    let applied = false;
+  for (let round = 1; ; round += 1) {
     let verificationFailed = false;
 
-    for (let exchange = 1; exchange <= MAX_EDIT_EXCHANGES; exchange += 1) {
+    // No fixed exchange cap: this loop leaves on an applied edit (then
+    // verification), success, or a termination path.
+    for (let exchange = 1; ; exchange += 1) {
       // 1. Ask. The prompt depends on whether a target is pinned and on what
       //    failed last; the reply is parsed strictly, or rejected as protocol.
-      messages = buildPrompt(pinned, diagnostics, continuation);
+      messages = buildPrompt(pinned, diagnostics);
       const reply = await options.provider.chat(messages, undefined, { effort: "none" });
 
-      if (reply === "STOP" && offersStop(pinned, continuation)) {
+      if (overBudget()) {
+        return terminate("token-budget", budgetDiagnostics());
+      }
+      if (offersStop(pinned) && reply === "STOP") {
         return terminate("edit-exhausted", diagnostics);
       }
 
@@ -197,7 +206,11 @@ async function runLoop(options: LoopOptions): Promise<LoopResult> {
         const selection = resolveSelection(reply, options.cwd); // strict AND
         if (!selection.ok) {
           diagnostics = selection.diagnostic;
-          continue; // same round, next exchange
+          stalledAttempts += 1;
+          if (repeatedFingerprint(reply, diagnostics, failedFingerprints)) {
+            return terminate("edit-exhausted", noProgressDiagnostics());
+          }
+          continue;
         }
         pinned = selection.selection;
         continue;
@@ -212,6 +225,10 @@ async function runLoop(options: LoopOptions): Promise<LoopResult> {
       const payload = parseEdit(reply); // one JSON payload, a batch, or edit-dsl statements
       if (!payload.ok) {
         diagnostics = payload.diagnostic;
+        stalledAttempts += 1;
+        if (repeatedFingerprint(reply, diagnostics, failedFingerprints)) {
+          return terminate("edit-exhausted", noProgressDiagnostics());
+        }
         continue;
       }
 
@@ -219,10 +236,13 @@ async function runLoop(options: LoopOptions): Promise<LoopResult> {
       const resolution = applyEdit(pinned, payload.edit, readDisk(pinned.path));
       if (!resolution.ok) {
         diagnostics = resolution.diagnostic;
+        stalledAttempts += 1;
+        if (repeatedFingerprint(reply, diagnostics, failedFingerprints)) {
+          return terminate("edit-exhausted", noProgressDiagnostics());
+        }
         continue;
       }
       writeFile(pinned.path, resolution.source);
-      applied = true;
 
       // 5. Verify. No rollback: the attempted state stays on disk.
       const check = await checkTool(options.cwd, options.checkCommand);
@@ -231,25 +251,17 @@ async function runLoop(options: LoopOptions): Promise<LoopResult> {
         return success(resolution.source);
       }
       diagnostics = formatDiagnostics(check, test);
+      stalledAttempts += 1;
       verificationFailed = true;
       break; // open the next round with these diagnostics
     }
 
-    // 6. Round bookkeeping (#60): a round that wrote no edit counts exactly like
-    //    a failed verification. Only a pass (which ends the run) resets it.
-    if (verificationFailed || !applied) {
-      stalledRounds += 1;
+    // 6. Continue. A failed verification opens the next round; the no-progress
+    //    ask (and a decision-only turn past the first ask) is a cadence, not a
+    //    round cap.
+    if (verificationFailed) {
+      continue;
     }
-
-    // 7. Continue or stop. A stalled streak opens the next round with the
-    //    no-progress ask (or, past the first ask, a decision-only turn).
-    if (isStalledAskMilestone(stalledRounds)) {
-      diagnostics = stalledAskDiagnostics(stalledRounds);
-    }
-    if (round === MAX_RUN_ITERATIONS) {
-      return terminate("edit-exhausted", diagnostics);
-    }
-    continuation = { pick: pinned === null, diagnostics };
   }
 }
 ```
@@ -259,22 +271,24 @@ async function runLoop(options: LoopOptions): Promise<LoopResult> {
 These are real branches in the two drivers; the core above is still correct
 without them, which is why they sit outside it:
 
-- **Verification failures also advance `stalledRounds`** — the counter spans
-  both rejection cycles and failed verifications, and is never reset (a pass
-  ends the run).
+- **The no-progress ask cadence** — `stalledAttempts` also counts rejected
+  exchanges and failed verifications, and the first ask fires at 8, then every
+  4; a decision-only turn never advances the counter. The ask is passable, so a
+  recovering cycle can continue.
 - **Create → repair** — a failed `create` whose file parses becomes a `modify`
   round against the kept file; an unparseable or absent one is removed and the
   create is retried.
-- **Termination reasons other than budget** — token budget, three consecutive
-  truncated completions, a broken previous source, and a harness-side
-  formatter fault each take their own exit.
+- **Termination reasons other than budget** — three consecutive truncated
+  completions (the `MAX_CONSECUTIVE_LENGTH` output-length guard, not a round or
+  exchange cap), a broken previous source, a repeated no-progress fingerprint,
+  and a harness-side formatter fault each take their own exit.
 - **Explicit-targets mode** — when the caller supplies `LoopOptions.targets`,
   one locator per desired declaration, the JSON driver skips picking, the
   target queue drives rounds, and same-file targets are sequenced across
   exchanges; the edit-dsl driver never sees targets.
 - **Prompt variants** — lean issue messages on `tsc` repair rounds, repair-context
   shrinking, a bounded prior-attempts digest, and a failure-history note only
-  feed the continuation and no-progress prompts.
+  feed the no-progress asks.
 
 Provider failures are retried in `src/openai.ts`, not here; context overflow and
 payload-too-large are translated into diagnostics so one bad call does not

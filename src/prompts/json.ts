@@ -2,7 +2,6 @@ import type { Locator, SourceFile } from "../utility";
 import {
   appendSpecSection,
   assembleSystemPrompt,
-  MAX_EDIT_EXCHANGES,
   numberedSourceBlock,
   RANGE_SELECTOR_NOTE,
 } from "./shared";
@@ -14,7 +13,7 @@ const JSON_EDIT_SYSTEM_PARAGRAPH =
 const JSON_CREATE_DELETE_SYSTEM_PARAGRAPH =
   'A "create" selection asks for the COMPLETE declaration in "replacement"; the harness appends it to the target file, creating the file and any parent directories when needed. A "delete" selection carries no edit payload: the harness removes the declaration. To remove only part of a declaration, use "modify" with an empty "replacement". The syntax gate discards any edit that leaves the file unparseable and writes nothing.';
 const JSON_ROUNDS_SYSTEM_PARAGRAPH =
-  "A round allows at most 3 exchanges: picking the target, writing the edit, and re-asking after a rejected edit share that budget. When an edit verifies, the run is done; when verification fails, the next round shows the current source and the failing diagnostics, and it may either revise the pinned declaration or re-pin to a different declaration in the same file by returning that declaration's own {path, symbol, kind} (the new address must resolve uniquely in the current source). A round that exhausts its 3 exchanges without a valid edit continues through a continuation prompt: reply `STOP` to end the run, or return a corrected edit (or, when no target is pinned, a corrected selection) to open a fresh round with a new 3-exchange budget; the run is capped at 32 rounds, after which it ends with the failure summary.";
+  "There is no fixed exchange or round cap: the run continues while it makes progress and ends when an edit verifies, when the token budget is spent, or when the same reply/source/diagnostics repeats with no progress. When verification fails, the next attempt shows the current source and the failing diagnostics, and it may either revise the pinned declaration or re-pin to a different declaration in the same file by returning that declaration's own {path, symbol, kind} (the new address must resolve uniquely in the current source). A rejected or failing attempt is retried with its diagnostics and a correction; at a no-progress milestone the next attempt asks you to change the failing cause, or to reply `STOP` to end the run.";
 
 export function buildJsonSystemPrompt(multiPayload = false): string {
   return assembleSystemPrompt(
@@ -140,13 +139,14 @@ export function buildSelectionRetryPrompt(diagnostics: string): string {
 }
 
 /**
- * Selection-side round continuation (#52): the exhausted round never pinned a
- * target, so the fresh round re-asks for the selection (or `STOP`); the
- * prior-attempts digest (#57) is appended after the diagnostics.
+ * Selection-side no-progress ask (#52/#57): a repeated selection failure
+ * milestone offers `STOP` or a corrected selection. It names a no-progress
+ * cadence, never a fixed selection budget: a run that keeps making progress is
+ * bounded by the token budget, not by this prompt. The prior-attempts digest
+ * (#57) and failure history (#71) are appended after the diagnostics.
  */
 export function buildSelectionContinuationPrompt(input: {
-  round: number;
-  maxRounds: number;
+  failedAttempts: number;
   diagnostics: string;
   digest?: string;
   /** Failure history (#71), appended after the diagnostics before the digest. */
@@ -158,7 +158,7 @@ export function buildSelectionContinuationPrompt(input: {
     input.failureHistory === undefined || input.failureHistory.trim() === ""
       ? ""
       : `\n${input.failureHistory}\n`;
-  return `Round ${input.round} of ${input.maxRounds} exhausted its ${MAX_EDIT_EXCHANGES}-exchange selection budget without a valid pick. Reply STOP to end the run, or return a corrected selection to continue with a fresh round.
+  return `No progress: ${input.failedAttempts} consecutive failed selection attempts; no fixed selection budget applies. Reply STOP to end the run, or return a corrected selection to continue.
 
 ${selectionRetryBody(input.diagnostics)}${failureHistorySection}${digestSection}`;
 }

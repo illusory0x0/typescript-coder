@@ -8,7 +8,6 @@ export const CONTEXT_SYMBOL_LIMIT = 500;
 export const TEST_FILE_SUFFIX = ".test.ts";
 /** Bound on the carried re-approach statement (#75); clamped like the digest states. */
 export const APPROACH_LIMIT = 600;
-export const MAX_EDIT_EXCHANGES = 3;
 
 // Opt-in multi-payload protocol (#69): appended to the system prompt when the
 // variant is enabled, so the default prompt stays byte-identical.

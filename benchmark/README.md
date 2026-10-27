@@ -153,7 +153,8 @@ reported in each row's `Notes` and never as a tuned column.
   `pinned-repair`.
 - `records` (tc side): per-record summaries with `row`, `iteration`, `kind`
   (`exchange` or `verification`), `exchange` (1-based index inside the Run
-  iteration's shared ≤3 budget; null for verification rows), `outcome`
+  iteration; informational only, because pinned-repair has no fixed exchange
+  budget; null for verification rows), `outcome`
   (exchanges: `selected`, `applied`, `stopped`, `protocol`, `address`, `echo`,
   `matcher`, `no-op`, `repeat`, `duplicate`, `gate`, `format`, `truncated`,
   `prev-broken`; verifications: `ok`, `tsc`, `tests`, `gate`, `format`,
@@ -288,24 +289,25 @@ the flag off a `{"payloads": …}` reply is a classic `stage: protocol` rejectio
 ## Run budget (tc side)
 
 The tc loop nests Run and Edit (#43): each Run iteration repeats Edit →
-Verification. Every iteration grants a fresh Edit budget of at most 3 model
-exchanges, shared by target picking and content revision; soft failures
-(protocol, address, echo, matcher, range-invalid, no-op, repeat, duplicate, gate, format, truncated)
-consume an exchange and re-ask with staged diagnostics. Each soft failure is
-classified into a typed cause (#56) and the retry prompt's lead sentence is that
-cause's concrete correction; consecutive same-cause rejections accumulate in a
-run-scope streak (reset by an applied edit) that escalates from the second one
-(for matcher causes: omit `matcher` and return the complete declaration). A
-`format` rejection whose formatter message carries the duplicate-modifier
-signature is a harness fault and exits immediately (see the termination list).
-Verification runs once per iteration: a pass ends the run, a failure starts the
-next iteration, and a round that exhausts its exchanges continues through the
-STOP continuation prompt, with the run capped at **32 iterations** (#52; the
-token budget remains a separate bound). A failed create
-whose kept file parses continues as a `modify` repair round; an absent or
-unparseable kept file is removed and the create re-runs.
+Verification. There is no fixed exchange or iteration cap: target picking and
+content revision keep retrying while distinct attempts make progress, and soft
+failures (protocol, address, echo, matcher, range-invalid, no-op, repeat,
+duplicate, gate, format, truncated) re-ask with staged diagnostics. Each soft
+failure is classified into a typed cause (#56) and the retry prompt's lead
+sentence is that cause's concrete correction; consecutive same-cause rejections
+accumulate in a run-scope streak (reset by an applied edit) that escalates from
+the second one (for matcher causes: omit `matcher` and return the complete
+declaration). A `format` rejection whose formatter message carries the
+duplicate-modifier signature is a harness fault and exits immediately (see the
+termination list). A repeated reply/source/diagnostics fingerprint is no
+progress and ends the run; the no-progress ask fires at 8 consecutive failed
+attempts (then every 4) and offers `STOP`. Verification runs once per iteration:
+a pass ends the run, a failure starts the next iteration (the token budget is a
+separate bound). A failed create whose kept file parses continues as a `modify`
+repair round; an absent or unparseable kept file is removed and the create
+re-runs.
 
-A run that cannot produce a valid edit within the budget ends as
+A run that cannot produce a valid edit and stops making progress ends as
 `edit-exhausted`, a deletion that fails verification ends as
 `delete-verification-failed`, a target that stops parsing ends as
 `prev-broken`, and a duplicate-modifier format rejection ends as
@@ -457,14 +459,14 @@ protocol marker, while the pinned-repair block keeps the historical edit-loop
 hash. The ledger has no mode column yet, so a multi-mode row is not selected by
 `check` until that column lands.
 
-| Digest         | What it covers                                                                        | Computation point                                                         |
-| -------------- | ------------------------------------------------------------------------------------- | ------------------------------------------------------------------------- |
-| `model`        | the gateway model id                                                                  | `report.model`                                                            |
-| `taskIssue`    | the task spec text of every task in the report, keyed by task                         | `TASK_SPECS` (`benchmark/specs/<task>.md`)                                |
-| `fixture`      | the on-disk content of `benchmark/fixtures/<task>/`, keyed by task and relative path  | current tree                                                              |
-| `systemPrompt` | the model-facing system + protocol text (plan-exec hashes planning+execution prompts) | `buildSystemPrompt` / task prompts (`src/loop.ts`, `src/prompts/task.ts`) |
-| `loopConfig`   | token budget, pinned-repair edit/iteration/stall caps, `effort`, `reps`, `multiPayload`; plan-exec adds `planExec: "work-dag"` | loop constants + run flags                                                |
-| `pricing`      | the peak/off-peak rate table plus `PRICING_FETCHED_ON`                                | `src/benchmark-pricing.ts`                                                |
+| Digest         | What it covers                                                                                                                                                                                                                                          | Computation point                                                         |
+| -------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | ------------------------------------------------------------------------- |
+| `model`        | the gateway model id                                                                                                                                                                                                                                    | `report.model`                                                            |
+| `taskIssue`    | the task spec text of every task in the report, keyed by task                                                                                                                                                                                           | `TASK_SPECS` (`benchmark/specs/<task>.md`)                                |
+| `fixture`      | the on-disk content of `benchmark/fixtures/<task>/`, keyed by task and relative path                                                                                                                                                                    | current tree                                                              |
+| `systemPrompt` | the model-facing system + protocol text (plan-exec hashes planning+execution prompts)                                                                                                                                                                   | `buildSystemPrompt` / task prompts (`src/loop.ts`, `src/prompts/task.ts`) |
+| `loopConfig`   | token budget, the no-progress ask cadence, `effort`, `reps`, `multiPayload`, and pinned-repair's `scheduling: "token-budget+no-progress"` (no fixed exchange/round caps); plan-exec adds `planExec: "work-dag"` and keeps its historical literal fields | loop constants + run flags                                                |
+| `pricing`      | the peak/off-peak rate table plus `PRICING_FETCHED_ON`                                                                                                                                                                                                  | `src/benchmark-pricing.ts`                                                |
 
 `inputHash` is sha256 over the stable JSON of that digest object. A change to
 the fixture text, the prompt, the loop config, or the pricing table changes the

@@ -1,3 +1,4 @@
+import { createHash } from "node:crypto";
 import {
   existsSync,
   mkdirSync,
@@ -74,7 +75,6 @@ import type { NodeSummary } from "./tasks";
 import {
   APPROACH_LIMIT,
   CONTEXT_SYMBOL_LIMIT,
-  MAX_EDIT_EXCHANGES,
   numberedSourceBlock,
   RANGE_SELECTOR_NOTE,
   SELF_CHECK_OFFER,
@@ -113,7 +113,6 @@ import {
 
 export {
   APPROACH_LIMIT,
-  MAX_EDIT_EXCHANGES,
   numberedSourceBlock,
   numberedSourceRange,
   RANGE_SELECTOR_NOTE,
@@ -313,18 +312,21 @@ export function buildContextYaml(files: SourceFile[], build?: TolerantIndex): st
 }
 
 /**
- * The no-progress ask (#54/#60) facts the retry and continuation headers render.
- * The first ask is byte-identical to the original wording; from the second
- * decision point on the header is sharpened (#65) with the `history` fact.
+ * The no-progress ask (#54/#60) facts the retry header renders. The first ask
+ * is byte-identical to the original wording; from the second decision point on
+ * the header is sharpened (#65) with the `history` fact.
+ *
+ * #57: this is a cadence, not a cap. `failedAttempts` counts consecutive
+ * rejected exchanges and failed verifications; the run still ends through the
+ * token budget or a repeated no-progress fingerprint, never because this count
+ * reached a fixed exchange/round limit.
  */
 export interface StalledAsk {
-  failedRounds: number;
-  round: number;
-  maxRounds: number;
+  failedAttempts: number;
   /**
-   * 1-based decision-point number (`failedRounds / MAX_STALLED_ROUNDS`): 1 is the
-   * first ask; 2+ fold in the unchanged/cycling fact and demand address-or-STOP.
-   * Absent is treated as the first ask.
+   * 1-based decision-point number (`failedAttempts / MAX_STALLED_ROUNDS`): 1 is
+   * the first ask; 2+ fold in the unchanged/cycling fact and demand
+   * address-or-STOP. Absent is treated as the first ask.
    */
   askNumber?: number;
   /** The `#71` failure pattern the sharpened ask names; null while still changing. */
@@ -332,9 +334,11 @@ export interface StalledAsk {
 }
 
 export interface RetryPromptInput {
-  /** 1-based exchange number the prompt requests inside the current Run iteration. */
+  /**
+   * 1-based exchange number the prompt requests. It is informational only: #57
+   * removed the fixed exchange budget, so no "N of M" remainder is rendered.
+   */
   exchangeNumber: number;
-  maxExchanges: number;
   /** `create` asks for the complete declaration; `modify` for the flat JSON payload. */
   mode: "modify" | "create";
   /** Canonical pinned selection, `{mode, path, symbol, kind}`. */
@@ -354,16 +358,11 @@ export interface RetryPromptInput {
   /** True in a verification-repair iteration, where the pin may move to another declaration. */
   repin: boolean;
   /**
-   * Round-level continuation (#52): replaces the exchange header with the
-   * round-exhausted / STOP framing; this prompt and the no-progress ask (#54)
-   * are the only ones that offer `STOP`.
-   */
-  continuation?: { round: number; maxRounds: number };
-  /**
    * No-progress ask (#54): replaces the exchange header (and the corrective
-   * action sentence) with the consecutive-failed-rounds framing; only the
-   * first exchange of a stalled round sets it. From the second ask (#65) the
-   * header names the unchanged/cycling failing set.
+   * action sentence) with the consecutive-failed-attempts framing. From the
+   * second ask (#65) the header names the unchanged/cycling failing set. This
+   * prompt (and the selection no-progress ask) is the only one that offers
+   * `STOP`; there is no fixed exchange or round cap behind it.
    */
   stalled?: StalledAsk;
   /**
@@ -374,8 +373,8 @@ export interface RetryPromptInput {
   correction?: string;
   /**
    * Prior-attempts digest (#57): the bounded checkpoint appended after the
-   * Diagnostics block. Only the #52 round-continuation prompts and the #54
-   * no-progress ask carry it; ordinary retries stay unchanged.
+   * Diagnostics block. Only the #54/#57 no-progress asks carry it; ordinary
+   * retries stay unchanged.
    */
   digest?: string;
   /**
@@ -430,14 +429,15 @@ function multiModifyInstruction(
 }
 
 /**
- * The no-progress ask header (#54). The first decision point renders the original
- * wording byte-for-byte; from the second on (#65) it names the unchanged/cycling
- * failing set the `#71 Failure history` note carries and requires the reply to
- * address it or `STOP`. STOP's meaning is unchanged and no cap or auto-stop is
- * added — the ask stays passable so a recovering cycle can continue.
+ * The no-progress ask header (#54/#57). The first decision point keeps the
+ * original first sentence and offers STOP; from the second on (#65) it names the
+ * unchanged/cycling failing set the `#71 Failure history` note carries and
+ * requires the reply to address it or `STOP`. There is no round maximum: the
+ * cadence only schedules the ask, and the run still ends on the token budget or
+ * a repeated no-progress fingerprint.
  */
 function stalledAskHeader(stalled: StalledAsk): string {
-  const base = `No progress: ${stalled.failedRounds} consecutive failed rounds. This is round ${stalled.round} of ${stalled.maxRounds}.`;
+  const base = `No progress: ${stalled.failedAttempts} consecutive failed attempts.`;
   const askNumber = stalled.askNumber ?? 1;
   if (askNumber <= 1) {
     return `${base} Reply exactly \`STOP\` to end the run now, but only if the failures cannot be resolved; otherwise take a materially different approach rather than another minimal attempt.`;
@@ -506,17 +506,7 @@ function isEditPayloadReply(
 }
 
 export function buildRetryPrompt(input: RetryPromptInput): string {
-  const {
-    exchangeNumber,
-    maxExchanges,
-    mode,
-    locatorJson,
-    currentSource,
-    diagnostics,
-    failure,
-    repin,
-  } = input;
-  const remaining = Math.max(0, maxExchanges - exchangeNumber);
+  const { exchangeNumber, mode, locatorJson, currentSource, diagnostics, failure, repin } = input;
   const label = failure === "verification" ? "failed verification" : "failed";
   const numbered = input.preRenderedSource ?? numberedSourceBlock(currentSource);
   const sourceNote =
@@ -544,12 +534,10 @@ export function buildRetryPrompt(input: RetryPromptInput): string {
     stalled !== undefined
       ? stalledLead
       : (input.correction ?? "Make minimal corrective changes to the complete declaration.");
-  // Only an ordinary retry states where it sits in the exchange budget; the
-  // #52 continuation and #54 stalled headers already frame the round.
-  const status =
-    stalled !== undefined || input.continuation !== undefined
-      ? ""
-      : `Edit exchange ${exchangeNumber} of ${maxExchanges} ${label}. ${remaining} exchange(s) remain in this iteration. `;
+  // Only an ordinary retry names its attempt; the #54 stalled header already
+  // frames the no-progress ask. #57 removed the fixed exchange budget, so no
+  // "N of M" or remaining count is rendered.
+  const status = stalled !== undefined ? "" : `Edit exchange ${exchangeNumber} ${label}. `;
   const modifyInstruction =
     input.protocolFormat === "edit-dsl"
       ? `${modifyLead} ${status}${editDslInstruction()}`
@@ -563,12 +551,7 @@ export function buildRetryPrompt(input: RetryPromptInput): string {
       ? `${createLead} ${status}${editDslCreateInstruction()}`
       : `${createLead} ${status}Output ONLY one flat JSON object {"path": ..., "symbol": ..., "kind": ..., "replacement": ...}: echo the pinned selection in the address, put the COMPLETE corrected declaration in "replacement", and omit "matcher" and "range". No markdown fences and no explanations.`;
   const instruction = mode === "modify" ? modifyInstruction : createInstruction;
-  const header =
-    stalled !== undefined
-      ? stalledAskHeader(stalled)
-      : input.continuation === undefined
-        ? ""
-        : `Round ${input.continuation.round} of ${input.continuation.maxRounds} exhausted its ${maxExchanges}-exchange edit budget without a valid edit. Reply STOP to end the run, or return a corrected edit to continue with a fresh round.`;
+  const header = stalled === undefined ? "" : stalledAskHeader(stalled);
   const digestSection =
     input.digest === undefined || input.digest.trim() === "" ? "" : `\n${input.digest}\n`;
   const failureHistorySection =
@@ -606,7 +589,7 @@ ${failureHistorySection}${digestSection}`;
     }
     return `${header}\n\n${DECISION_INSTRUCTION}\n\nDiagnostics:\n\n\`\`\`\n${diagnostics}\n\`\`\`\n${failureHistorySection}${digestSection}`;
   }
-  // EditDsl retry/continuation (#B4): Goal + select-line symbol index + the
+  // EditDsl retry/no-progress ask (#B4): Goal + select-line symbol index + the
   // declaration details, with no JSON pinned-selection block. The edit-dsl
   // instruction already carries the clause rules, including create mode.
   // The self-check offer is JSON-only and is deliberately absent here (#9).
@@ -646,71 +629,9 @@ ${diagnostics}
 ${selfCheckSection}${approachSection}${failureHistorySection}${digestSection}`;
 }
 
-export interface ContinuationPromptInput {
-  /** Round that exhausted its exchange budget (1-based). */
-  round: number;
-  maxRounds: number;
-  /** `create` asks for the complete declaration; `modify` for the flat JSON payload. */
-  mode: "modify" | "create";
-  /** Canonical pinned selection, `{mode, path, symbol, kind}`. */
-  locatorJson: string;
-  /** Current on-disk source of the selected region (whole file in create mode). */
-  currentSource: string;
-  /** Optional pre-rendered `Current source:` block (repair-context shrink). */
-  preRenderedSource?: string;
-  /** The diagnostics that opened the round plus the latest rejection. */
-  diagnostics: string;
-  /** True when the continued round may still re-pin to another declaration. */
-  repin: boolean;
-  /** Prior-attempts digest (#57), appended after the Diagnostics block. */
-  digest?: string;
-  /** Failure history (#71), appended after the Diagnostics block before the digest. */
-  failureHistory?: string;
-  /**
-   * No-progress ask (#60): a continuation that directly follows a milestone
-   * no-progress round carries the stalled decision framing (and its STOP
-   * semantics) instead of the round-exhausted header; the retry shape is kept.
-   * The #65 sharpened framing rides the same field.
-   */
-  stalled?: StalledAsk;
-  /** Opt-in multi-payload variant (#69); forwarded to the retry prompt. */
-  multiPayload?: boolean;
-  /** Edit protocol format (#119); forwarded to the retry prompt. */
-  protocolFormat?: ProtocolFormat;
-  /** EditDsl Goal/index context (#B4); forwarded to the retry prompt. */
-  editDslContext?: { issue: string; indexText: string; startLine?: number };
-}
-
-/**
- * Round-level continuation (#52): shown as the first message of the round that
- * follows an exhausted one. It keeps the retry shape (instruction, pinned
- * selection, current source, diagnostics) and adds the STOP framing; this
- * prompt and the no-progress ask (#54/#60) are the only ones that offer `STOP`.
- */
-export function buildContinuationPrompt(input: ContinuationPromptInput): string {
-  return buildRetryPrompt({
-    exchangeNumber: 1,
-    maxExchanges: MAX_EDIT_EXCHANGES,
-    mode: input.mode,
-    locatorJson: input.locatorJson,
-    currentSource: input.currentSource,
-    preRenderedSource: input.preRenderedSource,
-    diagnostics: input.diagnostics,
-    failure: "edit",
-    repin: input.repin,
-    continuation: { round: input.round, maxRounds: input.maxRounds },
-    stalled: input.stalled,
-    digest: input.digest,
-    failureHistory: input.failureHistory,
-    multiPayload: input.multiPayload,
-    protocolFormat: input.protocolFormat,
-    editDslContext: input.editDslContext,
-  });
-}
-
 const TERMINATION_SUMMARY: Record<TerminationReason | "provider-error", string> = {
   "token-budget": "the token budget was exceeded",
-  "edit-exhausted": "the edit budget was exhausted without a valid edit",
+  "edit-exhausted": "the run ended without a verified edit",
   "delete-verification-failed": "the deletion could not be verified",
   "prev-broken": "the current source of the target no longer parses",
   "provider-error": "the provider call failed",
@@ -722,7 +643,8 @@ const TERMINATION_SUMMARY: Record<TerminationReason | "provider-error", string> 
 
 /**
  * Termination step (#43): the summary prompt is the final user message of a
- * failed run, not an Edit exchange — it does not count against the ≤3 budget.
+ * failed run, not an Edit attempt — it is never counted against the token
+ * budget or the no-progress cadence.
  */
 export function buildSummaryPrompt(
   reason: TerminationReason | "provider-error",
@@ -1361,44 +1283,46 @@ export function canonicalAgentMode(value: unknown): AgentMode | null {
 }
 
 export const DEFAULT_TOKEN_BUDGET = 120_000;
-/** Model exchanges per Run iteration, shared by target picking and content revision (#43). */
-export const MAX_RUN_ITERATIONS = 32;
 /**
- * No-progress decision point (#54): after this many consecutive
- * verification-failed rounds, the first content prompt of the next round asks
- * the model to decide (reply `STOP` or take a materially different approach).
+ * No-progress ask cadence (#54/#57), not an exchange or round cap: after this
+ * many consecutive failed attempts (rejected exchanges plus failed verification
+ * rounds), the next prompt asks the model to decide (reply `STOP` or take a
+ * materially different approach). The run itself is bounded by the token budget
+ * and the repeated no-progress fingerprint; no fixed exchange or round count
+ * terminates it.
  */
 export const MAX_STALLED_ROUNDS = 8;
 /**
- * Output-limit strike cap (#98): consecutive `finish_reason == "length"`
- * replies are counted from `records`; the third in a row ends the run through
- * the summary/stop path instead of continuing to burn budget.
+ * Output-limit strike guard (#98), not an exchange or round cap: consecutive
+ * `finish_reason == "length"` replies are counted from `records`; the third in a
+ * row ends the run through the summary/stop path instead of continuing to burn
+ * budget. It bounds output truncation, not the number of model attempts.
  */
 export const MAX_CONSECUTIVE_LENGTH = 3;
 
 /**
  * No-progress ask cadence after the first decision point (#65): the first ask
- * stays at `MAX_STALLED_ROUNDS`; later asks recur this many failed rounds apart
- * (4), so a fast-burning storm reaches the sharpened repeated ask before the
- * token budget can end the run.
+ * stays at `MAX_STALLED_ROUNDS`; later asks recur this many failed attempts
+ * apart (4), so a fast-burning storm reaches the sharpened repeated ask before
+ * the token budget can end the run.
  */
 export const STALLED_ASK_INTERVAL = Math.max(1, Math.floor(MAX_STALLED_ROUNDS / 2));
 
 /**
- * True when `failedRounds` is a no-progress decision point (#54/#60/#65): the
+ * True when `failedAttempts` is a no-progress decision point (#54/#60/#65): the
  * first at `MAX_STALLED_ROUNDS` (8), then every `STALLED_ASK_INTERVAL` (4) —
- * 8, 12, 16, 20, …
+ * 8, 12, 16, 20, … The count schedules an ask; it never terminates a run.
  */
-export function isStalledAskMilestone(failedRounds: number): boolean {
+export function isStalledAskMilestone(failedAttempts: number): boolean {
   return (
-    failedRounds >= MAX_STALLED_ROUNDS &&
-    (failedRounds - MAX_STALLED_ROUNDS) % STALLED_ASK_INTERVAL === 0
+    failedAttempts >= MAX_STALLED_ROUNDS &&
+    (failedAttempts - MAX_STALLED_ROUNDS) % STALLED_ASK_INTERVAL === 0
   );
 }
 
-/** 1-based decision-point index for a milestone failed-round count (#65). */
-export function stalledAskNumber(failedRounds: number): number {
-  return 1 + Math.floor((failedRounds - MAX_STALLED_ROUNDS) / STALLED_ASK_INTERVAL);
+/** 1-based decision-point index for a milestone failed-attempt count (#65). */
+export function stalledAskNumber(failedAttempts: number): number {
+  return 1 + Math.floor((failedAttempts - MAX_STALLED_ROUNDS) / STALLED_ASK_INTERVAL);
 }
 
 /**
@@ -2028,7 +1952,10 @@ export interface LoopRecord {
   /** 1-based Run iteration this row belongs to. */
   iteration: number;
   kind: "exchange" | "verification";
-  /** Exchange index inside the Run iteration (shared ≤3 budget); null for verification rows. */
+  /**
+   * 1-based exchange index inside the Run iteration; null for verification
+   * rows. #57 removed the fixed exchange budget, so this is informational only.
+   */
   exchange: number | null;
   outcome: AttemptOutcome;
   locator: Locator;
@@ -2530,8 +2457,8 @@ export function recordRow(input: {
 /**
  * Bounded, incrementally-updated prior-attempts digest (#57): the repair
  * chain's checkpoint. `updateAttemptDigest` reads only the records beyond the
- * cursor, and the rendered text goes to the #52 round-continuation prompts
- * and the #54 no-progress ask only — never to ordinary retries.
+ * cursor, and the rendered text goes to the no-progress asks only — never to
+ * ordinary retries.
  */
 export interface AttemptDigestState {
   /** Rendered entry lines retained under the bound, oldest first. */
@@ -3915,7 +3842,7 @@ function editDslPromptStartLine(
   return diskSource.slice(0, resolved.entry.node.start).split("\n").length;
 }
 
-// The source a retry/continuation prompt shows. A repair iteration in modify
+// The source a retry/no-progress prompt shows. A repair iteration in modify
 // mode shrinks the whole file to the declarations that matter when the toggle
 // is on (returning the partial block as `preRendered`); otherwise this is the
 // historic whole-file / re-resolved-declaration behavior, byte-identically.
@@ -4389,8 +4316,11 @@ function resolveSelection(
   return { ok: true, selection: { mode: response.mode, locator, entry } };
 }
 
-function exhaustedDiagnostics(openedBy: string | null, last: string | null): string {
-  const reason = `edit-exhausted: the ${MAX_EDIT_EXCHANGES}-exchange Edit budget was exhausted without a valid edit`;
+// Fallback diagnostic for a run that reaches the end of a driver without a
+// valid edit and without a more specific termination reason. #57 removed the
+// fixed exchange budget, so this names the end state, never a cap.
+function editExhaustedDiagnostics(openedBy: string | null, last: string | null): string {
+  const reason = "edit-exhausted: the run ended without a valid edit";
   const parts = [reason];
   if (openedBy !== null) {
     parts.push(openedBy);
@@ -4401,8 +4331,30 @@ function exhaustedDiagnostics(openedBy: string | null, last: string | null): str
   return parts.join("\n\n");
 }
 
-// Retry/continuation diagnostics (#48/#52): the failure that opened the round
-// plus the latest rejection, deduplicated when they are the same text.
+/**
+ * Repeated no-progress fingerprint (#57): the same reply, diagnostics, and
+ * source state was already rejected. This is a no-progress termination path,
+ * not a count cap: a run that keeps producing distinct attempts is bounded only
+ * by the token budget and the no-progress ask cadence.
+ */
+function repeatedNoProgressDiagnostics(context: string | null): string {
+  const reason =
+    "edit-exhausted: no progress: the same reply/source/diagnostics fingerprint repeated; no fixed exchange or round cap applies";
+  return context === null ? reason : `${reason}\n\n${context}`;
+}
+
+// One fingerprint per rejected attempt. It includes the reply, the rejection
+// diagnostics, and the source the reply was resolved against, so a legitimate
+// retry after a state change is not mistaken for a repeat. Hash keeps the set's
+// memory bounded by the token budget rather than by reply size.
+function noProgressFingerprint(reply: string, diagnostics: string, state: string): string {
+  return createHash("sha256")
+    .update(`${reply}\u0000${diagnostics}\u0000${state}`, "utf8")
+    .digest("hex");
+}
+
+// Retry diagnostics (#48): the failure that opened the round plus the latest
+// rejection, deduplicated when they are the same text.
 function combinedDiagnostics(openedBy: string | null, last: string | null): string {
   if (openedBy !== null && last !== null && last !== openedBy) {
     return `${openedBy}\n\n${last}`;
@@ -4410,26 +4362,13 @@ function combinedDiagnostics(openedBy: string | null, last: string | null): stri
   return last ?? "the previous exchange was rejected";
 }
 
-// Cap diagnostic (#52): entering a Run iteration beyond MAX_RUN_ITERATIONS.
-function capDiagnostics(openedBy: string | null): string {
-  const reason = `edit-exhausted: the ${MAX_RUN_ITERATIONS}-round cap was reached without a verified edit`;
-  return openedBy === null ? reason : `${reason}\n\n${openedBy}`;
-}
-
-// STOP diagnostic (#52): the model ended a continuation round itself.
-function stoppedDiagnostics(rounds: number, context: string | null): string {
-  const reason = `edit-exhausted: the model replied STOP after ${rounds} rounds`;
-  return context === null ? reason : `${reason}\n\n${context}`;
-}
-
 // Stalled-stop diagnostic (#54): the model ended the run at the no-progress ask.
-function stalledStopDiagnostics(failedRounds: number, context: string | null): string {
-  const reason = `edit-exhausted: the model replied STOP after ${failedRounds} consecutive failed rounds`;
+function stalledStopDiagnostics(failedAttempts: number, context: string | null): string {
+  const reason = `edit-exhausted: the model replied STOP after ${failedAttempts} consecutive failed attempts`;
   return context === null ? reason : `${reason}\n\n${context}`;
 }
 
-// `STOP` is only special as the reply to a continuation prompt (#52) or to the
-// no-progress ask (#54).
+// `STOP` is only special as the reply to a no-progress ask (#54/#57).
 function isStopReply(response: ChatResponse): boolean {
   return (response.content ?? "").trim().toUpperCase() === "STOP";
 }
@@ -4554,8 +4493,7 @@ async function runJsonLoop(options: LoopOptions): Promise<LoopResult> {
     role: "user",
     content: buildUserPrompt(options.issue, contextYaml, []),
   };
-  // Round 1 (and selection-continuation rounds, which carry no verification
-  // stage) always starts from the full message; the per-round variant is chosen
+  // Round 1 always starts from the full message; the per-round variant is chosen
   // at the top of the Run loop and applied on the content-exchange rebuild.
   const initialMessages: ChatMessage[] = [systemMessage, issueMessage];
   let messages: ChatMessage[] = initialMessages;
@@ -4584,17 +4522,21 @@ async function runJsonLoop(options: LoopOptions): Promise<LoopResult> {
   // Stage of the verification failure that opened the current Run iteration
   // (#49): `tsc` makes the round's content prompts lean.
   let pendingVerificationStage: "tsc" | "tests" | null = null;
-  // Consecutive no-progress rounds (#54/#60): incremented once at every failed
-  // verification and once at every round that ends with no applied edit
-  // (rejection-exhausted, truncated, or spent picking). It survives rounds and
-  // #52 continuations and is never reset (a passing verification ends the run).
-  let stalledRounds = 0;
+  // Consecutive no-progress attempts (#54/#57): incremented at every rejected
+  // exchange (including truncation and viewer-only replies) and at every failed
+  // verification. It schedules the no-progress ask at the #54/#65 milestones
+  // only; it is never a cap. A passing verification ends the run.
+  let stalledAttempts = 0;
+  // The failed-attempt count whose no-progress ask was already shown. A decision
+  // turn or self-check reply does not increment the count, so without this guard
+  // the same milestone would ask twice.
+  let stalledAskShownAt = -1;
   // Per-cause retry policy (#56): the last rejection cause and the length of
   // the consecutive-same-cause streak, plus the correction sentence the next
   // edit retry must carry (the escalation once the streak reaches 2, and the
   // #65 context: the round's opening diagnostics and an undeclared address
-  // name). An applied edit resets all three; verification failures and #52
-  // continuations deliberately do not.
+  // name). An applied edit resets all three; verification failures deliberately
+  // do not.
   let lastRejectionCause: RejectionCause | null = null;
   let lastRejectionStreak = 0;
   let lastCorrection: string | null = null;
@@ -4613,9 +4555,9 @@ async function runJsonLoop(options: LoopOptions): Promise<LoopResult> {
     lastCorrection = null;
   };
   // Prior-attempts digest (#57): a bounded, incrementally-updated checkpoint of
-  // the failing chain. It is rendered into the #52 round-continuation prompts
-  // and the #54 no-progress ask only; `digestText` advances it over the records
-  // the previous prompt has not seen yet, immediately before rendering.
+  // the failing chain. It is rendered into the no-progress asks only;
+  // `digestText` advances it over the records the previous prompt has not seen
+  // yet, immediately before rendering.
   const attemptDigest = createAttemptDigestState(protocolFormat);
   const digestText = (): string => {
     updateAttemptDigest(attemptDigest, records);
@@ -4624,24 +4566,36 @@ async function runJsonLoop(options: LoopOptions): Promise<LoopResult> {
   // Resubmission guard (#48): the last modify-mode payload, kept across
   // iterations; a byte-identical resend is rejected as `stage: repeat`.
   let lastModifySubmission: ModifySubmission | null = null;
-  // Round-level continuation (#52): a round that exhausts its ≤3 exchanges
-  // below the cap does not end the run; the next iteration opens with this
-  // continuation prompt and its reply is the first exchange of the fresh round.
-  let continuation: {
-    /** Round that exhausted its budget (the prompt names it). */
-    round: number;
-    /** True when the new round must re-pick the target. */
-    pick: boolean;
-    /** Opening + latest rejection diagnostics carried into the prompt. */
-    diagnostics: string;
-  } | null = null;
+  // Repeated-failure fingerprints (#57): a failed reply + diagnostics + source
+  // state seen before is no progress and ends the run. This is the no-cap
+  // termination path; distinct attempts remain bounded by the token budget.
+  const failedFingerprints = new Set<string>();
+  const repeatFailure = (reply: string, diagnostics: string, state: string): boolean => {
+    const key = noProgressFingerprint(reply, diagnostics, state);
+    if (failedFingerprints.has(key)) {
+      return true;
+    }
+    failedFingerprints.add(key);
+    return false;
+  };
+  // The no-progress ask is due once per failed-attempt milestone. It is taken
+  // only when a prompt actually renders it, so a successful pick or a decision
+  // turn cannot consume it without the model seeing it.
+  const takeStalledAsk = (history: FailurePattern | null): StalledAsk | undefined => {
+    if (!isStalledAskMilestone(stalledAttempts) || stalledAskShownAt === stalledAttempts) {
+      return undefined;
+    }
+    stalledAskShownAt = stalledAttempts;
+    return {
+      failedAttempts: stalledAttempts,
+      askNumber: stalledAskNumber(stalledAttempts),
+      history,
+    };
+  };
 
   // Applied targets (#81): every address an applied exchange covered, in order,
   // for the result report.
   const appliedTargets: Locator[] = [];
-  // Set when a targets round passes verification but pending targets remain, so
-  // the outer loop opens a fresh round instead of returning success.
-  let continueTargets = false;
   // The active coverable set for one exchange (#81): the first pending target
   // per file, since same-file targets are sequenced across exchanges.
   const activeTargets = (): Locator[] => {
@@ -4775,9 +4729,9 @@ async function runJsonLoop(options: LoopOptions): Promise<LoopResult> {
   };
 
   let iteration = 0;
-  // STOP (#52/#54): the reply to a continuation prompt or to the no-progress
-  // ask may end the run; it is recorded as an exchange row with the dedicated
-  // `stopped` outcome, carrying the diagnostics builder's text.
+  // STOP (#54/#57): the reply to a no-progress ask may end the run; it is
+  // recorded as an exchange row with the dedicated `stopped` outcome, carrying
+  // the diagnostics builder's text.
   const stopRun = async (
     exchange: number,
     response: ChatResponse,
@@ -4801,17 +4755,8 @@ async function runJsonLoop(options: LoopOptions): Promise<LoopResult> {
   };
   for (;;) {
     iteration += 1;
-    // Hard cap (#52): rounds 1..MAX_RUN_ITERATIONS run; entering the next one
-    // terminates through the existing chain naming the cap.
-    if (iteration > MAX_RUN_ITERATIONS) {
-      return await terminate("edit-exhausted", capDiagnostics(pendingDiagnostics));
-    }
     initialContentPrompt = null;
-    continueTargets = false;
     let verificationFailed = false;
-    // True once this round writes an edit; a round that ends without one is a
-    // no-progress round (#60).
-    let appliedEdit = false;
     let lastDiagnostics: string | null = pendingDiagnostics;
     let lastFailure: "edit" | "verification" =
       pendingDiagnostics === null ? "edit" : "verification";
@@ -4819,7 +4764,7 @@ async function runJsonLoop(options: LoopOptions): Promise<LoopResult> {
     // edit-exhausted summary even after edit soft failures overwrite `last`.
     const iterationOpenedBy: string | null = lastDiagnostics;
     // Stage that opened this iteration (#49), carried with the diagnostics so a
-    // #52 continuation keeps its chain's prompt variant.
+    // verification-repair chain keeps its prompt variant.
     const iterationOpenedByStage: "tsc" | "tests" | null = pendingVerificationStage;
     pendingDiagnostics = null;
     pendingVerificationStage = null;
@@ -4834,12 +4779,14 @@ async function runJsonLoop(options: LoopOptions): Promise<LoopResult> {
     // result into the next prompt.
     let selfCheckUsed = false;
     let pendingSelfCheck: string | null = null;
-    // Decision-only turn (#75), per Run iteration: `decisionTurn` is set while
-    // building the first prompt of a repeated non-converging ask; a non-edit
-    // reply to it is clamped into `pendingApproach` and carried into the next
-    // exchange's edit prompt instead of being applied.
-    let decisionTurn = false;
+    // Decision-only turn (#75), per round: a non-edit reply to a repeated
+    // non-converging ask is clamped into `pendingApproach` and carried into the
+    // next exchange's edit prompt instead of being applied.
     let pendingApproach: string | null = null;
+    // True when the prompt built at the end of the previous exchange offered
+    // `STOP` (a selection no-progress ask). Content prompts are built and
+    // answered in one exchange, so they set the per-exchange flag directly.
+    let stopOffered = false;
     const retryDiagnostics = (diagnostics: string): string => {
       const identical = lastRejection === diagnostics;
       lastRejection = diagnostics;
@@ -4862,109 +4809,26 @@ async function runJsonLoop(options: LoopOptions): Promise<LoopResult> {
       }
     }
 
-    // Round-level continuation (#52): the prompt built when the previous round
-    // exhausted its exchanges below the cap; the reply to it is the first
-    // exchange of this round.
-    const pendingContinuation = continuation;
-    continuation = null;
-
-    // No-progress ask (#54/#60): a round that opens on a stalled streak (a
-    // positive multiple of MAX_STALLED_ROUNDS) asks the model to decide in its
-    // first content prompt. A verification-failure cycle opens the round
-    // directly; a rejection-exhausted cycle (#60) opens through the #52
-    // continuation prompt, which then carries the ask framing instead of the
-    // round-exhausted header. Every continuation-producing round advanced the
-    // counter in the same iteration, so a milestone here is the one the
-    // previous round just crossed. A selection continuation has no pinned
-    // target and keeps its own STOP framing.
-    const stalledAsk =
-      !targetsMode &&
-      pinned !== null &&
-      isStalledAskMilestone(stalledRounds) &&
-      (pendingContinuation !== null || iterationOpenedBy !== null);
-
-    let continuationPrompt: string | null = null;
-    let continuationDiagnostics: string | null = null;
-    if (pendingContinuation !== null) {
-      continuationDiagnostics = pendingContinuation.diagnostics;
-      // Failure history (#71): the trailing verification failures as the
-      // prompts see them (chain reset included); computed once per
-      // continuation and threaded into both variants. The same pattern feeds the
-      // sharpened 2nd+ ask framing (#65).
-      const failurePattern = detectFailurePattern(records);
-      const failureHistory = renderFailureHistoryNote(failurePattern);
-      if (pendingContinuation.pick) {
-        continuationPrompt = buildSelectionContinuationPrompt({
-          round: pendingContinuation.round,
-          maxRounds: MAX_RUN_ITERATIONS,
-          diagnostics: pendingContinuation.diagnostics,
-          digest: digestText(),
-          failureHistory,
-        });
-        messages = [systemMessage, issueMessage, { role: "user", content: continuationPrompt }];
-      } else {
-        const continuedTarget = pinned;
-        if (continuedTarget === null) {
-          // Unreachable: an edit continuation is only set after a pick.
-          throw new Error("edit continuation without a pinned target");
-        }
-        const target = continuedTarget.locator.path;
-        const diskSource = readFileIfExists(join(cwd, target)) ?? "";
-        const repairSource = repairContextSource({
-          mode: continuedTarget.mode === "create" ? "create" : "modify",
-          repair,
-          target,
-          locator: continuedTarget.locator,
-          diskSource,
-          diagnostics: pendingContinuation.diagnostics,
-        });
-        const currentSource =
-          repairSource.preRendered !== undefined
-            ? repairSource.source
-            : truncateSource(repairSource.source);
-        const stalledInfo: StalledAsk | undefined = stalledAsk
-          ? {
-              failedRounds: stalledRounds,
-              round: iteration,
-              maxRounds: MAX_RUN_ITERATIONS,
-              askNumber: stalledAskNumber(stalledRounds),
-              history: failurePattern,
-            }
-          : undefined;
-        decisionTurn = stalledInfo !== undefined && isDecisionAsk(stalledInfo);
-        continuationPrompt = buildContinuationPrompt({
-          round: pendingContinuation.round,
-          maxRounds: MAX_RUN_ITERATIONS,
-          mode: continuedTarget.mode === "create" ? "create" : "modify",
-          locatorJson: pinnedAddressJson,
-          currentSource,
-          preRenderedSource: repairSource.preRendered,
-          diagnostics: pendingContinuation.diagnostics,
-          // The ask names re-pinning as a concrete alternative, so its round
-          // may move the pin exactly like a verification-opened ask round.
-          repin: (iterationOpenedBy !== null || stalledAsk) && continuedTarget.mode === "modify",
-          digest: digestText(),
-          failureHistory,
-          stalled: stalledInfo,
-          multiPayload: multiPayload,
-          protocolFormat,
-        });
-      }
-    }
-
-    // Explicit-targets mode (#81): the target queue drives every round — there
-    // is no model pick and no #52 round continuation. Seed (or advance to) the
-    // next pending target and name the pending addresses in its edit prompt.
-    // With no pending target left, fall through to the ordinary repair path.
+    // Explicit-targets mode (#81): the target queue drives every round. Seed
+    // (or advance to) the next pending target and name the pending addresses in
+    // its edit prompt. With no pending target left, fall through to the
+    // ordinary repair path.
     if (targetsMode && targetQueue.length > 0) {
-      continuation = null;
       if (!seedNextTarget() && pendingDiagnostics === null) {
         return await terminate("edit-exhausted", null);
       }
     }
 
-    for (let exchange = 1; exchange <= MAX_EDIT_EXCHANGES; exchange += 1) {
+    // #57: one exchange loop, no fixed exchange budget. A rejection retries or
+    // ends through the no-progress fingerprint/token budget; the loop leaves
+    // only on an applied edit (then verification), success, or termination.
+    for (let exchange = 1; ; exchange += 1) {
       const pick = pinned === null;
+      // Set when this exchange's prompt is a no-progress ask (the only prompts
+      // that offer `STOP`).
+      let promptOffersStop = stopOffered;
+      stopOffered = false;
+      let decisionTurn = false;
       // Reasoning policy (#35; revised 2026-10-18 after the effort sweep and
       // the none/none/max canonical run): every Edit-loop call runs at "none". The
       // sweep showed reasoning only added cost on the happy path (json/sexp)
@@ -5011,12 +4875,15 @@ async function runJsonLoop(options: LoopOptions): Promise<LoopResult> {
             tokenBudgetDiagnostics(consumedTokens, tokenBudget, tokenBudgetBasis),
           );
         }
-        // Only the continuation prompt offers STOP (#52).
-        if (exchange === 1 && continuationPrompt !== null && isStopReply(response)) {
+        // Only the selection no-progress ask offers STOP (#57).
+        if (promptOffersStop && isStopReply(response)) {
           return await stopRun(
             exchange,
             response,
-            stoppedDiagnostics(iteration, continuationDiagnostics),
+            stalledStopDiagnostics(
+              stalledAttempts,
+              combinedDiagnostics(iterationOpenedBy, lastDiagnostics),
+            ),
           );
         }
         let candidate: Locator = EMPTY_LOCATOR;
@@ -5056,26 +4923,45 @@ async function runJsonLoop(options: LoopOptions): Promise<LoopResult> {
             }),
           );
           registerRejection(cause);
-          lastDiagnostics = diagnostic;
+          const selectionDiagnostics = combinedDiagnostics(iterationOpenedBy, diagnostic);
+          lastDiagnostics = selectionDiagnostics;
           lastFailure = "edit";
-          if (exchange === MAX_EDIT_EXCHANGES) {
-            if (iteration >= MAX_RUN_ITERATIONS) {
-              return await terminate("edit-exhausted", capDiagnostics(iterationOpenedBy));
-            }
-            // Selection exhaustion (#52): the next round re-asks for the
-            // target (or STOP) instead of ending the run.
-            continuation = {
-              round: iteration,
-              pick: true,
-              diagnostics: combinedDiagnostics(iterationOpenedBy, diagnostic),
-            };
-            break;
+          stalledAttempts += 1;
+          // #57: a repeated selection reply is no progress and ends the run;
+          // distinct rejections are retried until the token budget or the
+          // no-progress ask cadence.
+          // Only read the candidate's source when it is inside the editable
+          // workspace; a path-escaping address contributes its raw path only.
+          const selectionState =
+            candidate.path === "" || safeMutablePath(cwd, candidate.path) === null
+              ? candidate.path
+              : (readFileIfExists(join(cwd, candidate.path)) ?? "");
+          if (repeatFailure(response.content ?? "", diagnostic, selectionState)) {
+            return await terminate(
+              "edit-exhausted",
+              repeatedNoProgressDiagnostics(selectionDiagnostics),
+            );
           }
           messages.push({ role: "assistant", content: response.content ?? "" });
-          messages.push({
-            role: "user",
-            content: buildSelectionRetryPrompt(diagnostic),
-          });
+          const failurePattern = detectFailurePattern(records);
+          const selectionAsk = takeStalledAsk(failurePattern);
+          if (selectionAsk !== undefined) {
+            stopOffered = true;
+            messages.push({
+              role: "user",
+              content: buildSelectionContinuationPrompt({
+                failedAttempts: stalledAttempts,
+                diagnostics: selectionDiagnostics,
+                digest: digestText(),
+                failureHistory: renderFailureHistoryNote(failurePattern),
+              }),
+            });
+          } else {
+            messages.push({
+              role: "user",
+              content: buildSelectionRetryPrompt(diagnostic),
+            });
+          }
           continue;
         }
         const selection = resolution !== null && resolution.ok ? resolution.selection : null;
@@ -5083,11 +4969,15 @@ async function runJsonLoop(options: LoopOptions): Promise<LoopResult> {
           // Unreachable: a non-null resolution with an ok=true branch was set.
           return await terminate(
             "edit-exhausted",
-            exhaustedDiagnostics(iterationOpenedBy, diagnostic),
+            editExhaustedDiagnostics(iterationOpenedBy, diagnostic),
           );
         }
         pinned = { mode: selection.mode, locator: selection.locator };
         pinnedAddressJson = pinJson(pinned);
+        // A successful pick is progress: the next content prompt is fresh, not a
+        // retry of the rejected selection attempts before it.
+        lastDiagnostics = null;
+        lastFailure = "edit";
         records.push(
           recordRow({
             row: records.length + 1,
@@ -5146,9 +5036,8 @@ async function runJsonLoop(options: LoopOptions): Promise<LoopResult> {
         continue;
       }
 
-      // Content exchange: revise the pinned target. A fresh iteration has a
-      // fresh ≤3 budget; soft failures re-ask with diagnostics and consume the
-      // same budget.
+      // Content exchange: revise the pinned target. Soft failures retry with
+      // diagnostics; there is no exchange budget to consume (#57).
       let pinnedTarget: { mode: SelectionMode; locator: Locator } | null = pinned;
       if (pinnedTarget === null) {
         // Unreachable: the pick branch either pins a target or returns.
@@ -5158,9 +5047,26 @@ async function runJsonLoop(options: LoopOptions): Promise<LoopResult> {
       const diskSource = readFileIfExists(join(cwd, target)) ?? "";
       let contentPrompt: string;
       // Repair exchange (#73): an intra-round retry (diagnostics present) or a
-      // #52 continuation — never the fresh post-pick edit prompt. Only a repair
+      // no-progress ask — never the fresh post-pick edit prompt. Only a repair
       // exchange accepts a self-verification request and offers it in the prompt.
       let repairExchange: boolean;
+      // Failure history (#71): computed for every content retry; the same
+      // pattern feeds the sharpened 2nd+ ask framing (#65). The no-progress ask
+      // (#54/#57) is a cadence and can land on any exchange, including the
+      // first content prompt after a late successful pick.
+      const failurePattern = detectFailurePattern(records);
+      const stalled = targetsMode ? undefined : takeStalledAsk(failurePattern);
+      const failureHistory = renderFailureHistoryNote(failurePattern);
+      // A verification-opened retry may move the pin; the ask names re-pinning
+      // as a concrete alternative, so it may too.
+      let repinAllowed = iterationOpenedBy !== null;
+      if (stalled !== undefined) {
+        promptOffersStop = true;
+        repinAllowed = true;
+        // Decision-only turn (#75): the same repeated-non-converging gating as
+        // the earlier no-progress ask.
+        decisionTurn = isDecisionAsk(stalled);
+      }
       if (targetsMode && targetQueue.length > 0) {
         // Explicit-targets mode (#81): every content prompt names the pending
         // targets (and, after a rejection, the diagnostics) so the model must
@@ -5181,16 +5087,19 @@ async function runJsonLoop(options: LoopOptions): Promise<LoopResult> {
         }
         contentPrompt = targetsPrompt;
         repairExchange = lastDiagnostics !== null;
-      } else if (exchange === 1 && continuationPrompt !== null) {
-        // Round-level continuation (#52): the first exchange of a continued
-        // round shows the continuation prompt instead of the echo of a pick.
-        contentPrompt = continuationPrompt;
-        repairExchange = true;
-      } else if (lastDiagnostics === null && initialContentPrompt !== null) {
+      } else if (
+        stalled === undefined &&
+        lastDiagnostics === null &&
+        initialContentPrompt !== null
+      ) {
         contentPrompt = initialContentPrompt;
         repairExchange = false;
       } else {
-        const promptDiagnostics = combinedDiagnostics(iterationOpenedBy, lastDiagnostics);
+        const rawPromptDiagnostics = combinedDiagnostics(iterationOpenedBy, lastDiagnostics);
+        const promptDiagnostics =
+          stalled !== undefined && rawPromptDiagnostics === "the previous exchange was rejected"
+            ? "the previous attempts made no progress"
+            : rawPromptDiagnostics;
         const repairSource = repairContextSource({
           mode: pinnedTarget.mode === "create" ? "create" : "modify",
           repair,
@@ -5203,36 +5112,12 @@ async function runJsonLoop(options: LoopOptions): Promise<LoopResult> {
           repairSource.preRendered !== undefined
             ? repairSource.source
             : truncateSource(repairSource.source);
-        // No-progress ask (#54): only the first content prompt of a stalled
-        // round carries the decision framing and the digest (#57); every other
-        // retry is unchanged.
-        // Failure history (#71): unlike the digest, the note is computed for
-        // every content retry — ordinary retries and the #54 ask alike. The same
-        // pattern feeds the sharpened 2nd+ ask framing (#65).
-        const failurePattern = detectFailurePattern(records);
-        const stalled =
-          exchange === 1 && stalledAsk
-            ? {
-                failedRounds: stalledRounds,
-                round: iteration,
-                maxRounds: MAX_RUN_ITERATIONS,
-                askNumber: stalledAskNumber(stalledRounds),
-                history: failurePattern,
-              }
-            : undefined;
-        const failureHistory = renderFailureHistoryNote(failurePattern);
-        // Decision-only turn (#75): the same repeated-non-converging gating as
-        // the continuation path; only the first exchange of a stalled round.
-        if (stalled !== undefined) {
-          decisionTurn = isDecisionAsk(stalled);
-        }
         // The self-check result is shown exactly once, in the prompt right after
         // the request was executed (#73).
         const selfCheck = pendingSelfCheck;
         pendingSelfCheck = null;
         contentPrompt = buildRetryPrompt({
           exchangeNumber: exchange,
-          maxExchanges: MAX_EDIT_EXCHANGES,
           mode: pinnedTarget.mode === "create" ? "create" : "modify",
           locatorJson: pinnedAddressJson,
           currentSource,
@@ -5241,7 +5126,9 @@ async function runJsonLoop(options: LoopOptions): Promise<LoopResult> {
           // iteration keep the verification failure visible too (#48).
           diagnostics: promptDiagnostics,
           failure: lastFailure,
-          repin: iterationOpenedBy !== null && pinnedTarget.mode === "modify",
+          // The ask names re-pinning as a concrete alternative, so it may move
+          // the pin exactly like a verification-opened retry.
+          repin: repinAllowed && pinnedTarget.mode === "modify",
           stalled,
           digest: stalled === undefined ? undefined : digestText(),
           failureHistory,
@@ -5296,27 +5183,15 @@ async function runJsonLoop(options: LoopOptions): Promise<LoopResult> {
           tokenBudgetDiagnostics(consumedTokens, tokenBudget, tokenBudgetBasis),
         );
       }
-      // The no-progress ask's STOP (#54), only at its first exchange; the
-      // stalled diagnostics stay distinct from #52's exhausted-round text. A
-      // milestone continuation (#60) carries the ask framing, so its STOP
-      // takes precedence over the continuation's and keeps the chain context.
-      if (exchange === 1 && stalledAsk && isStopReply(response)) {
+      // Only a no-progress ask offers STOP (#54/#57).
+      if (promptOffersStop && isStopReply(response)) {
         return await stopRun(
           exchange,
           response,
           stalledStopDiagnostics(
-            stalledRounds,
-            continuationDiagnostics ?? combinedDiagnostics(iterationOpenedBy, lastDiagnostics),
+            stalledAttempts,
+            combinedDiagnostics(iterationOpenedBy, lastDiagnostics),
           ),
-        );
-      }
-      // Only the continuation prompt (#52) and the no-progress ask (#54) offer
-      // STOP, each at its own exchange-1 prompt.
-      if (exchange === 1 && continuationPrompt !== null && isStopReply(response)) {
-        return await stopRun(
-          exchange,
-          response,
-          stoppedDiagnostics(iteration, continuationDiagnostics),
         );
       }
       // Decision-only turn (#75): STOP was handled above. A reply that still
@@ -5325,7 +5200,6 @@ async function runJsonLoop(options: LoopOptions): Promise<LoopResult> {
       // re-approach — clamped and carried into the next exchange's prompt
       // instead of being parsed as an edit (no cap, no auto-stop).
       if (
-        exchange === 1 &&
         decisionTurn &&
         !isEditPayloadReply(response.content ?? "", multiPayload, protocolFormat)
       ) {
@@ -5374,38 +5248,27 @@ async function runJsonLoop(options: LoopOptions): Promise<LoopResult> {
         registerRejection(cause);
         lastDiagnostics = retryDiagnostics(diagnostics);
         lastFailure = "edit";
-        // Output-limit strike cap (#98): the just-pushed row is counted, so the
-        // third consecutive length finish terminates through the summary path
-        // rather than continuing into another exchange or round.
+        stalledAttempts += 1;
+        // Output-limit strike guard (#98), not an exchange/round cap: the
+        // just-pushed row is counted, so the third consecutive length finish
+        // terminates through the summary path rather than continuing to burn
+        // budget. A non-consecutive truncation is an ordinary failed attempt.
         if (consecutiveLengthFinishes(records) >= MAX_CONSECUTIVE_LENGTH) {
           return await terminate(
             "output-limit",
             "stage: output-limit\nthe completion hit the output limit on 3 consecutive attempts; ending the run through the summary path",
           );
         }
-        if (exchange === MAX_EDIT_EXCHANGES) {
-          if (iteration >= MAX_RUN_ITERATIONS) {
-            return await terminate("edit-exhausted", capDiagnostics(iterationOpenedBy));
-          }
-          // Round exhaustion below the cap (#52): continue with a fresh round.
-          // In explicit-targets mode the queue drives the run, so exhaustion
-          // ends the round and the next one re-seeds the pending target.
-          if (!targetsMode) {
-            continuation = {
-              round: iteration,
-              pick: false,
-              diagnostics: combinedDiagnostics(iterationOpenedBy, lastDiagnostics),
-            };
-          }
-          break;
-        }
+        // Truncation has its own output-length guard above; do not also feed it
+        // to the reply/source fingerprint before that guard can fire.
         continue;
       }
       const content = response.content ?? "";
       // Bounded self-verification request (#73): a repair exchange may reply
       // with the distinct request object instead of an edit payload. At most one
-      // is executed per round, and only when a later exchange exists to return
-      // its result; every refusal falls through to the ordinary protocol path.
+      // is executed per round; every refusal falls through to the ordinary
+      // protocol path. The exchange loop has no fixed cap (#57), so a request is
+      // never refused for arriving "too late".
       let requestFailure: string | null = null;
       if (repairExchange) {
         const parsedRequest = parseSelfCheckRequest(content);
@@ -5415,9 +5278,6 @@ async function runJsonLoop(options: LoopOptions): Promise<LoopResult> {
           if (selfCheckUsed) {
             requestFailure =
               "stage: protocol\nthe round already used its one self-verification request; return an edit payload now (the harness runs at most one request per round)";
-          } else if (exchange >= MAX_EDIT_EXCHANGES) {
-            requestFailure =
-              "stage: protocol\nthere is no exchange left in this round to return a self-check result; return an edit payload";
           } else {
             const result = await executeSelfCheck(parsedRequest.request, {
               cwd,
@@ -5558,7 +5418,7 @@ async function runJsonLoop(options: LoopOptions): Promise<LoopResult> {
           failure =
             'stage: protocol\nmode "create" does not take a "matcher" or "range"; omit them and return the complete declaration';
         } else if (!addressEquals(pinnedTarget.locator, payload.locator)) {
-          if ((iterationOpenedBy !== null || stalledAsk) && pinnedTarget.mode === "modify") {
+          if (repinAllowed && pinnedTarget.mode === "modify") {
             // Verification-repair re-pin (#48): a round opened by failing
             // verification may move the pin to another declaration in the same
             // file; the new address resolves strictly against the current source.
@@ -5742,7 +5602,7 @@ async function runJsonLoop(options: LoopOptions): Promise<LoopResult> {
               const locator = entryPayload.locator;
               if (addressEquals(pinnedTarget.locator, locator)) {
                 span = resolvePayloadSpan(sourceBefore, target, entryPayload, repair);
-              } else if (iterationOpenedBy !== null || stalledAsk) {
+              } else if (repinAllowed) {
                 if (locator.path !== target) {
                   noteFailure(
                     index,
@@ -5951,21 +5811,15 @@ async function runJsonLoop(options: LoopOptions): Promise<LoopResult> {
         });
         lastDiagnostics = retryDiagnostics(diagnostics);
         lastFailure = "edit";
-        if (exchange === MAX_EDIT_EXCHANGES) {
-          if (iteration >= MAX_RUN_ITERATIONS) {
-            return await terminate("edit-exhausted", capDiagnostics(iterationOpenedBy));
-          }
-          // Round exhaustion below the cap (#52): continue with a fresh round.
-          // In explicit-targets mode the queue drives the run, so exhaustion
-          // ends the round and the next one re-seeds the pending target.
-          if (!targetsMode) {
-            continuation = {
-              round: iteration,
-              pick: false,
-              diagnostics: combinedDiagnostics(iterationOpenedBy, lastDiagnostics),
-            };
-          }
-          break;
+        stalledAttempts += 1;
+        // #57: distinct rejected edits retry without a fixed exchange cap; a
+        // repeated reply/source/diagnostics fingerprint is no progress and ends
+        // the run instead of looping until the budget.
+        if (repeatFailure(response.content ?? "", diagnostics, sourceBefore)) {
+          return await terminate(
+            "edit-exhausted",
+            repeatedNoProgressDiagnostics(combinedDiagnostics(iterationOpenedBy, lastDiagnostics)),
+          );
         }
         continue;
       }
@@ -5979,7 +5833,6 @@ async function runJsonLoop(options: LoopOptions): Promise<LoopResult> {
       } else {
         writeTarget(cwd, target, newSource);
       }
-      appliedEdit = true;
       // An applied edit ends the rejection chain (#56): the next rejection
       // starts a fresh streak regardless of the verification outcome below.
       clearRejectionPolicy();
@@ -6024,8 +5877,8 @@ async function runJsonLoop(options: LoopOptions): Promise<LoopResult> {
       );
       // Same-file sequencing (#81): a path-independent batch covers at most one
       // target per file, so apply the next pending target in the next exchange
-      // of this round before verifying.
-      if (targetsMode && targetQueue.length > 0 && exchange < MAX_EDIT_EXCHANGES) {
+      // of this round before verifying. There is no exchange cap (#57).
+      if (targetsMode && targetQueue.length > 0) {
         if (seedNextTarget()) {
           continue;
         }
@@ -6048,20 +5901,17 @@ async function runJsonLoop(options: LoopOptions): Promise<LoopResult> {
           }),
         );
         if (targetsMode && (targetQueue.length > 0 || targetFailures.length > 0)) {
-          // Not every requested target was applied: do not claim success. If
-          // work remains, open a fresh round for the next target; otherwise
-          // report the unresolved targets through the termination step.
-          if (targetQueue.length > 0) {
-            continueTargets = true;
-            break;
-          }
+          // Not every requested target was applied: never claim success. The
+          // queue is normally empty here (the sequencing block above seeds every
+          // remaining target), so this reports the unresolved targets through
+          // the termination step.
           return await terminate("edit-exhausted", null);
         }
         return success(newSource);
       }
       // No rollback (#30): the attempted state stays on disk for the next
-      // iteration to refine. A failure just starts the next iteration, which
-      // gets a fresh ≤3 exchange budget.
+      // iteration to refine. A failure just starts the next iteration; #57
+      // removed the fixed exchange/round budget.
       const diagnostics = formatDiagnostics({
         check,
         test,
@@ -6087,64 +5937,34 @@ async function runJsonLoop(options: LoopOptions): Promise<LoopResult> {
       );
       pendingDiagnostics = diagnostics;
       pendingVerificationStage = check.ok ? "tests" : "tsc";
-      // One more consecutive verification-failed round (#54): the count spans
-      // rounds and #52 continuations; only a pass (which ends the run) resets it.
-      stalledRounds += 1;
+      stalledAttempts += 1;
+      // #57: a failed verification is one more failed attempt; a repeated
+      // reply/source/diagnostics state is no progress. The round still ends so
+      // the next prompt opens with the verification failure, but nothing
+      // terminates it for reaching a fixed round count.
+      if (repeatFailure(response.content ?? "", diagnostics, newSource)) {
+        return await terminate(
+          "edit-exhausted",
+          repeatedNoProgressDiagnostics(combinedDiagnostics(iterationOpenedBy, diagnostics)),
+        );
+      }
       verificationFailed = true;
       break;
     }
 
-    // No-progress counting (#60): a round that ends with no applied edit (all
-    // exchanges rejected, truncated, or spent picking) counts exactly like a
-    // failed verification; only a pass (which ends the run) stops the chain.
-    // The #54 decision point then fires in rejection cycles at the same
-    // multiples of MAX_STALLED_ROUNDS.
-    if (!verificationFailed && !appliedEdit) {
-      stalledRounds += 1;
-    }
-    // Explicit-targets mode (#81): a passing partial verification with targets
-    // still pending opens a fresh round for the next target.
-    if (continueTargets) {
-      continue;
-    }
+    // The exchange loop leaves only on a failed verification (the next round
+    // opens with its diagnostics) or on success/termination. #57 has no fixed
+    // exchange or round cap and no round-continuation budget: the token budget,
+    // the repeated no-progress fingerprint, and the no-progress ask are the
+    // only termination paths for a failed loop.
     if (verificationFailed) {
       continue;
     }
-    // Round-level continuation (#52): a successful pick may have consumed the
-    // last exchange (no content exchange is left); below the cap the round
-    // continues through a continuation prompt instead of ending the run.
-    if (
-      !targetsMode &&
-      continuation === null &&
-      pinned !== null &&
-      iteration < MAX_RUN_ITERATIONS
-    ) {
-      continuation = {
-        round: iteration,
-        pick: false,
-        diagnostics: combinedDiagnostics(iterationOpenedBy, lastDiagnostics),
-      };
-    }
-    if (continuation !== null) {
-      // A continued verification-repair chain keeps its opening diagnostics, so
-      // the continuation (and its retries) may still re-pin (#52).
-      if (iterationOpenedBy !== null) {
-        pendingDiagnostics = iterationOpenedBy;
-      }
-      // ...and its prompt variant (#49): a tsc-repair chain stays lean.
-      if (iterationOpenedByStage !== null) {
-        pendingVerificationStage = iterationOpenedByStage;
-      }
-      continue;
-    }
-    if (iteration >= MAX_RUN_ITERATIONS) {
-      return await terminate("edit-exhausted", capDiagnostics(iterationOpenedBy));
-    }
-    // Unreachable: the exchange loop only falls through after a pick or with a
-    // continuation set.
+    // Unreachable: every other exchange path returns, retries, or breaks after
+    // a failed verification.
     return await terminate(
       "edit-exhausted",
-      exhaustedDiagnostics(iterationOpenedBy, lastDiagnostics),
+      editExhaustedDiagnostics(iterationOpenedBy, lastDiagnostics),
     );
   }
 }
@@ -6201,8 +6021,7 @@ async function runEditDslLoop(options: LoopOptions): Promise<LoopResult> {
     role: "user",
     content: buildEditDslUserPrompt(options.issue, editDslIndexText, []),
   };
-  // Round 1 (and selection-continuation rounds, which carry no verification
-  // stage) always starts from the full message; the per-round variant is chosen
+  // Round 1 always starts from the full message; the per-round variant is chosen
   // at the top of the Run loop and applied on the content-exchange rebuild.
   const initialMessages: ChatMessage[] = [systemMessage, issueMessage];
   let messages: ChatMessage[] = initialMessages;
@@ -6225,11 +6044,6 @@ async function runEditDslLoop(options: LoopOptions): Promise<LoopResult> {
   // A first-turn edit-dsl editor already carries its `replace`; its reply is
   // applied in the content branch without a second provider call.
   let prefetchedReply: ChatResponse | null = null;
-  // #8: an edit-dsl confirmation editor that arrives on the round's last normal
-  // exchange has no in-round slot. Its already-counted reply is carried into a
-  // fresh round and applied as that round's first exchange (no second provider
-  // call), paired with the `# modified text` prompt it answered.
-  let pendingConfirmation: { reply: ChatResponse; prompt: string } | null = null;
   // Run-start source of the target file ("" when the file did not exist).
   let baseSource = "";
   // First content prompt after a pick; null once a retry prompt takes over.
@@ -6245,17 +6059,21 @@ async function runEditDslLoop(options: LoopOptions): Promise<LoopResult> {
   // Stage of the verification failure that opened the current Run iteration
   // (#49): `tsc` makes the round's content prompts lean.
   let pendingVerificationStage: "tsc" | "tests" | null = null;
-  // Consecutive no-progress rounds (#54/#60): incremented once at every failed
-  // verification and once at every round that ends with no applied edit
-  // (rejection-exhausted, truncated, or spent picking). It survives rounds and
-  // #52 continuations and is never reset (a passing verification ends the run).
-  let stalledRounds = 0;
+  // Consecutive no-progress attempts (#54/#57): incremented at every rejected
+  // exchange (including truncation, viewer-only replies, and failed apply
+  // guards) and at every failed verification. It schedules the no-progress ask
+  // at the #54/#65 milestones only; it is never a cap.
+  let stalledAttempts = 0;
+  // The failed-attempt count whose no-progress ask was already shown. A decision
+  // turn or self-check reply does not increment the count, so without this guard
+  // the same milestone would ask twice.
+  let stalledAskShownAt = -1;
   // Per-cause retry policy (#56): the last rejection cause and the length of
   // the consecutive-same-cause streak, plus the correction sentence the next
   // edit retry must carry (the escalation once the streak reaches 2, and the
   // #65 context: the round's opening diagnostics and an undeclared address
-  // name). An applied edit resets all three; verification failures and #52
-  // continuations deliberately do not.
+  // name). An applied edit resets all three; verification failures deliberately
+  // do not.
   let lastRejectionCause: RejectionCause | null = null;
   let lastRejectionStreak = 0;
   let lastCorrection: string | null = null;
@@ -6286,25 +6104,40 @@ async function runEditDslLoop(options: LoopOptions): Promise<LoopResult> {
     addressFailures = 0;
   };
   // Prior-attempts digest (#57): a bounded, incrementally-updated checkpoint of
-  // the failing chain. It is rendered into the #52 round-continuation prompts
-  // and the #54 no-progress ask only; `digestText` advances it over the records
-  // the previous prompt has not seen yet, immediately before rendering.
+  // the failing chain. It is rendered into the no-progress asks only;
+  // `digestText` advances it over the records the previous prompt has not seen
+  // yet, immediately before rendering.
   const attemptDigest = createAttemptDigestState(protocolFormat);
   const digestText = (): string => {
     updateAttemptDigest(attemptDigest, records);
     return renderAttemptDigest(attemptDigest);
   };
-  // Round-level continuation (#52): a round that exhausts its ≤3 exchanges
-  // below the cap does not end the run; the next iteration opens with this
-  // continuation prompt and its reply is the first exchange of the fresh round.
-  let continuation: {
-    /** Round that exhausted its budget (the prompt names it). */
-    round: number;
-    /** True when the new round must re-pick the target. */
-    pick: boolean;
-    /** Opening + latest rejection diagnostics carried into the prompt. */
-    diagnostics: string;
-  } | null = null;
+  // Repeated-failure fingerprints (#57): a failed reply + diagnostics + source
+  // state seen before is no progress and ends the run. This is the no-cap
+  // termination path; distinct attempts remain bounded by the token budget.
+  const failedFingerprints = new Set<string>();
+  const repeatFailure = (reply: string, diagnostics: string, state: string): boolean => {
+    const key = noProgressFingerprint(reply, diagnostics, state);
+    if (failedFingerprints.has(key)) {
+      return true;
+    }
+    failedFingerprints.add(key);
+    return false;
+  };
+  // The no-progress ask is due once per failed-attempt milestone. It is taken
+  // only when a prompt actually renders it, so a successful pick or a decision
+  // turn cannot consume it without the model seeing it.
+  const takeStalledAsk = (history: FailurePattern | null): StalledAsk | undefined => {
+    if (!isStalledAskMilestone(stalledAttempts) || stalledAskShownAt === stalledAttempts) {
+      return undefined;
+    }
+    stalledAskShownAt = stalledAttempts;
+    return {
+      failedAttempts: stalledAttempts,
+      askNumber: stalledAskNumber(stalledAttempts),
+      history,
+    };
+  };
 
   /** Run-level warnings, e.g. ignored inert edit-dsl clauses (#44). */
   const warnings: string[] = [];
@@ -6348,9 +6181,9 @@ async function runEditDslLoop(options: LoopOptions): Promise<LoopResult> {
   };
 
   let iteration = 0;
-  // STOP (#52/#54): the reply to a continuation prompt or to the no-progress
-  // ask may end the run; it is recorded as an exchange row with the dedicated
-  // `stopped` outcome, carrying the diagnostics builder's text.
+  // STOP (#54/#57): the reply to a no-progress ask may end the run; it is
+  // recorded as an exchange row with the dedicated `stopped` outcome, carrying
+  // the diagnostics builder's text.
   const stopRun = async (
     exchange: number,
     response: ChatResponse,
@@ -6374,25 +6207,9 @@ async function runEditDslLoop(options: LoopOptions): Promise<LoopResult> {
   };
   for (;;) {
     iteration += 1;
-    // Hard cap (#52): rounds 1..MAX_RUN_ITERATIONS run; entering the next one
-    // terminates through the existing chain naming the cap.
-    if (iteration > MAX_RUN_ITERATIONS) {
-      return await terminate("edit-exhausted", capDiagnostics(pendingDiagnostics));
-    }
     initialContentPrompt = null;
     prefetchedReply = null;
-    // #8: reopen a carried confirmation editor as this round's first content
-    // exchange. The reply's tokens were counted when the confirmation call ran
-    // on the previous round, so it is reused verbatim, once.
-    if (pendingConfirmation !== null) {
-      prefetchedReply = pendingConfirmation.reply;
-      initialContentPrompt = pendingConfirmation.prompt;
-      pendingConfirmation = null;
-    }
     let verificationFailed = false;
-    // True once this round writes an edit; a round that ends without one is a
-    // no-progress round (#60).
-    let appliedEdit = false;
     let lastDiagnostics: string | null = pendingDiagnostics;
     let lastFailure: "edit" | "verification" =
       pendingDiagnostics === null ? "edit" : "verification";
@@ -6400,7 +6217,7 @@ async function runEditDslLoop(options: LoopOptions): Promise<LoopResult> {
     // edit-exhausted summary even after edit soft failures overwrite `last`.
     const iterationOpenedBy: string | null = lastDiagnostics;
     // Stage that opened this iteration (#49), carried with the diagnostics so a
-    // #52 continuation keeps its chain's prompt variant.
+    // verification-repair chain keeps its prompt variant.
     const iterationOpenedByStage: "tsc" | "tests" | null = pendingVerificationStage;
     pendingDiagnostics = null;
     pendingVerificationStage = null;
@@ -6415,12 +6232,14 @@ async function runEditDslLoop(options: LoopOptions): Promise<LoopResult> {
     // result into the next prompt.
     let selfCheckUsed = false;
     let pendingSelfCheck: string | null = null;
-    // Decision-only turn (#75), per Run iteration: `decisionTurn` is set while
-    // building the first prompt of a repeated non-converging ask; a non-edit
-    // reply to it is clamped into `pendingApproach` and carried into the next
-    // exchange's edit prompt instead of being applied.
-    let decisionTurn = false;
+    // Decision-only turn (#75), per round: a non-edit reply to a repeated
+    // non-converging ask is clamped into `pendingApproach` and carried into the
+    // next exchange's edit prompt instead of being applied.
     let pendingApproach: string | null = null;
+    // True when the prompt built at the end of the previous exchange offered
+    // `STOP` (a selection no-progress ask). Content prompts are built and
+    // answered in one exchange, so they set the per-exchange flag directly.
+    let stopOffered = false;
     const retryDiagnostics = (diagnostics: string): string => {
       const identical = lastRejection === diagnostics;
       lastRejection = diagnostics;
@@ -6443,110 +6262,16 @@ async function runEditDslLoop(options: LoopOptions): Promise<LoopResult> {
       }
     }
 
-    // Round-level continuation (#52): the prompt built when the previous round
-    // exhausted its exchanges below the cap; the reply to it is the first
-    // exchange of this round.
-    const pendingContinuation = continuation;
-    continuation = null;
-
-    // No-progress ask (#54/#60): a round that opens on a stalled streak (a
-    // positive multiple of MAX_STALLED_ROUNDS) asks the model to decide in its
-    // first content prompt. A verification-failure cycle opens the round
-    // directly; a rejection-exhausted cycle (#60) opens through the #52
-    // continuation prompt, which then carries the ask framing instead of the
-    // round-exhausted header. Every continuation-producing round advanced the
-    // counter in the same iteration, so a milestone here is the one the
-    // previous round just crossed. A selection continuation has no pinned
-    // target and keeps its own STOP framing.
-    const stalledAsk =
-      pinned !== null &&
-      isStalledAskMilestone(stalledRounds) &&
-      (pendingContinuation !== null || iterationOpenedBy !== null);
-
-    let continuationPrompt: string | null = null;
-    let continuationDiagnostics: string | null = null;
-    if (pendingContinuation !== null) {
-      continuationDiagnostics = pendingContinuation.diagnostics;
-      // Failure history (#71): the trailing verification failures as the
-      // prompts see them (chain reset included); computed once per
-      // continuation and threaded into both variants. The same pattern feeds the
-      // sharpened 2nd+ ask framing (#65).
-      const failurePattern = detectFailurePattern(records);
-      const failureHistory = renderFailureHistoryNote(failurePattern);
-      if (pendingContinuation.pick) {
-        continuationPrompt = buildEditDslSelectionContinuationPrompt({
-          round: pendingContinuation.round,
-          maxRounds: MAX_RUN_ITERATIONS,
-          issue: options.issue,
-          indexText: editDslIndexText,
-          diagnostics: pendingContinuation.diagnostics,
-          digest: digestText(),
-          failureHistory,
-        });
-        messages = [systemMessage, issueMessage, { role: "user", content: continuationPrompt }];
-      } else {
-        const continuedTarget = pinned;
-        if (continuedTarget === null) {
-          // Unreachable: an edit continuation is only set after a pick.
-          throw new Error("edit continuation without a pinned target");
-        }
-        const target = continuedTarget.locator.path;
-        const diskSource = readFileIfExists(join(cwd, target)) ?? "";
-        const repairSource = repairContextSource({
-          mode: continuedTarget.mode === "create" ? "create" : "modify",
-          repair,
-          target,
-          locator: continuedTarget.locator,
-          diskSource,
-          diagnostics: pendingContinuation.diagnostics,
-        });
-        const currentSource =
-          repairSource.preRendered !== undefined
-            ? repairSource.source
-            : truncateSource(repairSource.source);
-        const stalledInfo: StalledAsk | undefined = stalledAsk
-          ? {
-              failedRounds: stalledRounds,
-              round: iteration,
-              maxRounds: MAX_RUN_ITERATIONS,
-              askNumber: stalledAskNumber(stalledRounds),
-              history: failurePattern,
-            }
-          : undefined;
-        decisionTurn = stalledInfo !== undefined && isDecisionAsk(stalledInfo);
-        continuationPrompt = buildContinuationPrompt({
-          round: pendingContinuation.round,
-          maxRounds: MAX_RUN_ITERATIONS,
-          mode: continuedTarget.mode === "create" ? "create" : "modify",
-          locatorJson: pinnedAddressJson,
-          currentSource,
-          preRenderedSource: repairSource.preRendered,
-          diagnostics: pendingContinuation.diagnostics,
-          // The ask names re-pinning as a concrete alternative, so its round
-          // may move the pin exactly like a verification-opened ask round.
-          repin: (iterationOpenedBy !== null || stalledAsk) && continuedTarget.mode === "modify",
-          digest: digestText(),
-          failureHistory,
-          stalled: stalledInfo,
-          multiPayload: multiPayload,
-          protocolFormat,
-          editDslContext: {
-            issue: options.issue,
-            indexText: editDslIndexText,
-            startLine: editDslPromptStartLine(
-              continuedTarget.mode === "create" ? "create" : "modify",
-              target,
-              continuedTarget.locator,
-              diskSource,
-              repair,
-            ),
-          },
-        });
-      }
-    }
-
-    for (let exchange = 1; exchange <= MAX_EDIT_EXCHANGES; exchange += 1) {
+    // #57: one exchange loop, no fixed exchange budget. A rejection retries or
+    // ends through the no-progress fingerprint/token budget; the loop leaves
+    // only on an applied edit (then verification), success, or termination.
+    for (let exchange = 1; ; exchange += 1) {
       const pick = pinned === null;
+      // Set when this exchange's prompt is a no-progress ask (the only prompts
+      // that offer `STOP`).
+      let promptOffersStop = stopOffered;
+      stopOffered = false;
+      let decisionTurn = false;
       // Reasoning policy (#35; revised 2026-10-18 after the effort sweep and
       // the none/none/max canonical run): every Edit-loop call runs at "none". The
       // sweep showed reasoning only added cost on the happy path (json/sexp)
@@ -6593,12 +6318,15 @@ async function runEditDslLoop(options: LoopOptions): Promise<LoopResult> {
             tokenBudgetDiagnostics(consumedTokens, tokenBudget, tokenBudgetBasis),
           );
         }
-        // Only the continuation prompt offers STOP (#52).
-        if (exchange === 1 && continuationPrompt !== null && isStopReply(response)) {
+        // Only the selection no-progress ask offers STOP (#57).
+        if (promptOffersStop && isStopReply(response)) {
           return await stopRun(
             exchange,
             response,
-            stoppedDiagnostics(iteration, continuationDiagnostics),
+            stalledStopDiagnostics(
+              stalledAttempts,
+              combinedDiagnostics(iterationOpenedBy, lastDiagnostics),
+            ),
           );
         }
         let candidate: Locator = EMPTY_LOCATOR;
@@ -6780,34 +6508,56 @@ async function runEditDslLoop(options: LoopOptions): Promise<LoopResult> {
               : diagnostic;
           lastDiagnostics = selectionDiagnostics;
           lastFailure = "edit";
-          if (exchange === MAX_EDIT_EXCHANGES) {
-            if (iteration >= MAX_RUN_ITERATIONS) {
-              return await terminate("edit-exhausted", capDiagnostics(iterationOpenedBy));
-            }
-            // Selection exhaustion (#52): the next round re-asks for the
-            // target (or STOP) instead of ending the run.
-            continuation = {
-              round: iteration,
-              pick: true,
-              diagnostics: combinedDiagnostics(iterationOpenedBy, selectionDiagnostics),
-            };
-            break;
+          stalledAttempts += 1;
+          // #57: a repeated selection reply is no progress and ends the run;
+          // distinct rejections are retried until the token budget or the
+          // no-progress ask cadence.
+          // Only read the candidate's source when it is inside the editable
+          // workspace; a path-escaping address contributes its raw path only.
+          const selectionState =
+            candidate.path === "" || safeMutablePath(cwd, candidate.path) === null
+              ? candidate.path
+              : (readFileIfExists(join(cwd, candidate.path)) ?? "");
+          if (repeatFailure(response.content ?? "", diagnostic, selectionState)) {
+            return await terminate(
+              "edit-exhausted",
+              repeatedNoProgressDiagnostics(
+                combinedDiagnostics(iterationOpenedBy, selectionDiagnostics),
+              ),
+            );
           }
           messages.push({ role: "assistant", content: response.content ?? "" });
-          messages.push({
-            role: "user",
-            content: fsReply
-              ? buildEditDslCommandRetryPrompt(
-                  options.issue,
-                  editDslIndexText,
-                  selectionDiagnostics,
-                )
-              : buildEditDslSelectionRetryPrompt(
-                  options.issue,
-                  editDslIndexText,
-                  selectionDiagnostics,
-                ),
-          });
+          const failurePattern = detectFailurePattern(records);
+          const selectionAsk = takeStalledAsk(failurePattern);
+          if (selectionAsk !== undefined) {
+            stopOffered = true;
+            messages.push({
+              role: "user",
+              content: buildEditDslSelectionContinuationPrompt({
+                failedAttempts: stalledAttempts,
+                issue: options.issue,
+                indexText: editDslIndexText,
+                diagnostics: combinedDiagnostics(iterationOpenedBy, selectionDiagnostics),
+                digest: digestText(),
+                failureHistory: renderFailureHistoryNote(failurePattern),
+              }),
+            });
+          } else {
+            messages.push({
+              role: "user",
+              content: fsReply
+                ? buildEditDslCommandRetryPrompt(
+                    options.issue,
+                    editDslIndexText,
+                    selectionDiagnostics,
+                  )
+                : buildEditDslSelectionRetryPrompt(
+                    options.issue,
+                    editDslIndexText,
+                    selectionDiagnostics,
+                  ),
+            });
+          }
           continue;
         }
         if (fsReadFeedback !== null) {
@@ -6827,17 +6577,8 @@ async function runEditDslLoop(options: LoopOptions): Promise<LoopResult> {
           );
           lastDiagnostics = fsReadFeedback;
           lastFailure = "edit";
-          if (exchange === MAX_EDIT_EXCHANGES) {
-            if (iteration >= MAX_RUN_ITERATIONS) {
-              return await terminate("edit-exhausted", capDiagnostics(iterationOpenedBy));
-            }
-            continuation = {
-              round: iteration,
-              pick: true,
-              diagnostics: combinedDiagnostics(iterationOpenedBy, fsReadFeedback),
-            };
-            break;
-          }
+          // A read-only reply is inspection, not a failed attempt: it does not
+          // advance the no-progress cadence and is bounded by the token budget.
           messages.push({ role: "assistant", content: response.content ?? "" });
           messages.push({
             role: "user",
@@ -6857,6 +6598,8 @@ async function runEditDslLoop(options: LoopOptions): Promise<LoopResult> {
           pinned = { mode: fsPick.mode, locator };
           pinnedAddressJson = pinJson(pinned);
           pinnedAssistantContent = (response.content ?? "").trim();
+          lastDiagnostics = null;
+          lastFailure = "edit";
           records.push(
             recordRow({
               row: records.length + 1,
@@ -6889,6 +6632,8 @@ async function runEditDslLoop(options: LoopOptions): Promise<LoopResult> {
           pinned = { mode: "modify", locator: renamePick.locator };
           pinnedAddressJson = pinJson(pinned);
           pinnedAssistantContent = (response.content ?? "").trim();
+          lastDiagnostics = null;
+          lastFailure = "edit";
           records.push(
             recordRow({
               row: records.length + 1,
@@ -6919,13 +6664,15 @@ async function runEditDslLoop(options: LoopOptions): Promise<LoopResult> {
           // Unreachable: an edit-dsl success sets `editDslPick`.
           return await terminate(
             "edit-exhausted",
-            exhaustedDiagnostics(iterationOpenedBy, diagnostic),
+            editExhaustedDiagnostics(iterationOpenedBy, diagnostic),
           );
         }
         const { selection, mode, entry, source: pickSource } = editDslPick;
         pinned = { mode, locator: selection.locator };
         pinnedAddressJson = pinJson(pinned);
         pinnedAssistantContent = (response.content ?? "").trim();
+        lastDiagnostics = null;
+        lastFailure = "edit";
         records.push(
           recordRow({
             row: records.length + 1,
@@ -6990,9 +6737,8 @@ async function runEditDslLoop(options: LoopOptions): Promise<LoopResult> {
         continue;
       }
 
-      // Content exchange: revise the pinned target. A fresh iteration has a
-      // fresh ≤3 budget; soft failures re-ask with diagnostics and consume the
-      // same budget.
+      // Content exchange: revise the pinned target. Soft failures re-ask with
+      // diagnostics; #57 removed the fixed exchange budget.
       let pinnedTarget: { mode: SelectionMode; locator: Locator } | null = pinned;
       if (pinnedTarget === null) {
         // Unreachable: the pick branch either pins a target or returns.
@@ -7002,19 +6748,36 @@ async function runEditDslLoop(options: LoopOptions): Promise<LoopResult> {
       const diskSource = readFileIfExists(join(cwd, target)) ?? "";
       let contentPrompt: string;
       // Repair exchange (#73): an intra-round retry (diagnostics present) or a
-      // #52 continuation — never the fresh post-pick edit prompt. Only a repair
+      // A no-progress ask — never the fresh post-pick edit prompt. Only a repair
       // exchange accepts a self-verification request and offers it in the prompt.
       let repairExchange: boolean;
-      if (exchange === 1 && continuationPrompt !== null) {
-        // Round-level continuation (#52): the first exchange of a continued
-        // round shows the continuation prompt instead of the echo of a pick.
-        contentPrompt = continuationPrompt;
-        repairExchange = true;
-      } else if (lastDiagnostics === null && initialContentPrompt !== null) {
+      // Failure history (#71): computed for every content retry; the same
+      // pattern feeds the sharpened 2nd+ ask framing (#65). The no-progress ask
+      // (#54/#57) is a cadence and can land on any exchange, including the first
+      // content prompt after a late successful pick.
+      const failurePattern = detectFailurePattern(records);
+      // A prefetched first-turn editor or confirmation reply already answered a
+      // prompt the model saw; do not consume a no-progress ask for it.
+      const stalled = prefetchedReply === null ? takeStalledAsk(failurePattern) : undefined;
+      const failureHistory = renderFailureHistoryNote(failurePattern);
+      // A verification-opened retry may move the pin; the ask names re-pinning
+      // as a concrete alternative, so it may too.
+      const repinAllowed = iterationOpenedBy !== null || stalled !== undefined;
+      if (stalled !== undefined) {
+        promptOffersStop = true;
+        // Decision-only turn (#75): the same repeated-non-converging gating as
+        // the earlier no-progress ask.
+        decisionTurn = isDecisionAsk(stalled);
+      }
+      if (stalled === undefined && lastDiagnostics === null && initialContentPrompt !== null) {
         contentPrompt = initialContentPrompt;
         repairExchange = false;
       } else {
-        const promptDiagnostics = combinedDiagnostics(iterationOpenedBy, lastDiagnostics);
+        const rawPromptDiagnostics = combinedDiagnostics(iterationOpenedBy, lastDiagnostics);
+        const promptDiagnostics =
+          stalled !== undefined && rawPromptDiagnostics === "the previous exchange was rejected"
+            ? "the previous attempts made no progress"
+            : rawPromptDiagnostics;
         const repairSource = repairContextSource({
           mode: pinnedTarget.mode === "create" ? "create" : "modify",
           repair,
@@ -7027,36 +6790,12 @@ async function runEditDslLoop(options: LoopOptions): Promise<LoopResult> {
           repairSource.preRendered !== undefined
             ? repairSource.source
             : truncateSource(repairSource.source);
-        // No-progress ask (#54): only the first content prompt of a stalled
-        // round carries the decision framing and the digest (#57); every other
-        // retry is unchanged.
-        // Failure history (#71): unlike the digest, the note is computed for
-        // every content retry — ordinary retries and the #54 ask alike. The same
-        // pattern feeds the sharpened 2nd+ ask framing (#65).
-        const failurePattern = detectFailurePattern(records);
-        const stalled =
-          exchange === 1 && stalledAsk
-            ? {
-                failedRounds: stalledRounds,
-                round: iteration,
-                maxRounds: MAX_RUN_ITERATIONS,
-                askNumber: stalledAskNumber(stalledRounds),
-                history: failurePattern,
-              }
-            : undefined;
-        const failureHistory = renderFailureHistoryNote(failurePattern);
-        // Decision-only turn (#75): the same repeated-non-converging gating as
-        // the continuation path; only the first exchange of a stalled round.
-        if (stalled !== undefined) {
-          decisionTurn = isDecisionAsk(stalled);
-        }
         // The self-check result is shown exactly once, in the prompt right after
         // the request was executed (#73).
         const selfCheck = pendingSelfCheck;
         pendingSelfCheck = null;
         contentPrompt = buildRetryPrompt({
           exchangeNumber: exchange,
-          maxExchanges: MAX_EDIT_EXCHANGES,
           mode: pinnedTarget.mode === "create" ? "create" : "modify",
           locatorJson: pinnedAddressJson,
           currentSource,
@@ -7065,7 +6804,9 @@ async function runEditDslLoop(options: LoopOptions): Promise<LoopResult> {
           // iteration keep the verification failure visible too (#48).
           diagnostics: promptDiagnostics,
           failure: lastFailure,
-          repin: iterationOpenedBy !== null && pinnedTarget.mode === "modify",
+          // The ask names re-pinning as a concrete alternative, so it may move
+          // the pin exactly like a verification-opened retry.
+          repin: repinAllowed && pinnedTarget.mode === "modify",
           stalled,
           digest: stalled === undefined ? undefined : digestText(),
           failureHistory,
@@ -7142,27 +6883,15 @@ async function runEditDslLoop(options: LoopOptions): Promise<LoopResult> {
           );
         }
       }
-      // The no-progress ask's STOP (#54), only at its first exchange; the
-      // stalled diagnostics stay distinct from #52's exhausted-round text. A
-      // milestone continuation (#60) carries the ask framing, so its STOP
-      // takes precedence over the continuation's and keeps the chain context.
-      if (exchange === 1 && stalledAsk && isStopReply(response)) {
+      // Only a no-progress ask offers STOP (#54/#57).
+      if (promptOffersStop && isStopReply(response)) {
         return await stopRun(
           exchange,
           response,
           stalledStopDiagnostics(
-            stalledRounds,
-            continuationDiagnostics ?? combinedDiagnostics(iterationOpenedBy, lastDiagnostics),
+            stalledAttempts,
+            combinedDiagnostics(iterationOpenedBy, lastDiagnostics),
           ),
-        );
-      }
-      // Only the continuation prompt (#52) and the no-progress ask (#54) offer
-      // STOP, each at its own exchange-1 prompt.
-      if (exchange === 1 && continuationPrompt !== null && isStopReply(response)) {
-        return await stopRun(
-          exchange,
-          response,
-          stoppedDiagnostics(iteration, continuationDiagnostics),
         );
       }
       // Decision-only turn (#75): STOP was handled above. A reply that still
@@ -7171,7 +6900,6 @@ async function runEditDslLoop(options: LoopOptions): Promise<LoopResult> {
       // re-approach — clamped and carried into the next exchange's prompt
       // instead of being parsed as an edit (no cap, no auto-stop).
       if (
-        exchange === 1 &&
         decisionTurn &&
         !isEditPayloadReply(response.content ?? "", multiPayload, protocolFormat)
       ) {
@@ -7220,27 +6948,19 @@ async function runEditDslLoop(options: LoopOptions): Promise<LoopResult> {
         registerRejection(cause);
         lastDiagnostics = retryDiagnostics(diagnostics);
         lastFailure = "edit";
-        // Output-limit strike cap (#98): the just-pushed row is counted, so the
-        // third consecutive length finish terminates through the summary path
-        // rather than continuing into another exchange or round.
+        stalledAttempts += 1;
+        // Output-limit strike guard (#98), not an exchange/round cap: the
+        // just-pushed row is counted, so the third consecutive length finish
+        // terminates through the summary path rather than continuing to burn
+        // budget. A non-consecutive truncation is an ordinary failed attempt.
         if (consecutiveLengthFinishes(records) >= MAX_CONSECUTIVE_LENGTH) {
           return await terminate(
             "output-limit",
             "stage: output-limit\nthe completion hit the output limit on 3 consecutive attempts; ending the run through the summary path",
           );
         }
-        if (exchange === MAX_EDIT_EXCHANGES) {
-          if (iteration >= MAX_RUN_ITERATIONS) {
-            return await terminate("edit-exhausted", capDiagnostics(iterationOpenedBy));
-          }
-          // Round exhaustion below the cap (#52): continue with a fresh round.
-          continuation = {
-            round: iteration,
-            pick: false,
-            diagnostics: combinedDiagnostics(iterationOpenedBy, lastDiagnostics),
-          };
-          break;
-        }
+        // Truncation has its own output-length guard above; do not also feed it
+        // to the reply/source fingerprint before that guard can fire.
         continue;
       }
       const content = response.content ?? "";
@@ -7257,9 +6977,6 @@ async function runEditDslLoop(options: LoopOptions): Promise<LoopResult> {
           if (selfCheckUsed) {
             requestFailure =
               "stage: protocol\nthe round already used its one self-verification request; return an edit payload now (the harness runs at most one request per round)";
-          } else if (exchange >= MAX_EDIT_EXCHANGES) {
-            requestFailure =
-              "stage: protocol\nthere is no exchange left in this round to return a self-check result; return an edit payload";
           } else {
             const result = await executeSelfCheck(parsedRequest.request, {
               cwd,
@@ -7607,17 +7324,8 @@ async function runEditDslLoop(options: LoopOptions): Promise<LoopResult> {
           );
           lastDiagnostics = editDslViewerFeedback;
           lastFailure = "edit";
-          if (exchange === MAX_EDIT_EXCHANGES) {
-            if (iteration >= MAX_RUN_ITERATIONS) {
-              return await terminate("edit-exhausted", capDiagnostics(iterationOpenedBy));
-            }
-            continuation = {
-              round: iteration,
-              pick: false,
-              diagnostics: combinedDiagnostics(iterationOpenedBy, lastDiagnostics),
-            };
-            break;
-          }
+          // A viewer is inspection, not a failed attempt: it does not advance
+          // the no-progress cadence and is bounded by the token budget only.
           continue;
         } else {
           carriedViewerFeedback = editDslViewerFeedback;
@@ -7704,17 +7412,15 @@ async function runEditDslLoop(options: LoopOptions): Promise<LoopResult> {
         });
         lastDiagnostics = retryDiagnostics(diagnostics);
         lastFailure = "edit";
-        if (exchange === MAX_EDIT_EXCHANGES) {
-          if (iteration >= MAX_RUN_ITERATIONS) {
-            return await terminate("edit-exhausted", capDiagnostics(iterationOpenedBy));
-          }
-          // Round exhaustion below the cap (#52): continue with a fresh round.
-          continuation = {
-            round: iteration,
-            pick: false,
-            diagnostics: combinedDiagnostics(iterationOpenedBy, lastDiagnostics),
-          };
-          break;
+        stalledAttempts += 1;
+        // #57: distinct rejected edits retry without a fixed exchange cap; a
+        // repeated reply/source/diagnostics fingerprint is no progress and ends
+        // the run instead of looping until the budget.
+        if (repeatFailure(response.content ?? "", diagnostics, sourceBefore)) {
+          return await terminate(
+            "edit-exhausted",
+            repeatedNoProgressDiagnostics(combinedDiagnostics(iterationOpenedBy, lastDiagnostics)),
+          );
         }
         continue;
       }
@@ -7731,7 +7437,6 @@ async function runEditDslLoop(options: LoopOptions): Promise<LoopResult> {
       } else {
         writeTarget(cwd, target, newSource);
       }
-      appliedEdit = true;
       // An applied edit ends the rejection chain (#56): the next rejection
       // starts a fresh streak regardless of the verification outcome below.
       clearRejectionPolicy();
@@ -7857,33 +7562,19 @@ async function runEditDslLoop(options: LoopOptions): Promise<LoopResult> {
             (selection.rename !== undefined && selection.rename !== null),
         );
         if (continues) {
-          if (exchange < MAX_EDIT_EXCHANGES) {
-            prefetchedReply = confirmation;
-            initialContentPrompt = modifiedPrompt;
-            continue;
-          }
-          // #8: the verified edit consumed the round's last normal exchange,
-          // so the confirmation editor has no in-round slot. Carry the
-          // already-counted reply into a fresh round (a defined continuation
-          // like #52): the modified prompt and its reply stay paired, the
-          // edit is applied as that round's first exchange without another
-          // provider call, and the fresh round is charged against
-          // MAX_RUN_ITERATIONS and the token budget like any other round.
-          if (iteration >= MAX_RUN_ITERATIONS) {
-            // No round left to carry the confirmation editor: keep the
-            // verified state and end, exactly as the old guard did, rather
-            // than report a misleading cap failure.
-            return success(newSource);
-          }
-          pendingConfirmation = { reply: confirmation, prompt: modifiedPrompt };
-          break;
+          // #8/#57: the exchange loop has no fixed slot limit, so a verified
+          // confirmation editor always continues in the same round. Its reply
+          // was already counted; the next exchange reuses it without another
+          // provider call.
+          prefetchedReply = confirmation;
+          initialContentPrompt = modifiedPrompt;
+          continue;
         }
-        return success(newSource);
         return success(newSource);
       }
       // No rollback (#30): the attempted state stays on disk for the next
-      // iteration to refine. A failure just starts the next iteration, which
-      // gets a fresh ≤3 exchange budget.
+      // iteration to refine. A failure just starts the next iteration; #57
+      // removed the fixed exchange/round budget.
       const diagnostics = formatDiagnostics({
         check,
         test,
@@ -7913,59 +7604,34 @@ async function runEditDslLoop(options: LoopOptions): Promise<LoopResult> {
         carriedViewerFeedback !== null ? `${carriedViewerFeedback}\n\n${diagnostics}` : diagnostics;
       carriedViewerFeedback = null;
       pendingVerificationStage = check.ok ? "tests" : "tsc";
-      // One more consecutive verification-failed round (#54): the count spans
-      // rounds and #52 continuations; only a pass (which ends the run) resets it.
-      stalledRounds += 1;
+      stalledAttempts += 1;
+      // #57: a failed verification is one more failed attempt; a repeated
+      // reply/source/diagnostics state is no progress. The round still ends so
+      // the next prompt opens with the verification failure, but nothing
+      // terminates it for reaching a fixed round count.
+      if (repeatFailure(response.content ?? "", diagnostics, newSource)) {
+        return await terminate(
+          "edit-exhausted",
+          repeatedNoProgressDiagnostics(combinedDiagnostics(iterationOpenedBy, diagnostics)),
+        );
+      }
       verificationFailed = true;
       break;
     }
 
-    // No-progress counting (#60): a round that ends with no applied edit (all
-    // exchanges rejected, truncated, or spent picking) counts exactly like a
-    // failed verification; only a pass (which ends the run) stops the chain.
-    // The #54 decision point then fires in rejection cycles at the same
-    // multiples of MAX_STALLED_ROUNDS.
-    if (!verificationFailed && !appliedEdit) {
-      stalledRounds += 1;
-    }
+    // The exchange loop leaves only on a failed verification (the next round
+    // opens with its diagnostics) or on success/termination. #57 has no fixed
+    // exchange or round cap and no round-continuation budget: the token budget,
+    // the repeated no-progress fingerprint, and the no-progress ask are the
+    // only termination paths for a failed loop.
     if (verificationFailed) {
       continue;
     }
-    // #8: a carried confirmation editor opens a fresh round (accounted like a
-    // #52 continuation) instead of the ordinary round continuation prompt.
-    if (pendingConfirmation !== null) {
-      continue;
-    }
-    // Round-level continuation (#52): a successful pick may have consumed the
-    // last exchange (no content exchange is left); below the cap the round
-    // continues through a continuation prompt instead of ending the run.
-    if (continuation === null && pinned !== null && iteration < MAX_RUN_ITERATIONS) {
-      continuation = {
-        round: iteration,
-        pick: false,
-        diagnostics: combinedDiagnostics(iterationOpenedBy, lastDiagnostics),
-      };
-    }
-    if (continuation !== null) {
-      // A continued verification-repair chain keeps its opening diagnostics, so
-      // the continuation (and its retries) may still re-pin (#52).
-      if (iterationOpenedBy !== null) {
-        pendingDiagnostics = iterationOpenedBy;
-      }
-      // ...and its prompt variant (#49): a tsc-repair chain stays lean.
-      if (iterationOpenedByStage !== null) {
-        pendingVerificationStage = iterationOpenedByStage;
-      }
-      continue;
-    }
-    if (iteration >= MAX_RUN_ITERATIONS) {
-      return await terminate("edit-exhausted", capDiagnostics(iterationOpenedBy));
-    }
-    // Unreachable: the exchange loop only falls through after a pick or with a
-    // continuation set.
+    // Unreachable: every other exchange path returns, retries, or breaks after
+    // a failed verification.
     return await terminate(
       "edit-exhausted",
-      exhaustedDiagnostics(iterationOpenedBy, lastDiagnostics),
+      editExhaustedDiagnostics(iterationOpenedBy, lastDiagnostics),
     );
   }
 }

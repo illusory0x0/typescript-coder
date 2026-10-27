@@ -79,7 +79,7 @@ function failedResult(overrides: Partial<LoopResult> = {}): LoopResult {
     editedSource: null,
     records,
     diagnostics:
-      "edit-exhausted: the 3-exchange Edit budget was exhausted without a valid edit\n\n" +
+      "edit-exhausted: the run ended without a verified edit\n\n" +
       "stage: tsc\nsrc/helper.ts(2,3): error TS2322: Type 'string' is not assignable",
     explanation: "the symbol cannot satisfy the test",
     messages: [],
