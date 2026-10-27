@@ -132,6 +132,100 @@ next reply carries the edit. An editor select clause (with `replace` or
 missing path, a missing symbol, or a space miss pins mode `create`, and the next
 prompt asks for a create clause.
 
+### Syntax-form design notes
+
+The fence is a **control delimiter embedded in text that may itself be arbitrary
+TypeScript**. A syntax form is not good because it is readable to a human or
+valid in Markdown; it is good when the model copies it exactly, cannot confuse it
+with a format it was trained to close or escape, and the parser can still reject
+ambiguity.
+
+`tc` uses bare line markers:
+
+```text
+TC_EDIT_BEGIN
+... raw body ...
+TC_EDIT_END
+```
+
+The markers are uppercase words with underscores, must be exactly one line
+(leading/trailing whitespace allowed), and contain no `<`, `>`, backticks,
+braces, brackets, quotes, or whitespace between words. The prompt shows this
+canonical form and one counterexample; the body close is the only delimiter for
+a code block. The old `<<<TC_EDIT_BEGIN>>>` / `<<<TC_EDIT_END>>>` form was
+hard-switched away: it resembles too many control formats and produced repeated
+fence/terminator errors in live runs.
+
+#### Known conflict surfaces
+
+| Form                           | Examples                                    | Why it is dangerous as a body delimiter                                                                                                         | Verdict                                                                        |
+| ------------------------------ | ------------------------------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------- | ------------------------------------------------------------------------------ |
+| XML / HTML / JSX tags          | `<edit>…</edit>`, `<tc:begin>`              | Models auto-close tags, nest them, or confuse them with UI/JSX; closing tags look like tool markup                                              | Avoid                                                                          |
+| Tool-use / DSML special tokens | `<\|...\|>`, `<\|tool_call\|>`, `<｜...｜>` | These are control-token shapes, not ordinary text; tokenizers/servers may interpret or filter them, and models may emit them despite “no tools” | Never use as a literal fence                                                   |
+| Markdown fences                | ` ``` `, `~~~`                              | The most overfit code format; bodies often contain backticks; models wrap replies unprompted; nesting is ambiguous                              | Use only as an explicitly tolerated outer wrapper, never as the body delimiter |
+| JSON / JSON5                   | `{"body": "..."}`                           | Quotes and escaping multiply with real code; models overfit JSON and may truncate or “repair” it; a code body is not a string                   | Avoid for raw bodies                                                           |
+| YAML                           | `body: &#124;` / indentation                | Indentation and `:` are both code and YAML; invisible whitespace errors are costly                                                              | Avoid                                                                          |
+| Heredoc / shell                | `<<EOF`, `EOF`, `<<'EOF'`                   | Looks like shell; terminator is a short word that can occur in code; models may add shell semantics                                             | Avoid                                                                          |
+| Merge-conflict / diff markers  | `<<<<<<<`, `=======`, `>>>>>>>`, `@@`       | Models see these in diffs and conflict resolution; confuses “ours/theirs” framing                                                               | Avoid                                                                          |
+| Comment sentinels              | `// BEGIN`, `/* END */`, `# end`            | Comments are legal code and models may drop, normalize, or duplicate them; a comment line can occur in the body                                 | Avoid unless no punctuation-free marker is possible                            |
+| String delimiters              | triple quotes, backticks, `"""`             | The body itself may contain the same delimiter; escaping/trimming rules become another failure mode                                             | Avoid                                                                          |
+| Wiki/array brackets            | `[[BEGIN]]`, `[[END]]`                      | Looks like nested arrays or wiki links; model may balance brackets                                                                              | Avoid                                                                          |
+| Template/percent markers       | `%%BEGIN%%`, `{{BEGIN}}`                    | Common templating syntax; models may substitute or escape                                                                                       | Avoid                                                                          |
+| Markdown heading/rule markers  | `===`, `---`, `## BEGIN`                    | Common Markdown/setext/diff syntax; models may treat them as formatting                                                                         | Avoid                                                                          |
+| Unicode box drawing / emoji    | `━━`, `🔒`, zero-width characters           | Tokenization/normalization varies; invisible characters are unreviewable                                                                        | Avoid                                                                          |
+| Fixed random nonce             | `BEGIN_7F3A`                                | Safer against body collision, but adds a copy burden and a new failure mode: model copies the wrong nonce                                       | Optional hardening, not default                                                |
+| Length-prefixed body           | `BEGIN 1234`                                | Unambiguous in principle, but models cannot reliably count characters                                                                           | Avoid in model-facing syntax                                                   |
+
+#### Common design mistakes
+
+1. **Assuming “common” means “easy for the model.”** Markdown, XML, JSON,
+   YAML, and diff syntax are common because models were trained on them; a
+   delimiter in one of those families invites completion/normalization rather
+   than exact copying.
+2. **Using code punctuation as a control boundary.** Backticks, quotes,
+   brackets, braces, comments, and `end` are legal in the body; without an
+   escape/nonce the first matching line becomes a semantic boundary.
+3. **Confusing a tool call with text.** `<|...|>` and DSML shapes are not safe
+   plain text; a model may emit them from training, and an API may treat them as
+   control tokens. The protocol explicitly says “no tools,” but that does not
+   make the tokens safe.
+4. **Using paired nesting syntax.** XML/HTML/JSX and Markdown fences require
+   matching open/close; models can mismatch, nest, or auto-close them.
+5. **Two terminators for one statement.** A sentinel close plus a separate
+   `end` gives the model two chances to terminate and two chances to disagree.
+   For a code body, the close should be the terminator; only statements without
+   a body need `end`.
+6. **Depending on indentation or significant whitespace.** YAML-like and
+   heredoc-like forms hide errors that are invisible in a diff.
+7. **Making the delimiter a prefix of valid code.** A bare word can collide with
+   an identifier; exact-line matching and uppercase underscores reduce this, but
+   any fixed marker needs a collision policy.
+8. **Adding a random nonce for every call.** It helps against collisions but
+   makes copying harder; use it only when the body can contain the fixed marker.
+9. **Making the parser permissive to hide syntax errors.** Recovery aliases are
+   useful (for example one trailing `end` after a write close), but arbitrary
+   trailing text makes the boundary meaningless.
+10. **Testing readability instead of model behavior.** A human can read XML;
+    that does not mean an LLM will copy it exactly. Measure protocol errors on
+    actual model families.
+11. **Not providing a canonical example and a counterexample.** The prompt
+    should show the exact lines, not only describe them in prose.
+12. **Using Unicode/invisible characters.** Tokenization and normalization can
+    change them; diffs cannot reveal them reliably.
+
+#### Rules for a new delimiter
+
+- One short, stable, punctuation-free line marker; no Markdown/XML/JSON/tool
+  special-token family.
+- Exact whole-line match; trim only whitespace; no inline body.
+- One terminator for a body; do not require a second `end` after it.
+- Fixed marker by default; add a nonce/length only for a real collision problem.
+- Canonical prompt example plus a “do not add `end` after the close” example.
+- Explicit recovery policy: at most one compatibility alias, and a hard error
+  for a second terminator or trailing text.
+- Tests must include code containing the candidate marker, nested code, CRLF,
+  leading indentation, and real model-family runs.
+
 ### Address rules for declarations and members
 
 An address is `(path, symbol, kind)`. `symbol` is dotted when the declaration is

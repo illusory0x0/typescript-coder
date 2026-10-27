@@ -335,6 +335,10 @@ and are tracked separately from planning turns.
 
 ## 3. Flat Plan DSL
 
+The fence-form rationale is owned by
+[`edit-protocol.md`](edit-protocol.md) §2 “Syntax-form design notes”; the Plan
+DSL uses the same bare `TC_EDIT_BEGIN` / `TC_EDIT_END` line markers.
+
 The planner emits a flat block DSL, not JSON. Every record is independent. No
 nesting, no JSON fallback, and no legacy Stage/Task/Edit mode.
 
