@@ -1576,4 +1576,23 @@ describe("prompt examples", () => {
       }
     }
   });
+
+  test("every fence marker in the examples is a whole line", () => {
+    for (const form of EDIT_DSL_EXAMPLE_FORMS) {
+      const reply = "raw" in form ? form.raw : serializeSelections(form.selections);
+      const lines = reply.split("\n");
+      for (const line of lines) {
+        if (!line.includes(BEGIN) && !line.includes(END)) {
+          continue;
+        }
+        expect(line.trim()).toBe(line.includes(BEGIN) ? BEGIN : END);
+      }
+      for (const [index, line] of lines.entries()) {
+        if (line.trim() !== END) {
+          continue;
+        }
+        expect(lines[index + 1]?.trim()).not.toBe("end");
+      }
+    }
+  });
 });

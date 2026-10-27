@@ -95,7 +95,11 @@ A select clause is never a file command. A select clause with `replace` or
   range. A pick-only `{a, b, …}` set is supported as separate regions: the same
   fence replacement is applied to every resolved range (all-or-none at
   resolution; overlapping ranges are a `stage: range` failure).
-- **`replace with <fence>`**: the sentinel-only fence shared with the Plan DSL
+- **`replace with <fence>`**: the sentinel-only fence shared with the Plan DSL.
+  The prompt teaches a line-sensitive layout: both markers occupy their own
+  lines and the raw body starts on the next line. The parser's inline-opener
+  and one-trailing-`end` forms are compatibility recovery only; prompts and
+  examples never teach them.
   ([`plan-exec.md`](plan-exec.md) §3). `TC_EDIT_BEGIN` and
   `TC_EDIT_END` are exact whole lines, optionally indented or with
   trailing whitespace. The opener may share the `with` line when it is the last
