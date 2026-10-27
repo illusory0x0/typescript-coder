@@ -59,6 +59,9 @@ digraph issues {
   "52" [label="#52 Extend declaration addresses to nested and named members"];
   "53" [label="#53 Extend structural matcher contexts and add a declaration corpus"];
   "54" [label="#54 Support file-level select for import and export statements"];
+  "55" [label="#55 Port plan-exec executor hardening and no-cap scheduling to pinned-repair"];
+  "56" [label="#56 Add pinned-repair output contract and scaffold guidance"];
+  "57" [label="#57 Remove fixed exchange and round caps from pinned-repair"];
 
   // parent edges (parent -> child), solid
   "1" -> "2";
@@ -99,6 +102,8 @@ digraph issues {
   "51" -> "52";
   "51" -> "53";
   "51" -> "54";
+  "55" -> "56";
+  "55" -> "57";
 
   // dependency edges (blocker -> blocked), dashed
   "2" -> "3" [style=dashed, label="blocks"];
@@ -145,4 +150,5 @@ digraph issues {
   "49" -> "50" [style=dashed, label="blocks"];
   "50" -> "54" [style=dashed, label="blocks"];
   "54" -> "53" [style=dashed, label="blocks"];
+  "56" -> "57" [style=dashed, label="blocks"];
 }

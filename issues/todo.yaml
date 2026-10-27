@@ -10,3 +10,27 @@
   parent: null
   deps: [47]
   file: 0044-stabilize-plan-exec-on-mini-spreadsheet-after-guard-and-matcher-changes.md
+- id: 56
+  title: "Add pinned-repair output contract and scaffold guidance"
+  status: todo
+  priority: medium
+  milestone: null
+  parent: 55
+  deps: []
+  file: 0056-add-pinned-repair-output-contract-and-scaffold-guidance.md
+- id: 57
+  title: "Remove fixed exchange and round caps from pinned-repair"
+  status: todo
+  priority: medium
+  milestone: null
+  parent: 55
+  deps: [56]
+  file: 0057-remove-fixed-exchange-and-round-caps-from-pinned-repair.md
+- id: 55
+  title: "Port plan-exec executor hardening and no-cap scheduling to pinned-repair"
+  status: todo
+  priority: medium
+  milestone: null
+  parent: null
+  deps: []
+  file: 0055-port-plan-exec-executor-hardening-and-no-cap-scheduling-to-pinned-repair.md
