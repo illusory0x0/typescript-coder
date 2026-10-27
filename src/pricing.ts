@@ -1,4 +1,4 @@
-// Official DeepSeek V4.1-Flash ("deepseek-flash") pricing and per-run cost
+// Official DeepSeek V4.1-Flash ("deepseek-v4.1-flash") pricing and per-run cost
 // computation for benchmark reports and the loop's hard USD budget.
 //
 // Rates are USD per 1M tokens, fetched 2026-10-27 from

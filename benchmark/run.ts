@@ -486,7 +486,7 @@ const TASK_REFERENCE_BASENAMES: Record<TaskName, string> = {
   "mini-spreadsheet": "workbook",
 };
 
-const DEFAULT_MODEL = "deepseek-flash";
+const DEFAULT_MODEL = "deepseek-v4.1-flash";
 const DEFAULT_REPS = 5;
 const DEFAULT_CONCURRENCY = 4;
 const PILOT_REPS = 1;

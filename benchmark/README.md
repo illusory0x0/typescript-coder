@@ -22,7 +22,7 @@ Flags: `--task`, `--all` (default: the four-task benchmark matrix; excludes
 `--concurrency <n>` (default 4, max parallel runs), `--pilot` (1 rep per task
 and side, writes `benchmark/results/pilot-<date>.json`), `--side tc` (the only
 allowed value; oc is frozen), `--model`
-(default `deepseek-flash`), `--keep`, `--json <path>`, `--replay-dir
+(default `deepseek-v4.1-flash`), `--keep`, `--json <path>`, `--replay-dir
 <path>` (tc side only: write one replay bundle per run to `<path>/<task>-tc-
 rep<n>.json`; off by default), `--budget-usd <usd>` (tc side only: abort a run
 once accumulated **cache-excluded USD** exceeds `<usd>`; the final termination

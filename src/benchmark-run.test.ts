@@ -671,7 +671,7 @@ describe("oc model override (--oc-model)", () => {
     expect(parseArgs([]).ocModel).toBeNull();
     expect(parseArgs(["--model", "base"]).ocModel).toBeNull();
     expect(parseArgs(["--model", "base", "--oc-model", "base#none"]).ocModel).toBe("base#none");
-    expect(parseArgs(["--oc-model", "base#none"]).model).toBe("deepseek-flash");
+    expect(parseArgs(["--oc-model", "base#none"]).model).toBe("deepseek-v4.1-flash");
   });
 
   test.skipIf(!runModulePresent)(
