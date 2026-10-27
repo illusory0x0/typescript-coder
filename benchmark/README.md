@@ -29,9 +29,10 @@ once accumulated **cache-excluded USD** exceeds `<usd>`; the final termination
 summary call is not budgeted; default 0.10, see "Run budget" below),
 `--effort <none|low|high|max>` (tc side only: force this reasoning_effort
 on every Edit-loop call, overriding the default described below),
-`--agent-mode pinned-repair|plan-exec|both` (the tc loop; `pinned-repair` is the
-default, `both` measures the pinned-repair and plan-exec loops in one
-report, and `edit` remains the deprecated input alias), `--help`.
+`--pilot-json <path>` (full run only: explicit pilot report path for
+`pilotReference`), `--agent-mode pinned-repair|plan-exec|both` (the tc loop;
+`pinned-repair` is the default, `both` measures the pinned-repair and plan-exec
+loops in one report, and `edit` remains the deprecated input alias), `--help`.
 Non-pilot results default to `benchmark/results/<date>.json`.
 
 The tc side runs every Edit-loop call at `reasoning_effort: none` by default
@@ -118,7 +119,10 @@ The held-out result is reported in each run report and never as a tuned column.
   side did not report them.
 - `steps`: tc = number of recorded loop rows (`records`, exchanges +
   verifications); oc = assistant messages in the session export (null when
-  unavailable).
+  unavailable). `steps` is deliberately **not** the model-call count.
+- `turns`: tc = measured model calls; plan-exec also carries `planning`,
+  `execution`, and `review` phase counts. `turns` is additive telemetry;
+  aggregates keep `Mean steps` and add `Mean turns`.
 - `agentMode` (tc side): `"pinned-repair"` or `"plan-exec"`; null for the
   oc side. Legacy rows may carry `"edit"`, read through the alias as
   `pinned-repair`.

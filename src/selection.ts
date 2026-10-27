@@ -787,18 +787,12 @@ class SelectionReader {
           [EDIT_FENCE_END],
         );
       }
+      // Compatibility: models often append the statement-style `end` after a
+      // write's sentinel close. The sentinel already terminates the write, so
+      // consume one optional trailing `end`; a second one remains an error.
       if (this.keywordAt("end")) {
-        this.syntax(
-          "EDIT_STRAY_END",
-          `a \`write\` ends at its ${EDIT_FENCE_END} close; the trailing \`end\` has no open statement to close`,
-          {
-            expected: [EDIT_FENCE_END],
-            found: "end",
-            hint: `remove the trailing \`end\`; the sentinel close ${EDIT_FENCE_END} already terminates the write`,
-          },
-        );
-      }
-      if (!this.statementStartAt()) {
+        this.consumeEnd("`write` command");
+      } else if (!this.statementStartAt()) {
         this.syntax(
           "EDIT_EMBEDDED_FENCE_END",
           `the write body contains the literal line ${EDIT_FENCE_END}; a fence body cannot carry the end marker, and no text may follow the close on its line`,

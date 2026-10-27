@@ -1014,18 +1014,19 @@ describe("parseMultiEditor", () => {
     }
   });
 
-  test("rejects a trailing end after a write close", () => {
+  test("accepts one compatibility trailing end after a write close", () => {
     const text = ["write src/a.ts with", BEGIN, "x", END, "end"].join("\n");
-    try {
-      parseMultiEditor(text);
-      throw new Error("expected a syntax error");
-    } catch (error) {
-      expect(error).toBeInstanceOf(SelectionSyntaxError);
-      const syntax = error as SelectionSyntaxError;
-      expect(syntax.issues[0]?.code).toBe("EDIT_STRAY_END");
-      expect(syntax.issues[0]?.hint).toContain("remove");
-      expect(syntax.issues[0]?.hint).toContain("sentinel close");
-    }
+    expect(parseMultiEditor(text)).toEqual([
+      {
+        type: "fs",
+        statement: { op: "write", path: "src/a.ts", ranges: null, replacement: "x" },
+      },
+    ]);
+  });
+
+  test("rejects a second trailing end after a write close", () => {
+    const text = ["write src/a.ts with", BEGIN, "x", END, "end", "end"].join("\n");
+    expect(() => parseMultiEditor(text)).toThrow(SelectionSyntaxError);
   });
 
   test("an unclosed write fence remains EDIT_UNCLOSED_FENCE", () => {

@@ -487,7 +487,7 @@ clone of the current graph, then validated by the same merge rules.
                    <node-field>*
                    "end" NL
 
-<node-update>  ::= "node~" <id> NL
+<node-update>  ::= "node~" <id> [ "verify" <verify> ] NL
                    <update-field>*
                    "end" NL
 
@@ -510,7 +510,9 @@ Semantics:
   `instruction:` is required, `verify` is required, hints/approach/phase are
   optional. A patch may add any number of nodes; the USD cost budget and run
   no-progress detection bound growth.
-- `node~` replaces only the fields present and preserves omitted fields.
+- `node~` replaces only the fields present and preserves omitted fields. The
+  optional `verify tsc|test` may stay on the header line (compatibility) or be
+  emitted as a normal body field.
   `after` present replaces the whole dependency list; `after` with no ids clears
   it. One or more `hint` lines replace the whole hint list; `hint clear` clears
   it. `approach:` / `phase:` replace the text; `approach clear` / `phase clear`
@@ -1082,7 +1084,11 @@ tc --agent-mode plan-exec < issue.txt
 - `LoopResult.usage` splits a `plan-exec` run's spend into `planning`,
   `review`, and `execution` `LoopTokens` buckets; their sum is
   `LoopResult.tokens`, and all three count toward the budget.
-  `LoopResult.warnings` carries recovered parser warnings.
+- `LoopResult.turns` adds model-call telemetry (`planning`, `execution`,
+  `review`, `total`) without changing `records`/`steps`.
+- `LoopResult.executionMessages` carries optional per-attempt executor
+  transcripts; it is not embedded in the benchmark Markdown report.
+- `LoopResult.warnings` carries recovered parser warnings.
 
 The node-summary change is a breaking result-schema change;
 `typescript-coder-result@3` is shipped. `@2` carried per-edit Stage/Task/Edit

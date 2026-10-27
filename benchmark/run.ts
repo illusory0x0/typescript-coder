@@ -66,6 +66,8 @@ interface CliArgs {
   ocModel: string | null;
   keep: boolean;
   json: string | null;
+  /** Explicit pilot report path for a full run's `pilotReference`; null = default. */
+  pilotJson: string | null;
   replayDir: string | null;
   costBudgetUsd: number | null;
   effort: ReasoningEffort | null;
@@ -181,6 +183,8 @@ interface SideOutcome {
   readonly error: string | null;
   readonly infraError: string | null;
   readonly steps: number | null;
+  /** Model calls; phase fields are present only for plan-exec. */
+  readonly turns: RunTurnCounts;
   readonly durationMs: number;
   /** Wall clock of the side's model work (what `durationMs` measures). */
   readonly startedAt: string;
@@ -215,6 +219,14 @@ interface LogPaths {
   readonly stats: string | null;
 }
 
+/** Model-turn telemetry; old `steps` remains the execution-record count. */
+export interface RunTurnCounts {
+  readonly total: number;
+  readonly planning: number | null;
+  readonly execution: number | null;
+  readonly review: number | null;
+}
+
 export interface RunRecord {
   readonly task: TaskName;
   readonly side: Side;
@@ -236,6 +248,8 @@ export interface RunRecord {
   readonly finishedAt: string;
   readonly cost: number | null;
   readonly steps: number | null;
+  /** Model calls; additive to `steps`, which stays the record count. */
+  readonly turns: RunTurnCounts;
   readonly records: readonly RecordSummary[] | null;
   /** Per-run rejected-vs-applied exchange counts (#69); null when no records. */
   readonly exchangeStats: RecordExchangeStats | null;
@@ -292,6 +306,8 @@ export interface AggregateRow {
   cache: { read: TokenStats; hitRate: number | null };
   durationMsMean: number | null;
   stepsMean: number | null;
+  /** Mean model calls per selected run; `stepsMean` remains the record mean. */
+  turnsMean: number | null;
   /** Raw token sums divided by successful runs; diagnostic only. */
   tokensPerSuccess: { in: number | null; out: number | null; total: number | null };
   /** Cache-excluded USD sums divided by successful runs; budget/comparison view. */
@@ -533,6 +549,8 @@ Options:
                                              the oc side cannot run)
   --keep                                     keep workspaces and logs under ./tmp/benchmark/
   --json <path>                              report output path (default: benchmark/results/)
+  --pilot-json <path>                        explicit pilot report path for pilotReference
+                                             on a full run (default: pilot-<date>.json)
   --replay-dir <path>                        write per-run tc-side replay bundles to <path>
   --budget-usd <usd>                         abort a tc-side run once accumulated cache-excluded
                                              USD cost exceeds <usd>; the final termination summary
@@ -642,6 +660,19 @@ export function frozenDimensionError(side: SideSelection): string | null {
     : "the oc side is frozen and no oc baseline is committed; benchmark only runs --side tc";
 }
 
+/** Resolve the pilot report a full run should cite (explicit path or default). */
+export function pilotCandidatePath(
+  repoRoot: string,
+  date: string,
+  pilotJson: string | null,
+  cwd = process.cwd(),
+): string {
+  if (pilotJson === null) {
+    return join(repoRoot, "benchmark", "results", `pilot-${date}.json`);
+  }
+  return isAbsolute(pilotJson) ? pilotJson : resolve(cwd, pilotJson);
+}
+
 function parseTask(value: string): TaskName {
   const match = TASKS.find((task) => task.name === value);
   if (match === undefined) {
@@ -662,6 +693,7 @@ export function parseArgs(argv: string[]): CliArgs {
     ocModel: null,
     keep: false,
     json: null,
+    pilotJson: null,
     replayDir: null,
     costBudgetUsd: null,
     effort: null,
@@ -751,6 +783,15 @@ export function parseArgs(argv: string[]): CliArgs {
           failUsage("missing value for --json");
         }
         args.json = value;
+        index += 1;
+        break;
+      }
+      case "--pilot-json": {
+        const value = argv[index + 1];
+        if (value === undefined || value.startsWith("-")) {
+          failUsage("missing value for --pilot-json");
+        }
+        args.pilotJson = value;
         index += 1;
         break;
       }
@@ -989,6 +1030,8 @@ function fetchWithTimeout(input: string | URL | Request, init?: RequestInit): Pr
 
 class RecordingProvider implements ProviderLike {
   readonly rawUsages: unknown[] = [];
+  /** Measured model calls; used for turn telemetry, not the record count. */
+  calls = 0;
   readonly #inner: OpenAIProvider;
   readonly #recorder: ReplayRecorder | null;
 
@@ -1002,6 +1045,7 @@ class RecordingProvider implements ProviderLike {
     tools?: ToolDefinition[],
     options?: { temperature?: number },
   ): Promise<ChatResponse> {
+    this.calls += 1;
     const response = await this.#inner.chat(messages, tools, options);
     this.rawUsages.push(usageFromRaw(response.raw));
     this.#recorder?.record(messages, response);
@@ -1258,6 +1302,12 @@ async function runTypescriptCoderSide(options: {
     error,
     infraError: null,
     steps: result?.records.length ?? null,
+    turns: {
+      total: provider.calls,
+      planning: result?.turns?.planning ?? null,
+      execution: result?.turns?.execution ?? null,
+      review: result?.turns?.review ?? null,
+    },
     durationMs,
     startedAt,
     finishedAt,
@@ -1409,6 +1459,7 @@ async function runOpencodeSide(options: {
     error,
     infraError,
     steps,
+    turns: { total: 0, planning: null, execution: null, review: null },
     durationMs,
     startedAt,
     finishedAt,
@@ -1663,6 +1714,7 @@ async function runOnce(job: BenchmarkJob, context: RunContext): Promise<RunRecor
     finishedAt: outcome.finishedAt,
     cost,
     steps: outcome.steps,
+    turns: outcome.turns,
     records: outcome.recordSummaries,
     exchangeStats: outcome.exchangeStats,
     loopDiagnostics: outcome.loopDiagnostics,
@@ -1865,6 +1917,14 @@ export function aggregateRuns(
         : selected.reduce((left, run) => left + run.durationMs, 0) / selected.length,
     stepsMean:
       steps.length === 0 ? null : steps.reduce((left, right) => left + right, 0) / steps.length,
+    turnsMean: (() => {
+      const values = selected
+        .map((run) => run.turns.total)
+        .filter((value): value is number => typeof value === "number");
+      return values.length === 0
+        ? null
+        : values.reduce((left, right) => left + right, 0) / values.length;
+    })(),
     tokensPerSuccess: {
       in: perSuccess(tokens.in),
       out: perSuccess(tokens.out),
@@ -2486,8 +2546,8 @@ export function writeMarkdownReport(
 
   lines.push("## Per-task results", "");
   lines.push(
-    "| Task | Side | Protocol | Agent mode | Success | Billable in ($) | Cache hit | Billable out ($) | Billable total ($) | Full $ | $/success | Mean dur (s) | Mean steps |",
-    "| --- | --- | --- | --- | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: |",
+    "| Task | Side | Protocol | Agent mode | Success | Billable in ($) | Cache hit | Billable out ($) | Billable total ($) | Full $ | $/success | Mean dur (s) | Mean steps | Mean turns |",
+    "| --- | --- | --- | --- | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: |",
   );
   for (const row of aggregates.byTaskSide) {
     lines.push(
@@ -2499,14 +2559,14 @@ export function writeMarkdownReport(
         row.cost.mean,
       )} | ${formatUsd(row.costPerSuccess)} | ${formatSeconds(
         row.durationMsMean,
-      )} | ${formatSteps(row.stepsMean)} |`,
+      )} | ${formatSteps(row.stepsMean)} | ${formatSteps(row.turnsMean)} |`,
     );
   }
   lines.push("");
 
   lines.push("## Overall comparison", "");
   lines.push(
-    "| Side | Protocol | Agent mode | Success | Mean billable in ($) | Cache hit | Mean billable out ($) | Mean billable total ($) | Total billable ($) | Mean full $ | Total full $ | $/success | Mean dur (s) | Mean steps |",
+    "| Side | Protocol | Agent mode | Success | Mean billable in ($) | Cache hit | Mean billable out ($) | Mean billable total ($) | Total billable ($) | Mean full $ | Total full $ | $/success | Mean dur (s) | Mean steps | Mean turns |",
     "| --- | --- | --- | --- | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: |",
   );
   for (const row of aggregates.bySide) {
@@ -2519,7 +2579,9 @@ export function writeMarkdownReport(
         row.billableCost.total.total,
       )} | ${formatUsd(row.cost.mean)} | ${formatUsd(row.cost.total)} | ${formatUsd(
         row.costPerSuccess,
-      )} | ${formatSeconds(row.durationMsMean)} | ${formatSteps(row.stepsMean)} |`,
+      )} | ${formatSeconds(row.durationMsMean)} | ${formatSteps(row.stepsMean)} | ${formatSteps(
+        row.turnsMean,
+      )} |`,
     );
   }
   lines.push("");
@@ -2915,7 +2977,7 @@ async function main(): Promise<number> {
 
   // The full run on the pilot's date references the pilot report when it has
   // already been written; other days (and missing files) stay null.
-  const pilotCandidate = join(repoRoot, "benchmark", "results", `pilot-${date}.json`);
+  const pilotCandidate = pilotCandidatePath(repoRoot, date, args.pilotJson);
 
   // #66/#16: pin the measured inputs per variant, so a multi-variant report can
   // be checked against the prompt each result actually measured.

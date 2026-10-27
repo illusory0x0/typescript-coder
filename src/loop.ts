@@ -1516,6 +1516,14 @@ export function cloneLoopUsage(usage: LoopUsage): LoopUsage {
   };
 }
 
+/** Model calls by plan/execute phase; additive telemetry, not a record count. */
+export interface LoopTurnCounts {
+  readonly planning: number;
+  readonly execution: number;
+  readonly review: number;
+  readonly total: number;
+}
+
 export interface LoopResult {
   ok: boolean;
   mode?: SelectionMode;
@@ -1541,6 +1549,16 @@ export interface LoopResult {
    * order (`typescript-coder-result@3`). Absent on the single-target drivers.
    */
   nodes?: NodeSummary[];
+  /**
+   * Plan/execute model-call telemetry: calls by conversation bucket. Additive;
+   * `records` and `steps` keep their historical execution-row semantics.
+   */
+  turns?: LoopTurnCounts;
+  /**
+   * Plan/execute executor transcripts, one per execution attempt. Optional
+   * (additive); the benchmark report does not embed these messages.
+   */
+  executionMessages?: ChatMessage[][];
   /** Recovered parser warnings (#33); absent when the reply was clean. */
   warnings?: string[];
 }

@@ -254,6 +254,19 @@ describe("runLoop dispatch", () => {
     expect(provider.calls[0]?.[0]?.content).toContain("work-graph planner");
   }, 30000);
 
+  test("reports additive plan turns, execution transcripts, and typed causes", async () => {
+    const dir = project();
+    const node = workNode(2, "answer");
+    const provider = new ScriptedProvider([planText([node]), "junk", GOOD_EDIT, "approve"]);
+    const result = await runTaskLoop(baseOptions(dir, provider));
+    expect(result.ok).toBe(true);
+    expect(result.turns).toEqual({ planning: 1, execution: 2, review: 1, total: 4 });
+    expect(result.records[0]).toMatchObject({ outcome: "protocol", cause: "protocol" });
+    expect(result.executionMessages).toHaveLength(1);
+    expect(result.executionMessages?.[0]?.[0]?.role).toBe("system");
+    expect(result.executionMessages?.[0]?.at(-1)?.role).toBe("assistant");
+  }, 30000);
+
   test("the default edit mode is unchanged", async () => {
     const dir = project();
     const provider = new ScriptedProvider([GOOD_EDIT]);

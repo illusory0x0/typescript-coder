@@ -1,4 +1,4 @@
-import type { LoopResult, TerminationReason } from "./loop";
+import type { LoopResult, LoopTurnCounts, TerminationReason } from "./loop";
 
 /**
  * Versioned contract of the machine-readable sub-agent result (#80, #28).
@@ -45,6 +45,8 @@ export interface SubagentResult {
   diagnostics: string | null;
   /** Plan/execute runs: one entry per WorkNode, in record order; absent in edit mode. */
   nodes?: ResultNode[];
+  /** Plan/execute model-call counts; absent in edit mode and legacy results. */
+  turns?: LoopTurnCounts;
 }
 
 function zeroResultTokens(): ResultTokens {
@@ -94,6 +96,7 @@ export function buildSubagentResult(input: {
     terminationReason: result.terminationReason ?? null,
     diagnostics: result.diagnostics,
     ...(result.nodes === undefined ? {} : { nodes: result.nodes }),
+    ...(result.turns === undefined ? {} : { turns: result.turns }),
   };
 }
 

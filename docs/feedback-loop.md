@@ -114,14 +114,17 @@ Each exchange and each verification is recorded as a row (`records`). A
 A `LoopResult` carries `ok`, `mode` (the selection mode, not `AgentMode`),
 `locator`, `filePath`, `editedSource`, `records`, `diagnostics`, `explanation`,
 `messages`, `skipped`, `terminationReason`, `tokens`, and `appliedTargets`.
-Plan-exec adds `usage`, `warnings`, and `nodes`; [`plan-exec.md`](plan-exec.md)
-§10 owns those fields and the string-id WorkNode result schema.
+Plan-exec adds `usage`, `turns`, optional `executionMessages`, `warnings`, and
+`nodes`; [`plan-exec.md`](plan-exec.md) §10 owns those fields and the string-id
+WorkNode result schema. `turns` is model-call telemetry; `steps`/`records` keep
+their historical meaning.
 
 The subagent result printed by `--format json` is
 `typescript-coder-result@3`: format, status, verified, files, targets, records,
-tokens, terminationReason, diagnostics, and (plan-exec only) nodes. It keeps the
-single `tokens` object; `LoopResult.usage` and `LoopResult.warnings` are not
-exposed there.
+tokens, terminationReason, diagnostics, and (plan-exec only) nodes plus additive
+`turns` telemetry. It keeps the single `tokens` object;
+`LoopResult.usage`, `LoopResult.executionMessages`, and `LoopResult.warnings`
+are not exposed there.
 
 ## Failure handling
 

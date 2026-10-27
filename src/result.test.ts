@@ -119,6 +119,15 @@ describe("buildSubagentResult", () => {
     expect(result.tokens).toBe(tokens);
   });
 
+  test("carries additive plan/execute turn telemetry", () => {
+    const result = buildSubagentResult({
+      result: resultOf({
+        turns: { planning: 1, execution: 2, review: 1, total: 4 },
+      }),
+    });
+    expect(result.turns).toEqual({ planning: 1, execution: 2, review: 1, total: 4 });
+  });
+
   test("carries plan/execute WorkNode summaries with string node ids (#49)", () => {
     const result = buildSubagentResult({
       result: resultOf({

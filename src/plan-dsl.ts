@@ -1578,8 +1578,23 @@ export type PatchParse =
   | { ok: true; patch: PlanPatch }
   | { ok: false; stage: "plan-protocol" | "plan-graph"; diagnostics: string };
 
-function parseUpdateHeader(cursor: Cursor, header: Line, keyword: "node~" | "node-"): NodeId {
-  const [actual, idToken, ...extra] = tokensOf(header);
+interface UpdateHeader {
+  id: NodeId;
+  /** `node~` accepts an inline `verify tsc|test`; the strict body form still works. */
+  verify?: WorkVerify;
+}
+
+function parseUpdateHeader(cursor: Cursor, header: Line, keyword: "node~" | "node-"): UpdateHeader {
+  const [actual, idToken, ...rest] = tokensOf(header);
+  let extra = rest;
+  let verify: WorkVerify | undefined;
+  if (keyword === "node~" && extra[0] === "verify") {
+    const value = extra[1];
+    if (value !== undefined && VERIFY_SET.has(value) && extra.length === 2) {
+      verify = value as WorkVerify;
+      extra = [];
+    }
+  }
   if (actual !== keyword || extra.length > 0 || idToken === undefined) {
     fail(
       cursor,
@@ -1589,11 +1604,14 @@ function parseUpdateHeader(cursor: Cursor, header: Line, keyword: "node~" | "nod
         line: header.number,
         expected: [`${keyword} "NN-slug"`],
         found: extra[0] ?? header.text.trim(),
-        hint: `write ${keyword} "03-impl"`,
+        hint: `write ${keyword} ${idToken ?? `"03-impl"`}`,
       },
     );
   }
-  return quotedId(cursor, idToken, `${keyword} id on line ${header.number}`, header, idToken);
+  return {
+    id: quotedId(cursor, idToken, `${keyword} id on line ${header.number}`, header, idToken),
+    ...(verify === undefined ? {} : { verify }),
+  };
 }
 
 function parseNodeAdd(cursor: Cursor, header: Line, ids: Map<NodeId, Line>): PlanPatchOp {
@@ -1623,19 +1641,21 @@ function parseNodeAdd(cursor: Cursor, header: Line, ids: Map<NodeId, Line>): Pla
 }
 
 function parseNodeUpdate(cursor: Cursor, header: Line): PlanPatchOp {
-  const id = parseUpdateHeader(cursor, header, "node~");
+  const parsed = parseUpdateHeader(cursor, header, "node~");
+  const id = parsed.id;
   const body = parseNodeBody(cursor, id, {
     allowClear: true,
     requireInstruction: false,
     afterSeen: false,
-    verifySeen: false,
+    verifySeen: parsed.verify !== undefined,
   });
   expectEnd(cursor, `node ${id}`, id);
+  const verify = parsed.verify ?? body.verify;
   return {
     kind: "node-update",
     id,
     ...(body.after === undefined ? {} : { after: body.after }),
-    ...(body.verify === undefined ? {} : { verify: body.verify }),
+    ...(verify === undefined ? {} : { verify }),
     ...(body.instruction === undefined ? {} : { instruction: body.instruction }),
     ...(body.hints === undefined ? {} : { hints: body.hints }),
     ...(body.approach === undefined ? {} : { approach: body.approach }),
@@ -1644,7 +1664,7 @@ function parseNodeUpdate(cursor: Cursor, header: Line): PlanPatchOp {
 }
 
 function parseNodeRemove(cursor: Cursor, header: Line): PlanPatchOp {
-  const id = parseUpdateHeader(cursor, header, "node-");
+  const id = parseUpdateHeader(cursor, header, "node-").id;
   expectEnd(cursor, `node ${id}`, id);
   return { kind: "node-remove", id };
 }

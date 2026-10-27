@@ -689,20 +689,23 @@ describe("Plan patch DSL parse", () => {
     const empty = acceptedPatch(`patch
 node~ "02-a"
 end
-node~ "03-b"
-after
+node~ "03-b" verify test
 end
 node~ "04-c"
+after
+end
+node~ "05-d"
 hint clear
 approach clear
 phase clear
 end`);
     expect(empty.ops).toEqual([
       { kind: "node-update", id: "02-a" },
-      { kind: "node-update", id: "03-b", after: [] },
+      { kind: "node-update", id: "03-b", verify: "test" },
+      { kind: "node-update", id: "04-c", after: [] },
       {
         kind: "node-update",
-        id: "04-c",
+        id: "05-d",
         hints: [],
         approach: null,
         phase: null,

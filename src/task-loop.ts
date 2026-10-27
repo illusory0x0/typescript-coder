@@ -81,6 +81,7 @@ import type {
   LoopUsage,
   MatcherKind,
   ProviderLike,
+  RejectionCause,
   TerminationReason,
 } from "./loop";
 import type { SelectionStage } from "./cascade";
@@ -211,6 +212,37 @@ function stageOf(diagnostics: string): string {
   return match?.[1] ?? "protocol";
 }
 
+/** Typed record cause for a plan-exec exchange rejection; verification rows stay null. */
+function rejectionCauseOf(
+  outcome: ExchangeOutcome,
+  diagnostics: string,
+): RejectionCause | undefined {
+  switch (outcome) {
+    case "protocol":
+    case "echo":
+    case "address":
+    case "no-op":
+    case "repeat":
+    case "duplicate":
+    case "gate":
+    case "format":
+    case "truncated":
+      return outcome;
+    case "range":
+      return "range-invalid";
+    case "matcher":
+      if (diagnostics.includes("unparseable")) {
+        return "matcher-unparseable";
+      }
+      if (diagnostics.includes("ambiguous")) {
+        return "matcher-ambiguous";
+      }
+      return "matcher-not-found";
+    default:
+      return undefined;
+  }
+}
+
 function hashText(text: string): string {
   return createHash("sha256").update(text, "utf8").digest("hex");
 }
@@ -241,6 +273,7 @@ function writeRecord(
     stages?: SelectionStage[];
     matcherKinds?: (MatcherKind | null)[];
     creates?: number;
+    cause?: RejectionCause;
   },
 ): void {
   records.push(
@@ -260,6 +293,7 @@ function writeRecord(
       stages: input.stages,
       matcherKinds: input.matcherKinds,
       creates: input.creates,
+      cause: input.cause,
     }),
   );
 }
@@ -1485,6 +1519,8 @@ export async function runTaskLoop(options: LoopOptions): Promise<LoopResult> {
   ];
   const usageState: UsageState = { usage: zeroLoopUsage(), consumed: 0 };
   const records: LoopRecord[] = [];
+  const turnCounts = { planning: 0, execution: 0, review: 0, total: 0 };
+  const executionMessages: ChatMessage[][] = [];
   /** Recovered parser warnings, surfaced on the final result (#33). */
   const runWarnings: string[] = [];
   const noteWarnings = (result: DslParseResult<unknown>): void => {
@@ -1527,6 +1563,14 @@ export async function runTaskLoop(options: LoopOptions): Promise<LoopResult> {
       ...(runWarnings.length === 0 ? {} : { warnings: [...runWarnings] }),
       tokens: totalLoopTokens(usageState.usage),
       usage: cloneLoopUsage(usageState.usage),
+      turns: { ...turnCounts },
+      ...(executionMessages.length === 0
+        ? {}
+        : {
+            executionMessages: executionMessages.map((messages) =>
+              messages.map((message) => ({ ...message })),
+            ),
+          }),
       nodes: current === null ? [] : summaryOf(current),
     };
   };
@@ -1547,11 +1591,21 @@ export async function runTaskLoop(options: LoopOptions): Promise<LoopResult> {
       ...(runWarnings.length === 0 ? {} : { warnings: [...runWarnings] }),
       tokens: totalLoopTokens(usageState.usage),
       usage: cloneLoopUsage(usageState.usage),
+      turns: { ...turnCounts },
+      ...(executionMessages.length === 0
+        ? {}
+        : {
+            executionMessages: executionMessages.map((messages) =>
+              messages.map((message) => ({ ...message })),
+            ),
+          }),
       nodes: summaryOf(state),
     };
   };
 
   const providerCall = async (): Promise<ChatResponse | LoopResult> => {
+    turnCounts.planning += 1;
+    turnCounts.total += 1;
     let response: ChatResponse;
     try {
       response = await callModel(
@@ -1779,6 +1833,8 @@ export async function runTaskLoop(options: LoopOptions): Promise<LoopResult> {
           outOfHint,
         }),
       });
+      turnCounts.review += 1;
+      turnCounts.total += 1;
       let response: ChatResponse;
       try {
         response = await callModel(
@@ -1907,153 +1963,163 @@ export async function runTaskLoop(options: LoopOptions): Promise<LoopResult> {
     let feedback: string | undefined;
     let strategyAdvisory: string | undefined;
 
-    for (;;) {
-      let response: ChatResponse;
-      try {
-        response = await callModel(
-          chat.messages,
-          usageState.usage.execution,
-          usageState,
-          options.provider,
-          options,
-        );
-      } catch (error) {
-        return {
-          kind: "terminated",
-          result: await terminated("provider-error", providerErrorDiagnostics(error)),
-        };
-      }
-      if (overBudget(usageState, costBudgetUsd)) {
-        return {
-          kind: "terminated",
-          result: await terminated(
-            "cost-budget",
-            costBudgetDiagnostics(usageState.consumed, costBudgetUsd),
-          ),
-        };
-      }
-      const content = response.content ?? "";
-      chat.messages.push({ role: "assistant", content });
+    try {
+      for (;;) {
+        turnCounts.execution += 1;
+        turnCounts.total += 1;
+        let response: ChatResponse;
+        try {
+          response = await callModel(
+            chat.messages,
+            usageState.usage.execution,
+            usageState,
+            options.provider,
+            options,
+          );
+        } catch (error) {
+          return {
+            kind: "terminated",
+            result: await terminated("provider-error", providerErrorDiagnostics(error)),
+          };
+        }
+        if (overBudget(usageState, costBudgetUsd)) {
+          return {
+            kind: "terminated",
+            result: await terminated(
+              "cost-budget",
+              costBudgetDiagnostics(usageState.consumed, costBudgetUsd),
+            ),
+          };
+        }
+        const content = response.content ?? "";
+        chat.messages.push({ role: "assistant", content });
 
-      const context: ExecutionContext = {
-        cwd,
-        workspace,
-        options,
-        records,
-        warnings: runWarnings,
-        shapeFailures,
-        node,
-        iteration,
-      };
-      const outcome = await applyEditReply(context, content, bases);
-      const workspaceKey = workspaceFingerprint(cwd, bases);
-      // Read-only replies are inspection, not progress. A viewer/read may be
-      // repeated only after the workspace changes; an identical reply against
-      // the same source is a protocol rejection that asks for an edit.
-      let duplicateViewer = false;
-      if (outcome.viewerOnly) {
-        const viewerKey = hashText(`${content}\n${workspaceKey}`);
-        duplicateViewer = viewerSeen.has(viewerKey);
-        viewerSeen.add(viewerKey);
-      }
-      let diagnostics: string | null;
-      if (outcome.ok) {
-        writeRecord(records, {
-          iteration,
-          kind: "exchange",
-          exchange: null,
+        const context: ExecutionContext = {
+          cwd,
+          workspace,
+          options,
+          records,
+          warnings: runWarnings,
+          shapeFailures,
           node,
-          outcome: "applied",
-          replacement: content,
-          diagnostics: outcome.diagnostics,
-          finishReason: response.finishReason,
-          payloads: outcome.payloads,
-          appliedLocators: outcome.appliedLocators,
-          selectors: outcome.selectors,
-          stages: outcome.stages,
-          matcherKinds: outcome.matcherKinds,
-          creates: outcome.creates,
-        });
-        const writes = outcome.wholeFileWrites ?? [];
-        const repeatedWrites = new Set(
-          writes
-            .filter((write) => write.existed && wholeFileWritesSinceEdit.has(write.path))
-            .map((write) => write.path),
-        );
-        for (const write of writes) {
-          wholeFileWritesSinceEdit.add(write.path);
-        }
-        strategyAdvisory = editStrategyAdvisory(writes, repeatedWrites) ?? undefined;
-        if (outcome.targetedEdit === true) {
-          wholeFileWritesSinceEdit.clear();
-        }
-        const gate = await verifyNode(context, bases, outcome.paths);
-        if (gate.ok) {
-          return { kind: "passed", gateDiagnostics: null };
-        }
-        diagnostics = gate.diagnostics ?? "stage: gate\nthe work node gate failed";
-        priorGate = diagnostics;
-        priorDiagnostics = undefined;
-        feedback = outcome.feedback ?? undefined;
-      } else {
-        const viewerNoProgress = duplicateViewer
-          ? "stage: protocol\nthe same viewer/read was already requested and the workspace has not changed; inspection makes no progress. Reply with the edit clauses or file commands for this work node now."
-          : null;
-        diagnostics =
-          viewerNoProgress ?? outcome.diagnostics ?? "stage: protocol\nthe reply was rejected";
-        writeRecord(records, {
           iteration,
-          kind: "exchange",
-          exchange: null,
-          node,
-          outcome: duplicateViewer
+        };
+        const outcome = await applyEditReply(context, content, bases);
+        const workspaceKey = workspaceFingerprint(cwd, bases);
+        // Read-only replies are inspection, not progress. A viewer/read may be
+        // repeated only after the workspace changes; an identical reply against
+        // the same source is a protocol rejection that asks for an edit.
+        let duplicateViewer = false;
+        if (outcome.viewerOnly) {
+          const viewerKey = hashText(`${content}\n${workspaceKey}`);
+          duplicateViewer = viewerSeen.has(viewerKey);
+          viewerSeen.add(viewerKey);
+        }
+        let diagnostics: string | null;
+        if (outcome.ok) {
+          writeRecord(records, {
+            iteration,
+            kind: "exchange",
+            exchange: null,
+            node,
+            outcome: "applied",
+            replacement: content,
+            diagnostics: outcome.diagnostics,
+            finishReason: response.finishReason,
+            payloads: outcome.payloads,
+            appliedLocators: outcome.appliedLocators,
+            selectors: outcome.selectors,
+            stages: outcome.stages,
+            matcherKinds: outcome.matcherKinds,
+            creates: outcome.creates,
+          });
+          const writes = outcome.wholeFileWrites ?? [];
+          const repeatedWrites = new Set(
+            writes
+              .filter((write) => write.existed && wholeFileWritesSinceEdit.has(write.path))
+              .map((write) => write.path),
+          );
+          for (const write of writes) {
+            wholeFileWritesSinceEdit.add(write.path);
+          }
+          strategyAdvisory = editStrategyAdvisory(writes, repeatedWrites) ?? undefined;
+          if (outcome.targetedEdit === true) {
+            wholeFileWritesSinceEdit.clear();
+          }
+          const gate = await verifyNode(context, bases, outcome.paths);
+          if (gate.ok) {
+            return { kind: "passed", gateDiagnostics: null };
+          }
+          diagnostics = gate.diagnostics ?? "stage: gate\nthe work node gate failed";
+          priorGate = diagnostics;
+          priorDiagnostics = undefined;
+          feedback = outcome.feedback ?? undefined;
+        } else {
+          const viewerNoProgress = duplicateViewer
+            ? "stage: protocol\nthe same viewer/read was already requested and the workspace has not changed; inspection makes no progress. Reply with the edit clauses or file commands for this work node now."
+            : null;
+          diagnostics =
+            viewerNoProgress ?? outcome.diagnostics ?? "stage: protocol\nthe reply was rejected";
+          const rejectionOutcome = duplicateViewer
             ? "protocol"
             : outcome.viewerOnly
               ? "viewer"
-              : outcomeOf(stageOf(diagnostics)),
-          replacement: content,
-          diagnostics,
-          finishReason: response.finishReason,
-          payloads: outcome.payloads,
-          selectors: outcome.selectors,
-          stages: outcome.stages,
-          matcherKinds: outcome.matcherKinds,
-          creates: outcome.creates,
-        });
-        strategyAdvisory = undefined;
-        priorGate = undefined;
-        priorDiagnostics = duplicateViewer || !outcome.viewerOnly ? diagnostics : undefined;
-        feedback = duplicateViewer ? undefined : (outcome.feedback ?? undefined);
-      }
-
-      const stateKey = hashText(`${workspaceKey}\n${diagnostics ?? ""}`);
-      const replyKey = hashText(`${content}\n${stateKey}`);
-      // A successful viewer is inspection and is bounded by `viewerSeen`. A
-      // duplicate viewer is a protocol rejection and joins the ordinary
-      // repeated fingerprint so a model that ignores the edit request stops.
-      const inspectionOnly = outcome.viewerOnly && !duplicateViewer;
-      if (!inspectionOnly) {
-        if (seen.has(replyKey) || seen.has(stateKey)) {
-          return {
-            kind: "failed",
-            diagnostics: `stage: no-progress\nthe work node #${node.id} stopped making progress: the same reply/source/diagnostics fingerprint repeated; no fixed exchange cap applies\n\n${diagnostics ?? ""}`,
-          };
+              : outcomeOf(stageOf(diagnostics));
+          writeRecord(records, {
+            iteration,
+            kind: "exchange",
+            exchange: null,
+            node,
+            outcome: rejectionOutcome,
+            replacement: content,
+            diagnostics,
+            finishReason: response.finishReason,
+            payloads: outcome.payloads,
+            selectors: outcome.selectors,
+            stages: outcome.stages,
+            matcherKinds: outcome.matcherKinds,
+            creates: outcome.creates,
+            ...(rejectionOutcome === "viewer"
+              ? {}
+              : { cause: rejectionCauseOf(rejectionOutcome, diagnostics) }),
+          });
+          strategyAdvisory = undefined;
+          priorGate = undefined;
+          priorDiagnostics = duplicateViewer || !outcome.viewerOnly ? diagnostics : undefined;
+          feedback = duplicateViewer ? undefined : (outcome.feedback ?? undefined);
         }
-        seen.add(replyKey);
-        seen.add(stateKey);
-      }
 
-      chat.messages.push({
-        role: "user",
-        content: buildTaskTurnPrompt({
-          node,
-          views: sourceViews(cwd, node),
-          ...(priorDiagnostics === undefined ? {} : { diagnostics: priorDiagnostics }),
-          ...(priorGate === undefined ? {} : { gateDiagnostics: priorGate }),
-          ...(feedback === undefined ? {} : { feedback }),
-          ...(strategyAdvisory === undefined ? {} : { editStrategyAdvisory: strategyAdvisory }),
-        }),
-      });
+        const stateKey = hashText(`${workspaceKey}\n${diagnostics ?? ""}`);
+        const replyKey = hashText(`${content}\n${stateKey}`);
+        // A successful viewer is inspection and is bounded by `viewerSeen`. A
+        // duplicate viewer is a protocol rejection and joins the ordinary
+        // repeated fingerprint so a model that ignores the edit request stops.
+        const inspectionOnly = outcome.viewerOnly && !duplicateViewer;
+        if (!inspectionOnly) {
+          if (seen.has(replyKey) || seen.has(stateKey)) {
+            return {
+              kind: "failed",
+              diagnostics: `stage: no-progress\nthe work node #${node.id} stopped making progress: the same reply/source/diagnostics fingerprint repeated; no fixed exchange cap applies\n\n${diagnostics ?? ""}`,
+            };
+          }
+          seen.add(replyKey);
+          seen.add(stateKey);
+        }
+
+        chat.messages.push({
+          role: "user",
+          content: buildTaskTurnPrompt({
+            node,
+            views: sourceViews(cwd, node),
+            ...(priorDiagnostics === undefined ? {} : { diagnostics: priorDiagnostics }),
+            ...(priorGate === undefined ? {} : { gateDiagnostics: priorGate }),
+            ...(feedback === undefined ? {} : { feedback }),
+            ...(strategyAdvisory === undefined ? {} : { editStrategyAdvisory: strategyAdvisory }),
+          }),
+        });
+      }
+    } finally {
+      executionMessages.push(chat.messages.map((message) => ({ ...message })));
     }
   };
 

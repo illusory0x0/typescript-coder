@@ -51,6 +51,7 @@ interface AggregateLike {
   tokens: { in: TokenStatsLike; out: TokenStatsLike; total: TokenStatsLike };
   billableCost: { in: TokenStatsLike; out: TokenStatsLike; total: TokenStatsLike };
   billableCostPerSuccess: number | null;
+  turnsMean: number | null;
   cache?: { read: TokenStatsLike; hitRate: number | null };
   tokensPerSuccess: { in: number | null; out: number | null; total: number | null };
   selectors: { range: number; matcher: number; wholeSymbol: number };
@@ -111,6 +112,12 @@ interface RunModule {
     concurrency: number,
     run: (job: Job, index: number) => Promise<Result>,
   ): Promise<Result[]>;
+  pilotCandidatePath(
+    repoRoot: string,
+    date: string,
+    pilotJson: string | null,
+    cwd?: string,
+  ): string;
   parseAgentModes(value: string): string[];
   cacheBalanceWarning(rows: readonly AggregateLike[]): string | null;
   billableCostMultiplierSentence(
@@ -142,6 +149,7 @@ interface RunModule {
   parseArgs(argv: string[]): {
     model: string;
     task: string | null;
+    pilotJson: string | null;
     ocModel: string | null;
     side: string;
     protocolFormats: string[];
@@ -194,6 +202,12 @@ function makeRun(
     finishedAt: "2026-10-20T00:01:00.000Z",
     cost: peakCost(raw, side),
     steps: 1,
+    turns: {
+      total: side === "tc" ? 3 : 0,
+      planning: side === "tc" ? 1 : null,
+      execution: side === "tc" ? 1 : null,
+      review: side === "tc" ? 1 : null,
+    },
     records: null,
     exchangeStats,
     loopDiagnostics: null,
@@ -261,6 +275,8 @@ describe("cache-excluded USD triple (#89)", () => {
       expect(ocOverall?.billableCost.total.total).toBeCloseTo(0.000825, 12);
       expect(tcOverall?.tokens.total.total).toBe(1900);
       expect(ocOverall?.tokens.total.total).toBe(1400);
+      expect(tcOverall?.turnsMean).toBe(3);
+      expect(ocOverall?.turnsMean).toBe(0);
     },
   );
 
@@ -438,6 +454,7 @@ describe("rendered report (#89)", () => {
         writeMarkdownReport(mdPath, report);
         const markdown = readFileSync(mdPath, "utf8");
         expect(markdown).toContain("## USD accounting");
+        expect(markdown).toContain("Mean turns");
         expect(markdown).toContain("Billable in ($)");
         expect(markdown).not.toContain("decision-only");
         // json-parser tc: billable in $0.00006, out $0.00060, total $0.00066;
@@ -631,6 +648,22 @@ describe("oc model override (--oc-model)", () => {
       "the oc side is frozen and no oc baseline is committed",
     );
     expect(frozenDimensionError("tc")).toBeNull();
+  });
+
+  test.skipIf(!runModulePresent)("resolves an explicit or default pilot report path", async () => {
+    const { pilotCandidatePath } = await loadRunModule();
+    expect(pilotCandidatePath("/repo", "2026-10-27", null)).toBe(
+      "/repo/benchmark/results/pilot-2026-10-27.json",
+    );
+    expect(pilotCandidatePath("/repo", "2026-10-27", "tmp/pilot.json", "/work")).toBe(
+      "/work/tmp/pilot.json",
+    );
+  });
+
+  test.skipIf(!runModulePresent)("parses --pilot-json for a full report", async () => {
+    const { parseArgs } = await loadRunModule();
+    expect(parseArgs([]).pilotJson).toBeNull();
+    expect(parseArgs(["--pilot-json", "tmp/pilot.json"]).pilotJson).toBe("tmp/pilot.json");
   });
 
   test.skipIf(!runModulePresent)("parses --oc-model and defaults to null", async () => {

@@ -297,20 +297,20 @@ categories:
           `filePath`, `editedSource`, `records`, `diagnostics`, `explanation`,
           `messages`, `skipped`, `terminationReason`, `tokens`,
           `appliedTargets`, and, in plan-exec, `usage`
-          (planning/review/execution buckets), `warnings` (recovered parser
-          warnings), and `nodes`, one per WorkNode with `id`, `verify`,
-          `status`, and optional `phase`/`approach`. See
-          `docs/feedback-loop.md` "Records and result" and
-          `docs/plan-exec.md` §10.
+          (planning/review/execution buckets), `turns` (model-call telemetry),
+          optional `executionMessages`, `warnings` (recovered parser warnings),
+          and `nodes`, one per WorkNode with `id`, `verify`, `status`, and
+          optional `phase`/`approach`. See `docs/feedback-loop.md` "Records and
+          result" and `docs/plan-exec.md` §10.
       - term: subagent result
         definition: >-
           `typescript-coder-result@3`, printed by `--format json`: format,
           status, verified, files, targets, records, tokens,
           terminationReason, diagnostics, and (plan-exec only) nodes
-          whose `id` is a string graph node id. It keeps
-          the single `tokens` object; `LoopResult.usage` and
-          `LoopResult.warnings` are not exposed here. See
-          `docs/plan-exec.md` §10.
+          whose `id` is a string graph node id, plus additive `turns`
+          telemetry. It keeps the single `tokens` object; `LoopResult.usage`,
+          `LoopResult.executionMessages`, and `LoopResult.warnings` are not
+          exposed here. See `docs/plan-exec.md` §10.
 
   - id: benchmark-run
     title: Benchmark run model
@@ -488,6 +488,11 @@ categories:
         definition: >-
           tc: number of recorded loop rows (exchanges plus verifications).
           oc: assistant messages in the session export; null when unavailable.
+          This is not the model-call count; see turns.
+      - term: turns
+        definition: >-
+          Measured model calls per run; plan-exec adds `planning`, `execution`,
+          and `review` phase counts. Additive to `steps`/records.
       - term: record summary
         definition: >-
           Per-row `row`, `iteration`, `kind`, `exchange`, `outcome`, `cause`,
