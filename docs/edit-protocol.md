@@ -23,8 +23,10 @@ Two reply formats exist, selected by `--protocol-format` (default `edit-dsl`):
 - **edit-dsl**: the default. One or more statements, on the same resolver but
   with richer locators (regex, multi-range `pick`) and atomic multi-clause
   replies. The same reply language also carries file commands (`create`,
-  `delete`, `read`, `write`). A JSON payload in this mode is a protocol
-  rejection.
+  `delete`, `read`, `write`). After a target is pinned, a reply may instead be
+  the standalone control turn `check end` or `test end`: it runs the task's
+  configured check/test command, writes nothing, and returns bounded output. A
+  JSON payload in this mode is a protocol rejection.
 - **JSON payload**: opt-in, one flat object per exchange. Explicit-targets mode
   (`--targets`) always uses it.
 
@@ -412,6 +414,23 @@ braces cannot be empty. `end` is required by the grammar. For `select`,
 a hard error. A `write` has no `end`: its `<<<TC_EDIT_END>>>` close terminates
 it, and a trailing `end` is `EDIT_STRAY_END`. Prompts and examples always emit
 the canonical terminator; recovery is not taught as a form.
+
+### Self-check control turn
+
+After pinning, the edit-dsl loop recognizes one additional reply shape before
+the `multiEditor` parser:
+
+```text
+control-turn = 'check' 'end' | 'test' 'end' ;
+```
+
+It must be the whole reply: no arguments, edit, read, select, JSON, or prose.
+`check end` runs the configured check command (default `bunx tsc --noEmit`);
+`test end` runs the configured test command (default `bun test`). The command
+result is bounded and returned in the next prompt; the control turn writes
+nothing. It is repeatable, with no fixed self-check count: the token budget and
+the repeated/no-progress policy are the bounds. The final edit still passes the
+ordinary automatic verification and judge.
 
 ### Declaration and member create
 

@@ -12,8 +12,9 @@ Vocabulary is canonical in [`README.md`](README.md).
 `tc` is not an open-ended tool-calling agent. Its default `pinned-repair` run is
 a fixed Edit → Verify loop: the model is asked to pick one declaration, then to
 rewrite part of it, and the harness decides whether the result counts. The model
-never chooses files to read or commands to run; it answers structured prompts
-and the harness owns discovery, splicing, formatting, and verification.
+does not run arbitrary commands: under edit-dsl it can inspect with `read` and,
+after pinning, request the configured `check`/`test` commands; the harness still
+owns discovery, splicing, formatting, and verification.
 
 Implementation: `runLoop` in `src/loop.ts` is a dispatcher. The default
 `pinned-repair` mode routes to `runEditDslLoop` (explicit targets and
@@ -141,9 +142,11 @@ give-up:
   its pinned-selection block. The format-specific correction text is owned by
   [`edit-protocol.md`](edit-protocol.md) §7. There is no fixed retry count: a
   distinct failure is retried until the token budget or a no-progress stop.
-- **Before editing, a repair exchange may ask one bounded self-check** —
+- **Before editing, a repair exchange may ask one bounded JSON self-check** —
   `{"request":"read" | "check" | "test"}` — to see the current source or run
-  the task's commands itself. It does not write anything.
+  the task's commands itself. It does not write anything. Edit-dsl instead uses
+  standalone `check end` / `test end` control turns after pinning; they are
+  repeatable with no fixed count and are bounded by the token/no-progress policy.
 - **Repeated no-progress fingerprint** — a failed reply repeated against the
   same source and diagnostics is no progress and ends the run with
   `edit-exhausted`; a cycle that keeps producing distinct replies is bounded by

@@ -46,6 +46,7 @@ import {
   numberedSourceRange,
   parseEditResponse,
   parseEditResponseList,
+  parseEditDslSelfCheck,
   parseSelectionResponse,
   parseSelfCheckRequest,
   rejectionLead,
@@ -2399,6 +2400,28 @@ describe("self-verification request (#73)", () => {
       expect(parsed.kind).toBe("error");
       if (parsed.kind === "error") {
         expect(parsed.diagnostics.startsWith("stage: protocol")).toBe(true);
+      }
+    }
+  });
+
+  test("parses only standalone edit-dsl check/test control commands", () => {
+    expect(parseEditDslSelfCheck("check end")).toEqual({ kind: "ok", request: "check" });
+    expect(parseEditDslSelfCheck("  test end  ")).toEqual({ kind: "ok", request: "test" });
+    expect(parseEditDslSelfCheck("TEST END")).toEqual({ kind: "ok", request: "test" });
+    expect(parseEditDslSelfCheck("select answer in src/a.ts end")).toEqual({ kind: "none" });
+    expect(parseEditDslSelfCheck("write src/a.ts with")).toEqual({ kind: "none" });
+    for (const bad of [
+      "test",
+      "test src/a.test.ts end",
+      "test end\nselect answer in src/a.ts end",
+      "check end because it failed",
+    ]) {
+      const parsed = parseEditDslSelfCheck(bad);
+      expect(parsed.kind).toBe("error");
+      if (parsed.kind === "error") {
+        expect(parsed.diagnostics).toContain("standalone");
+        expect(parsed.diagnostics).toContain("`check end`");
+        expect(parsed.diagnostics).toContain("`test end`");
       }
     }
   });
@@ -8554,6 +8577,132 @@ describe("edit-dsl protocol (#111/#119)", () => {
     expect(helperSource(dir)).toContain("return 2;");
   }, 30000);
 
+  function loggingCommand(logPath: string, label: string): string[] {
+    const script = [
+      'const { appendFileSync } = require("node:fs");',
+      `appendFileSync(${JSON.stringify(logPath)}, "${label}\\n");`,
+      "process.exit(0);",
+    ].join("\n");
+    return ["bun", "-e", script];
+  }
+
+  test("a standalone test self-check runs before the edit and writes nothing", async () => {
+    const dir = fixtureDir();
+    const logPath = join(dir, "self-check-calls.log");
+    let sourceAtNextPrompt = "";
+    const provider = new ScriptedProvider(
+      [
+        editDslSelect("answer", "src/helper.ts", "value"),
+        "test end",
+        editDslReply(answerEditor("return 2;", { kind: "snippet", value: "return 1;" })),
+      ],
+      (callIndex) => {
+        if (callIndex === 2) {
+          sourceAtNextPrompt = helperSource(dir);
+        }
+      },
+    );
+    const result = await runLoopBase({
+      cwd: dir,
+      issue: "make the answer test pass",
+      provider,
+      checkCommand: TSC,
+      testCommand: loggingCommand(logPath, "test"),
+    });
+    expect(result.ok).toBe(true);
+    expect(result.records.map((record) => record.outcome)).toContain("self-check");
+    expect(exchangeStats(result.records).selfChecks).toBe(1);
+    const selfCheck = result.records.find((record) => record.outcome === "self-check");
+    expect(selfCheck?.diagnostics).toContain("Self-check (test): the test command passed");
+    expect(sourceAtNextPrompt).toBe("export function answer(): number {\n  return 1;\n}\n");
+    const afterControl = (provider.calls[2] ?? []).at(-1)?.content ?? "";
+    expect(afterControl).toContain("Self-check result:");
+    expect(afterControl).toContain("Self-check (test): the test command passed");
+    // One self-check plus the edit verification's targeted + full suite runs.
+    expect(readFileSync(logPath, "utf8")).toBe("test\ntest\ntest\n");
+    expect(helperSource(dir)).toContain("return 2;");
+  }, 30000);
+
+  test("a standalone check self-check runs the configured check command", async () => {
+    const dir = fixtureDir();
+    const logPath = join(dir, "self-check-calls.log");
+    const provider = new ScriptedProvider([
+      editDslSelect("answer", "src/helper.ts", "value"),
+      "check end",
+      editDslReply(answerEditor("return 2;", { kind: "snippet", value: "return 1;" })),
+    ]);
+    const result = await runLoopBase({
+      cwd: dir,
+      issue: "make the answer test pass",
+      provider,
+      checkCommand: loggingCommand(logPath, "check"),
+      testCommand: passingCommand,
+    });
+    expect(result.ok).toBe(true);
+    const selfCheck = result.records.find((record) => record.outcome === "self-check");
+    expect(selfCheck?.diagnostics).toContain("Self-check (check): the check command passed");
+    expect((provider.calls[2] ?? []).at(-1)?.content ?? "").toContain(
+      "Self-check (check): the check command passed",
+    );
+    // One self-check plus the edit verification's check.
+    expect(readFileSync(logPath, "utf8")).toBe("check\ncheck\n");
+    expect(helperSource(dir)).toContain("return 2;");
+  }, 30000);
+
+  test("test self-checks have no fixed count and repeat is surfaced as no progress", async () => {
+    const dir = fixtureDir();
+    const logPath = join(dir, "self-check-calls.log");
+    const provider = new ScriptedProvider([
+      editDslSelect("answer", "src/helper.ts", "value"),
+      "test end",
+      "test end",
+      editDslReply(answerEditor("return 2;", { kind: "snippet", value: "return 1;" })),
+    ]);
+    const result = await runLoopBase({
+      cwd: dir,
+      issue: "make the answer test pass",
+      provider,
+      checkCommand: TSC,
+      testCommand: loggingCommand(logPath, "test"),
+    });
+    expect(result.ok).toBe(true);
+    expect(exchangeStats(result.records).selfChecks).toBe(2);
+    expect(result.records.some((record) => record.diagnostics?.includes("already used"))).toBe(
+      false,
+    );
+    const afterSecondControl = (provider.calls[3] ?? []).at(-1)?.content ?? "";
+    expect(afterSecondControl).toContain("No progress: the same test command");
+    // Two self-checks plus the edit verification's targeted + full suite runs.
+    expect(readFileSync(logPath, "utf8")).toBe("test\ntest\ntest\ntest\n");
+  }, 30000);
+
+  test("a malformed self-check is rejected without running a command", async () => {
+    const dir = fixtureDir();
+    const logPath = join(dir, "self-check-calls.log");
+    const provider = new ScriptedProvider([
+      editDslSelect("answer", "src/helper.ts", "value"),
+      "test src/helper.test.ts end",
+      editDslReply(answerEditor("return 2;", { kind: "snippet", value: "return 1;" })),
+    ]);
+    const result = await runLoopBase({
+      cwd: dir,
+      issue: "make the answer test pass",
+      provider,
+      checkCommand: TSC,
+      testCommand: loggingCommand(logPath, "test"),
+    });
+    expect(result.ok).toBe(true);
+    const rejected = result.records.find(
+      (record) => record.outcome === "protocol" && record.diagnostics?.includes("standalone"),
+    );
+    expect(rejected).toBeDefined();
+    expect(result.records.some((record) => record.outcome === "self-check")).toBe(false);
+    // No self-check ran; the edit verification's targeted + full suite did.
+    expect(readFileSync(logPath, "utf8")).toBe("test\ntest\n");
+    const retryPrompt = (provider.calls[2] ?? []).at(-1)?.content ?? "";
+    expect(retryPrompt).toContain("self-check commands are standalone");
+  }, 30000);
+
   test("a repeated kind-mismatch address loop recovers through the fallback (#24)", async () => {
     const dir = passingFixtureDir();
     writeFileSync(join(dir, "src", "lisp.ts"), "export const MAX_TOKENS = 10;\n");
@@ -9190,8 +9339,11 @@ describe("edit-dsl protocol (#111/#119)", () => {
       expect(prompt).toContain(EDIT_DSL_OUTPUT_CONTRACT);
       expect(prompt).toContain("No tools are available on this turn");
       expect(prompt).toContain(
-        "`read`, `select`, `write`, `create`, and `delete` are literal edit-dsl text commands, not function calls",
+        "`read`, `select`, `write`, `create`, `delete`, `check`, and `test` are literal edit-dsl text commands, not function calls",
       );
+      expect(prompt).toContain("standalone `check end` runs the task's check command");
+      expect(prompt).toContain("`test end` runs its test command");
+      expect(prompt).toContain("A self-check reply must contain exactly one of those commands");
       expect(prompt).toContain("Never emit `<|...|>`, `<｜...｜>`");
       expect(prompt).toContain(
         "is plain text: it is not a Markdown code fence and not a tool-call boundary",

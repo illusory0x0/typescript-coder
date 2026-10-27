@@ -1113,6 +1113,41 @@ export function parseSelfCheckRequest(content: string): SelfCheckParse {
   return { kind: "ok", request: value as SelfCheckKind };
 }
 
+/** Result of parsing a standalone edit-dsl self-check command. */
+export type EditDslSelfCheckParse =
+  | { kind: "none" }
+  | { kind: "ok"; request: "check" | "test" }
+  | { kind: "error"; diagnostics: string };
+
+const EDIT_DSL_SELF_CHECK_PREFIX = /^(check|test)(?:\s|$)/i;
+const EDIT_DSL_SELF_CHECK_EXACT = /^(check|test)\s+end$/i;
+
+/**
+ * Parse the edit-dsl self-check turn: exactly `check end` or `test end`.
+ * It is a standalone control reply, not a file command or an edit; anything
+ * that only starts with one of the words is a protocol error, and anything
+ * else falls through to the ordinary edit-dsl parser.
+ */
+export function parseEditDslSelfCheck(content: string): EditDslSelfCheckParse {
+  const trimmed = content.trim();
+  if (!EDIT_DSL_SELF_CHECK_PREFIX.test(trimmed)) {
+    return { kind: "none" };
+  }
+  const match = EDIT_DSL_SELF_CHECK_EXACT.exec(trimmed);
+  if (match === null) {
+    return {
+      kind: "error",
+      diagnostics:
+        "stage: protocol\nself-check commands are standalone; reply with exactly `check end` or `test end`, with no arguments, edits, reads, selects, JSON, or prose",
+    };
+  }
+  const request = match[1]?.toLowerCase();
+  if (request !== "check" && request !== "test") {
+    return { kind: "none" };
+  }
+  return { kind: "ok", request };
+}
+
 /** Shared stdout+stderr budget for one self-check command result (#73). */
 export const SELF_CHECK_OUTPUT_LIMIT = 4_000;
 
@@ -6064,6 +6099,10 @@ async function runEditDslLoop(options: LoopOptions): Promise<LoopResult> {
   // guards) and at every failed verification. It schedules the no-progress ask
   // at the #54/#65 milestones only; it is never a cap.
   let stalledAttempts = 0;
+  // Edit-dsl self-check no-progress note: the same command, source, and result
+  // repeated is surfaced to the model, but it never becomes a hard count. The
+  // token budget remains the stop.
+  let lastEditDslSelfCheckFingerprint: string | null = null;
   // The failed-attempt count whose no-progress ask was already shown. A decision
   // turn or self-check reply does not increment the count, so without this guard
   // the same milestone would ask twice.
@@ -6964,6 +7003,73 @@ async function runEditDslLoop(options: LoopOptions): Promise<LoopResult> {
         continue;
       }
       const content = response.content ?? "";
+      // Edit-dsl self-check turn: a standalone `check end` / `test end` runs
+      // the configured command without writing. It is deliberately separate
+      // from the JSON #73 request and has no fixed count; repeated identical
+      // results are surfaced as no progress, while the token budget is the stop.
+      const editDslSelfCheck = parseEditDslSelfCheck(content);
+      if (editDslSelfCheck.kind !== "none") {
+        if (editDslSelfCheck.kind === "error") {
+          const cause = classifyRejection({ stage: "protocol" });
+          records.push(
+            recordRow({
+              row: records.length + 1,
+              iteration,
+              kind: "exchange",
+              exchange,
+              locator: pinnedTarget.locator,
+              replacement: response.content ?? null,
+              diagnostics: editDslSelfCheck.diagnostics,
+              outcome: "protocol",
+              finishReason: response.finishReason,
+              cause,
+              payloads: 0,
+              toolCalls: response.toolCalls.length,
+            }),
+          );
+          registerRejection(cause);
+          lastDiagnostics = editDslSelfCheck.diagnostics;
+          lastFailure = "edit";
+          stalledAttempts += 1;
+          continue;
+        }
+        const result = await executeSelfCheck(editDslSelfCheck.request, {
+          cwd,
+          target,
+          checkCommand: options.checkCommand,
+          testCommand: options.testCommand,
+          commandTimeoutMs: options.commandTimeoutMs,
+        });
+        const sourceState = readFileIfExists(join(cwd, target)) ?? baseSource;
+        const fingerprint = `${editDslSelfCheck.request}\0${sourceState}\0${result}`;
+        const repeated = fingerprint === lastEditDslSelfCheckFingerprint;
+        lastEditDslSelfCheckFingerprint = fingerprint;
+        const selfCheckResult = repeated
+          ? `No progress: the same ${editDslSelfCheck.request} command returned the same result with no source change. Change the failing cause or use a different edit.\n\n${result}`
+          : result;
+        pendingSelfCheck = selfCheckResult;
+        if (lastDiagnostics === null) {
+          lastDiagnostics =
+            "stage: self-check\nthe requested self-check ran; use the result below and continue with the edit";
+        }
+        lastFailure = "edit";
+        records.push(
+          recordRow({
+            row: records.length + 1,
+            iteration,
+            kind: "exchange",
+            exchange,
+            locator: pinnedTarget.locator,
+            replacement: null,
+            diagnostics: selfCheckResult,
+            outcome: "self-check",
+            finishReason: response.finishReason,
+            payloads: 0,
+            toolCalls: response.toolCalls.length,
+          }),
+        );
+        continue;
+      }
       // Bounded self-verification request (#73): a repair exchange may reply
       // with the distinct request object instead of an edit payload. At most one
       // is executed per round, and only when a later exchange exists to return
