@@ -1,3 +1,44 @@
 # Open issues in picking order. This order is authoritative: `reorder`
 # rewrites it; `add` appends; other writes keep it. `check` enforces it.
 # A dep, and every child of an umbrella, must be listed before its dependent.
+
+- id: 58
+  title: "Fix plan terminator retries"
+  status: todo
+  priority: medium
+  milestone: null
+  parent: null
+  deps: []
+  file: 0058-fix-plan-terminator-retries.md
+- id: 60
+  title: "Parse, execute, and gate test filters"
+  status: todo
+  priority: medium
+  milestone: null
+  parent: 59
+  deps: [58]
+  file: 0060-parse-execute-and-gate-test-filters.md
+- id: 61
+  title: "Teach the planner to plan test slices"
+  status: todo
+  priority: medium
+  milestone: null
+  parent: 59
+  deps: [60]
+  file: 0061-teach-the-planner-to-plan-test-slices.md
+- id: 62
+  title: "Document, accept, and benchmark slice gates"
+  status: todo
+  priority: medium
+  milestone: null
+  parent: 59
+  deps: [58, 60, 61]
+  file: 0062-document-accept-and-benchmark-slice-gates.md
+- id: 59
+  title: "Add slice-level test gates to plan-exec"
+  status: todo
+  priority: medium
+  milestone: null
+  parent: null
+  deps: []
+  file: 0059-add-slice-level-test-gates-to-plan-exec.md
