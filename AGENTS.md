@@ -64,11 +64,13 @@ with `--reps >= 1` (including `--pilot`) or `just accept --live`, ask the human
 first and warn that the run calls the real model and costs money. Do not run any
 of these unprompted, and do not use them as an iteration loop.
 
-Normal tc reports run `--side tc` with the edit-dsl protocol. Cost accounting is
-always at the official DeepSeek peak prices, even when the run happens
-off-peak; comparisons and the `--budget-usd` cap use cache-excluded USD, not
-tokens. `--agent-mode pinned-repair|plan-exec|both` selects the tc loop mode(s),
-where `both` is the benchmark's multi-mode selector; the `edit` alias is
+Normal tc reports run `--side tc` with the edit-dsl protocol. The default
+benchmark matrix is the four tasks `json-parser`, `sexp-parser`, `minilisp`, and
+`csv-parser`; `mini-spreadsheet` is targeted-only via `--task mini-spreadsheet`.
+Cost accounting is always at the official DeepSeek peak prices, even when the
+run happens off-peak; comparisons and the `--budget-usd` cap use cache-excluded
+USD, not tokens. `--agent-mode pinned-repair|plan-exec|both` selects the tc loop
+mode(s), where `both` is the benchmark's multi-mode selector; the `edit` alias is
 deprecated. With no committed baseline, a tc-only report does not render an oc
 savings comparison.
 

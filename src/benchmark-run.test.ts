@@ -79,6 +79,7 @@ interface ScheduledJobLike {
 }
 
 interface RunModule {
+  BENCHMARK_TASKS: readonly string[];
   computeAggregates(
     runs: readonly unknown[],
     tasks: readonly string[],
@@ -140,6 +141,7 @@ interface RunModule {
   writeMarkdownReport(path: string, report: unknown, baselineRoot?: string): void;
   parseArgs(argv: string[]): {
     model: string;
+    task: string | null;
     ocModel: string | null;
     side: string;
     protocolFormats: string[];
@@ -600,6 +602,18 @@ describe("cache balance", () => {
       const warning = cacheBalanceWarning(aggregates.bySide);
       expect(warning).toContain("cache hit rates span");
       expect(warning).toContain("80 points");
+    },
+  );
+});
+
+describe("default task matrix", () => {
+  test.skipIf(!runModulePresent)(
+    "defaults to the four benchmark tasks and keeps mini-spreadsheet explicit",
+    async () => {
+      const { BENCHMARK_TASKS, parseArgs } = await loadRunModule();
+      expect(BENCHMARK_TASKS).toEqual(["json-parser", "sexp-parser", "minilisp", "csv-parser"]);
+      expect(parseArgs([]).task).toBeNull();
+      expect(parseArgs(["--task", "mini-spreadsheet"]).task).toBe("mini-spreadsheet");
     },
   );
 });

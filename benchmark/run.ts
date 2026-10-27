@@ -402,11 +402,16 @@ interface JudgeResult extends JudgeRecord {
   readonly log: string;
 }
 
+/** The default four-task benchmark matrix; mini-spreadsheet is targeted-only. */
+export const BENCHMARK_TASKS: readonly TaskName[] = [
+  "json-parser",
+  "sexp-parser",
+  "minilisp",
+  "csv-parser",
+];
+
 const TASKS: readonly TaskSpec[] = [
-  { name: "json-parser" },
-  { name: "sexp-parser" },
-  { name: "minilisp" },
-  { name: "csv-parser" },
+  ...BENCHMARK_TASKS.map((name) => ({ name })),
   { name: "mini-spreadsheet" },
 ];
 
@@ -437,12 +442,7 @@ export const TASK_ISSUES: Record<TaskName, string> = TASK_SPECS;
  * its spec hash stays pinned to exactly these four tasks; `mini-spreadsheet`
  * is intentionally outside the comparison matrix.
  */
-const BASELINE_TASKS: readonly TaskName[] = [
-  "json-parser",
-  "sexp-parser",
-  "minilisp",
-  "csv-parser",
-];
+const BASELINE_TASKS: readonly TaskName[] = BENCHMARK_TASKS;
 
 /**
  * Same text hash the provenance record uses for `taskIssue`, retained for an
@@ -517,8 +517,11 @@ function printUsage(): void {
 
 Options:
   --task <json-parser|sexp-parser|minilisp|csv-parser|mini-spreadsheet>
-                                             run a single task (default: all)
-  --all                                      run all tasks (default)
+                                             run a single task (default: the four-task
+                                             benchmark matrix; mini-spreadsheet is
+                                             available only through this explicit flag)
+  --all                                      run the four benchmark tasks (default;
+                                             excludes mini-spreadsheet)
   --reps <n>                                 repetitions per task and side (default: 5; minimum 5, pilot uses 1)
   --concurrency <n>                          max parallel runs (default: ${DEFAULT_CONCURRENCY})
   --pilot                                    force 1 rep per task and side and write
@@ -2900,7 +2903,7 @@ async function main(): Promise<number> {
       : isAbsolute(args.replayDir)
         ? args.replayDir
         : resolve(process.cwd(), args.replayDir);
-  const tasks = args.task === null ? TASKS.map((task) => task.name) : [args.task];
+  const tasks: TaskName[] = args.task === null ? [...BENCHMARK_TASKS] : [args.task];
   const sides: Side[] = args.side === "both" ? ["tc", "oc"] : [args.side];
   const reps = args.pilot ? PILOT_REPS : args.reps;
   const protocols = PROTOCOLS;
