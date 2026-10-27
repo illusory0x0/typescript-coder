@@ -1,4 +1,5 @@
 import { describe, expect, test } from "bun:test";
+import { renderDslIssues } from "./dsl-diagnostics";
 import {
   END_OF_LINE_COLUMN,
   SelectionSyntaxError,
@@ -238,6 +239,29 @@ describe("parseSelection", () => {
     } else {
       throw new Error("expected a write statement");
     }
+  });
+
+  test("a warning-only inline-fence multi-editor reply is accepted", () => {
+    const detailed = parseMultiEditorDetailed(
+      [`write src/a.ts with ${BEGIN}`, "export const a = 2;", END].join("\n"),
+    );
+    expect(detailed.ok).toBe(true);
+    expect(detailed.value).toHaveLength(1);
+    expect(detailed.issues).toHaveLength(1);
+    expect(detailed.issues[0]?.code).toBe("EDIT_INLINE_FENCE_OPEN");
+    expect(detailed.issues[0]?.severity).toBe("warning");
+  });
+
+  test("renders an inline-fence warning after a real error", () => {
+    const detailed = parseMultiEditorDetailed(
+      [`write src/a.ts with ${BEGIN}`, "export const a = 2;", END, "nonsense"].join("\n"),
+    );
+    expect(detailed.ok).toBe(false);
+    expect(detailed.issues.map((issue) => issue.code)).toContain("EDIT_INLINE_FENCE_OPEN");
+    const rendered = renderDslIssues(detailed.issues);
+    expect(rendered.indexOf("code: EDIT_MISSING_FIELD")).toBeLessThan(
+      rendered.indexOf("code: EDIT_INLINE_FENCE_OPEN"),
+    );
   });
 
   test("rejects text after an inline opener", () => {

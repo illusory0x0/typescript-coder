@@ -49,6 +49,36 @@ describe("renderDslIssues", () => {
     expect(rendered).toContain("code: EDIT_MISSING_END");
   });
 
+  test("renders errors before warnings without dropping the warning", () => {
+    const rendered = renderDslIssues([
+      issue({
+        severity: "warning",
+        code: "EDIT_INLINE_FENCE_OPEN",
+        message: "the fence opener shares a line with with",
+        recovered: true,
+      }),
+      issue({ code: "EDIT_MISSING_FIELD", message: "expected a statement" }),
+    ]);
+    expect(rendered.startsWith("stage: syntax\ncode: EDIT_MISSING_FIELD")).toBe(true);
+    expect(rendered).toContain("code: EDIT_INLINE_FENCE_OPEN");
+    expect(rendered.indexOf("code: EDIT_MISSING_FIELD")).toBeLessThan(
+      rendered.indexOf("code: EDIT_INLINE_FENCE_OPEN"),
+    );
+  });
+
+  test("keeps errors visible when warnings would exceed the display limit", () => {
+    const warnings = Array.from({ length: DSL_ISSUE_LIMIT + 1 }, (_, index) =>
+      issue({ severity: "warning", code: `EDIT_WARN_${index}`, recovered: true }),
+    );
+    const rendered = renderDslIssues([
+      ...warnings,
+      issue({ code: "EDIT_REAL_ERROR", message: "the blocking problem" }),
+    ]);
+    expect(rendered).toContain("code: EDIT_REAL_ERROR");
+    expect(rendered).toContain("code: EDIT_WARN_0");
+    expect(rendered).toContain("… 2 more issue(s)");
+  });
+
   test(`bounds the output to the first ${DSL_ISSUE_LIMIT} issues plus a count`, () => {
     const many = Array.from({ length: DSL_ISSUE_LIMIT + 2 }, (_, index) =>
       issue({ code: `EDIT_${index}`, line: index + 1, excerpt: `line ${index + 1}` }),

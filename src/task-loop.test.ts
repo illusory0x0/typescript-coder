@@ -108,6 +108,23 @@ function project(): string {
   return dir;
 }
 
+/** The same project plus a class whose method can be edited as a whole member. */
+function projectWithWorkbook(): string {
+  const dir = project();
+  writeFileSync(
+    join(dir, "src", "workbook.ts"),
+    [
+      "export class Workbook {",
+      "  evaluateInput(input: string): number {",
+      "    return input.length;",
+      "  }",
+      "}",
+      "",
+    ].join("\n"),
+  );
+  return dir;
+}
+
 function nodeId(label: number, slug: string): string {
   return `${String(label).padStart(2, "0")}-${slug}`;
 }
@@ -143,6 +160,17 @@ function patchText(...lines: string[]): string {
 function editDsl(replacement: string): string {
   return [
     "select answer in src/helper.ts resolve value",
+    "replace with",
+    "<<<TC_EDIT_BEGIN>>>",
+    replacement,
+    "<<<TC_EDIT_END>>>",
+    "end",
+  ].join("\n");
+}
+
+function wholeSymbolEdit(head: string, replacement: string): string {
+  return [
+    head,
     "replace with",
     "<<<TC_EDIT_BEGIN>>>",
     replacement,
@@ -755,6 +783,14 @@ describe("address feedback", () => {
     expect(result.ok).toBe(true);
     const execution = promptsStartingWith(provider, "# Work node");
     expect(execution).toHaveLength(3);
+    expect(execution[1]).toContain("recovery: do not resend this select;");
+    expect(execution[1]).toContain(
+      "split this into one declaration per reply / one create per added declaration",
+    );
+    expect(execution[1]).toContain(
+      "use 'write src/helper.ts with <<<TC_EDIT_BEGIN>>> ... <<<TC_EDIT_END>>>'",
+    );
+    expect(execution[1]).not.toContain("this shape failure already occurred");
     expect(execution[1]).toContain("write src/helper.ts with");
     expect(execution[1]).toContain("create <kind> <name> in src/helper.ts");
     expect(execution[1]).toContain("keep the selected function");
@@ -767,6 +803,152 @@ describe("address feedback", () => {
       "applied",
       "ok",
     ]);
+  }, 30000);
+
+  test("a repeated whole-declaration shape failure points to write or split", async () => {
+    const dir = project();
+    const node = workNode(2, "answer");
+    const multi = wholeSymbolEdit(
+      "select answer in src/helper.ts resolve value",
+      ["export function answer(): number {", "  return 2;", "}", "export const sibling = 1;"].join(
+        "\n",
+      ),
+    );
+    const largerMulti = wholeSymbolEdit(
+      "select answer in src/helper.ts resolve value",
+      [
+        "export function answer(): number {",
+        "  return 2;",
+        "}",
+        "export const sibling = 1;",
+        "export const other = 2;",
+      ].join("\n"),
+    );
+    const provider = new ScriptedProvider([
+      planText([node]),
+      multi,
+      largerMulti,
+      GOOD_EDIT,
+      "approve",
+    ]);
+    const result = await runTaskLoop(baseOptions(dir, provider));
+    expect(result.ok).toBe(true);
+    const execution = promptsStartingWith(provider, "# Work node");
+    expect(execution).toHaveLength(3);
+    expect(execution[1]).toContain("code: EDIT_DECLARATION_MISMATCH");
+    expect(execution[1]).not.toContain("this shape failure already occurred");
+    expect(execution[2]).toContain("this shape failure already occurred; switch to write or split");
+    expect(result.records.map((record) => record.outcome)).toEqual([
+      "address",
+      "address",
+      "applied",
+      "ok",
+    ]);
+  }, 30000);
+});
+
+describe("whole-declaration member edits", () => {
+  const validMethod = [
+    "evaluateInput(input: string): number {",
+    "  return input.length + 1;",
+    "}",
+  ].join("\n");
+  const methodNode = () =>
+    workNode(2, "method", {
+      instruction: "Change Workbook.evaluateInput.",
+      hints: [{ path: "src/workbook.ts", symbol: "Workbook.evaluateInput", kind: "value" }],
+    });
+
+  test("applies a valid class-method whole-symbol replacement", async () => {
+    const dir = projectWithWorkbook();
+    const provider = new ScriptedProvider([
+      planText([methodNode()]),
+      [
+        wholeSymbolEdit("select Workbook.evaluateInput in src/workbook.ts", validMethod),
+        GOOD_EDIT,
+      ].join("\n"),
+      "approve",
+    ]);
+    const result = await runTaskLoop(baseOptions(dir, provider));
+    expect(result.ok).toBe(true);
+    expect(readFileSync(join(dir, "src", "workbook.ts"), "utf8")).toContain(
+      "return input.length + 1;",
+    );
+    expect(result.records.some((record) => record.outcome === "address")).toBe(false);
+  }, 30000);
+
+  test("an invalid class-method replacement fails at the gate, not the shape guard", async () => {
+    const dir = projectWithWorkbook();
+    const invalidMethod = ["evaluateInput(input: string): number {", "  return input.length"].join(
+      "\n",
+    );
+    const provider = new ScriptedProvider([
+      planText([methodNode()]),
+      wholeSymbolEdit("select Workbook.evaluateInput in src/workbook.ts", invalidMethod),
+      [
+        wholeSymbolEdit("select Workbook.evaluateInput in src/workbook.ts", validMethod),
+        GOOD_EDIT,
+      ].join("\n"),
+      "approve",
+    ]);
+    const result = await runTaskLoop(baseOptions(dir, provider));
+    expect(result.ok).toBe(true);
+    const rejected = result.records.find(
+      (record) => record.kind === "exchange" && record.outcome === "gate",
+    );
+    expect(rejected?.diagnostics).toContain("stage: gate");
+    expect(rejected?.diagnostics).not.toContain("EDIT_DECLARATION_MISMATCH");
+    expect(readFileSync(join(dir, "src", "workbook.ts"), "utf8")).toContain(
+      "return input.length + 1;",
+    );
+  }, 30000);
+
+  test("a valid object-literal member replacement is spliced at the member span", async () => {
+    const dir = project();
+    writeFileSync(
+      join(dir, "src", "config.ts"),
+      "export const config = {\n  timeout: 100,\n  retries: 3,\n};\n",
+    );
+    const node = workNode(2, "config", {
+      instruction: "Change config.timeout.",
+      hints: [{ path: "src/config.ts", symbol: "config.timeout", kind: "value" }],
+    });
+    const provider = new ScriptedProvider([
+      planText([node]),
+      [wholeSymbolEdit("select config.timeout in src/config.ts", "timeout: 200"), GOOD_EDIT].join(
+        "\n",
+      ),
+      "approve",
+    ]);
+    const result = await runTaskLoop(baseOptions(dir, provider));
+    expect(result.ok).toBe(true);
+    const config = readFileSync(join(dir, "src", "config.ts"), "utf8");
+    expect(config).toContain("timeout: 200");
+    expect(config).toContain("retries: 3");
+    expect(config).toContain("export const config");
+    expect(result.records.some((record) => record.outcome === "address")).toBe(false);
+  }, 30000);
+});
+
+describe("inline fence warnings", () => {
+  test("accepts a warning-only inline-fence write reply", async () => {
+    const dir = project();
+    const node = workNode(2, "answer");
+    const inlineWrite = [
+      "write src/helper.ts with <<<TC_EDIT_BEGIN>>>",
+      "export function answer(): number {",
+      "  return 2;",
+      "}",
+      "<<<TC_EDIT_END>>>",
+    ].join("\n");
+    const provider = new ScriptedProvider([planText([node]), inlineWrite, "approve"]);
+    const result = await runTaskLoop(baseOptions(dir, provider));
+    expect(result.ok).toBe(true);
+    expect(readFileSync(join(dir, "src", "helper.ts"), "utf8")).toContain("return 2;");
+    expect(result.warnings?.some((warning) => warning.startsWith("EDIT_INLINE_FENCE_OPEN:"))).toBe(
+      true,
+    );
+    expect(result.records.find((record) => record.outcome === "applied")).toBeDefined();
   }, 30000);
 });
 

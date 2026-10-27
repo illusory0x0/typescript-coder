@@ -381,6 +381,8 @@ interface ExecutionContext {
   records: LoopRecord[];
   /** Warnings recovered by a tolerant parser; recorded on the run result. */
   warnings: string[];
+  /** Whole-declaration shape failures already seen in this work node. */
+  shapeFailures: Set<string>;
   node: WorkNode;
   iteration: number;
 }
@@ -428,6 +430,17 @@ interface DeclarationShape {
   kind: string;
 }
 
+/**
+ * Index names for declarations nested in a class, interface, namespace, enum,
+ * or object literal are dotted (`Workbook.evaluateInput`, `config.timeout`).
+ * Their node spans a member, not a top-level declaration, so the whole-symbol
+ * declaration guard and variable-statement expansion do not apply. The normal
+ * splice/parse/format/gate path validates a member replacement.
+ */
+function isNestedMemberName(name: string): boolean {
+  return name.includes(".");
+}
+
 /** Unwrap the export wrapper around a top-level declaration. */
 function unwrapTopLevelDeclaration(statement: Node): Node | null {
   const kind = (statement as Node & { kind?: string }).kind;
@@ -468,6 +481,11 @@ function declarationNodeName(node: Node): string | null {
 
 /** The exact target kind, including const/let/var for variable entries. */
 function targetDeclarationShape(source: string, entry: IndexEntry): DeclarationShape | null {
+  // A dotted name is a nested member or a dotted namespace declaration, never a
+  // single top-level declaration; there is no top-level name/kind shape to keep.
+  if (isNestedMemberName(entry.locator.name)) {
+    return null;
+  }
   if (entry.locator.kind !== "variable") {
     return { name: entry.locator.name, kind: entry.locator.kind };
   }
@@ -495,6 +513,15 @@ function targetDeclarationShape(source: string, entry: IndexEntry): DeclarationS
 }
 
 /**
+ * The recovery line shown at the top of every whole-declaration shape failure:
+ * a repeated select cannot add a sibling declaration or change the selected
+ * declaration's kind, so the model must switch forms or split the change.
+ */
+function declarationShapeRecovery(path: string): string {
+  return `recovery: do not resend this select; use 'write ${path} with <<<TC_EDIT_BEGIN>>> ... <<<TC_EDIT_END>>>' or split this into one declaration per reply / one create per added declaration.`;
+}
+
+/**
  * The remediation appended to a whole-declaration shape failure: a
  * multi-declaration or kind-changing replacement needs the whole-file `write`
  * form or one declaration per reply, and a different kind needs an explicit
@@ -511,46 +538,72 @@ function declarationShapeRemediation(
     : `hint: use ${write} for a multi-declaration or name-changing replacement, or split the change into one declaration per reply with a \`create <kind> <name> in ${path} with <fence> end\` clause per new declaration; a whole-declaration replacement must keep the selected ${target.kind} ${JSON.stringify(target.name)}.`;
 }
 
+interface DeclarationShapeFailure {
+  /** Stable problem identity, used to flag a repeat within one work node. */
+  key: string;
+  diagnostics: string;
+}
+
 /**
  * A whole-declaration modify replaces the declaration span, not just a body.
  * It must still produce exactly the same top-level declaration kind and name;
  * otherwise `NAME_ERROR = ...` can pass the parse gate and fail only at tsc.
+ * Nested members are exempt: their target is not a top-level declaration.
  */
 function declarationShapeProblem(
   source: string,
   entry: IndexEntry,
   replacement: string,
-): string | null {
+): DeclarationShapeFailure | null {
   const target = targetDeclarationShape(source, entry);
   if (target === null) {
     return null;
   }
+  const failure = (category: string, detail: string): DeclarationShapeFailure => ({
+    key: `${entry.locator.path}\u0000${target.name}\u0000${target.kind}\u0000${category}`,
+    diagnostics: `stage: address\ncode: EDIT_DECLARATION_MISMATCH\n${declarationShapeRecovery(entry.locator.path)}\n${detail}`,
+  });
   let program: Program;
   try {
     program = new Parser(replacement).parseProgram();
   } catch (error) {
-    return `stage: address\ncode: EDIT_DECLARATION_MISMATCH\nthe replacement for ${JSON.stringify(target.kind)} ${JSON.stringify(target.name)} does not parse as a declaration: ${error instanceof Error ? error.message : String(error)}`;
+    return failure(
+      "parse",
+      `the replacement for ${JSON.stringify(target.kind)} ${JSON.stringify(target.name)} does not parse as a declaration: ${error instanceof Error ? error.message : String(error)}`,
+    );
   }
   const declarations = program.body
     .map((statement) => unwrapTopLevelDeclaration(statement))
     .filter((declaration): declaration is Node => declaration !== null);
   if (declarations.length !== 1) {
-    return `stage: address\ncode: EDIT_DECLARATION_MISMATCH\na whole-declaration modify must produce exactly one top-level declaration named ${JSON.stringify(target.name)}; got ${declarations.length}\n${declarationShapeRemediation(entry.locator.path, target, false)}`;
+    return failure(
+      "multi-declaration",
+      `a whole-declaration modify must produce exactly one top-level declaration named ${JSON.stringify(target.name)}; got ${declarations.length}\n${declarationShapeRemediation(entry.locator.path, target, false)}`,
+    );
   }
   const declaration = declarations[0];
   if (declaration === undefined) {
-    return `stage: address\ncode: EDIT_DECLARATION_MISMATCH\nthe replacement declares no top-level ${JSON.stringify(target.name)}\n${declarationShapeRemediation(entry.locator.path, target, false)}`;
+    return failure(
+      "no-declaration",
+      `the replacement declares no top-level ${JSON.stringify(target.name)}\n${declarationShapeRemediation(entry.locator.path, target, false)}`,
+    );
   }
   const name = declarationNodeName(declaration);
   if (name !== target.name) {
-    return `stage: address\ncode: EDIT_DECLARATION_MISMATCH\nthe replacement must declare ${JSON.stringify(target.name)}, not ${JSON.stringify(name ?? "<not a declaration>")}\n${declarationShapeRemediation(entry.locator.path, target, false)}`;
+    return failure(
+      "name",
+      `the replacement must declare ${JSON.stringify(target.name)}, not ${JSON.stringify(name ?? "<not a declaration>")}\n${declarationShapeRemediation(entry.locator.path, target, false)}`,
+    );
   }
   const kind =
     (declaration as Node & { kind?: string }).kind === "VariableStatement"
       ? ((declaration as Node & { declarationKind?: string }).declarationKind ?? "variable")
       : declarationKindOf(declaration);
   if (kind !== target.kind) {
-    return `stage: address\ncode: EDIT_DECLARATION_MISMATCH\nthe replacement for ${JSON.stringify(target.kind)} ${JSON.stringify(target.name)} must remain a ${target.kind} declaration; got ${kind}\n${declarationShapeRemediation(entry.locator.path, target, true)}`;
+    return failure(
+      "kind",
+      `the replacement for ${JSON.stringify(target.kind)} ${JSON.stringify(target.name)} must remain a ${target.kind} declaration; got ${kind}\n${declarationShapeRemediation(entry.locator.path, target, true)}`,
+    );
   }
   return null;
 }
@@ -785,13 +838,23 @@ async function applyEditReply(
       expandedRegions.push(region);
       continue;
     }
-    if (region.stage === "whole-symbol" && region.text.trim() !== "") {
+    const nestedMember = isNestedMemberName(existing.entry.locator.name);
+    if (!nestedMember && region.stage === "whole-symbol" && region.text.trim() !== "") {
       const shape = declarationShapeProblem(source, existing.entry, region.text);
       if (shape !== null) {
-        return rejected(shape, feedback);
+        const repeated = context.shapeFailures.has(shape.key);
+        context.shapeFailures.add(shape.key);
+        return rejected(
+          repeated
+            ? `${shape.diagnostics}\nthis shape failure already occurred; switch to write or split`
+            : shape.diagnostics,
+          feedback,
+        );
       }
     }
-    const expanded = expandVariableRegion(source, existing.entry, region);
+    // A nested member spans its own node; there is no top-level declaration
+    // shape guard or variable-statement expansion to apply.
+    const expanded = nestedMember ? region : expandVariableRegion(source, existing.entry, region);
     if ("error" in expanded) {
       return rejected(expanded.error, feedback);
     }
@@ -1840,6 +1903,8 @@ export async function runTaskLoop(options: LoopOptions): Promise<LoopResult> {
     const viewerSeen = new Set<string>();
     /** Whole-file-written paths since the last targeted edit, per work node. */
     const wholeFileWritesSinceEdit = new Set<string>();
+    /** Whole-declaration shape failures already reported for this work node. */
+    const shapeFailures = new Set<string>();
     let priorGate: string | undefined;
     let priorDiagnostics: string | undefined;
     let feedback: string | undefined;
@@ -1879,6 +1944,7 @@ export async function runTaskLoop(options: LoopOptions): Promise<LoopResult> {
         options,
         records,
         warnings: runWarnings,
+        shapeFailures,
         node,
         iteration,
       };

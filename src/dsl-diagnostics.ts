@@ -157,18 +157,26 @@ function renderIssue(issue: DslIssue): string[] {
 }
 
 /**
- * Render issues in one stable shape. The first `limit` issues are shown (8 by
- * default), then a single count line; warnings are visible but their marker
- * makes clear they do not block.
+ * Render issues in one stable shape. Errors render before warnings so a
+ * recovered warning can never hide the blocking diagnostic or consume the
+ * display limit; order within a severity is preserved. The first `limit` issues
+ * are shown (8 by default), then a single count line.
  */
 export function renderDslIssues(
   issues: readonly DslIssue[],
   options: { limit?: number } = {},
 ): string {
   const limit = Math.max(0, options.limit ?? DSL_ISSUE_LIMIT);
-  const shown = issues.slice(0, limit);
+  const ordered = issues
+    .map((issue, index) => ({ issue, index }))
+    .sort((left, right) => {
+      const rank = (severity: DslIssue["severity"]): number => (severity === "error" ? 0 : 1);
+      return rank(left.issue.severity) - rank(right.issue.severity) || left.index - right.index;
+    })
+    .map((entry) => entry.issue);
+  const shown = ordered.slice(0, limit);
   const blocks = shown.map(renderIssue).map((lines) => lines.join("\n"));
-  const hidden = issues.length - shown.length;
+  const hidden = ordered.length - shown.length;
   if (hidden > 0) {
     blocks.push(`… ${hidden} more issue(s)`);
   }
