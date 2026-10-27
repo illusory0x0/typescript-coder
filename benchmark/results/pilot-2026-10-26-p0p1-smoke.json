@@ -1,0 +1,2002 @@
+{
+  "generatedAt": "2026-10-26T14:25:58.471Z",
+  "date": "2026-10-26",
+  "mode": "pilot",
+  "tasks": [
+    "mini-spreadsheet"
+  ],
+  "sides": [
+    "tc"
+  ],
+  "reps": 1,
+  "concurrency": 1,
+  "model": "deepseek-flash",
+  "ocModel": null,
+  "effort": null,
+  "multiPayload": false,
+  "protocolFormat": "edit-dsl",
+  "protocolFormats": [
+    "edit-dsl"
+  ],
+  "agentModes": [
+    "plan-exec"
+  ],
+  "tokenBudget": 120000,
+  "bunVersion": "1.3.13",
+  "opencodeVersion": null,
+  "pilotReference": "benchmark/results/pilot-2026-10-26.json",
+  "infraErrors": [],
+  "runs": [
+    {
+      "task": "mini-spreadsheet",
+      "side": "tc",
+      "protocol": "edit-dsl",
+      "agentMode": "plan-exec",
+      "rep": 1,
+      "ok": false,
+      "sideOk": false,
+      "tokens": {
+        "input": 539682,
+        "output": 21501,
+        "cacheRead": 427008,
+        "cacheWrite": null,
+        "reasoning": 405,
+        "total": 561183,
+        "billable": {
+          "in": 112674,
+          "out": 21906,
+          "total": 134580,
+          "loop": 121401
+        }
+      },
+      "usageAvailable": true,
+      "usageSource": "chat-completions",
+      "rawUsage": [
+        {
+          "prompt_tokens": 7535,
+          "completion_tokens": 932,
+          "total_tokens": 8467,
+          "prompt_tokens_details": {
+            "cached_tokens": 6144
+          },
+          "completion_tokens_details": {
+            "reasoning_tokens": 0
+          },
+          "cost": 0,
+          "opencode": {
+            "billing_source": "go",
+            "list_cost": 0.00078628,
+            "allowance": 0.00078628,
+            "tokens": {
+              "input": 1391,
+              "output": 932,
+              "reasoning": 0,
+              "cache_read": 6144,
+              "cache_write_5m": 0,
+              "cache_write_1h": 0
+            }
+          }
+        },
+        {
+          "prompt_tokens": 2254,
+          "completion_tokens": 203,
+          "total_tokens": 2457,
+          "prompt_tokens_details": {
+            "cached_tokens": 0
+          },
+          "completion_tokens_details": {
+            "reasoning_tokens": 0
+          },
+          "cost": 0,
+          "opencode": {
+            "billing_source": "go",
+            "list_cost": 0.0004599,
+            "allowance": 0.0004599,
+            "tokens": {
+              "input": 2254,
+              "output": 203,
+              "reasoning": 0,
+              "cache_read": 0,
+              "cache_write_5m": 0,
+              "cache_write_1h": 0
+            }
+          }
+        },
+        {
+          "prompt_tokens": 9051,
+          "completion_tokens": 298,
+          "total_tokens": 9349,
+          "prompt_tokens_details": {
+            "cached_tokens": 7424
+          },
+          "completion_tokens_details": {
+            "reasoning_tokens": 0
+          },
+          "cost": 0,
+          "opencode": {
+            "billing_source": "go",
+            "list_cost": 0.00044512,
+            "allowance": 0.00044512,
+            "tokens": {
+              "input": 1627,
+              "output": 298,
+              "reasoning": 0,
+              "cache_read": 7424,
+              "cache_write_5m": 0,
+              "cache_write_1h": 0
+            }
+          }
+        },
+        {
+          "prompt_tokens": 10153,
+          "completion_tokens": 297,
+          "total_tokens": 10450,
+          "prompt_tokens_details": {
+            "cached_tokens": 8960
+          },
+          "completion_tokens_details": {
+            "reasoning_tokens": 0
+          },
+          "cost": 0,
+          "opencode": {
+            "billing_source": "go",
+            "list_cost": 0.00038403,
+            "allowance": 0.00038403,
+            "tokens": {
+              "input": 1193,
+              "output": 297,
+              "reasoning": 0,
+              "cache_read": 8960,
+              "cache_write_5m": 0,
+              "cache_write_1h": 0
+            }
+          }
+        },
+        {
+          "prompt_tokens": 2816,
+          "completion_tokens": 209,
+          "total_tokens": 3025,
+          "prompt_tokens_details": {
+            "cached_tokens": 0
+          },
+          "completion_tokens_details": {
+            "reasoning_tokens": 0
+          },
+          "cost": 0,
+          "opencode": {
+            "billing_source": "go",
+            "list_cost": 0.0005478,
+            "allowance": 0.0005478,
+            "tokens": {
+              "input": 2816,
+              "output": 209,
+              "reasoning": 0,
+              "cache_read": 0,
+              "cache_write_5m": 0,
+              "cache_write_1h": 0
+            }
+          }
+        },
+        {
+          "prompt_tokens": 11264,
+          "completion_tokens": 2,
+          "total_tokens": 11266,
+          "prompt_tokens_details": {
+            "cached_tokens": 10112
+          },
+          "completion_tokens_details": {
+            "reasoning_tokens": 0
+          },
+          "cost": 0,
+          "opencode": {
+            "billing_source": "go",
+            "list_cost": 0.00020434,
+            "allowance": 0.00020434,
+            "tokens": {
+              "input": 1152,
+              "output": 2,
+              "reasoning": 0,
+              "cache_read": 10112,
+              "cache_write_5m": 0,
+              "cache_write_1h": 0
+            }
+          }
+        },
+        {
+          "prompt_tokens": 2392,
+          "completion_tokens": 3714,
+          "total_tokens": 6106,
+          "prompt_tokens_details": {
+            "cached_tokens": 0
+          },
+          "completion_tokens_details": {
+            "reasoning_tokens": 0
+          },
+          "cost": 0,
+          "opencode": {
+            "billing_source": "go",
+            "list_cost": 0.0025872,
+            "allowance": 0.0025872,
+            "tokens": {
+              "input": 2392,
+              "output": 3714,
+              "reasoning": 0,
+              "cache_read": 0,
+              "cache_write_5m": 0,
+              "cache_write_1h": 0
+            }
+          }
+        },
+        {
+          "prompt_tokens": 12160,
+          "completion_tokens": 2,
+          "total_tokens": 12162,
+          "prompt_tokens_details": {
+            "cached_tokens": 11264
+          },
+          "completion_tokens_details": {
+            "reasoning_tokens": 0
+          },
+          "cost": 0,
+          "opencode": {
+            "billing_source": "go",
+            "list_cost": 0.00016939,
+            "allowance": 0.00016939,
+            "tokens": {
+              "input": 896,
+              "output": 2,
+              "reasoning": 0,
+              "cache_read": 11264,
+              "cache_write_5m": 0,
+              "cache_write_1h": 0
+            }
+          }
+        },
+        {
+          "prompt_tokens": 2304,
+          "completion_tokens": 860,
+          "total_tokens": 3164,
+          "prompt_tokens_details": {
+            "cached_tokens": 0
+          },
+          "completion_tokens_details": {
+            "reasoning_tokens": 0
+          },
+          "cost": 0,
+          "opencode": {
+            "billing_source": "go",
+            "list_cost": 0.0008616,
+            "allowance": 0.0008616,
+            "tokens": {
+              "input": 2304,
+              "output": 860,
+              "reasoning": 0,
+              "cache_read": 0,
+              "cache_write_5m": 0,
+              "cache_write_1h": 0
+            }
+          }
+        },
+        {
+          "prompt_tokens": 7158,
+          "completion_tokens": 996,
+          "total_tokens": 8154,
+          "prompt_tokens_details": {
+            "cached_tokens": 2304
+          },
+          "completion_tokens_details": {
+            "reasoning_tokens": 0
+          },
+          "cost": 0,
+          "opencode": {
+            "billing_source": "go",
+            "list_cost": 0.00133261,
+            "allowance": 0.00133261,
+            "tokens": {
+              "input": 4854,
+              "output": 996,
+              "reasoning": 0,
+              "cache_read": 2304,
+              "cache_write_5m": 0,
+              "cache_write_1h": 0
+            }
+          }
+        },
+        {
+          "prompt_tokens": 10685,
+          "completion_tokens": 35,
+          "total_tokens": 10720,
+          "prompt_tokens_details": {
+            "cached_tokens": 7040
+          },
+          "completion_tokens_details": {
+            "reasoning_tokens": 0
+          },
+          "cost": 0,
+          "opencode": {
+            "billing_source": "go",
+            "list_cost": 0.00058887,
+            "allowance": 0.00058887,
+            "tokens": {
+              "input": 3645,
+              "output": 35,
+              "reasoning": 0,
+              "cache_read": 7040,
+              "cache_write_5m": 0,
+              "cache_write_1h": 0
+            }
+          }
+        },
+        {
+          "prompt_tokens": 15813,
+          "completion_tokens": 971,
+          "total_tokens": 16784,
+          "prompt_tokens_details": {
+            "cached_tokens": 10624
+          },
+          "completion_tokens_details": {
+            "reasoning_tokens": 0
+          },
+          "cost": 0,
+          "opencode": {
+            "billing_source": "go",
+            "list_cost": 0.00139282,
+            "allowance": 0.00139282,
+            "tokens": {
+              "input": 5189,
+              "output": 971,
+              "reasoning": 0,
+              "cache_read": 10624,
+              "cache_write_5m": 0,
+              "cache_write_1h": 0
+            }
+          }
+        },
+        {
+          "prompt_tokens": 19039,
+          "completion_tokens": 11,
+          "total_tokens": 19050,
+          "prompt_tokens_details": {
+            "cached_tokens": 15744
+          },
+          "completion_tokens_details": {
+            "reasoning_tokens": 0
+          },
+          "cost": 0,
+          "opencode": {
+            "billing_source": "go",
+            "list_cost": 0.00054808,
+            "allowance": 0.00054808,
+            "tokens": {
+              "input": 3295,
+              "output": 11,
+              "reasoning": 0,
+              "cache_read": 15744,
+              "cache_write_5m": 0,
+              "cache_write_1h": 0
+            }
+          }
+        },
+        {
+          "prompt_tokens": 21894,
+          "completion_tokens": 23,
+          "total_tokens": 21917,
+          "prompt_tokens_details": {
+            "cached_tokens": 18944
+          },
+          "completion_tokens_details": {
+            "reasoning_tokens": 0
+          },
+          "cost": 0,
+          "opencode": {
+            "billing_source": "go",
+            "list_cost": 0.00051313,
+            "allowance": 0.00051313,
+            "tokens": {
+              "input": 2950,
+              "output": 23,
+              "reasoning": 0,
+              "cache_read": 18944,
+              "cache_write_5m": 0,
+              "cache_write_1h": 0
+            }
+          }
+        },
+        {
+          "prompt_tokens": 24991,
+          "completion_tokens": 11,
+          "total_tokens": 25002,
+          "prompt_tokens_details": {
+            "cached_tokens": 21888
+          },
+          "completion_tokens_details": {
+            "reasoning_tokens": 0
+          },
+          "cost": 0,
+          "opencode": {
+            "billing_source": "go",
+            "list_cost": 0.00053771,
+            "allowance": 0.00053771,
+            "tokens": {
+              "input": 3103,
+              "output": 11,
+              "reasoning": 0,
+              "cache_read": 21888,
+              "cache_write_5m": 0,
+              "cache_write_1h": 0
+            }
+          }
+        },
+        {
+          "prompt_tokens": 27077,
+          "completion_tokens": 951,
+          "total_tokens": 28028,
+          "prompt_tokens_details": {
+            "cached_tokens": 24960
+          },
+          "completion_tokens_details": {
+            "reasoning_tokens": 0
+          },
+          "cost": 0,
+          "opencode": {
+            "billing_source": "go",
+            "list_cost": 0.00096303,
+            "allowance": 0.00096303,
+            "tokens": {
+              "input": 2117,
+              "output": 951,
+              "reasoning": 0,
+              "cache_read": 24960,
+              "cache_write_5m": 0,
+              "cache_write_1h": 0
+            }
+          }
+        },
+        {
+          "prompt_tokens": 30252,
+          "completion_tokens": 2523,
+          "total_tokens": 32775,
+          "prompt_tokens_details": {
+            "cached_tokens": 27008
+          },
+          "completion_tokens_details": {
+            "reasoning_tokens": 0
+          },
+          "cost": 0,
+          "opencode": {
+            "billing_source": "go",
+            "list_cost": 0.00208142,
+            "allowance": 0.00208142,
+            "tokens": {
+              "input": 3244,
+              "output": 2523,
+              "reasoning": 0,
+              "cache_read": 27008,
+              "cache_write_5m": 0,
+              "cache_write_1h": 0
+            }
+          }
+        },
+        {
+          "prompt_tokens": 34466,
+          "completion_tokens": 20,
+          "total_tokens": 34486,
+          "prompt_tokens_details": {
+            "cached_tokens": 30208
+          },
+          "completion_tokens_details": {
+            "reasoning_tokens": 0
+          },
+          "cost": 0,
+          "opencode": {
+            "billing_source": "go",
+            "list_cost": 0.00074132,
+            "allowance": 0.00074132,
+            "tokens": {
+              "input": 4258,
+              "output": 20,
+              "reasoning": 0,
+              "cache_read": 30208,
+              "cache_write_5m": 0,
+              "cache_write_1h": 0
+            }
+          }
+        },
+        {
+          "prompt_tokens": 36247,
+          "completion_tokens": 1636,
+          "total_tokens": 37883,
+          "prompt_tokens_details": {
+            "cached_tokens": 34432
+          },
+          "completion_tokens_details": {
+            "reasoning_tokens": 0
+          },
+          "cost": 0,
+          "opencode": {
+            "billing_source": "go",
+            "list_cost": 0.00135715,
+            "allowance": 0.00135715,
+            "tokens": {
+              "input": 1815,
+              "output": 1636,
+              "reasoning": 0,
+              "cache_read": 34432,
+              "cache_write_5m": 0,
+              "cache_write_1h": 0
+            }
+          }
+        },
+        {
+          "prompt_tokens": 39673,
+          "completion_tokens": 2503,
+          "total_tokens": 42176,
+          "prompt_tokens_details": {
+            "cached_tokens": 36224
+          },
+          "completion_tokens_details": {
+            "reasoning_tokens": 0
+          },
+          "cost": 0,
+          "opencode": {
+            "billing_source": "go",
+            "list_cost": 0.00212782,
+            "allowance": 0.00212782,
+            "tokens": {
+              "input": 3449,
+              "output": 2503,
+              "reasoning": 0,
+              "cache_read": 36224,
+              "cache_write_5m": 0,
+              "cache_write_1h": 0
+            }
+          }
+        },
+        {
+          "prompt_tokens": 16542,
+          "completion_tokens": 410,
+          "total_tokens": 16952,
+          "prompt_tokens_details": {
+            "cached_tokens": 12160
+          },
+          "completion_tokens_details": {
+            "reasoning_tokens": 0
+          },
+          "cost": 0,
+          "opencode": {
+            "billing_source": "go",
+            "list_cost": 0.00093978,
+            "allowance": 0.00093978,
+            "tokens": {
+              "input": 4382,
+              "output": 410,
+              "reasoning": 0,
+              "cache_read": 12160,
+              "cache_write_5m": 0,
+              "cache_write_1h": 0
+            }
+          }
+        },
+        {
+          "prompt_tokens": 4170,
+          "completion_tokens": 6,
+          "total_tokens": 4176,
+          "prompt_tokens_details": {
+            "cached_tokens": 0
+          },
+          "completion_tokens_details": {
+            "reasoning_tokens": 0
+          },
+          "cost": 0,
+          "opencode": {
+            "billing_source": "go",
+            "list_cost": 0.0006291,
+            "allowance": 0.0006291,
+            "tokens": {
+              "input": 4170,
+              "output": 6,
+              "reasoning": 0,
+              "cache_read": 0,
+              "cache_write_5m": 0,
+              "cache_write_1h": 0
+            }
+          }
+        },
+        {
+          "prompt_tokens": 8287,
+          "completion_tokens": 24,
+          "total_tokens": 8311,
+          "prompt_tokens_details": {
+            "cached_tokens": 4096
+          },
+          "completion_tokens_details": {
+            "reasoning_tokens": 0
+          },
+          "cost": 0,
+          "opencode": {
+            "billing_source": "go",
+            "list_cost": 0.00065534,
+            "allowance": 0.00065534,
+            "tokens": {
+              "input": 4191,
+              "output": 24,
+              "reasoning": 0,
+              "cache_read": 4096,
+              "cache_write_5m": 0,
+              "cache_write_1h": 0
+            }
+          }
+        },
+        {
+          "prompt_tokens": 10785,
+          "completion_tokens": 23,
+          "total_tokens": 10808,
+          "prompt_tokens_details": {
+            "cached_tokens": 8192
+          },
+          "completion_tokens_details": {
+            "reasoning_tokens": 0
+          },
+          "cost": 0,
+          "opencode": {
+            "billing_source": "go",
+            "list_cost": 0.00042733,
+            "allowance": 0.00042733,
+            "tokens": {
+              "input": 2593,
+              "output": 23,
+              "reasoning": 0,
+              "cache_read": 8192,
+              "cache_write_5m": 0,
+              "cache_write_1h": 0
+            }
+          }
+        },
+        {
+          "prompt_tokens": 13621,
+          "completion_tokens": 23,
+          "total_tokens": 13644,
+          "prompt_tokens_details": {
+            "cached_tokens": 10752
+          },
+          "completion_tokens_details": {
+            "reasoning_tokens": 0
+          },
+          "cost": 0,
+          "opencode": {
+            "billing_source": "go",
+            "list_cost": 0.00047641,
+            "allowance": 0.00047641,
+            "tokens": {
+              "input": 2869,
+              "output": 23,
+              "reasoning": 0,
+              "cache_read": 10752,
+              "cache_write_5m": 0,
+              "cache_write_1h": 0
+            }
+          }
+        },
+        {
+          "prompt_tokens": 17740,
+          "completion_tokens": 1160,
+          "total_tokens": 18900,
+          "prompt_tokens_details": {
+            "cached_tokens": 13568
+          },
+          "completion_tokens_details": {
+            "reasoning_tokens": 0
+          },
+          "cost": 0,
+          "opencode": {
+            "billing_source": "go",
+            "list_cost": 0.0013625,
+            "allowance": 0.0013625,
+            "tokens": {
+              "input": 4172,
+              "output": 1160,
+              "reasoning": 0,
+              "cache_read": 13568,
+              "cache_write_5m": 0,
+              "cache_write_1h": 0
+            }
+          }
+        },
+        {
+          "prompt_tokens": 21734,
+          "completion_tokens": 1097,
+          "total_tokens": 22831,
+          "prompt_tokens_details": {
+            "cached_tokens": 17664
+          },
+          "completion_tokens_details": {
+            "reasoning_tokens": 0
+          },
+          "cost": 0,
+          "opencode": {
+            "billing_source": "go",
+            "list_cost": 0.00132169,
+            "allowance": 0.00132169,
+            "tokens": {
+              "input": 4070,
+              "output": 1097,
+              "reasoning": 0,
+              "cache_read": 17664,
+              "cache_write_5m": 0,
+              "cache_write_1h": 0
+            }
+          }
+        },
+        {
+          "prompt_tokens": 25230,
+          "completion_tokens": 1100,
+          "total_tokens": 26330,
+          "prompt_tokens_details": {
+            "cached_tokens": 21632
+          },
+          "completion_tokens_details": {
+            "reasoning_tokens": 0
+          },
+          "cost": 0,
+          "opencode": {
+            "billing_source": "go",
+            "list_cost": 0.0012646,
+            "allowance": 0.0012646,
+            "tokens": {
+              "input": 3598,
+              "output": 1100,
+              "reasoning": 0,
+              "cache_read": 21632,
+              "cache_write_5m": 0,
+              "cache_write_1h": 0
+            }
+          }
+        },
+        {
+          "prompt_tokens": 28850,
+          "completion_tokens": 391,
+          "total_tokens": 29241,
+          "prompt_tokens_details": {
+            "cached_tokens": 25216
+          },
+          "completion_tokens_details": {
+            "reasoning_tokens": 0
+          },
+          "cost": 0,
+          "opencode": {
+            "billing_source": "go",
+            "list_cost": 0.00085535,
+            "allowance": 0.00085535,
+            "tokens": {
+              "input": 3634,
+              "output": 391,
+              "reasoning": 0,
+              "cache_read": 25216,
+              "cache_write_5m": 0,
+              "cache_write_1h": 0
+            }
+          }
+        },
+        {
+          "prompt_tokens": 18011,
+          "completion_tokens": 2,
+          "total_tokens": 18013,
+          "prompt_tokens_details": {
+            "cached_tokens": 16512
+          },
+          "completion_tokens_details": {
+            "reasoning_tokens": 0
+          },
+          "cost": 0,
+          "opencode": {
+            "billing_source": "go",
+            "list_cost": 0.00027559,
+            "allowance": 0.00027559,
+            "tokens": {
+              "input": 1499,
+              "output": 2,
+              "reasoning": 0,
+              "cache_read": 16512,
+              "cache_write_5m": 0,
+              "cache_write_1h": 0
+            }
+          }
+        },
+        {
+          "prompt_tokens": 3437,
+          "completion_tokens": 54,
+          "total_tokens": 3491,
+          "prompt_tokens_details": {
+            "cached_tokens": 0
+          },
+          "completion_tokens_details": {
+            "reasoning_tokens": 0
+          },
+          "cost": 0,
+          "opencode": {
+            "billing_source": "go",
+            "list_cost": 0.00054795,
+            "allowance": 0.00054795,
+            "tokens": {
+              "input": 3437,
+              "output": 54,
+              "reasoning": 0,
+              "cache_read": 0,
+              "cache_write_5m": 0,
+              "cache_write_1h": 0
+            }
+          }
+        },
+        {
+          "prompt_tokens": 5343,
+          "completion_tokens": 6,
+          "total_tokens": 5349,
+          "prompt_tokens_details": {
+            "cached_tokens": 3328
+          },
+          "completion_tokens_details": {
+            "reasoning_tokens": 0
+          },
+          "cost": 0,
+          "opencode": {
+            "billing_source": "go",
+            "list_cost": 0.00031583,
+            "allowance": 0.00031583,
+            "tokens": {
+              "input": 2015,
+              "output": 6,
+              "reasoning": 0,
+              "cache_read": 3328,
+              "cache_write_5m": 0,
+              "cache_write_1h": 0
+            }
+          }
+        },
+        {
+          "prompt_tokens": 9339,
+          "completion_tokens": 181,
+          "total_tokens": 9520,
+          "prompt_tokens_details": {
+            "cached_tokens": 5248
+          },
+          "completion_tokens_details": {
+            "reasoning_tokens": 0
+          },
+          "cost": 0,
+          "opencode": {
+            "billing_source": "go",
+            "list_cost": 0.00073799,
+            "allowance": 0.00073799,
+            "tokens": {
+              "input": 4091,
+              "output": 181,
+              "reasoning": 0,
+              "cache_read": 5248,
+              "cache_write_5m": 0,
+              "cache_write_1h": 0
+            }
+          }
+        },
+        {
+          "prompt_tokens": 11224,
+          "completion_tokens": 54,
+          "total_tokens": 11278,
+          "prompt_tokens_details": {
+            "cached_tokens": 9216
+          },
+          "completion_tokens_details": {
+            "reasoning_tokens": 0
+          },
+          "cost": 0,
+          "opencode": {
+            "billing_source": "go",
+            "list_cost": 0.00036125,
+            "allowance": 0.00036125,
+            "tokens": {
+              "input": 2008,
+              "output": 54,
+              "reasoning": 0,
+              "cache_read": 9216,
+              "cache_write_5m": 0,
+              "cache_write_1h": 0
+            }
+          }
+        },
+        {
+          "prompt_tokens": 18145,
+          "completion_tokens": 773,
+          "total_tokens": 18918,
+          "prompt_tokens_details": {
+            "cached_tokens": 6144
+          },
+          "completion_tokens_details": {
+            "reasoning_tokens": 405
+          },
+          "cost": 0,
+          "opencode": {
+            "billing_source": "go",
+            "list_cost": 0.00228238,
+            "allowance": 0.00228238,
+            "tokens": {
+              "input": 12001,
+              "output": 773,
+              "reasoning": 405,
+              "cache_read": 6144,
+              "cache_write_5m": 0,
+              "cache_write_1h": 0
+            }
+          }
+        }
+      ],
+      "durationMs": 189606,
+      "startedAt": "2026-10-26T14:26:02.899Z",
+      "finishedAt": "2026-10-26T14:29:12.505Z",
+      "cost": 0.031325724,
+      "rateClass": "off-peak",
+      "steps": 35,
+      "records": [
+        {
+          "row": 1,
+          "iteration": 1,
+          "kind": "exchange",
+          "exchange": null,
+          "outcome": "applied",
+          "diagnosticsHead": null,
+          "replacementChars": 731,
+          "finishReason": "stop",
+          "cause": null,
+          "payloads": 1,
+          "toolCalls": 0,
+          "selectors": [
+            "whole-symbol"
+          ],
+          "stages": [
+            "whole-symbol"
+          ],
+          "matcherKinds": [
+            null
+          ]
+        },
+        {
+          "row": 2,
+          "iteration": 1,
+          "kind": "verification",
+          "exchange": null,
+          "outcome": "ok",
+          "diagnosticsHead": null,
+          "replacementChars": null,
+          "finishReason": null,
+          "cause": null,
+          "payloads": 0,
+          "toolCalls": 0,
+          "selectors": null,
+          "stages": null,
+          "matcherKinds": null
+        },
+        {
+          "row": 3,
+          "iteration": 2,
+          "kind": "exchange",
+          "exchange": null,
+          "outcome": "applied",
+          "diagnosticsHead": null,
+          "replacementChars": 751,
+          "finishReason": "stop",
+          "cause": null,
+          "payloads": 1,
+          "toolCalls": 0,
+          "selectors": [
+            "whole-symbol"
+          ],
+          "stages": [
+            "whole-symbol"
+          ],
+          "matcherKinds": [
+            null
+          ]
+        },
+        {
+          "row": 4,
+          "iteration": 2,
+          "kind": "verification",
+          "exchange": null,
+          "outcome": "ok",
+          "diagnosticsHead": null,
+          "replacementChars": null,
+          "finishReason": null,
+          "cause": null,
+          "payloads": 0,
+          "toolCalls": 0,
+          "selectors": null,
+          "stages": null,
+          "matcherKinds": null
+        },
+        {
+          "row": 5,
+          "iteration": 3,
+          "kind": "exchange",
+          "exchange": null,
+          "outcome": "applied",
+          "diagnosticsHead": null,
+          "replacementChars": 12820,
+          "finishReason": "stop",
+          "cause": null,
+          "payloads": 1,
+          "toolCalls": 0,
+          "selectors": [
+            "whole-symbol"
+          ],
+          "stages": [
+            "whole-symbol"
+          ],
+          "matcherKinds": [
+            null
+          ]
+        },
+        {
+          "row": 6,
+          "iteration": 3,
+          "kind": "verification",
+          "exchange": null,
+          "outcome": "ok",
+          "diagnosticsHead": null,
+          "replacementChars": null,
+          "finishReason": null,
+          "cause": null,
+          "payloads": 0,
+          "toolCalls": 0,
+          "selectors": null,
+          "stages": null,
+          "matcherKinds": null
+        },
+        {
+          "row": 7,
+          "iteration": 4,
+          "kind": "exchange",
+          "exchange": null,
+          "outcome": "applied",
+          "diagnosticsHead": "Read results (read commands write nothing): src/workbook.ts (whole file, 505 lines; folded): ```text 1 | export type CellValue = number | string | boolean | null; 2 | 3 | export type CellError = \"#DIV",
+          "replacementChars": 3433,
+          "finishReason": "stop",
+          "cause": null,
+          "payloads": 2,
+          "toolCalls": 0,
+          "selectors": [
+            "whole-symbol"
+          ],
+          "stages": [
+            "whole-symbol"
+          ],
+          "matcherKinds": [
+            null
+          ]
+        },
+        {
+          "row": 8,
+          "iteration": 4,
+          "kind": "verification",
+          "exchange": null,
+          "outcome": "tsc",
+          "diagnosticsHead": "stage: tsc replacement line 10: TS2304: Cannot find name 'normalizeAddress'. — in declaration `Workbook` (class) 17 | setCell(_address: string, _input: string | number | boolean | null): void { 18 | c",
+          "replacementChars": null,
+          "finishReason": null,
+          "cause": null,
+          "payloads": 0,
+          "toolCalls": 0,
+          "selectors": null,
+          "stages": null,
+          "matcherKinds": null
+        },
+        {
+          "row": 9,
+          "iteration": 4,
+          "kind": "exchange",
+          "exchange": null,
+          "outcome": "applied",
+          "diagnosticsHead": "Read results (read commands write nothing): src/workbook.ts (selected lines, 15 lines): ```text 491 | if (isOp(state, \"^\")) { 492 | state.pos += 1; 493 | const exponent = parseUnary(state); 494 | if (",
+          "replacementChars": 3900,
+          "finishReason": "stop",
+          "cause": null,
+          "payloads": 2,
+          "toolCalls": 0,
+          "selectors": [
+            "whole-symbol"
+          ],
+          "stages": [
+            "whole-symbol"
+          ],
+          "matcherKinds": [
+            null
+          ]
+        },
+        {
+          "row": 10,
+          "iteration": 4,
+          "kind": "verification",
+          "exchange": null,
+          "outcome": "tsc",
+          "diagnosticsHead": "stage: tsc replacement line 10: TS2304: Cannot find name 'addressToKey'. — in declaration `Workbook` (class) 17 | setCell(_address: string, _input: string | number | boolean | null): void { 18 | const",
+          "replacementChars": null,
+          "finishReason": null,
+          "cause": null,
+          "payloads": 0,
+          "toolCalls": 0,
+          "selectors": null,
+          "stages": null,
+          "matcherKinds": null
+        },
+        {
+          "row": 11,
+          "iteration": 4,
+          "kind": "exchange",
+          "exchange": null,
+          "outcome": "viewer",
+          "diagnosticsHead": "stage: protocol the reply only located source and wrote nothing; add the edit clauses or file commands for this work node. Read results (read commands write nothing): src/workbook.ts (selected lines, ",
+          "replacementChars": 118,
+          "finishReason": "stop",
+          "cause": null,
+          "payloads": 3,
+          "toolCalls": 0,
+          "selectors": [],
+          "stages": [],
+          "matcherKinds": []
+        },
+        {
+          "row": 12,
+          "iteration": 4,
+          "kind": "exchange",
+          "exchange": null,
+          "outcome": "applied",
+          "diagnosticsHead": null,
+          "replacementChars": 3808,
+          "finishReason": "stop",
+          "cause": null,
+          "payloads": 1,
+          "toolCalls": 0,
+          "selectors": [
+            "whole-symbol"
+          ],
+          "stages": [
+            "whole-symbol"
+          ],
+          "matcherKinds": [
+            null
+          ]
+        },
+        {
+          "row": 13,
+          "iteration": 4,
+          "kind": "verification",
+          "exchange": null,
+          "outcome": "tsc",
+          "diagnosticsHead": "stage: tsc replacement line 10: TS2304: Cannot find name 'addressToKey'. — in declaration `Workbook` (class) 17 | setCell(_address: string, _input: string | number | boolean | null): void { 18 | const",
+          "replacementChars": null,
+          "finishReason": null,
+          "cause": null,
+          "payloads": 0,
+          "toolCalls": 0,
+          "selectors": null,
+          "stages": null,
+          "matcherKinds": null
+        },
+        {
+          "row": 14,
+          "iteration": 4,
+          "kind": "exchange",
+          "exchange": null,
+          "outcome": "viewer",
+          "diagnosticsHead": "stage: protocol the reply only located source and wrote nothing; add the edit clauses or file commands for this work node. Read results (read commands write nothing): src/workbook.ts (selected lines, ",
+          "replacementChars": 37,
+          "finishReason": "stop",
+          "cause": null,
+          "payloads": 1,
+          "toolCalls": 0,
+          "selectors": [],
+          "stages": [],
+          "matcherKinds": []
+        },
+        {
+          "row": 15,
+          "iteration": 4,
+          "kind": "exchange",
+          "exchange": null,
+          "outcome": "viewer",
+          "diagnosticsHead": "stage: protocol the reply only located source and wrote nothing; add the edit clauses or file commands for this work node. Read results (read commands write nothing): src/workbook.ts (selected lines, ",
+          "replacementChars": 79,
+          "finishReason": "stop",
+          "cause": null,
+          "payloads": 2,
+          "toolCalls": 0,
+          "selectors": [],
+          "stages": [],
+          "matcherKinds": []
+        },
+        {
+          "row": 16,
+          "iteration": 4,
+          "kind": "exchange",
+          "exchange": null,
+          "outcome": "viewer",
+          "diagnosticsHead": "stage: protocol the reply only located source and wrote nothing; add the edit clauses or file commands for this work node. Read results (read commands write nothing): src/workbook.ts (selected lines, ",
+          "replacementChars": 39,
+          "finishReason": "stop",
+          "cause": null,
+          "payloads": 1,
+          "toolCalls": 0,
+          "selectors": [],
+          "stages": [],
+          "matcherKinds": []
+        },
+        {
+          "row": 17,
+          "iteration": 4,
+          "kind": "exchange",
+          "exchange": null,
+          "outcome": "applied",
+          "diagnosticsHead": null,
+          "replacementChars": 3741,
+          "finishReason": "stop",
+          "cause": null,
+          "payloads": 1,
+          "toolCalls": 0,
+          "selectors": [
+            "whole-symbol"
+          ],
+          "stages": [
+            "whole-symbol"
+          ],
+          "matcherKinds": [
+            null
+          ]
+        },
+        {
+          "row": 18,
+          "iteration": 4,
+          "kind": "verification",
+          "exchange": null,
+          "outcome": "tsc",
+          "diagnosticsHead": "stage: tsc replacement line 10: TS2304: Cannot find name 'parseAddressKey'. — in declaration `Workbook` (class) 17 | setCell(_address: string, _input: string | number | boolean | null): void { 18 | co",
+          "replacementChars": null,
+          "finishReason": null,
+          "cause": null,
+          "payloads": 0,
+          "toolCalls": 0,
+          "selectors": null,
+          "stages": null,
+          "matcherKinds": null
+        },
+        {
+          "row": 19,
+          "iteration": 4,
+          "kind": "exchange",
+          "exchange": null,
+          "outcome": "no-op",
+          "diagnosticsHead": "clause 1 of 14 (src/workbook.ts): stage: no-op the edit does not change the file: the replacement is identical to the text it replaces; change the code so the diagnostics are actually addressed",
+          "replacementChars": 9155,
+          "finishReason": "stop",
+          "cause": null,
+          "payloads": 14,
+          "toolCalls": 0,
+          "selectors": [
+            "whole-symbol",
+            "whole-symbol",
+            "whole-symbol",
+            "whole-symbol",
+            "whole-symbol",
+            "whole-symbol",
+            "whole-symbol",
+            "whole-symbol",
+            "whole-symbol",
+            "whole-symbol",
+            "whole-symbol",
+            "whole-symbol",
+            "whole-symbol"
+          ],
+          "stages": [
+            "whole-symbol",
+            "whole-symbol",
+            "whole-symbol",
+            "whole-symbol",
+            "whole-symbol",
+            "whole-symbol",
+            "whole-symbol",
+            "whole-symbol",
+            "whole-symbol",
+            "whole-symbol",
+            "whole-symbol",
+            "whole-symbol",
+            "whole-symbol"
+          ],
+          "matcherKinds": [
+            null,
+            null,
+            null,
+            null,
+            null,
+            null,
+            null,
+            null,
+            null,
+            null,
+            null,
+            null,
+            null
+          ]
+        },
+        {
+          "row": 20,
+          "iteration": 4,
+          "kind": "exchange",
+          "exchange": null,
+          "outcome": "protocol",
+          "diagnosticsHead": "stage: syntax code: EDIT_MALFORMED_FENCE message: the fence opener <<<TC_EDIT_BEGIN>>> must be on its own line at line 1:67 1 | select file src/workbook.ts match `class Workbook {` replace with `class",
+          "replacementChars": 88,
+          "finishReason": "stop",
+          "cause": null,
+          "payloads": 0,
+          "toolCalls": 0,
+          "selectors": null,
+          "stages": null,
+          "matcherKinds": null
+        },
+        {
+          "row": 21,
+          "iteration": 4,
+          "kind": "exchange",
+          "exchange": null,
+          "outcome": "matcher",
+          "diagnosticsHead": "clause 2 of 15 (src/workbook.ts): stage: matcher the file-level snippet could not be parsed as TypeScript: the matcher does not parse in any supported owner context (top-level statement, class member,",
+          "replacementChars": 5604,
+          "finishReason": "stop",
+          "cause": null,
+          "payloads": 15,
+          "toolCalls": 0,
+          "selectors": [
+            "matcher",
+            "whole-symbol",
+            "whole-symbol",
+            "whole-symbol",
+            "whole-symbol",
+            "whole-symbol",
+            "whole-symbol",
+            "whole-symbol",
+            "whole-symbol",
+            "whole-symbol",
+            "whole-symbol",
+            "whole-symbol",
+            "whole-symbol",
+            "whole-symbol"
+          ],
+          "stages": [
+            "match",
+            "whole-symbol",
+            "whole-symbol",
+            "whole-symbol",
+            "whole-symbol",
+            "whole-symbol",
+            "whole-symbol",
+            "whole-symbol",
+            "whole-symbol",
+            "whole-symbol",
+            "whole-symbol",
+            "whole-symbol",
+            "whole-symbol",
+            "whole-symbol"
+          ],
+          "matcherKinds": [
+            "snippet",
+            null,
+            null,
+            null,
+            null,
+            null,
+            null,
+            null,
+            null,
+            null,
+            null,
+            null,
+            null,
+            null
+          ]
+        },
+        {
+          "row": 22,
+          "iteration": 4,
+          "kind": "exchange",
+          "exchange": null,
+          "outcome": "no-op",
+          "diagnosticsHead": "clause 1 of 14 (src/workbook.ts): stage: no-op the edit does not change the file: the replacement is identical to the text it replaces; change the code so the diagnostics are actually addressed",
+          "replacementChars": 9048,
+          "finishReason": "stop",
+          "cause": null,
+          "payloads": 14,
+          "toolCalls": 0,
+          "selectors": [
+            "whole-symbol",
+            "whole-symbol",
+            "whole-symbol",
+            "whole-symbol",
+            "whole-symbol",
+            "whole-symbol",
+            "whole-symbol",
+            "whole-symbol",
+            "whole-symbol",
+            "whole-symbol",
+            "whole-symbol",
+            "whole-symbol",
+            "whole-symbol"
+          ],
+          "stages": [
+            "whole-symbol",
+            "whole-symbol",
+            "whole-symbol",
+            "whole-symbol",
+            "whole-symbol",
+            "whole-symbol",
+            "whole-symbol",
+            "whole-symbol",
+            "whole-symbol",
+            "whole-symbol",
+            "whole-symbol",
+            "whole-symbol",
+            "whole-symbol"
+          ],
+          "matcherKinds": [
+            null,
+            null,
+            null,
+            null,
+            null,
+            null,
+            null,
+            null,
+            null,
+            null,
+            null,
+            null,
+            null
+          ]
+        },
+        {
+          "row": 23,
+          "iteration": 5,
+          "kind": "exchange",
+          "exchange": null,
+          "outcome": "viewer",
+          "diagnosticsHead": "stage: protocol the reply only located source and wrote nothing; add the edit clauses or file commands for this work node. Read results (read commands write nothing): src/workbook.ts (whole file, 628 ",
+          "replacementChars": 24,
+          "finishReason": "stop",
+          "cause": null,
+          "payloads": 1,
+          "toolCalls": 0,
+          "selectors": [],
+          "stages": [],
+          "matcherKinds": []
+        },
+        {
+          "row": 24,
+          "iteration": 5,
+          "kind": "exchange",
+          "exchange": null,
+          "outcome": "protocol",
+          "diagnosticsHead": "stage: syntax code: EDIT_MISSING_FIELD message: unexpected input after a statement; expected `select`, `create`, `delete`, `read`, or `write` at line 2:41 1 | read src/workbook.ts within 220-243 end 2",
+          "replacementChars": 83,
+          "finishReason": "stop",
+          "cause": null,
+          "payloads": 0,
+          "toolCalls": 0,
+          "selectors": null,
+          "stages": null,
+          "matcherKinds": null
+        },
+        {
+          "row": 25,
+          "iteration": 5,
+          "kind": "exchange",
+          "exchange": null,
+          "outcome": "viewer",
+          "diagnosticsHead": "stage: protocol the reply only located source and wrote nothing; add the edit clauses or file commands for this work node. Read results (read commands write nothing): src/workbook.ts (selected lines, ",
+          "replacementChars": 79,
+          "finishReason": "stop",
+          "cause": null,
+          "payloads": 2,
+          "toolCalls": 0,
+          "selectors": [],
+          "stages": [],
+          "matcherKinds": []
+        },
+        {
+          "row": 26,
+          "iteration": 5,
+          "kind": "exchange",
+          "exchange": null,
+          "outcome": "viewer",
+          "diagnosticsHead": "stage: protocol the reply only located source and wrote nothing; add the edit clauses or file commands for this work node. Read results (read commands write nothing): src/workbook.ts (selected lines, ",
+          "replacementChars": 79,
+          "finishReason": "stop",
+          "cause": null,
+          "payloads": 2,
+          "toolCalls": 0,
+          "selectors": [],
+          "stages": [],
+          "matcherKinds": []
+        },
+        {
+          "row": 27,
+          "iteration": 5,
+          "kind": "exchange",
+          "exchange": null,
+          "outcome": "protocol",
+          "diagnosticsHead": "stage: syntax code: EDIT_INLINE_FENCE_OPEN severity: warning message: the fence opener <<<TC_EDIT_BEGIN>>> shares a line with `with`; normalized it to start the raw body on the next line at line 1:48 ",
+          "replacementChars": 3885,
+          "finishReason": "stop",
+          "cause": null,
+          "payloads": 0,
+          "toolCalls": 0,
+          "selectors": null,
+          "stages": null,
+          "matcherKinds": null
+        },
+        {
+          "row": 28,
+          "iteration": 5,
+          "kind": "exchange",
+          "exchange": null,
+          "outcome": "address",
+          "diagnosticsHead": "stage: address code: EDIT_DECLARATION_MISMATCH the replacement for \"function\" \"isDigit\" does not parse as a declaration: expected \"}\"",
+          "replacementChars": 3620,
+          "finishReason": "stop",
+          "cause": null,
+          "payloads": 2,
+          "toolCalls": 0,
+          "selectors": [
+            "whole-symbol",
+            "whole-symbol"
+          ],
+          "stages": [
+            "whole-symbol",
+            "whole-symbol"
+          ],
+          "matcherKinds": [
+            null,
+            null
+          ]
+        },
+        {
+          "row": 29,
+          "iteration": 5,
+          "kind": "exchange",
+          "exchange": null,
+          "outcome": "applied",
+          "diagnosticsHead": null,
+          "replacementChars": 3526,
+          "finishReason": "stop",
+          "cause": null,
+          "payloads": 6,
+          "toolCalls": 0,
+          "selectors": [
+            "whole-symbol",
+            "whole-symbol",
+            "whole-symbol",
+            "whole-symbol",
+            "whole-symbol",
+            "whole-symbol"
+          ],
+          "stages": [
+            "whole-symbol",
+            "whole-symbol",
+            "whole-symbol",
+            "whole-symbol",
+            "whole-symbol",
+            "whole-symbol"
+          ],
+          "matcherKinds": [
+            null,
+            null,
+            null,
+            null,
+            null,
+            null
+          ]
+        },
+        {
+          "row": 30,
+          "iteration": 5,
+          "kind": "verification",
+          "exchange": null,
+          "outcome": "tsc",
+          "diagnosticsHead": "stage: tsc elsewhere in file: src/workbook.ts(18,17): error TS2304: Cannot find name 'parseAddressKey'. — in declaration `Workbook` (class) src/workbook.ts(31,20): error TS2304: Cannot find name 'pars",
+          "replacementChars": null,
+          "finishReason": null,
+          "cause": null,
+          "payloads": 0,
+          "toolCalls": 0,
+          "selectors": null,
+          "stages": null,
+          "matcherKinds": null
+        },
+        {
+          "row": 31,
+          "iteration": 5,
+          "kind": "exchange",
+          "exchange": null,
+          "outcome": "applied",
+          "diagnosticsHead": null,
+          "replacementChars": 1352,
+          "finishReason": "stop",
+          "cause": null,
+          "payloads": 6,
+          "toolCalls": 0,
+          "selectors": [
+            "whole-symbol",
+            "whole-symbol",
+            "whole-symbol",
+            "whole-symbol",
+            "whole-symbol",
+            "whole-symbol"
+          ],
+          "stages": [
+            "whole-symbol",
+            "whole-symbol",
+            "whole-symbol",
+            "whole-symbol",
+            "whole-symbol",
+            "whole-symbol"
+          ],
+          "matcherKinds": [
+            null,
+            null,
+            null,
+            null,
+            null,
+            null
+          ]
+        },
+        {
+          "row": 32,
+          "iteration": 5,
+          "kind": "verification",
+          "exchange": null,
+          "outcome": "ok",
+          "diagnosticsHead": null,
+          "replacementChars": null,
+          "finishReason": null,
+          "cause": null,
+          "payloads": 0,
+          "toolCalls": 0,
+          "selectors": null,
+          "stages": null,
+          "matcherKinds": null
+        },
+        {
+          "row": 33,
+          "iteration": 6,
+          "kind": "exchange",
+          "exchange": null,
+          "outcome": "protocol",
+          "diagnosticsHead": "stage: protocol code: EDIT_DSML_UNSUPPORTED message: DSML/tool-call markup is not supported: this turn has no tool namespace, and `read`, `select`, `write`, `create`, and `delete` are literal edit-dsl",
+          "replacementChars": 234,
+          "finishReason": "stop",
+          "cause": null,
+          "payloads": 0,
+          "toolCalls": 0,
+          "selectors": null,
+          "stages": null,
+          "matcherKinds": null
+        },
+        {
+          "row": 34,
+          "iteration": 6,
+          "kind": "exchange",
+          "exchange": null,
+          "outcome": "viewer",
+          "diagnosticsHead": "stage: protocol the reply only located source and wrote nothing; add the edit clauses or file commands for this work node. Read results (read commands write nothing): src/workbook.ts (whole file, 798 ",
+          "replacementChars": 24,
+          "finishReason": "stop",
+          "cause": null,
+          "payloads": 1,
+          "toolCalls": 0,
+          "selectors": [],
+          "stages": [],
+          "matcherKinds": []
+        },
+        {
+          "row": 35,
+          "iteration": 6,
+          "kind": "exchange",
+          "exchange": null,
+          "outcome": "gate",
+          "diagnosticsHead": "stage: gate the edit was discarded because the resulting source does not parse; nothing was written expected ; (line 800, column 28) replacement line 2, column 28: 1 | 2 | let evaluateNode = private e",
+          "replacementChars": 757,
+          "finishReason": "stop",
+          "cause": null,
+          "payloads": 1,
+          "toolCalls": 0,
+          "selectors": [
+            "whole-symbol"
+          ],
+          "stages": [
+            "whole-symbol"
+          ],
+          "matcherKinds": [
+            null
+          ]
+        }
+      ],
+      "exchangeStats": {
+        "turns": 26,
+        "payloads": 80,
+        "toolCalls": 0,
+        "applied": 9,
+        "rejected": 9,
+        "selected": 0,
+        "stopped": 0,
+        "selfChecks": 0,
+        "range": 0,
+        "matcher": 1,
+        "wholeSymbol": 61,
+        "stageWholeSymbol": 61,
+        "stageMatch": 1,
+        "stagePick": 0,
+        "snippet": 1,
+        "regex": 0,
+        "creates": 53
+      },
+      "loopDiagnostics": "token-budget: accumulated 121401 cache-excluded tokens exceeded the 120000 token budget",
+      "terminationReason": "token-budget",
+      "model": "deepseek-flash",
+      "workspace": "tmp/benchmark/2026-10-26T14-26-02-886Z-9a7ad90f/mini-spreadsheet-tc-plan-exec-rep1",
+      "logs": {
+        "side": "tmp/benchmark/2026-10-26T14-26-02-886Z-9a7ad90f/logs/mini-spreadsheet-tc-plan-exec-rep1/side.log",
+        "judge": "tmp/benchmark/2026-10-26T14-26-02-886Z-9a7ad90f/logs/mini-spreadsheet-tc-plan-exec-rep1/judge.log",
+        "session": null,
+        "stats": null
+      },
+      "versions": {
+        "bun": "1.3.13",
+        "opencode": null
+      },
+      "judge": {
+        "testsOk": false,
+        "tscOk": true,
+        "fixtureOk": true,
+        "detail": "bun test failed: bun test v1.3.13 (bf2e2cec)\n\nsrc/workbook.test.ts:\n37 |       C2: false,\n38 |     });\n39 |     expect(workbook.getValue(\"A1\")).toBe(42);\n40 |     expect(workbook.getValue(\"A2\")).toBe(-3.5);\n41 |     expect(workbook.getValue(\"B1\")).toBe(\"hello\");\n42 |     expect(workbook.getValue(\"B2\")).toBe(\"\");\n                                         ^\nerror: expect(received).toBe(expected)\n\nExpected: \"\"\nReceive..."
+      },
+      "error": null,
+      "infraError": null
+    }
+  ],
+  "aggregates": {
+    "byTaskSide": [
+      {
+        "task": "mini-spreadsheet",
+        "side": "tc",
+        "protocol": "edit-dsl",
+        "agentMode": "plan-exec",
+        "runs": 1,
+        "ok": 0,
+        "failed": 1,
+        "successRate": 0,
+        "usageRuns": 1,
+        "tokens": {
+          "in": {
+            "mean": 112674,
+            "total": 112674
+          },
+          "out": {
+            "mean": 21906,
+            "total": 21906
+          },
+          "total": {
+            "mean": 134580,
+            "total": 134580
+          }
+        },
+        "cost": {
+          "mean": 0.031325724,
+          "total": 0.031325724
+        },
+        "cache": {
+          "read": {
+            "mean": 427008,
+            "total": 427008
+          },
+          "hitRate": 0.79122149710385
+        },
+        "durationMsMean": 189606,
+        "stepsMean": 35,
+        "tokensPerSuccess": {
+          "in": null,
+          "out": null,
+          "total": null
+        },
+        "costPerSuccess": null,
+        "selectors": {
+          "range": 0,
+          "matcher": 1,
+          "wholeSymbol": 61
+        },
+        "stages": {
+          "wholeSymbol": 61,
+          "match": 1,
+          "pick": 0
+        },
+        "matcherKinds": {
+          "snippet": 1,
+          "regex": 0
+        },
+        "creates": 53
+      }
+    ],
+    "bySide": [
+      {
+        "task": null,
+        "side": "tc",
+        "protocol": "edit-dsl",
+        "agentMode": "plan-exec",
+        "runs": 1,
+        "ok": 0,
+        "failed": 1,
+        "successRate": 0,
+        "usageRuns": 1,
+        "tokens": {
+          "in": {
+            "mean": 112674,
+            "total": 112674
+          },
+          "out": {
+            "mean": 21906,
+            "total": 21906
+          },
+          "total": {
+            "mean": 134580,
+            "total": 134580
+          }
+        },
+        "cost": {
+          "mean": 0.031325724,
+          "total": 0.031325724
+        },
+        "cache": {
+          "read": {
+            "mean": 427008,
+            "total": 427008
+          },
+          "hitRate": 0.79122149710385
+        },
+        "durationMsMean": 189606,
+        "stepsMean": 35,
+        "tokensPerSuccess": {
+          "in": null,
+          "out": null,
+          "total": null
+        },
+        "costPerSuccess": null,
+        "selectors": {
+          "range": 0,
+          "matcher": 1,
+          "wholeSymbol": 61
+        },
+        "stages": {
+          "wholeSymbol": 61,
+          "match": 1,
+          "pick": 0
+        },
+        "matcherKinds": {
+          "snippet": 1,
+          "regex": 0
+        },
+        "creates": 53
+      }
+    ],
+    "overall": [
+      {
+        "task": null,
+        "side": "tc",
+        "protocol": "edit-dsl",
+        "agentMode": "plan-exec",
+        "runs": 1,
+        "ok": 0,
+        "failed": 1,
+        "successRate": 0,
+        "usageRuns": 1,
+        "tokens": {
+          "in": {
+            "mean": 112674,
+            "total": 112674
+          },
+          "out": {
+            "mean": 21906,
+            "total": 21906
+          },
+          "total": {
+            "mean": 134580,
+            "total": 134580
+          }
+        },
+        "cost": {
+          "mean": 0.031325724,
+          "total": 0.031325724
+        },
+        "cache": {
+          "read": {
+            "mean": 427008,
+            "total": 427008
+          },
+          "hitRate": 0.79122149710385
+        },
+        "durationMsMean": 189606,
+        "stepsMean": 35,
+        "tokensPerSuccess": {
+          "in": null,
+          "out": null,
+          "total": null
+        },
+        "costPerSuccess": null,
+        "selectors": {
+          "range": 0,
+          "matcher": 1,
+          "wholeSymbol": 61
+        },
+        "stages": {
+          "wholeSymbol": 61,
+          "match": 1,
+          "pick": 0
+        },
+        "matcherKinds": {
+          "snippet": 1,
+          "regex": 0
+        },
+        "creates": 53
+      }
+    ]
+  },
+  "provenance": {
+    "inputs": {
+      "model": "7d963f65d1ede1bd9416a5f55575efe0d202e0a00519ef04e47dae20c3180445",
+      "taskIssue": "3cdad7a3f3e1e716e36f6f5f87a27808f6676ed5743b1a9147c181c616a87dfb",
+      "fixture": "2544858a4476b890d7c13a7455f844f3719d3a2f48a06b783d193f5e1289b3ba",
+      "systemPrompt": "ffe4384c1fd9b7140d2443047eefca67cc97640ba8f699e289b8af9556e1f321",
+      "loopConfig": "b807efcd4334e01258df196500eff50bf73583187ecab37ce8acbf7b37daa27a",
+      "pricing": "aab6f45ac055bdc46329be2c46279a8ce322bfa62c0c61f0ef177d8b67766560"
+    },
+    "inputHash": "d6012fc00b76bf2f285cc2e66ec0d837b10fbf83c6fc84260a922c28d7434999",
+    "computedAt": "2026-10-26T14:25:58.471Z"
+  },
+  "warmups": [
+    {
+      "agentMode": "plan-exec",
+      "kind": "planning",
+      "promptChars": 9576,
+      "tokens": {
+        "input": null,
+        "output": null,
+        "cacheRead": null,
+        "cacheWrite": null,
+        "reasoning": null,
+        "total": null
+      },
+      "usageAvailable": false,
+      "durationMs": 3160,
+      "error": null
+    },
+    {
+      "agentMode": "plan-exec",
+      "kind": "execution",
+      "promptChars": 7530,
+      "tokens": {
+        "input": null,
+        "output": null,
+        "cacheRead": null,
+        "cacheWrite": null,
+        "reasoning": null,
+        "total": null
+      },
+      "usageAvailable": false,
+      "durationMs": 1250,
+      "error": null
+    }
+  ],
+  "cacheWarning": null
+}
