@@ -240,6 +240,11 @@ describe("execution prompts", () => {
 
   test("the execution prompt ends with a binding no-tools edit-dsl contract", () => {
     const prompt = buildTaskExecutionSystemPrompt();
+    expect(prompt).not.toContain("match (");
+    expect(prompt).toContain("matcher has no parentheses");
+    expect(prompt).toContain("use `write <path> with <fence>` for file content");
+    expect(prompt).not.toContain("create <path> with");
+    expect(prompt).toContain("the first non-whitespace token");
     expect(prompt.trimEnd().endsWith(TASK_EXECUTION_OUTPUT_CONTRACT)).toBe(true);
     expect(TASK_EXECUTION_OUTPUT_CONTRACT).toContain("No tools are available on this turn");
     expect(TASK_EXECUTION_OUTPUT_CONTRACT).toContain(
@@ -250,6 +255,7 @@ describe("execution prompts", () => {
       "is plain text: it is not a Markdown code fence and not a tool-call boundary",
     );
     expect(TASK_EXECUTION_OUTPUT_CONTRACT).toContain("no prose preamble, no Markdown fence");
+    expect(TASK_EXECUTION_OUTPUT_CONTRACT).toContain("The first non-whitespace token must be");
     expect(TASK_EXECUTION_OUTPUT_CONTRACT).toContain(
       "A viewer/read is inspection only; to finish a node, include edit clauses or file commands",
     );

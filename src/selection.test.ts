@@ -597,6 +597,12 @@ describe("parseSelection failures", () => {
     );
   });
 
+  test("a parenthesized matcher points at the no-parentheses form", () => {
+    const error = expectSyntax("select foo in a.ts\nmatch (`x`)\nend", "parentheses");
+    expect(error.issues[0]?.code).toBe("EDIT_MATCHER_MISSING");
+    expect(error.issues[0]?.hint).toContain("backtick snippet");
+  });
+
   test("reports every failing clause with an index and bounds the rendered list", () => {
     const text = Array.from(
       { length: 10 },
@@ -1347,6 +1353,19 @@ describe("create declaration statements (#50)", () => {
         type: "fs",
         statement: { op: "create", path: kind },
       });
+    }
+  });
+
+  test("rejects a path-only create with a fence and points to write", () => {
+    const text = ["create src/a.ts with", BEGIN, "x", END].join("\n");
+    try {
+      parseMultiEditor(text);
+      throw new Error("expected a syntax error");
+    } catch (error) {
+      expect(error).toBeInstanceOf(SelectionSyntaxError);
+      const syntax = error as SelectionSyntaxError;
+      expect(syntax.issues[0]?.code).toBe("EDIT_MISSING_END");
+      expect(syntax.issues[0]?.hint).toContain("write src/a.ts with");
     }
   });
 

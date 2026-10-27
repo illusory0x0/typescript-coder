@@ -48,13 +48,13 @@ the failing line, column, and a short excerpt so the retry can see exactly
 where the reply stopped. A partial selection is never returned.
 
 ```text
-select [kind] <symbol> in <path> [ resolve (value|type|namespace) ] [ within <selecters> ] [ match (<snippet> | /regex/) ] [ [ pick <selecters> ] replace with <fence> | rename <old> to <new> end | end ]
+select [kind] <symbol> in <path> [ resolve (value|type|namespace) ] [ within <selecters> ] [ match <snippet> | match /<regex>/ ] [ [ pick <selecters> ] replace with <fence> | rename <old> to <new> end | end ]
 ```
 
 The module-boundary form is the separate file-level editor:
 
 ```text
-select file <path> [ match (<snippet> | /regex/) ] [ pick <selecters> ] replace with <fence>
+select file <path> [ match <snippet> | match /<regex>/ ] [ pick <selecters> ] replace with <fence>
 ```
 
 A select clause is never a file command. A select clause with `replace` or
@@ -79,8 +79,10 @@ A select clause is never a file command. A select clause with `replace` or
   exactly those lines from the declaration, unfolded. It cannot be combined with
   `match`, `pick`, `replace`, or `rename`; editors use `pick` for a narrowed
   rewrite.
-- **`match`**: exactly one of two locators. A bare `match (` or unquoted code
-  is not a matcher; it reports `EDIT_MATCHER_MISSING`.
+- **`match`**: exactly one of two locators: `match` followed by a backtick
+  snippet, or `match` followed by a slash regex. The prompt writes both forms
+  without parentheses; a parenthesized matcher or unquoted code is not a
+  matcher and reports `EDIT_MATCHER_MISSING`.
   - a `` `snippet` `` in backticks, where only `` \` `` and `\\` are escapes and
     every other backslash is literal;
   - a `/regex/` in slashes, where only `\/` decodes to `/` and every other
@@ -661,7 +663,7 @@ TC_EDIT_BEGIN
 TC_EDIT_END
 ```
 
-- **`create … with`** bodies end at the `TC_EDIT_END` close; no `end` follows. **`create <path> end`** creates an empty file. An existing path is an `address` failure; parent directories are created. It does not run the parse/format gate. A path literally named like a create kind (for example `create function end`) remains this empty-file form because it has no `in` header.
+- **`create … with`** bodies end at the `TC_EDIT_END` close; no `end` follows. **`create <path> end`** creates an empty file; use `write <path> with <fence>` for file content. An existing path is an `address` failure; parent directories are created. It does not run the parse/format gate. A path literally named like a create kind (for example `create function end`) remains this empty-file form because it has no `in` header.
 - **`create [static] <kind> <name> in <path> with <fence>`** adds exactly one named declaration or member (§2.1). The descriptor is authoritative; a fence that declares a different name/kind, an invalid modifier, an unsafe path, or a duplicate name is rejected without writing.
 - **`create import|export in <path> with <fence>`** adds exactly one module-boundary statement (§2.1). The fence must parse as one matching import/export form; the statement is inserted after the shebang, directives, and existing imports. A wrong-kind, malformed, duplicate, or unsafe path is rejected without writing.
 - **`delete`** removes an existing regular file inside the workspace. A missing

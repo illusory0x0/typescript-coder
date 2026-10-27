@@ -6035,6 +6035,10 @@ describe("edit-dsl protocol (#111/#119)", () => {
     expect(system).toContain("a bare `select <symbol> in <path> end` is a viewer");
     expect(system).toContain("`create [static] <kind> <name> in <path> with <fence>`");
     expect(system).toContain("The fence close terminates the replacement");
+    expect(system).toContain("The matcher has no parentheses");
+    expect(system).not.toContain("match (");
+    expect(system).toContain("A path-only create is only `create <path> end`");
+    expect(system).toContain("The first non-whitespace token must begin a command");
     expect(system).toContain("select file <path>");
     expect(system).toContain("create import|export in <path>");
     expect(system).toContain("a dotted create never creates its owner");

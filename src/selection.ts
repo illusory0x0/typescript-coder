@@ -664,6 +664,18 @@ class SelectionReader {
       return this.parseCreateDeclaration();
     }
     const path = this.readToken("expected a file path after `create`");
+    this.skipWhitespace();
+    if (this.keywordAt("with")) {
+      this.syntax(
+        "EDIT_MISSING_END",
+        "a path-only `create` creates an empty file; `create <path> with` is not a form",
+        {
+          expected: ["end"],
+          found: "with",
+          hint: `use \`create ${path} end\` for an empty file, or \`write ${path} with <fence>\` for file content`,
+        },
+      );
+    }
     this.consumeEnd("`create` command");
     return { op: "create", path };
   }
@@ -1234,11 +1246,14 @@ class SelectionReader {
     if (char === "/") {
       return { kind: "regex", value: this.parseRegex() };
     }
-    this.syntax("EDIT_MATCHER_MISSING", "expected a `snippet` or `/regex/` after `match`", {
+    const found = this.atEnd() ? "<eof>" : this.peekToken();
+    this.syntax("EDIT_MATCHER_MISSING", "expected a backtick snippet or `/regex/` after `match`", {
       offset: start,
       expected: ["`snippet`", "/regex/"],
-      found: this.atEnd() ? "<eof>" : this.peekToken(),
-      hint: "use `match `return 1;`` or omit match to rewrite the whole declaration",
+      found,
+      hint: found.startsWith("(")
+        ? "remove the parentheses: write `match` followed by a backtick snippet or a slash regex"
+        : "use `match `return 1;`` or omit match to rewrite the whole declaration",
     });
   }
 
