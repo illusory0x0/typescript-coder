@@ -6,7 +6,7 @@ import { runLoop } from "./loop";
 import { billableCostForLoopTokens } from "./pricing";
 import { runTaskLoop } from "./task-loop";
 import { serializePlanDsl } from "./plan-dsl";
-import type { Plan, WorkNode } from "./tasks";
+import type { PlanReply, WorkNode } from "./tasks";
 import type { ProviderLike } from "./loop";
 import type { ChatMessage, ChatOptions, ChatResponse, ToolDefinition } from "./openai";
 
@@ -145,17 +145,17 @@ function workNode(
   };
 }
 
-function planOf(nodes: WorkNode[], goal = "Make the failing test pass."): Plan {
-  return { id: "01-main", goal, nodes };
+function planOf(nodes: WorkNode[], goal = "Make the failing test pass."): PlanReply {
+  return { goal, nodes, amends: [] };
 }
 
-function planText(nodes: WorkNode[], finish = true, goal?: string): string {
-  const wire = serializePlanDsl(planOf(nodes, goal));
-  return finish ? `${wire}\nfinish` : wire;
+function planText(nodes: WorkNode[], goal?: string): string {
+  return serializePlanDsl(planOf(nodes, goal));
 }
 
-function patchText(...lines: string[]): string {
-  return ["patch", ...lines].join("\n");
+/** Later planning turns emit records only; there is no patch header. */
+function replanText(...lines: string[]): string {
+  return lines.join("\n");
 }
 
 function editDsl(replacement: string): string {
@@ -226,6 +226,7 @@ function baseOptions(dir: string, provider: ProviderLike) {
     checkCommand: TSC,
     testCommand: ["bun", "test"],
     costBudgetUsd: 1,
+    autoApprove: false,
   };
 }
 
@@ -258,6 +259,34 @@ describe("runLoop dispatch", () => {
     expect(result.executionMessages).toHaveLength(1);
     expect(result.executionMessages?.[0]?.[0]?.role).toBe("system");
     expect(result.executionMessages?.[0]?.at(-1)?.role).toBe("assistant");
+  }, 30000);
+
+  test("auto-approves an in-hint successful node without a review call", async () => {
+    const dir = project();
+    const node = workNode(2, "answer");
+    const provider = new ScriptedProvider([planText([node]), GOOD_EDIT]);
+    const result = await runTaskLoop({ ...baseOptions(dir, provider), autoApprove: true });
+    expect(result.ok).toBe(true);
+    expect(result.turns).toEqual({ planning: 1, execution: 1, review: 0, total: 2 });
+    expect(promptsStartingWith(provider, "# Review")).toHaveLength(0);
+    expect(result.nodes?.map((entry) => entry.status)).toEqual(["passed"]);
+  }, 30000);
+
+  test("auto-approval still reviews an out-of-hint change", async () => {
+    const dir = project();
+    const node = workNode(2, "answer", {
+      instruction: "Change answer and also update extra to 2.",
+      hints: [{ path: "src/helper.ts", symbol: "answer", kind: "value" }],
+    });
+    const provider = new ScriptedProvider([
+      planText([node]),
+      [GOOD_EDIT, EXTRA_EDIT].join("\n"),
+      "approve",
+    ]);
+    const result = await runTaskLoop({ ...baseOptions(dir, provider), autoApprove: true });
+    expect(result.ok).toBe(true);
+    expect(result.turns).toEqual({ planning: 1, execution: 1, review: 1, total: 3 });
+    expect(promptsStartingWith(provider, "# Review")).toHaveLength(1);
   }, 30000);
 
   test("the default edit mode is unchanged", async () => {
@@ -315,40 +344,54 @@ describe("WorkNode DAG scheduling", () => {
       hints: [{ path: "src/broken.ts", symbol: "", kind: "file" }],
     });
     const answer = workNode(3, "answer", {
+      verify: "tsc",
       instruction: "Change answer so the test passes.",
     });
     const dependent = workNode(4, "dependent", {
       after: [nodeId(2, "broken")],
+      verify: "tsc",
       instruction: "Only run after the broken node passes.",
     });
-    const patch = patchText(
-      `node- "${nodeId(4, "dependent")}"`,
+    const final = workNode(5, "final", {
+      after: [nodeId(2, "broken")],
+      instruction: "Only run after the broken node passes.",
+    });
+    const appended = replanText(
+      `node "${nodeId(6, "final2")}" verify test`,
+      "instruction: Change ready to 2 and keep the suite green.",
+      "hint value ready in src/ready.ts",
       "end",
-      `node- "${nodeId(2, "broken")}"`,
-      "end",
-      "finish",
     );
     const provider = new ScriptedProvider([
-      planText([broken, answer, dependent]),
+      planText([broken, answer, dependent, final]),
       "junk",
       "junk",
       GOOD_EDIT,
       "approve",
-      patch,
+      appended,
+      READY_EDIT,
+      "approve",
     ]);
     const result = await runTaskLoop(baseOptions(dir, provider));
     expect(result.ok).toBe(true);
     const blockedPrompt = promptsStartingWith(provider, "# Work graph").find((content) =>
       content.includes("Blocked node(s)"),
     );
-    expect(blockedPrompt).toContain(`Blocked node(s): #${nodeId(4, "dependent")}`);
+    expect(blockedPrompt).toContain(
+      `Blocked node(s): #${nodeId(4, "dependent")}, #${nodeId(5, "final")}`,
+    );
     expect(blockedPrompt).toContain(`Failed dependency node(s): #${nodeId(2, "broken")}`);
     expect(result.nodes?.map((node) => [node.id, node.status])).toEqual([
+      [nodeId(2, "broken"), "failed"],
       [nodeId(3, "answer"), "passed"],
+      [nodeId(4, "dependent"), "pending"],
+      [nodeId(5, "final"), "pending"],
+      [nodeId(6, "final2"), "passed"],
     ]);
-    // The blocked dependent never received an execution prompt; the failed
-    // node was retried twice before no progress, and answer ran once.
-    expect(promptsStartingWith(provider, "# Work node")).toHaveLength(3);
+    // The blocked dependents never received an execution prompt; the failed
+    // node was retried twice before no progress, answer ran once, and the
+    // independent final test ran once.
+    expect(promptsStartingWith(provider, "# Work node")).toHaveLength(4);
     expect(
       promptsStartingWith(provider, "# Work node").some((content) =>
         content.includes("Only run after the broken node passes."),
@@ -1250,13 +1293,13 @@ describe("gates and progress", () => {
   test("stops on a repeated no-progress fingerprint without a fixed attempt cap", async () => {
     const dir = project();
     const node = workNode(2, "answer");
-    const provider = new ScriptedProvider([planText([node]), "junk", "junk", "patch"]);
+    const provider = new ScriptedProvider([planText([node]), "junk", "junk", "junk", "junk"]);
     const result = await runTaskLoop(baseOptions(dir, provider));
     expect(result.ok).toBe(false);
     expect(result.terminationReason).toBe("task-exhausted");
     // Two identical rejected replies are enough; the old fixed cap was three.
     expect(promptsStartingWith(provider, "# Work node")).toHaveLength(2);
-    expect(result.diagnostics).toContain("unchanged");
+    expect(result.diagnostics).toContain("repeated the same rejected reply");
   }, 30000);
 
   test("a review call counts toward the run USD cost budget", async () => {
@@ -1326,28 +1369,27 @@ describe("planner turns", () => {
     expect(feedback).toContain("write");
   }, 30000);
 
-  test("a patch may add multiple nodes and finish the graph", async () => {
+  test("a replan may add multiple nodes and completion follows the last green test", async () => {
     const dir = project();
     const answer = workNode(2, "answer", {
       verify: "tsc",
       instruction: "Change answer so the test passes.",
     });
-    const patch = patchText(
-      `node+ "${nodeId(3, "extra")}" verify tsc`,
+    const appended = replanText(
+      `node "${nodeId(3, "extra")}" verify tsc`,
       "instruction: Change extra to 2.",
       "hint value extra in src/extra.ts",
       "end",
-      `node+ "${nodeId(4, "final")}" after "${nodeId(2, "answer")}" "${nodeId(3, "extra")}" verify test`,
+      `node "${nodeId(4, "final")}" after "${nodeId(2, "answer")}" "${nodeId(3, "extra")}" verify test`,
       "instruction: Change ready to 2 and keep the suite green.",
       "hint value ready in src/ready.ts",
       "end",
-      "finish",
     );
     const provider = new ScriptedProvider([
-      planText([answer], false),
+      planText([answer]),
       GOOD_EDIT,
       "approve",
-      patch,
+      appended,
       EXTRA_EDIT,
       "approve",
       READY_EDIT,
@@ -1361,30 +1403,30 @@ describe("planner turns", () => {
       [nodeId(4, "final"), "passed"],
     ]);
     const planning = promptsStartingWith(provider, "# Work graph");
-    expect(planning.some((content) => content.includes("no final test node is marked"))).toBe(true);
+    expect(planning.some((content) => content.includes("passing tsc gate"))).toBe(true);
+    expect(planning.some((content) => content.includes("needs a passing test gate"))).toBe(true);
   }, 30000);
 
-  test("a finish rejection gets a concrete final-test retry and a repeat still stops", async () => {
+  test("a legacy finish reply is rejected with a concrete retry and a repeat stops", async () => {
     const dir = project();
     const node = workNode(2, "answer", { verify: "tsc" });
     const provider = new ScriptedProvider([
-      planText([node], false),
+      planText([node]),
       GOOD_EDIT,
       "approve",
-      patchText("finish"),
-      patchText("finish"),
+      "finish",
+      "finish",
     ]);
     const result = await runTaskLoop(baseOptions(dir, provider));
     expect(result.ok).toBe(false);
     expect(result.terminationReason).toBe("task-exhausted");
     const retry = lastPrompt(provider, 4);
-    expect(retry).toContain("Recovery for this finish rejection:");
-    expect(retry).toContain('node+ "02-answer-final" after "02-answer" verify test');
-    expect(retry).toContain('node~ "02-answer" verify test');
-    expect(retry).toContain("do not resend the unchanged patch");
+    expect(retry).toContain("PLAN_LEGACY_RECORD");
+    expect(retry).toContain("do not emit `patch`, `finish`");
+    expect(retry).toContain("Reply with corrected `node` or `amend` records");
   }, 30000);
 
-  test("a review patch reopens the current node and it executes again", async () => {
+  test("an amend reopens the current node and it executes again", async () => {
     const dir = project();
     const node = workNode(2, "marker", {
       instruction: "Change answer and extra so the test passes.",
@@ -1393,8 +1435,8 @@ describe("planner turns", () => {
         { path: "src/extra.ts", symbol: "extra", kind: "value" },
       ],
     });
-    const reopen = patchText(
-      `node~ "${nodeId(2, "marker")}"`,
+    const reopen = replanText(
+      `amend "${nodeId(2, "marker")}"`,
       "instruction: Now change ready to 2 as well.",
       "hint value ready in src/ready.ts",
       "end",

@@ -1,16 +1,20 @@
 /**
  * The plan/execute work-graph contract (`docs/plan-exec.md`). The planning model
- * emits a flat Plan DSL (`src/plan-dsl.ts`); this module owns the Plan/WorkNode
- * types, validates the DAG, and owns the scheduling state the harness (never the
- * model) advances.
+ * emits a flat reply of `node` and `amend` records (`src/plan-dsl.ts`); this
+ * module owns the Plan/WorkNode types, validates the DAG, and applies one reply
+ * to the harness-owned run state.
  *
  * A WorkNode is one unit of work with a verification boundary: its gate runs
  * after the executor has applied the node's edits. The planner owns the
  * decomposition, dependencies, verification boundary, instruction, target hints,
  * and an optional advisory approach; the executor owns the concrete edit actions
  * and their granularity. `after` edges define readiness; record order is the
- * deterministic tie-break among ready nodes. There are no Stage/Task/Edit
- * records in this contract.
+ * deterministic tie-break among ready nodes.
+ *
+ * The graph is append plus one narrow mutation: an `amend` may revise a pending,
+ * failed, or just-reviewed node. There is no delete, no `finish` marker, and no
+ * general patch algebra. Run success is derived from the scheduler and the last
+ * gate: no node is ready and the most recent gate was a passing `test`.
  *
  * `HintLoc.kind` is the TypeScript symbol space (`value` | `type` | `namespace`),
  * matching the edit-dsl `resolve` vocabulary, or `file` for a whole-file target.
@@ -21,7 +25,6 @@ import type { SymbolSpace } from "./utility";
 /**
  * A globally unique node id: two or more digits, a hyphen, then a lowercase
  * kebab-case slug (`"01-main"`, `"02-scaffold"`, `"03-impl"`).
- * Plan and work-node ids share one namespace.
  */
 export type NodeId = string;
 
@@ -36,14 +39,14 @@ export type WorkVerify = (typeof WORK_VERIFIES)[number];
 export const HINT_SPACES: readonly SymbolSpace[] = ["value", "type", "namespace"];
 
 /**
- * Harness-owned run state for one work node. `in-progress` means the executor
- * holds the node; `review` means its gate has finished but the planner's
- * post-execution review has not approved it yet.
+ * Harness-owned run state for one work node. `review` is a driver phase, not a
+ * graph status; a node is `pending` while it executes and only settles as
+ * `passed` or `failed`.
  */
-export const NODE_STATUSES = ["pending", "in-progress", "review", "passed", "failed"] as const;
+export const NODE_STATUSES = ["pending", "passed", "failed"] as const;
 export type NodeStatus = (typeof NODE_STATUSES)[number];
 
-/** True only for a settled node; `review` and `in-progress` are neither runnable nor done. */
+/** True only for a settled node. */
 export function isTerminalNodeStatus(status: NodeStatus | undefined): boolean {
   return status === "passed" || status === "failed";
 }
@@ -87,24 +90,46 @@ export interface WorkNode {
   phase?: string;
 }
 
-/** One parsed planning reply. Status is harness-owned and never echoed. */
-export interface Plan {
-  /** Root node id, unique in the same namespace as every work node. */
+/**
+ * One reasoning reply: append zero or more nodes, then amend zero or more
+ * existing nodes. The initial reply also carries the run goal.
+ */
+export interface PlanReply {
+  goal?: string;
+  nodes: WorkNode[];
+  amends: NodeAmend[];
+}
+
+/**
+ * A field-level revision of one node. Omitted fields are preserved; `null`
+ * clears an optional field; an empty `after` or `hints` list clears that list.
+ */
+export interface NodeAmend {
   id: NodeId;
+  after?: NodeId[];
+  verify?: WorkVerify;
+  instruction?: string;
+  hints?: HintLoc[];
+  approach?: string | null;
+  phase?: string | null;
+}
+
+/** The most recent gate result; run completion is derived from it. */
+export interface GateSnapshot {
+  nodeId: NodeId;
+  verify: WorkVerify;
+  ok: boolean;
+}
+
+/** The run state: the work graph plus harness-owned status and gate history. */
+export interface PlanRunState {
   /** The whole-requirement goal; planning context for the executor. */
   goal: string;
   /** Work nodes in record order (the deterministic readiness tie-break). */
   nodes: WorkNode[];
-}
-
-/** The run state: the DAG plus harness-owned node status. */
-export interface PlanRunState {
-  /** The Plan root; `nodes` mirrors `plan.nodes`. */
-  plan: Plan;
-  nodes: WorkNode[];
   nodeStatus: Map<NodeId, NodeStatus>;
-  /** The node marked by `finish`; `null` until the planner ends the run. */
-  finalNodeId: NodeId | null;
+  /** The last gate that ran, or `null` before the first execution. */
+  lastGate: GateSnapshot | null;
 }
 
 /** Caps the contract enforces before a plan can drive a run. */
@@ -130,11 +155,24 @@ const SKIPPED_SEGMENTS: ReadonlySet<string> = new Set([
 
 /** A plan rejection: `stage: plan-protocol` or `stage: plan-graph`. */
 export type PlanParse =
-  | { ok: true; plan: Plan; finalNodeId: NodeId | null }
+  | { ok: true; reply: PlanReply }
   | { ok: false; stage: "plan-protocol" | "plan-graph"; diagnostics: string };
 
-/** A re-plan merge rejection; always a graph amendment violation. */
-export type PlanMerge = { ok: true; state: PlanRunState } | { ok: false; diagnostics: string };
+/** A reply-application rejection; always a graph amendment violation. */
+export type PlanApply =
+  | { ok: true; state: PlanRunState; amended: NodeId[] }
+  | { ok: false; diagnostics: string };
+
+/** How one reply may change the graph. */
+export interface ApplyOptions {
+  /**
+   * A review turn may amend only this node and may not append work. Omitted for
+   * an ordinary planning turn, where pending and failed nodes are amendable.
+   */
+  reviewTarget?: NodeId;
+  /** The initial reply must carry a non-empty goal. */
+  requireGoal?: boolean;
+}
 
 function quote(value: string): string {
   return JSON.stringify(value);
@@ -160,7 +198,7 @@ export function isSafeHintPath(path: string): boolean {
   return true;
 }
 
-/** Every work node in record order. Accepts a Plan or the run state. */
+/** Every work node in record order. Accepts a PlanReply or the run state. */
 export function allNodes(source: { nodes: readonly WorkNode[] }): WorkNode[] {
   return [...source.nodes];
 }
@@ -168,11 +206,6 @@ export function allNodes(source: { nodes: readonly WorkNode[] }): WorkNode[] {
 /** The work node with this id, or `undefined`. */
 export function nodeById(source: { nodes: readonly WorkNode[] }, id: NodeId): WorkNode | undefined {
   return source.nodes.find((node) => node.id === id);
-}
-
-/** The last node in record order; `undefined` for an empty plan. */
-export function finalNode(source: { nodes: readonly WorkNode[] }): WorkNode | undefined {
-  return source.nodes[source.nodes.length - 1];
 }
 
 /** Direct dependents of a node, in record order. */
@@ -245,30 +278,17 @@ export function allNodesTerminal(state: PlanRunState): boolean {
 }
 
 /**
- * The `finish` node is the run's final test gate. It must still be the last
- * node in record order and it must verify `test`.
- */
-export function finalNodePassed(state: PlanRunState): boolean {
-  const finalId = state.finalNodeId;
-  if (finalId === null) {
-    return false;
-  }
-  const last = finalNode(state);
-  return (
-    last !== undefined &&
-    last.id === finalId &&
-    last.verify === "test" &&
-    state.nodeStatus.get(finalId) === "passed"
-  );
-}
-
-/**
- * The run is done only when every node is terminal and the `finish` node's gate
- * passed. Earlier failed nodes are allowed when later work supersedes them,
- * exactly like a failed phase followed by a green suite.
+ * The run is green only when no node is runnable and the most recent gate was a
+ * passing `test`. Blocked pending nodes are abandoned once the suite is green;
+ * earlier failed nodes are superseded in exactly the same way.
  */
 export function runComplete(state: PlanRunState): boolean {
-  return finalNodePassed(state) && allNodesTerminal(state);
+  return (
+    nextReadyNode(state) === undefined &&
+    state.lastGate !== null &&
+    state.lastGate.verify === "test" &&
+    state.lastGate.ok
+  );
 }
 
 /**
@@ -339,9 +359,7 @@ function claimId(id: unknown, where: string, nodeIds: Set<NodeId>, problems: str
     return;
   }
   if (nodeIds.has(id)) {
-    problems.push(
-      `${where} reuses node id ${quote(id)}; Plan and work-node ids must be globally unique`,
-    );
+    problems.push(`${where} reuses node id ${quote(id)}; work-node ids must be globally unique`);
     return;
   }
   nodeIds.add(id);
@@ -440,20 +458,21 @@ function cycleProblems(nodes: readonly WorkNode[]): string[] {
 }
 
 /**
- * Validate the complete graph, including the Plan root. Each returned string is
- * one problem; `validatePlan` renders them as a diagnostic list.
+ * Validate a complete graph. `goal` is `null` for an incremental reply, where
+ * the run goal is already established. Each returned string is one problem.
  */
-function graphProblems(plan: Plan): string[] {
+function graphProblems(goal: string | null, nodes: readonly WorkNode[]): string[] {
   const problems: string[] = [];
   const nodeIds = new Set<NodeId>();
-  claimId(plan.id, "plan.id", nodeIds, problems);
-  textProblems(plan.goal, "plan.goal", MAX_PLAN_GOAL_LENGTH, problems);
+  if (goal !== null) {
+    textProblems(goal, "plan.goal", MAX_PLAN_GOAL_LENGTH, problems);
+  }
 
-  if (plan.nodes.length === 0) {
+  if (nodes.length === 0) {
     problems.push("the plan must contain at least one work node");
   }
 
-  for (const node of plan.nodes) {
+  for (const node of nodes) {
     claimId(node.id, `node #${String(node.id)}.id`, nodeIds, problems);
     if (!VERIFY_SET.has(node.verify)) {
       problems.push(
@@ -499,8 +518,8 @@ function graphProblems(plan: Plan): string[] {
     problems.push(...hintProblems(node));
   }
 
-  const known = new Set(plan.nodes.map((node) => node.id));
-  for (const node of plan.nodes) {
+  const known = new Set(nodes.map((node) => node.id));
+  for (const node of nodes) {
     if (!Array.isArray(node.after)) {
       continue;
     }
@@ -511,56 +530,50 @@ function graphProblems(plan: Plan): string[] {
     }
   }
 
-  problems.push(...cycleProblems(plan.nodes));
+  problems.push(...cycleProblems(nodes));
   return problems;
 }
 
-/** Validate a Plan graph; `null` when it is valid, else a bullet diagnostic list. */
-export function validatePlan(plan: Plan): string | null {
-  const problems = graphProblems(plan);
+/** Validate the full run graph, including the goal; `null` when valid. */
+export function validatePlan(goal: string, nodes: readonly WorkNode[]): string | null {
+  const problems = graphProblems(goal, nodes);
   return problems.length === 0 ? null : problems.map((problem) => `- ${problem}`).join("\n");
 }
 
-/**
- * Validate a `finish` marker against the graph: the final id must exist, be the
- * last node in record order, and verify `test`. `null` when valid.
- */
-export function validateFinalNode(plan: Plan, finalNodeId: NodeId): string | null {
-  const last = finalNode(plan);
-  if (last === undefined) {
-    return `finish needs at least one work node; the plan has none`;
-  }
-  if (last.id !== finalNodeId) {
-    return `finish marks #${finalNodeId}, but the last work node is #${last.id}; finish must mark the last node in record order`;
-  }
-  if (last.verify !== "test") {
-    return `finish marks #${last.id}, which verifies "${last.verify}"; the final node must verify "test"`;
-  }
-  return null;
+/** Validate a graph fragment without a goal; `null` when valid. */
+export function validateNodes(nodes: readonly WorkNode[]): string | null {
+  const problems = graphProblems(null, nodes);
+  return problems.length === 0 ? null : problems.map((problem) => `- ${problem}`).join("\n");
 }
 
-/** Build the run state from a freshly parsed plan (every node pending). */
-export function initialState(plan: Plan, finalNodeId: NodeId | null = null): PlanRunState {
+/** Build the run state from a freshly parsed initial reply (every node pending). */
+export function initialState(reply: PlanReply): PlanRunState {
   return {
-    plan,
-    nodes: plan.nodes,
-    nodeStatus: new Map(plan.nodes.map((node) => [node.id, "pending" as NodeStatus])),
-    finalNodeId,
+    goal: reply.goal ?? "",
+    nodes: cloneNodes(reply.nodes),
+    nodeStatus: new Map(reply.nodes.map((node) => [node.id, "pending" as NodeStatus])),
+    lastGate: null,
   };
 }
 
-function sameLoc(a: HintLoc, b: HintLoc): boolean {
-  return a.path === b.path && a.symbol === b.symbol && a.kind === b.kind;
+function cloneHints(hints: readonly HintLoc[]): HintLoc[] {
+  return hints.map((hint) => ({ ...hint }));
 }
 
-function sameHints(a: readonly HintLoc[], b: readonly HintLoc[]): boolean {
-  return (
-    a.length === b.length &&
-    a.every((loc, index) => {
-      const other = b[index];
-      return other !== undefined && sameLoc(loc, other);
-    })
-  );
+function cloneNode(node: WorkNode): WorkNode {
+  return {
+    id: node.id,
+    after: [...node.after],
+    verify: node.verify,
+    instruction: node.instruction,
+    hints: cloneHints(node.hints),
+    ...(node.approach === undefined ? {} : { approach: node.approach }),
+    ...(node.phase === undefined ? {} : { phase: node.phase }),
+  };
+}
+
+function cloneNodes(nodes: readonly WorkNode[]): WorkNode[] {
+  return nodes.map(cloneNode);
 }
 
 function sameWorkNode(a: WorkNode, b: WorkNode): boolean {
@@ -571,109 +584,162 @@ function sameWorkNode(a: WorkNode, b: WorkNode): boolean {
     a.phase === b.phase &&
     a.after.length === b.after.length &&
     a.after.every((id, index) => id === b.after[index]) &&
-    sameHints(a.hints, b.hints)
+    a.hints.length === b.hints.length &&
+    a.hints.every((hint, index) => {
+      const other = b.hints[index];
+      return (
+        other !== undefined &&
+        hint.path === other.path &&
+        hint.symbol === other.symbol &&
+        hint.kind === other.kind
+      );
+    })
   );
 }
 
 /**
- * Merge a re-planning reply into the harness state. The reply re-emits the full
- * graph; ids are stable and record order is the readiness tie-break.
- *
- * - a passed node is immutable and cannot be removed;
- * - an in-progress node is held until it finishes;
- * - a failed node reopens when its definition changes, otherwise stays failed;
- * - a review node reopens pending when a review patch changes it;
- * - a new node starts pending and is appended after existing nodes;
- * - removed nodes must be pending or failed;
- * - the existing node order is preserved.
+ * Apply one amend to a node. Omitted fields are preserved; `null` clears an
+ * optional field; an empty `after`/`hints` list clears that list. Returns `null`
+ * when the amendment changes nothing.
  */
-export function mergeReplan(previous: PlanRunState, plan: Plan): PlanMerge {
+function amendedNode(node: WorkNode, amend: NodeAmend): WorkNode | null {
+  const approach =
+    amend.approach === undefined
+      ? node.approach
+      : amend.approach === null
+        ? undefined
+        : amend.approach;
+  const phase =
+    amend.phase === undefined ? node.phase : amend.phase === null ? undefined : amend.phase;
+  const next: WorkNode = {
+    id: node.id,
+    after: amend.after === undefined ? [...node.after] : [...amend.after],
+    verify: amend.verify ?? node.verify,
+    instruction: amend.instruction ?? node.instruction,
+    hints: amend.hints === undefined ? cloneHints(node.hints) : cloneHints(amend.hints),
+    ...(approach === undefined ? {} : { approach }),
+    ...(phase === undefined ? {} : { phase }),
+  };
+  return sameWorkNode(node, next) ? null : next;
+}
+
+function applyProblems(problems: readonly string[]): PlanApply {
+  const code = problems.some((problem) => problem.includes("reuses node id"))
+    ? "PLAN_DUPLICATE_ID"
+    : problems.some((problem) => problem.includes("cycle"))
+      ? "PLAN_CYCLE"
+      : problems.some((problem) => problem.includes("not in the plan"))
+        ? "PLAN_UNKNOWN_PARENT"
+        : "PLAN_STRUCTURE";
+  return {
+    ok: false,
+    diagnostics: `stage: plan-graph\ncode: ${code}\n${problems.map((problem) => `- ${problem}`).join("\n")}`,
+  };
+}
+
+/**
+ * Apply one parsed reply to the run state. Structure is all-or-nothing: a
+ * rejected reply leaves `previous` untouched. Append adds nodes after the
+ * existing record order; amend revises a pending or failed node, or the current
+ * review target. Passed nodes are immutable, and a review reply cannot append.
+ */
+export function applyPlanReply(
+  previous: PlanRunState,
+  reply: PlanReply,
+  options: ApplyOptions = {},
+): PlanApply {
   const problems: string[] = [];
-
-  const previousNodes = new Map<NodeId, WorkNode>(previous.nodes.map((node) => [node.id, node]));
-
-  const nextIds = plan.nodes.map((node) => node.id);
-  const nextSet = new Set(nextIds);
-  const keptPrevious = previous.nodes.map((node) => node.id).filter((id) => nextSet.has(id));
-  const keptNext = nextIds.filter((id) => previousNodes.has(id));
-  if (keptPrevious.join(",") !== keptNext.join(",")) {
-    problems.push("existing nodes must keep their plan order");
+  // The run goal is fixed by the initial reply; a later reply may echo it, but
+  // it does not rewrite the run's goal.
+  const goal = options.requireGoal === true ? (reply.goal ?? "") : previous.goal;
+  if (options.requireGoal === true && (reply.goal === undefined || reply.goal.trim() === "")) {
+    problems.push("the initial plan needs a non-empty goal: field");
   }
-  const firstNew = nextIds.findIndex((id) => !previousNodes.has(id));
-  if (firstNew !== -1 && nextIds.slice(firstNew).some((id) => previousNodes.has(id))) {
-    problems.push("new nodes must be appended after existing nodes");
+  if (reply.nodes.length === 0 && reply.amends.length === 0) {
+    problems.push(
+      "the reply carries no node or amend record; append work or revise a pending or failed node",
+    );
+  }
+  if (options.reviewTarget !== undefined && reply.nodes.length > 0) {
+    problems.push(
+      "a review reply may not add nodes; reply with approve or one amend for the reviewed node",
+    );
   }
 
-  for (const node of previous.nodes) {
-    if (nextSet.has(node.id)) {
-      continue;
-    }
-    const status = previous.nodeStatus.get(node.id) ?? "pending";
-    if (status === "passed") {
-      problems.push(`passed node #${node.id} cannot be removed by a re-plan`);
-    } else if (status === "review") {
-      problems.push(`node #${node.id} is in review and cannot be removed by a re-plan`);
-    } else if (status === "in-progress") {
+  const nodes = cloneNodes(previous.nodes);
+  const nodeStatus = new Map(previous.nodeStatus);
+  const amended: NodeId[] = [];
+
+  for (const node of reply.nodes) {
+    if (nodes.some((candidate) => candidate.id === node.id)) {
       problems.push(
-        `node #${node.id} is in progress; the harness holds it until the node finishes`,
+        `node #${node.id} reuses node id ${quote(node.id)}; work-node ids must be unique`,
       );
-    }
-  }
-
-  const nodeStatus = new Map<NodeId, NodeStatus>();
-  for (const node of plan.nodes) {
-    const before = previousNodes.get(node.id);
-    if (before === undefined) {
-      nodeStatus.set(node.id, "pending");
       continue;
     }
-    const beforeStatus = previous.nodeStatus.get(node.id) ?? "pending";
-    const changed = !sameWorkNode(before, node);
-    if (beforeStatus === "passed") {
-      if (changed) {
-        problems.push(
-          `passed node #${node.id} is immutable; add repair work in a new node or reopen it explicitly`,
-        );
-      }
-      nodeStatus.set(node.id, "passed");
-    } else if (beforeStatus === "in-progress") {
-      if (changed) {
-        problems.push(
-          `node #${node.id} is in progress; the harness holds it until the node finishes`,
-        );
-      }
-      nodeStatus.set(node.id, "in-progress");
-    } else if (beforeStatus === "review") {
-      nodeStatus.set(node.id, changed ? "pending" : "review");
-    } else if (beforeStatus === "failed") {
-      nodeStatus.set(node.id, changed ? "pending" : "failed");
-    } else {
-      nodeStatus.set(node.id, "pending");
-    }
+    nodes.push(cloneNode(node));
+    nodeStatus.set(node.id, "pending");
   }
 
-  if (problems.length > 0) {
-    return {
-      ok: false,
-      diagnostics: `stage: plan-graph\n${problems.map((problem) => `- ${problem}`).join("\n")}`,
-    };
+  for (const amend of reply.amends) {
+    const index = nodes.findIndex((node) => node.id === amend.id);
+    if (index === -1) {
+      problems.push(`amend names node #${amend.id}, which is not in the graph`);
+      continue;
+    }
+    const current = nodes[index];
+    if (current === undefined) {
+      problems.push(`amend names node #${amend.id}, which is not in the graph`);
+      continue;
+    }
+    const status = nodeStatus.get(amend.id) ?? "pending";
+    if (options.reviewTarget !== undefined) {
+      if (amend.id !== options.reviewTarget) {
+        problems.push(
+          `a review reply may amend only #${options.reviewTarget}; #${amend.id} is not the reviewed node`,
+        );
+        continue;
+      }
+    } else if (status === "passed") {
+      problems.push(`passed node #${amend.id} is immutable; add repair work in a new node`);
+      continue;
+    }
+    const next = amendedNode(current, amend);
+    if (next === null) {
+      problems.push(`amend #${amend.id} changes nothing`);
+      continue;
+    }
+    nodes[index] = next;
+    if (status === "failed") {
+      nodeStatus.set(amend.id, "pending");
+    }
+    amended.push(amend.id);
   }
-  const graphIssues = validatePlan(plan);
+
+  const graphIssues = validatePlan(goal, nodes);
   if (graphIssues !== null) {
-    return {
-      ok: false,
-      diagnostics: `stage: plan-graph\n${graphIssues}`,
-    };
+    problems.push(
+      ...graphIssues
+        .split("\n")
+        .filter((line) => line.startsWith("- "))
+        .map((line) => line.slice(2)),
+    );
+  }
+  if (problems.length > 0) {
+    return applyProblems(problems);
   }
 
   return {
     ok: true,
     state: {
-      plan,
-      nodes: plan.nodes,
+      goal,
+      nodes,
       nodeStatus,
-      finalNodeId: previous.finalNodeId,
+      // A review amend reopens a node whose gate had passed; that gate no
+      // longer certifies the graph until the node passes again.
+      lastGate: options.reviewTarget === undefined ? previous.lastGate : null,
     },
+    amended,
   };
 }
 

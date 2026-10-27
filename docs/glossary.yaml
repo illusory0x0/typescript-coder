@@ -206,10 +206,11 @@ categories:
           `symbol: ""`. Hints are guidance, not an allowlist.
       - term: NodeStatus
         definition: >-
-          Harness-owned node status: `pending`, `in-progress`, `review`,
-          `passed`, or `failed`. `review` means the gate passed but the planner
-          has not approved the result yet. Blocked is derived from failed
-          dependencies, not stored.
+          Harness-owned node status: `pending`, `passed`, or `failed`.
+          `review` is a driver phase, not a graph status: a node stays pending
+          while it executes and while the review turn decides. `lastGate` drives
+          completion (`no ready node` plus a passing `test`). Blocked is
+          derived from failed dependencies, not stored.
       - term: approach
         definition: >-
           Optional advisory strategy on a WorkNode, e.g. whole-file write for a

@@ -24,7 +24,7 @@ covered in [Live checks](#live-checks).
 | id                     | title                                                                                     | slow | live |
 | ---------------------- | ----------------------------------------------------------------------------------------- | ---- | ---- |
 | fix-answer             | failing test becomes green                                                                | no   | no   |
-| plan-exec-fix-answer   | flat-DSL plan/execute/review plans one task and the executor makes the failing test green | no   | no   |
+| plan-exec-fix-answer   | flat-DSL plan/execute plans one task and the executor makes the failing test green | no   | no   |
 | edit-dsl-viewer-edit   | edit-dsl select viewer opens details then an edit lands                                   | no   | no   |
 | edit-dsl-rename        | edit-dsl rename updates a declaration and its references                                  | no   | no   |
 | live-fix-answer        | real model makes the failing test pass                                                    | no   | yes  |

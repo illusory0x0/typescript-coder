@@ -56,6 +56,7 @@ describe("parseArgs", () => {
     costBudgetUsd: null,
     checkCommand: null,
     testCommand: null,
+    review: "auto" as const,
     cwd: null,
     commandTimeoutMs: null,
   };
@@ -146,6 +147,16 @@ describe("parseArgs", () => {
     expect(() => parseArgs(["--check="])).toThrow("--check requires a value");
     expect(() => parseArgs(["--test", "   "])).toThrow("--test requires a value");
     expect(() => parseArgs(["--test="])).toThrow("--test requires a value");
+  });
+
+  test("reads --review policy", () => {
+    expect(parseArgs([]).review).toBe("auto");
+    expect(parseArgs(["--review", "always"]).review).toBe("always");
+    expect(parseArgs(["--review=auto"]).review).toBe("auto");
+    expect(() => parseArgs(["--review", "sometimes"])).toThrow(
+      '--review must be "auto" or "always"',
+    );
+    expect(() => parseArgs(["--review="])).toThrow("--review requires a value");
   });
 
   test("reads --cwd in both value forms", () => {
@@ -646,6 +657,7 @@ describe("--mode", () => {
     expect(text).toContain("--mode <pinned-repair|plan-exec>");
     expect(text).toContain("(default: pinned-repair)");
     expect(text).toContain("deprecated alias: edit");
+    expect(text).toContain("--review <auto|always>");
   });
 });
 

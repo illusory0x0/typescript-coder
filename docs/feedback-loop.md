@@ -3,8 +3,9 @@
 Canonical ownership: this document owns the cross-mode loop lifecycle — AgentMode
 routing, rounds and exchanges, the pinned-repair Edit → Verify flow, retry /
 no-progress / termination policy, caps, records/result, and the `runLoop`
-skeleton. [`plan-exec.md`](plan-exec.md) owns the Plan → Execute → Review model,
-Plan/patch DSL, planning/review, scheduling, and plan-exec-specific execution.
+skeleton. [`plan-exec.md`](plan-exec.md) owns the Plan → Execute model,
+Plan DSL and amend records, planning/review, scheduling, and plan-exec-specific
+execution.
 [`edit-protocol.md`](edit-protocol.md) owns the edit-action reply language,
 resolution/cascade, application/gating, and repair feedback.
 Vocabulary is canonical in [`README.md`](README.md).
@@ -50,11 +51,12 @@ message because one CLI process runs one loop.
 DAG of WorkNodes in the flat Plan DSL, the executor carries out one node's work
 at a time, and the planner reviews the applied result after its gate passes. The
 plan is a living graph: ready nodes run in record order, a failed node blocks its
-dependents, and the planner may repair, add, or remove pending/failed work between
-execution rounds.
+dependents, and the planner may repair or add pending/failed work between
+execution rounds. There is no node delete: a failed node is amended in place or
+superseded by later work, and a green last test completes the run.
 
-[`plan-exec.md`](plan-exec.md) owns the Plan/WorkNode model, the Plan and patch
-DSLs, planning and review, validation/merge, scheduling, execution context,
+[`plan-exec.md`](plan-exec.md) owns the Plan/WorkNode model, the Plan DSL and
+amend records, planning and review, validation/apply, scheduling, execution context,
 application and gates, progress termination, and plan-exec-specific limits.
 
 Both modes share tolerant parser diagnostics (`src/dsl-diagnostics.ts`), the
@@ -62,7 +64,7 @@ commit/gate pipeline (`src/commit.ts`), and the result contract
 (`src/result.ts`). Plan-exec additionally splits spend into `planning`, `review`,
 and `execution` `LoopTokens` buckets; their sum is `LoopResult.tokens` and all
 count toward the budget. Recovered parser warnings are on
-`LoopResult.warnings`; [`plan-exec.md`](plan-exec.md) §10 owns those fields.
+`LoopResult.warnings`; [`plan-exec.md`](plan-exec.md) §9 owns those fields.
 
 ## Shape of a pinned-repair run
 
@@ -115,7 +117,7 @@ A `LoopResult` carries `ok`, `mode` (the selection mode, not `AgentMode`),
 `locator`, `filePath`, `editedSource`, `records`, `diagnostics`, `explanation`,
 `messages`, `skipped`, `terminationReason`, `tokens`, and `appliedTargets`.
 Plan-exec adds `usage`, `turns`, optional `executionMessages`, `warnings`, and
-`nodes`; [`plan-exec.md`](plan-exec.md) §10 owns those fields and the string-id
+`nodes`; [`plan-exec.md`](plan-exec.md) §9 owns those fields and the string-id
 WorkNode result schema. `turns` is model-call telemetry; `steps`/`records` keep
 their historical meaning.
 
@@ -162,7 +164,7 @@ give-up:
   exchange/round cap. Plan-exec shares the same model; it has no fixed round,
   exchange, viewer, review, or output-limit cap and is bounded by the token
   budget and repeated/no-progress fingerprints
-  ([`plan-exec.md`](plan-exec.md) §9).
+  ([`plan-exec.md`](plan-exec.md) §8).
 
 ## Algorithm core (skeleton)
 

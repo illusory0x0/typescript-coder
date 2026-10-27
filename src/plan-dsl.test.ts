@@ -1,20 +1,14 @@
 import { describe, expect, test } from "bun:test";
 import {
-  applyPlanPatch,
   parsePlan,
   parsePlanDsl,
   parsePlanDslDetailed,
-  parsePlanPatch,
-  parsePlanPatchDetailed,
   readPlan,
   serializePlanDsl,
-  serializePlanPatch,
 } from "./plan-dsl";
-import type { PlanPatch, PlanPatchOp } from "./plan-dsl";
-import { initialState, nodeById, readyNodes, validatePlan } from "./tasks";
-import type { Plan, PlanRunState, WorkNode, WorkVerify } from "./tasks";
+import type { PlanReply, WorkNode } from "./tasks";
 
-const SPEC_EXAMPLE = `plan "01-main"
+const SPEC_EXAMPLE = `plan
 goal: Make the failing test pass.
 
 node "02-scaffold" verify tsc
@@ -30,8 +24,7 @@ hint value evaluate in src/workbook.ts
 hint type CellResult in src/workbook.ts
 end`;
 
-const SPEC_PLAN: Plan = {
-  id: "01-main",
+const SPEC_PLAN: PlanReply = {
   goal: "Make the failing test pass.",
   nodes: [
     {
@@ -55,6 +48,7 @@ const SPEC_PLAN: Plan = {
       ],
     },
   ],
+  amends: [],
 };
 
 function node(id: string, overrides: Partial<Omit<WorkNode, "id">> = {}): WorkNode {
@@ -68,16 +62,16 @@ function node(id: string, overrides: Partial<Omit<WorkNode, "id">> = {}): WorkNo
   };
 }
 
-function plan(nodes: WorkNode[], goal = "Make the change."): Plan {
-  return { id: "01-main", goal, nodes };
+function plan(nodes: WorkNode[], goal = "Make the change."): PlanReply {
+  return { goal, nodes, amends: [] };
 }
 
-function accepted(content: string): Plan {
+function accepted(content: string): PlanReply {
   const parsed = parsePlanDsl(content);
   if (!parsed.ok) {
     throw new Error(`expected an accepted plan, got ${parsed.diagnostics}`);
   }
-  return parsed.plan;
+  return parsed.reply;
 }
 
 function rejected(content: string): string {
@@ -88,52 +82,36 @@ function rejected(content: string): string {
   return parsed.diagnostics;
 }
 
-function acceptedPatch(content: string): PlanPatch {
-  const parsed = parsePlanPatch(content);
+function acceptedFragment(content: string): PlanReply {
+  const parsed = parsePlanDsl(content, { initial: false });
   if (!parsed.ok) {
-    throw new Error(`expected an accepted patch, got ${parsed.diagnostics}`);
+    throw new Error(`expected an accepted reply, got ${parsed.diagnostics}`);
   }
-  return parsed.patch;
+  return parsed.reply;
 }
 
-function rejectedPatch(content: string): string {
-  const parsed = parsePlanPatch(content);
+function rejectedFragment(content: string): string {
+  const parsed = parsePlanDsl(content, { initial: false });
   if (parsed.ok) {
-    throw new Error("expected the patch to be rejected");
+    throw new Error("expected the reply to be rejected");
   }
   return parsed.diagnostics;
 }
 
-function stateOf(nodes: WorkNode[] = SPEC_PLAN.nodes): PlanRunState {
-  return initialState(plan(nodes));
-}
-
-function applied(state: PlanRunState, content: string): PlanRunState {
-  const merged = applyPlanPatch(state, acceptedPatch(content));
-  if (!merged.ok) {
-    throw new Error(merged.diagnostics);
-  }
-  return merged.state;
-}
-
-function snapshot(state: PlanRunState): string {
-  return JSON.stringify({
-    plan: state.plan,
-    nodeStatus: [...state.nodeStatus.entries()].sort(),
-    finalNodeId: state.finalNodeId,
-  });
-}
-
 describe("Plan DSL parse", () => {
   test("parses the canonical WorkNode DAG example", () => {
-    const plan = accepted(SPEC_EXAMPLE);
-    expect(plan).toEqual(SPEC_PLAN);
+    expect(accepted(SPEC_EXAMPLE)).toEqual(SPEC_PLAN);
     expect(parsePlan(SPEC_EXAMPLE).ok).toBe(true);
     expect(readPlan(SPEC_EXAMPLE).ok).toBe(true);
   });
 
+  test("accepts a legacy quoted plan id without keeping a plan-root id", () => {
+    const parsed = accepted(SPEC_EXAMPLE.replace("plan\n", 'plan "01-main"\n'));
+    expect(parsed).toEqual(SPEC_PLAN);
+  });
+
   test("parses a branching DAG and preserves record order", () => {
-    const content = `plan "01-main"
+    const content = `plan
 goal: Branch.
 
 node "02-a" verify tsc
@@ -158,7 +136,7 @@ end`;
   });
 
   test("accepts after on its own line as well as on the node header", () => {
-    const parsed = accepted(`plan "01-main"
+    const parsed = accepted(`plan
 goal: g
 
 node "02-a" verify tsc
@@ -181,7 +159,7 @@ end`);
   });
 
   test("preserves fenced instruction, approach, phase, and goal text raw", () => {
-    const content = `plan "01-main"
+    const content = `plan
 goal:
 TC_EDIT_BEGIN
 line one
@@ -211,960 +189,380 @@ end`;
     expect(accepted(serializePlanDsl(parsed))).toEqual(parsed);
   });
 
-  test("accepts a trailing finish and returns the final node id", () => {
-    const parsed = parsePlanDsl(`${SPEC_EXAMPLE}\nfinish`);
-    if (!parsed.ok) {
-      throw new Error(parsed.diagnostics);
-    }
-    expect(parsed.finalNodeId).toBe("03-impl");
-    expect(parsePlanDsl(SPEC_EXAMPLE)).toMatchObject({ ok: true, finalNodeId: null });
-  });
-
-  test("rejects a final node that does not verify test", () => {
-    expect(
-      rejected(
-        `${SPEC_EXAMPLE.replace("verify test\ninstruction: Implement", "verify tsc\ninstruction: Implement")}\nfinish`,
-      ),
-    ).toContain('must verify "test"');
-  });
-
-  test("rejects legacy stage/task/edit records with a dedicated diagnostic", () => {
-    const stageFirst = rejected(`stage "02-current" plan "01-main"
-goal: g
-end`);
-    expect(stageFirst).toContain("PLAN_LEGACY_RECORD");
-
-    const detailed = parsePlanDslDetailed(`stage "02-current" plan "01-main"
-goal: g
-end`);
-    expect(
-      String(detailed.issues.find((issue) => issue.code === "PLAN_LEGACY_RECORD")?.stage),
-    ).toBe("plan-protocol");
-
-    const taskAfterNode = rejected(`plan "01-main"
-goal: g
-
+  test("the initial plan requires a goal", () => {
+    const diagnostics = rejected(`plan
 node "02-a" verify test
 instruction: x
-end
-
-task "03-b" stage "02-a" verify test
-instruction: x
 end`);
-    expect(taskAfterNode).toContain("PLAN_LEGACY_RECORD");
-
-    const editAfterNode = rejected(`plan "01-main"
-goal: g
-
-node "02-a" verify test
-instruction: x
-end
-
-edit "03-b" task "02-a" modify value answer in src/a.ts
-instruction: x
-end`);
-    expect(editAfterNode).toContain("PLAN_LEGACY_RECORD");
+    expect(diagnostics).toContain("PLAN_MISSING_FIELD");
+    expect(diagnostics).toContain("needs a non-empty goal");
   });
 
-  test("uses plan-protocol and plan-graph diagnostic stages", () => {
-    const graph = parsePlanDslDetailed(`plan "01-main"
+  test("the initial plan may not amend nodes", () => {
+    const diagnostics = rejected(`plan
 goal: g
-
-node "02-a" after "03-b" verify test
-instruction: x
-end
-
-node "03-b" after "02-a" verify test
+amend "02-a"
 instruction: x
 end`);
-    expect(String(graph.issues.find((issue) => issue.code === "PLAN_CYCLE")?.stage)).toBe(
-      "plan-graph",
-    );
-
-    const patch = parsePlanPatchDetailed(`patch
-stage+ "04-next" plan "01-main"
-goal: g
-end`);
-    expect(String(patch.issues.find((issue) => issue.code === "PLAN_LEGACY_RECORD")?.stage)).toBe(
-      "plan-protocol",
-    );
+    expect(diagnostics).toContain("initial plan may not amend");
   });
 });
 
 describe("Plan DSL validation through the parser", () => {
   test("rejects dangling, self, and cyclic after edges", () => {
     expect(
-      rejected(`plan "01-main"
+      rejected(`plan
 goal: g
-
 node "02-a" verify test
 instruction: x
-end
-
-node "03-b" after "09-missing" verify test
-instruction: x
+after "09-missing"
 end`),
-    ).toContain("#09-missing");
+    ).toContain("not in the plan");
 
     expect(
-      rejected(`plan "01-main"
+      rejected(`plan
 goal: g
-
-node "02-a" after "02-a" verify test
+node "02-a" verify test
 instruction: x
+after "02-a"
 end`),
     ).toContain("lists itself");
 
-    const cycle = rejected(`plan "01-main"
+    const cycle = rejected(`plan
 goal: g
-
-node "02-a" after "03-b" verify test
+node "02-a" verify test
 instruction: x
+after "03-b"
 end
-
-node "03-b" after "02-a" verify test
-instruction: x
+node "03-b" verify test
+instruction: y
+after "02-a"
 end`);
-    expect(cycle).toContain("cycle");
-    expect(cycle).toContain("#02-a");
-    expect(cycle).toContain("#03-b");
+    expect(cycle).toContain("PLAN_CYCLE");
+    expect(cycle).toContain("#02-a -> #03-b -> #02-a");
   });
 
   test("rejects an unknown verify and a missing instruction", () => {
     expect(
-      rejected(`plan "01-main"
+      rejected(`plan
 goal: g
-
 node "02-a" verify lint
 instruction: x
 end`),
     ).toContain('verify must be "tsc" or "test"');
 
     expect(
-      rejected(`plan "01-main"
+      rejected(`plan
 goal: g
-
 node "02-a" verify test
 end`),
-    ).toContain("needs instruction:");
+    ).toContain("needs instruction");
   });
 
   test("rejects unsafe and duplicate hints", () => {
     expect(
-      rejected(`plan "01-main"
+      rejected(`plan
 goal: g
-
 node "02-a" verify test
 instruction: x
-hint file ../a.ts
+hint value a in ../a.ts
 end`),
-    ).toContain("writable repo-relative path");
+    ).toContain("not a writable repo-relative path");
 
     expect(
-      rejected(`plan "01-main"
+      rejected(`plan
 goal: g
-
 node "02-a" verify test
 instruction: x
-hint value answer in src/a.ts
-hint value answer in src/a.ts
+hint value a in src/a.ts
+hint value a in src/a.ts
 end`),
     ).toContain("more than once");
   });
 
-  test("rejects hint clear and approach/phase clear in an initial Plan", () => {
-    expect(
-      rejected(`plan "01-main"
+  test("rejects clear fields in an initial node record", () => {
+    for (const field of ["hint clear", "approach clear", "phase clear"]) {
+      expect(
+        rejected(`plan
 goal: g
-
 node "02-a" verify test
 instruction: x
-hint clear
+${field}
 end`),
-    ).toContain("only in a node~ patch");
-
-    expect(
-      rejected(`plan "01-main"
-goal: g
-
-node "02-a" verify test
-instruction: x
-approach clear
-end`),
-    ).toContain("only in a node~ patch");
-
-    expect(
-      rejected(`plan "01-main"
-goal: g
-
-node "02-a" verify test
-instruction: x
-phase clear
-end`),
-    ).toContain("only in a node~ patch");
+      ).toContain("allowed only in an amend record");
+    }
   });
 
   test("rejects malformed hint forms and unknown spaces", () => {
     expect(
-      rejected(`plan "01-main"
+      rejected(`plan
 goal: g
-
 node "02-a" verify test
 instruction: x
-hint answer in src/a.ts
-end`),
-    ).toContain("hint <space> <symbol> in <path>");
-
-    expect(
-      rejected(`plan "01-main"
-goal: g
-
-node "02-a" verify test
-instruction: x
-hint function answer in src/a.ts
-end`),
-    ).toContain("space");
-
-    expect(
-      rejected(`plan "01-main"
-goal: g
-
-node "02-a" verify test
-instruction: x
-hint file src/a.ts symbol
+hint file a.ts extra
 end`),
     ).toContain("hint file <path>");
+
+    expect(
+      rejected(`plan
+goal: g
+node "02-a" verify test
+instruction: x
+hint widget a in src/a.ts
+end`),
+    ).toContain("must be one of value, type, namespace");
   });
 
   test("rejects duplicate ids without imposing an arbitrary node cap", () => {
     expect(
-      rejected(`plan "01-main"
+      rejected(`plan
 goal: g
-
 node "02-a" verify test
 instruction: x
 end
-
 node "02-a" verify test
-instruction: x
+instruction: y
 end`),
-    ).toContain("reuses node id");
-
-    const many = Array.from({ length: 200 }, (_, index) => node(`${10 + index}-n-${index}`));
-    expect(accepted(serializePlanDsl(plan(many))).nodes.length).toBe(200);
+    ).toContain("PLAN_DUPLICATE_ID");
   });
 
-  test("a plan without finish may end in a tsc node", () => {
-    const parsed = accepted(`plan "01-main"
+  test("uses plan-protocol and plan-graph diagnostic stages", () => {
+    const protocol = rejected(`plan
 goal: g
-
-node "02-a" verify tsc
-instruction: x
+node "02-a" verify test
 end`);
-    expect(parsed.nodes[0]?.verify).toBe("tsc");
-    expect(validatePlan(parsed)).toBeNull();
+    expect(protocol).toContain("stage: plan-protocol");
+
+    const graph = rejected(`plan
+goal: g
+node "02-a" verify test
+instruction: x
+after "09-missing"
+end`);
+    expect(graph).toContain("stage: plan-graph");
   });
 });
 
 describe("Plan DSL tolerant diagnostics", () => {
   test("strips a whole-reply markdown fence with a warning", () => {
-    const parsed = parsePlanDslDetailed(`\`\`\`\n${SPEC_EXAMPLE}\n\`\`\``);
+    const parsed = parsePlanDslDetailed(`\`\`\`text\n${SPEC_EXAMPLE}\n\`\`\``);
     expect(parsed.ok).toBe(true);
-    expect(parsed.value?.plan).toEqual(SPEC_PLAN);
     expect(parsed.issues.some((issue) => issue.code === "PLAN_WHOLE_REPLY_FENCE")).toBe(true);
   });
 
   test("accepts bare ids with a warning", () => {
-    const parsed = parsePlanDslDetailed(SPEC_EXAMPLE.replace('plan "01-main"', "plan 01-main"));
+    const parsed = parsePlanDslDetailed(`plan
+goal: g
+node 02-a verify test
+instruction: x
+end`);
     expect(parsed.ok).toBe(true);
     expect(parsed.issues.some((issue) => issue.code === "PLAN_BARE_ID")).toBe(true);
-    expect(rejected('plan "1-main"\ngoal: g')).toContain("must be a string node id");
-    expect(rejected('plan "01-Main"\ngoal: g')).toContain("must be a string node id");
   });
 
   test("recovers a missing end at a record boundary or EOF with a warning", () => {
-    const atEof = parsePlanDslDetailed(SPEC_EXAMPLE.replace(/\nend$/, ""));
-    expect(atEof.ok).toBe(true);
-    expect(atEof.issues.some((issue) => issue.code === "PLAN_MISSING_END")).toBe(true);
-
-    const beforeSibling = parsePlanDslDetailed(`plan "01-main"
+    const boundary = parsePlanDslDetailed(`plan
 goal: g
-
 node "02-a" verify test
 instruction: x
-
 node "03-b" verify test
 instruction: y
 end`);
-    expect(beforeSibling.ok).toBe(true);
-    expect(beforeSibling.issues.filter((issue) => issue.code === "PLAN_MISSING_END")).toHaveLength(
-      1,
-    );
+    expect(boundary.ok).toBe(true);
+    expect(boundary.issues.some((issue) => issue.code === "PLAN_MISSING_END")).toBe(true);
+
+    const eof = parsePlanDslDetailed(`plan
+goal: g
+node "02-a" verify test
+instruction: x`);
+    expect(eof.ok).toBe(true);
+    expect(eof.issues.some((issue) => issue.code === "PLAN_MISSING_END")).toBe(true);
   });
 
   test("rejects an unclosed field fence as truncated", () => {
-    const parsed = parsePlanDslDetailed(`plan "01-main"
-goal:
+    const parsed = parsePlanDslDetailed(`plan
+goal: g
+node "02-a" verify test
+instruction:
 TC_EDIT_BEGIN
-unterminated`);
+never closed`);
     expect(parsed.ok).toBe(false);
     expect(parsed.truncated).toBe(true);
     expect(parsed.issues.some((issue) => issue.code === "PLAN_UNCLOSED_FENCE")).toBe(true);
   });
 
   test("rejects legacy hyphen and backtick field fences", () => {
-    for (const fence of ["-----", "``````"]) {
-      const parsed = parsePlanDslDetailed(`plan "01-main"
-goal:
-${fence}
-text
-${fence}`);
-      expect(parsed.ok).toBe(false);
-      expect(parsed.issues.some((issue) => issue.code === "PLAN_LEGACY_FENCE")).toBe(true);
-    }
+    expect(
+      rejected(`plan
+goal: g
+node "02-a" verify test
+instruction:
+------
+x
+------
+end`),
+    ).toContain("PLAN_LEGACY_FENCE");
   });
 
   test("rejects JSON, prose, unknown records, and duplicate fields", () => {
-    expect(rejected('{"id":"01-main","goal":"g","nodes":[]}')).toContain(
-      "JSON plan objects are not accepted",
-    );
-    expect(rejected(`Here is the plan:\n\n${SPEC_EXAMPLE}`)).toContain("expected the plan header");
-    expect(rejected(`${SPEC_EXAMPLE}\n\ntodo: later`)).toContain("unknown record header");
-    expect(rejected(`${SPEC_EXAMPLE}\n\nend`)).toContain('unexpected "end"');
-
+    expect(rejected(`{"plan": "x"}`)).toContain("JSON plan objects are not accepted");
+    expect(rejected(`hello world`)).toContain("unknown record header");
     expect(
-      rejected(`plan "01-main"
+      rejected(`plan
 goal: g
-
 node "02-a" verify test
-instruction: a
-instruction: b
-end`),
-    ).toContain("carries instruction more than once");
-
-    expect(
-      rejected(`plan "01-main"
-goal: g
-
-node "02-a" verify test
-verify tsc
 instruction: x
+verify tsc
 end`),
     ).toContain("carries verify more than once");
+  });
 
-    expect(
-      rejected(`plan "01-main"
-goal: g
-
-node "02-a" after "03-b" verify test
+  test("rejects legacy finish, patch, and node operators", () => {
+    for (const content of [
+      `finish`,
+      `patch`,
+      `node+ "02-a" verify test
 instruction: x
-after "04-c"
-end
-
-node "03-b" verify test
-instruction: b
-end
-
-node "04-c" verify test
-instruction: c
-end`),
-    ).toContain("carries after more than once");
+end`,
+      `node~ "02-a"
+instruction: x
+end`,
+      `node- "02-a"
+end`,
+    ]) {
+      const diagnostics = rejected(content);
+      expect(diagnostics).toContain("PLAN_LEGACY_RECORD");
+    }
   });
 });
 
-describe("Plan DSL serialize", () => {
-  test("serializes the canonical example byte-for-byte", () => {
-    expect(serializePlanDsl(SPEC_PLAN)).toBe(SPEC_EXAMPLE);
-    expect(serializePlanDsl(SPEC_PLAN)).not.toMatch(/^finish$/m);
-  });
-
-  test("round-trips multiline text, hints, approach, and phase", () => {
-    const shape = plan(
-      [
-        node("02-shape", {
-          verify: "tsc",
-          instruction: "Change the shape.\nKeep the helper in sync.",
-          hints: [
-            { path: "src/a.ts", symbol: "Formatter", kind: "type" },
-            { path: "src/a.ts", symbol: "formatNumber", kind: "value" },
-          ],
-          approach: "Scaffold first.\nThen fill bodies.",
-          phase: "scaffold",
-        }),
-      ],
-      "Migrate.\nThen rename.",
-    );
-    const wire = serializePlanDsl(shape);
-    expect(wire).toContain("hint type Formatter in src/a.ts");
-    expect(wire).toContain("hint value formatNumber in src/a.ts");
-    expect(accepted(wire)).toEqual(shape);
-    expect(serializePlanDsl(accepted(wire))).toBe(wire);
-  });
-
-  test("chooses a safe one-line or fenced form", () => {
-    const shape = plan([
-      node("02-a", {
-        instruction: "alpha\n-----\nbeta",
-        approach: "  padded approach  ",
-        phase: "phase",
-      }),
-    ]);
-    const wire = serializePlanDsl(shape);
-    expect(wire).toContain("instruction:\nTC_EDIT_BEGIN\nalpha\n-----\nbeta\nTC_EDIT_END");
-    expect(wire).toContain("approach:\nTC_EDIT_BEGIN\n  padded approach  \nTC_EDIT_END");
-    expect(accepted(wire)).toEqual(shape);
-  });
-
-  test("throws when Plan text contains the close sentinel line", () => {
-    expect(() => serializePlanDsl(plan([], "before\nTC_EDIT_END\nafter"))).toThrow(/literal line/);
-  });
-});
-
-const PATCH_EXAMPLE = `patch
-node+ "04-impl" after "03-scaffold" verify test
-instruction: Implement evaluate.
-hint value evaluate in src/workbook.ts
-approach: Prefer targeted edits.
-phase: implement
-end
-node~ "02-scaffold"
-after "01-main" "03-other"
+describe("amend records", () => {
+  test("parses every replacement field", () => {
+    const parsed = acceptedFragment(`amend "03-impl"
+after "02-scaffold"
 verify tsc
-instruction: Rework the skeleton.
-hint clear
-approach clear
-phase clear
-end
-node- "05-repair"
-end
-finish`;
-
-const PATCH_OPS: PlanPatchOp[] = [
-  {
-    kind: "node-add",
-    id: "04-impl",
-    after: ["03-scaffold"],
-    verify: "test",
-    instruction: "Implement evaluate.",
-    hints: [{ path: "src/workbook.ts", symbol: "evaluate", kind: "value" }],
-    approach: "Prefer targeted edits.",
-    phase: "implement",
-  },
-  {
-    kind: "node-update",
-    id: "02-scaffold",
-    after: ["01-main", "03-other"],
-    verify: "tsc",
-    instruction: "Rework the skeleton.",
-    hints: [],
-    approach: null,
-    phase: null,
-  },
-  { kind: "node-remove", id: "05-repair" },
-];
-
-describe("plan sentinel hard switch", () => {
-  test("rejects the removed angle-bracket sentinel", () => {
-    const old = `plan "01-main"
-goal:
-<<<TC_EDIT_BEGIN>>>
-g
-<<<TC_EDIT_END>>>
-
-node "02-a" verify tsc
-instruction: x
-end
-finish`;
-    const parsed = parsePlan(old);
-    expect(parsed.ok).toBe(false);
-    expect(parsed.ok ? "" : parsed.diagnostics).toContain("TC_EDIT_BEGIN");
-  });
-});
-
-describe("Plan patch DSL parse", () => {
-  test("parses every node operator and finish", () => {
-    const patch = acceptedPatch(PATCH_EXAMPLE);
-    expect(patch).toEqual({ ops: PATCH_OPS, finish: true });
-  });
-
-  test("accepts blank lines, indentation, and CRLF", () => {
-    const indented = PATCH_EXAMPLE.split("\n")
-      .map((line) => `  ${line}`)
-      .join("\n\n");
-    expect(acceptedPatch(indented)).toEqual(acceptedPatch(PATCH_EXAMPLE));
-    expect(acceptedPatch(PATCH_EXAMPLE.replace(/\n/g, "\r\n"))).toEqual(
-      acceptedPatch(PATCH_EXAMPLE),
-    );
-  });
-
-  test("parses empty updates and optional fields", () => {
-    const empty = acceptedPatch(`patch
-node~ "02-a"
-end
-node~ "03-b" verify test
-end
-node~ "04-c"
-after
-end
-node~ "05-d"
-hint clear
+instruction: Rewrite the return path.
+hint value evaluate in src/workbook.ts
 approach clear
 phase clear
 end`);
-    expect(empty.ops).toEqual([
-      { kind: "node-update", id: "02-a" },
-      { kind: "node-update", id: "03-b", verify: "test" },
-      { kind: "node-update", id: "04-c", after: [] },
+    expect(parsed.nodes).toEqual([]);
+    expect(parsed.amends).toEqual([
       {
-        kind: "node-update",
-        id: "05-d",
-        hints: [],
+        id: "03-impl",
+        after: ["02-scaffold"],
+        verify: "tsc",
+        instruction: "Rewrite the return path.",
+        hints: [{ path: "src/workbook.ts", symbol: "evaluate", kind: "value" }],
         approach: null,
         phase: null,
       },
     ]);
   });
 
-  test("node+ accepts header or body after, and defaults to no dependencies", () => {
-    const patch = acceptedPatch(`patch
-node+ "04-a" after "03-b" verify tsc
-instruction: x
-end
-node+ "05-c" verify test
-after "04-a"
-instruction: y
-end
-node+ "06-d" verify test
-instruction: z
+  test("supports hint clear and empty after", () => {
+    const parsed = acceptedFragment(`amend "03-impl"
+after
+hint clear
 end`);
-    expect(patch.ops.map((op) => (op.kind === "node-add" ? op.after : null))).toEqual([
-      ["03-b"],
-      ["04-a"],
-      [],
-    ]);
+    expect(parsed.amends[0]).toEqual({ id: "03-impl", after: [], hints: [] });
   });
 
-  test("parses empty patches and a bare finish", () => {
-    expect(acceptedPatch("patch")).toEqual({ ops: [], finish: false });
-    expect(acceptedPatch("patch\nfinish")).toEqual({ ops: [], finish: true });
-  });
-
-  test("recovers a missing end at a patch boundary", () => {
-    const atEof = parsePlanPatchDetailed('patch\nnode~ "02-a"\ninstruction: x');
-    expect(atEof.ok).toBe(true);
-    expect(atEof.issues.some((issue) => issue.code === "PLAN_MISSING_END")).toBe(true);
-    const beforeSibling = parsePlanPatchDetailed(
-      'patch\nnode~ "02-a"\ninstruction: x\nnode- "03-b"\nend',
-    );
-    expect(beforeSibling.ok).toBe(true);
-    expect(beforeSibling.issues.some((issue) => issue.code === "PLAN_MISSING_END")).toBe(true);
-  });
-});
-
-describe("Plan patch DSL rejection", () => {
-  test("rejects legacy stage/task/edit operators and plan~", () => {
-    for (const content of [
-      `patch
-stage+ "04-next" plan "01-main"
-goal: g
-end`,
-      `patch
-task+ "04-next" stage "02-a" verify test
-instruction: x
-end`,
-      `patch
-edit+ "04-change" task "02-a" modify value answer in src/a.ts
-instruction: x
-end`,
-      `patch
-plan~ "01-main"
-goal: g
-end`,
-    ]) {
-      expect(rejectedPatch(content)).toContain("PLAN_LEGACY_RECORD");
-    }
-  });
-
-  test("rejects a missing header, JSON, unknown records, and stray end", () => {
-    expect(rejectedPatch("")).toContain("the reply is empty");
-    expect(rejectedPatch('plan "01-main"\ngoal: g')).toContain("expected the patch header");
-    expect(rejectedPatch('{"ops":[],"finish":false}')).toContain("JSON patch objects");
-    expect(rejectedPatch("patch\nnope\nend")).toContain("unknown patch record");
-    expect(rejectedPatch("patch\nend")).toContain('unexpected "end"');
-    expect(rejectedPatch(`patch\n${PATCH_EXAMPLE}`)).toContain("patch header is a singleton");
-  });
-
-  test("rejects trailing records after finish", () => {
-    expect(rejectedPatch('patch\nfinish\nnode~ "02-a"\nend')).toContain(
-      "finish must be the last line",
-    );
-    expect(rejectedPatch("patch\nfinish\nfinish")).toContain("finish must be the last line");
-  });
-
-  test("rejects malformed headers, unknown verifies, and missing instructions", () => {
-    expect(rejectedPatch('patch\nnode+ "04-a" verify lint\ninstruction: x\nend')).toContain(
-      'verify must be "tsc" or "test"',
-    );
-    expect(rejectedPatch('patch\nnode+ "04-a" verify test\nend')).toContain("needs instruction:");
-    expect(rejectedPatch('patch\nnode+ "04-a" after verify test\ninstruction: x\nend')).toContain(
-      "after clause",
-    );
-    expect(rejectedPatch('patch\nnode~ "04-a"\nverify lint\nend')).toContain(
-      'verify must be "tsc" or "test"',
-    );
-    expect(rejectedPatch('patch\nnode- "04-a" extra\nend')).toContain(
-      'must be "node- \\"NN-slug\\""',
-    );
-    expect(rejectedPatch('patch\nnode~ "04-a"\ninstruction: a\ninstruction: b\nend')).toContain(
-      "carries instruction more than once",
-    );
-  });
-
-  test("rejects duplicate node+ ids inside one patch", () => {
+  test("rejects an amend with no fields and a malformed header", () => {
     expect(
-      rejectedPatch(`patch
-node+ "04-a" verify test
-instruction: x
-end
-node+ "04-a" verify test
-instruction: y
+      rejectedFragment(`amend "03-impl"
 end`),
-    ).toContain("reuses node id");
-  });
+    ).toContain("needs at least one replacement field");
 
-  test("rejects an unsafe hint through the graph validator", () => {
-    const state = stateOf();
-    expect(() =>
-      applied(
-        state,
-        `patch
-node+ "04-a" verify test
+    expect(
+      rejectedFragment(`amend
 instruction: x
-hint file ../a.ts
-end`,
-      ),
-    ).toThrow("writable repo-relative path");
-  });
-});
-
-describe("Plan patch DSL serialize", () => {
-  test("round-trips the combined example byte-for-byte", () => {
-    const patch = acceptedPatch(PATCH_EXAMPLE);
-    expect(serializePlanPatch(patch)).toBe(PATCH_EXAMPLE);
-    expect(acceptedPatch(serializePlanPatch(patch))).toEqual(patch);
-  });
-
-  test("round-trips empty updates, clears, and empty after", () => {
-    const content = `patch
-node~ "02-a"
-end
-node~ "03-b"
-after
-hint clear
-approach clear
-phase clear
-end`;
-    const patch = acceptedPatch(content);
-    expect(serializePlanPatch(patch)).toBe(content);
-    expect(acceptedPatch(serializePlanPatch(patch))).toEqual(patch);
-  });
-
-  test("round-trips fenced text", () => {
-    const content = `patch
-node~ "02-a"
-instruction:
-TC_EDIT_BEGIN
-alpha
-  beta
-TC_EDIT_END
-approach:
-TC_EDIT_BEGIN
-scaffold
-then fill bodies
-TC_EDIT_END
-end`;
-    expect(serializePlanPatch(acceptedPatch(content))).toBe(content);
-  });
-});
-
-describe("applyPlanPatch", () => {
-  function basePlan(): Plan {
-    return plan([
-      node("02-scaffold", { verify: "tsc" }),
-      node("03-impl", { after: ["02-scaffold"] }),
-      node("04-final", { after: ["03-impl"] }),
-    ]);
-  }
-
-  function baseState(): PlanRunState {
-    return initialState(basePlan());
-  }
-
-  test("node+ appends work and finish moves the final node", () => {
-    const state = applied(
-      baseState(),
-      `patch
-node+ "05-extra" after "04-final" verify test
-instruction: Add the extra behavior.
-hint value extra in src/a.ts
-end
-finish`,
-    );
-    expect(state.nodes.map((entry) => entry.id)).toEqual([
-      "02-scaffold",
-      "03-impl",
-      "04-final",
-      "05-extra",
-    ]);
-    expect(state.nodeStatus.get("05-extra")).toBe("pending");
-    expect(state.finalNodeId).toBe("05-extra");
-    expect(nodeById(state, "05-extra")?.hints).toEqual([
-      { path: "src/a.ts", symbol: "extra", kind: "value" },
-    ]);
-  });
-
-  test("node~ replaces after, hints, approach, and phase", () => {
-    const state = stateOf([
-      node("02-scaffold", { verify: "tsc" }),
-      node("03-impl", { after: ["02-scaffold"] }),
-      node("04-final", { after: ["03-impl"] }),
-      node("05-other", { verify: "tsc" }),
-    ]);
-    const replaced = applied(
-      state,
-      `patch
-node~ "03-impl"
-after "05-other"
-instruction: Implement after the other root.
-hint value impl in src/a.ts
-approach: Target edits first.
-phase: implement
-end`,
-    );
-    expect(nodeById(replaced, "03-impl")).toMatchObject({
-      after: ["05-other"],
-      instruction: "Implement after the other root.",
-      hints: [{ path: "src/a.ts", symbol: "impl", kind: "value" }],
-      approach: "Target edits first.",
-      phase: "implement",
-    });
-
-    const replacedAgain = applied(
-      replaced,
-      `patch
-node~ "03-impl"
-hint file src/b.ts
-approach: Prefer a whole-file write for this small module.
-phase: finalize
-end`,
-    );
-    expect(nodeById(replacedAgain, "03-impl")).toMatchObject({
-      after: ["05-other"],
-      instruction: "Implement after the other root.",
-      hints: [{ path: "src/b.ts", symbol: "", kind: "file" }],
-      approach: "Prefer a whole-file write for this small module.",
-      phase: "finalize",
-    });
-
-    const cleared = applied(
-      replacedAgain,
-      `patch
-node~ "03-impl"
-after
-hint clear
-approach clear
-phase clear
-end`,
-    );
-    expect(nodeById(cleared, "03-impl")).toMatchObject({
-      after: [],
-      hints: [],
-    });
-    expect(nodeById(cleared, "03-impl")?.approach).toBeUndefined();
-    expect(nodeById(cleared, "03-impl")?.phase).toBeUndefined();
-  });
-
-  test("a changed failed node reopens; an unchanged failed node stays failed", () => {
-    const state = baseState();
-    state.nodeStatus.set("03-impl", "failed");
-
-    const unchanged = applied(state, 'patch\nnode~ "03-impl"\nend');
-    expect(unchanged.nodeStatus.get("03-impl")).toBe("failed");
-
-    const repaired = applied(
-      state,
-      `patch
-node~ "03-impl"
-instruction: Repair the implementation.
-end`,
-    );
-    expect(repaired.nodeStatus.get("03-impl")).toBe("pending");
-  });
-
-  test("removing pending and failed nodes works; passed/review/in-progress nodes are held", () => {
-    const pending = applied(baseState(), 'patch\nnode- "04-final"\nend');
-    expect(pending.nodes.map((entry) => entry.id)).toEqual(["02-scaffold", "03-impl"]);
-
-    const failed = baseState();
-    failed.nodeStatus.set("04-final", "failed");
-    const removedFailed = applied(failed, 'patch\nnode- "04-final"\nend');
-    expect(removedFailed.nodes.map((entry) => entry.id)).toEqual(["02-scaffold", "03-impl"]);
-
-    const passed = baseState();
-    passed.nodeStatus.set("02-scaffold", "passed");
-    expect(() => applied(passed, 'patch\nnode- "02-scaffold"\nend')).toThrow(
-      "passed node #02-scaffold cannot be removed",
-    );
-
-    const review = baseState();
-    review.nodeStatus.set("04-final", "review");
-    expect(() => applied(review, 'patch\nnode- "04-final"\nend')).toThrow("is in review");
-
-    const inProgress = baseState();
-    inProgress.nodeStatus.set("03-impl", "in-progress");
-    expect(() => applied(inProgress, 'patch\nnode- "03-impl"\nend')).toThrow(/in[- ]progress/);
-  });
-
-  test("a passed node cannot be mutated", () => {
-    const state = baseState();
-    state.nodeStatus.set("02-scaffold", "passed");
-    expect(() =>
-      applied(
-        state,
-        `patch
-node~ "02-scaffold"
-instruction: Change the passed node.
-end`,
-      ),
-    ).toThrow("passed node #02-scaffold is immutable");
-  });
-
-  test("node+ reusing an existing id is rejected", () => {
-    expect(() =>
-      applied(
-        baseState(),
-        `patch
-node+ "02-scaffold" verify test
-instruction: Duplicate.
-end`,
-      ),
-    ).toThrow("reuses node id");
-  });
-
-  test("removing a dependency leaves a dangling graph and is rejected", () => {
-    expect(() => applied(baseState(), 'patch\nnode- "02-scaffold"\nend')).toThrow(
-      "depends on #02-scaffold, which is not in the plan",
-    );
-  });
-
-  test("a patch that creates a cycle is rejected and names the cycle", () => {
-    expect(() =>
-      applied(
-        baseState(),
-        `patch
-node~ "02-scaffold"
-after "04-final"
-end`,
-      ),
-    ).toThrow("cycle");
-  });
-
-  test("finish requires the merged last node to verify test", () => {
-    const state = stateOf([
-      node("02-scaffold", { verify: "tsc" }),
-      node("03-impl", { after: ["02-scaffold"] }),
-      node("04-final", { after: ["03-impl"], verify: "tsc" }),
-    ]);
-    expect(() => applied(state, "patch\nfinish")).toThrow('must verify "test"');
-  });
-
-  test("appending after the final node needs a new finish", () => {
-    const state = applied(baseState(), "patch\nfinish");
-    expect(state.finalNodeId).toBe("04-final");
-    const append = `patch
-node+ "05-extra" after "04-final" verify test
-instruction: More work.
-end`;
-
-    expect(() => applied(state, append)).toThrow("no longer last");
-    expect(() => applied(state, append)).toThrow("emit finish");
-
-    const finished = applied(state, `${append}\nfinish`);
-    expect(finished.finalNodeId).toBe("05-extra");
-  });
-
-  test("removing the final node without a new finish is rejected", () => {
-    const state = applied(baseState(), "patch\nfinish");
-    expect(() => applied(state, 'patch\nnode- "04-final"\nend')).toThrow("no longer last");
-  });
-
-  test("in-place repair preserves finalNodeId", () => {
-    const state = applied(baseState(), "patch\nfinish");
-    state.nodeStatus.set("04-final", "failed");
-    const repaired = applied(
-      state,
-      `patch
-node~ "04-final"
-instruction: Repair the final test.
-end`,
-    );
-    expect(repaired.finalNodeId).toBe("04-final");
-    expect(repaired.nodeStatus.get("04-final")).toBe("pending");
-  });
-
-  test("a rejected patch leaves the previous state untouched", () => {
-    const state = baseState();
-    const before = snapshot(state);
-    const merged = applyPlanPatch(
-      state,
-      acceptedPatch(`patch
-node~ "03-impl"
-instruction: Change it.
-end
-node- "09-missing"
 end`),
-    );
-    expect(merged.ok).toBe(false);
-    expect(snapshot(state)).toBe(before);
+    ).toContain('must be "amend \\"NN-slug\\""');
   });
 
-  test("a patch preserves the previous final node when it stays last", () => {
-    const state = applied(baseState(), "patch\nfinish");
-    const repaired = applied(
-      state,
-      `patch
-node~ "04-final"
-instruction: Keep this node final.
-end`,
-    );
-    expect(repaired.finalNodeId).toBe("04-final");
-  });
+  test("accepts a reply that appends and amends together", () => {
+    const parsed = acceptedFragment(`node "05-final" after "03-impl" verify test
+instruction: Final.
+end
 
-  test("the appended node becomes ready only after its dependency passes", () => {
-    const state = applied(
-      baseState(),
-      `patch
-node+ "05-extra" after "04-final" verify test
-instruction: More work.
-end`,
-    );
-    expect(readyNodes(state).map((entry) => entry.id)).toEqual(["02-scaffold"]);
-    state.nodeStatus.set("02-scaffold", "passed");
-    expect(readyNodes(state).map((entry) => entry.id)).toEqual(["03-impl"]);
-    state.nodeStatus.set("03-impl", "passed");
-    expect(readyNodes(state).map((entry) => entry.id)).toEqual(["04-final"]);
-    state.nodeStatus.set("04-final", "passed");
-    expect(readyNodes(state).map((entry) => entry.id)).toEqual(["05-extra"]);
-  });
-});
-
-describe("patch DSL validation of final and custom nodes", () => {
-  test("a patch may add nodes with no dependencies and custom verifies", () => {
-    const verify: WorkVerify = "tsc";
-    const patch = acceptedPatch(`patch
-node+ "04-a" verify ${verify}
-instruction: x
+amend "03-impl"
+instruction: Narrow the repair.
 end`);
-    expect(patch.ops[0]).toMatchObject({ kind: "node-add", after: [], verify: "tsc" });
+    expect(parsed.nodes.map((entry) => entry.id)).toEqual(["05-final"]);
+    expect(parsed.amends.map((amend) => amend.id)).toEqual(["03-impl"]);
+  });
+
+  test("incremental replies may name existing nodes in after", () => {
+    const parsed = acceptedFragment(`node "05-final" after "03-impl" verify test
+instruction: Final.
+end`);
+    expect(parsed.nodes[0]?.after).toEqual(["03-impl"]);
+  });
+});
+
+describe("Plan DSL serialize", () => {
+  test("serializes the canonical example byte-for-byte", () => {
+    expect(serializePlanDsl(SPEC_PLAN)).toBe(SPEC_EXAMPLE);
+  });
+
+  test("round-trips multiline text, hints, approach, and phase", () => {
+    const reply = plan([
+      node("02-a", {
+        instruction: "alpha\n  beta",
+        hints: [{ path: "src/a.ts", symbol: "answer", kind: "value" }],
+        approach: "line one\nline two",
+        phase: "impl",
+      }),
+    ]);
+    expect(accepted(serializePlanDsl(reply))).toEqual(reply);
+  });
+
+  test("serializes amends and clears", () => {
+    const reply: PlanReply = {
+      goal: "g",
+      nodes: [],
+      amends: [
+        { id: "03-impl", instruction: "x", hints: [], approach: null, phase: null, after: [] },
+      ],
+    };
+    const wire = serializePlanDsl(reply);
+    expect(wire).toContain('amend "03-impl"');
+    expect(wire).toContain("hint clear");
+    expect(wire).toContain("approach clear");
+    expect(wire).toContain("phase clear");
+    expect(acceptedFragment(wire)).toEqual({ goal: "g", nodes: [], amends: reply.amends });
+  });
+
+  test("chooses a safe one-line or fenced form", () => {
+    const wire = serializePlanDsl({
+      goal: "line one\nline two",
+      nodes: [node("02-a", { instruction: "x" })],
+      amends: [],
+    });
+    expect(wire).toContain("goal:\nTC_EDIT_BEGIN\nline one\nline two\nTC_EDIT_END");
+  });
+
+  test("throws when Plan text contains the close sentinel line", () => {
+    expect(() =>
+      serializePlanDsl({
+        goal: "g",
+        nodes: [node("02-a", { instruction: "before\nTC_EDIT_END\nafter" })],
+        amends: [],
+      }),
+    ).toThrow(/cannot serialize/);
+  });
+});
+
+describe("plan sentinel hard switch", () => {
+  test("rejects the removed angle-bracket sentinel", () => {
+    const diagnostics = rejected(`plan
+goal: g
+node "02-a" verify test
+instruction: <<<BEGIN>>>
+x
+<<<END>>>
+end`);
+    expect(diagnostics).toContain("PLAN_MISSING_END");
   });
 });

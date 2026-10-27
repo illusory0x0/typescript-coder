@@ -1,6 +1,6 @@
 /**
  * Shared diagnostics for the Plan DSL and the edit-action reply language
- * (`docs/plan-exec.md` §5.2-5.3). Both parsers collect `DslIssue`s while
+ * (`docs/plan-exec.md` §4.2-4.3). Both parsers collect `DslIssue`s while
  * recovering structure; one renderer turns them into the bounded, model-facing
  * shape: stage, stable code, line/column, excerpt with a caret,
  * expected/found/hint, and record/clause identity.

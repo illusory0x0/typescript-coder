@@ -361,21 +361,18 @@ export const scenarios: Scenario[] = [
   },
   {
     id: "plan-exec-fix-answer",
-    title:
-      "flat-DSL plan/execute/review plans one WorkNode and the executor makes the failing test green",
+    title: "flat-DSL plan/execute plans one WorkNode and the executor makes the failing test green",
     fixture: "fix-answer",
     agentMode: "plan-exec",
     issue: TEST_ISSUE,
     responses: [
-      `plan "01-main"
+      `plan
 goal: Make the failing answer test pass.
 
 node "02-answer" verify test
 instruction: Change answer so it returns 2 instead of 1.
 hint value answer in src/helper.ts
-end
-
-finish`,
+end`,
       [
         "select answer in src/helper.ts resolve value",
         "replace with",
@@ -385,25 +382,23 @@ finish`,
         "}",
         "TC_EDIT_END",
       ].join("\n"),
-      "approve",
     ],
     assertions: [
       hasOk(true),
       fileContains("src/helper.ts", "return 2;"),
       fileEqualsOriginal("src/helper.test.ts"),
-      hasCallCount(3),
+      hasCallCount(2),
       messageContains(1, "Change answer so it returns 2 instead of 1."),
     ],
   },
   {
     id: "plan-exec-write-fix-answer",
-    title:
-      "flat-DSL plan/execute/review accepts sentinel goal, instruction, and whole-file write fences",
+    title: "flat-DSL plan/execute accepts sentinel goal, instruction, and whole-file write fences",
     fixture: "fix-answer",
     agentMode: "plan-exec",
     issue: TEST_ISSUE,
     responses: [
-      `plan "01-main"
+      `plan
 goal:
 TC_EDIT_BEGIN
 Make the failing answer test pass.
@@ -419,9 +414,7 @@ approach:
 TC_EDIT_BEGIN
 The file is small; one whole-file write is often cheapest.
 TC_EDIT_END
-end
-
-finish`,
+end`,
       [
         "write src/helper.ts with",
         "TC_EDIT_BEGIN",
@@ -430,13 +423,12 @@ finish`,
         "}",
         "TC_EDIT_END",
       ].join("\n"),
-      "approve",
     ],
     assertions: [
       hasOk(true),
       fileContains("src/helper.ts", "return 2;"),
       fileEqualsOriginal("src/helper.test.ts"),
-      hasCallCount(3),
+      hasCallCount(2),
       messageContains(1, "Replace src/helper.ts so answer returns 2."),
     ],
   },

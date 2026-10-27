@@ -2,10 +2,9 @@ import { describe, expect, test } from "bun:test";
 import {
   allNodes,
   allNodesTerminal,
+  applyPlanReply,
   blockedNodes,
   dependentsOf,
-  finalNode,
-  finalNodePassed,
   formatHint,
   initialState,
   isNodeBlocked,
@@ -15,7 +14,6 @@ import {
   MAX_INSTRUCTION_LENGTH,
   MAX_PHASE_LENGTH,
   MAX_PLAN_GOAL_LENGTH,
-  mergeReplan,
   nextReadyNode,
   nodeById,
   readyNodes,
@@ -24,10 +22,10 @@ import {
   renderNodeTree,
   runComplete,
   summaryOf,
-  validateFinalNode,
+  validateNodes,
   validatePlan,
 } from "./tasks";
-import type { NodeId, Plan, PlanRunState, WorkNode } from "./tasks";
+import type { NodeId, PlanReply, PlanRunState, WorkNode } from "./tasks";
 import { parsePlan, serializePlanDsl } from "./plan-dsl";
 
 function node(id: string, overrides: Partial<Omit<WorkNode, "id">> = {}): WorkNode {
@@ -41,27 +39,24 @@ function node(id: string, overrides: Partial<Omit<WorkNode, "id">> = {}): WorkNo
   };
 }
 
-// Keep fixtures readable: a plan always owns the root id "01-main" and the
-// supplied nodes in record order.
-function plan(nodes: WorkNode[], goal = "Make the change."): Plan {
-  return { id: "01-main", goal, nodes };
+function plan(nodes: WorkNode[], goal = "Make the change."): PlanReply {
+  return { goal, nodes, amends: [] };
 }
 
-function planText(nodes: WorkNode[], final = false): string {
-  const content = serializePlanDsl(plan(nodes));
-  return final ? `${content}\nfinish` : content;
+function planText(nodes: WorkNode[], goal = "Make the change."): string {
+  return serializePlanDsl(plan(nodes, goal));
 }
 
-function accepted(content: string): Plan {
+function accepted(content: string): PlanReply {
   const parsed = parsePlan(content);
   if (!parsed.ok) {
     throw new Error(`expected an accepted plan, got ${parsed.diagnostics}`);
   }
-  return parsed.plan;
+  return parsed.reply;
 }
 
-function stateOf(nodes: WorkNode[], finalNodeId: NodeId | null = null): PlanRunState {
-  return initialState(accepted(planText(nodes)), finalNodeId);
+function stateOf(nodes: WorkNode[]): PlanRunState {
+  return initialState(accepted(planText(nodes)));
 }
 
 function pass(state: PlanRunState, id: NodeId): void {
@@ -76,9 +71,18 @@ function ids(nodes: readonly WorkNode[]): NodeId[] {
   return nodes.map((candidate) => candidate.id);
 }
 
+function gate(state: PlanRunState, id: NodeId, ok = true): void {
+  const candidate = nodeById(state, id);
+  state.lastGate = {
+    nodeId: id,
+    verify: candidate?.verify ?? "test",
+    ok,
+  };
+}
+
 describe("Plan/WorkNode schema", () => {
   test("parses a minimal plan with hints, approach, and phase", () => {
-    const parsed = parsePlan(`plan "01-main"
+    const parsed = parsePlan(`plan
 goal: Make the failing test pass.
 
 node "02-scaffold" verify tsc
@@ -97,8 +101,7 @@ end
     if (!parsed.ok) {
       throw new Error(parsed.diagnostics);
     }
-    expect(parsed.plan).toEqual({
-      id: "01-main",
+    expect(parsed.reply).toEqual({
       goal: "Make the failing test pass.",
       nodes: [
         {
@@ -122,8 +125,21 @@ end
           ],
         },
       ],
+      amends: [],
     });
-    expect(parsed.finalNodeId).toBeNull();
+  });
+
+  test("parses a legacy quoted plan id without keeping a plan-root id", () => {
+    const parsed = parsePlan(`plan "01-main"
+goal: Keep the goal.
+node "02-a" verify test
+instruction: Do it.
+end`);
+    if (!parsed.ok) {
+      throw new Error(parsed.diagnostics);
+    }
+    expect(parsed.reply.goal).toBe("Keep the goal.");
+    expect(parsed.reply.nodes.map((entry) => entry.id)).toEqual(["02-a"]);
   });
 
   test("accepts a linear chain and a branching DAG", () => {
@@ -147,24 +163,16 @@ end
     expect(branch.nodes[3]?.after).toEqual(["03-b", "04-c"]);
     expect(nodeById(branch, "05-d")?.after).toEqual(["03-b", "04-c"]);
     expect(dependentsOf(branch, "02-a").map((entry) => entry.id)).toEqual(["03-b"]);
-    expect(finalNode(branch)?.id).toBe("05-d");
     expect(allNodes(branch).map((entry) => entry.id)).toEqual(["02-a", "03-b", "04-c", "05-d"]);
   });
 
-  test("rejects duplicate plan/node ids and malformed ids", () => {
+  test("rejects duplicate node ids and malformed ids", () => {
     const duplicate = parsePlan(planText([node("02-a"), node("02-a")]));
     expect(duplicate.ok).toBe(false);
     if (!duplicate.ok) {
       expect(duplicate.diagnostics).toContain("reuses node id");
     }
-    const rootClash = parsePlan(
-      serializePlanDsl({ id: "01-main", goal: "g", nodes: [node("01-main")] }),
-    );
-    expect(rootClash.ok).toBe(false);
-    if (!rootClash.ok) {
-      expect(rootClash.diagnostics).toContain("reuses node id");
-    }
-    const malformed = parsePlan(serializePlanDsl(plan([node("2-a")])));
+    const malformed = parsePlan(serializePlanDsl({ goal: "g", nodes: [node("2-a")] }));
     expect(malformed.ok).toBe(false);
     if (!malformed.ok) {
       expect(malformed.diagnostics).toContain("must be a string node id");
@@ -181,28 +189,29 @@ end
   });
 
   test("rejects an empty plan without imposing an arbitrary node cap", () => {
-    expect(validatePlan(plan([]))).toContain("at least one work node");
+    expect(validatePlan("g", [])).toContain("at least one work node");
+    expect(parsePlan("plan\ngoal: g").ok).toBe(false);
     const many = Array.from({ length: 200 }, (_, index) => node(`${10 + index}-n-${index}`));
-    expect(validatePlan(plan(many))).toBeNull();
+    expect(validatePlan("g", many)).toBeNull();
   });
 
   test("enforces plan goal and node text lengths", () => {
-    expect(validatePlan(plan([node("02-a")], "x".repeat(MAX_PLAN_GOAL_LENGTH + 1)))).toContain(
+    expect(validatePlan("x".repeat(MAX_PLAN_GOAL_LENGTH + 1), [node("02-a")])).toContain(
       `at most ${MAX_PLAN_GOAL_LENGTH}`,
     );
     expect(
-      validatePlan(plan([node("02-a", { instruction: "x".repeat(MAX_INSTRUCTION_LENGTH + 1) })])),
+      validatePlan("g", [node("02-a", { instruction: "x".repeat(MAX_INSTRUCTION_LENGTH + 1) })]),
     ).toContain(`at most ${MAX_INSTRUCTION_LENGTH}`);
     expect(
-      validatePlan(plan([node("02-a", { approach: "x".repeat(MAX_APPROACH_LENGTH + 1) })])),
+      validatePlan("g", [node("02-a", { approach: "x".repeat(MAX_APPROACH_LENGTH + 1) })]),
     ).toContain(`at most ${MAX_APPROACH_LENGTH}`);
     expect(
-      validatePlan(plan([node("02-a", { phase: "x".repeat(MAX_PHASE_LENGTH + 1) })])),
+      validatePlan("g", [node("02-a", { phase: "x".repeat(MAX_PHASE_LENGTH + 1) })]),
     ).toContain(`at most ${MAX_PHASE_LENGTH}`);
-    expect(validatePlan(plan([node("02-a", { approach: "  " })]))).toContain(
+    expect(validatePlan("g", [node("02-a", { approach: "  " })])).toContain(
       "approach must be a non-empty string",
     );
-    expect(validatePlan(plan([node("02-a", { phase: "" })]))).toContain(
+    expect(validatePlan("g", [node("02-a", { phase: "" })])).toContain(
       "phase must be a non-empty string",
     );
   });
@@ -213,11 +222,11 @@ describe("hint validation", () => {
     const unsafe = plan([
       node("02-a", { hints: [{ path: "../a.ts", symbol: "x", kind: "value" }] }),
     ]);
-    expect(validatePlan(unsafe)).toContain("not a writable repo-relative path");
+    expect(validatePlan("g", unsafe.nodes)).toContain("not a writable repo-relative path");
     const human = plan([
       node("02-a", { hints: [{ path: "human/spec.md", symbol: "", kind: "file" }] }),
     ]);
-    expect(validatePlan(human)).toContain("not a writable repo-relative path");
+    expect(validatePlan("g", human.nodes)).toContain("not a writable repo-relative path");
     const duplicate = plan([
       node("02-a", {
         hints: [
@@ -226,26 +235,28 @@ describe("hint validation", () => {
         ],
       }),
     ]);
-    expect(validatePlan(duplicate)).toContain("more than once");
+    expect(validatePlan("g", duplicate.nodes)).toContain("more than once");
   });
 
   test("requires file hints to use an empty symbol and symbol hints to name a symbol", () => {
     const fileWithSymbol = plan([
       node("02-a", { hints: [{ path: "src/a.ts", symbol: "x", kind: "file" }] }),
     ]);
-    expect(validatePlan(fileWithSymbol)).toContain('a file hint uses symbol ""');
+    expect(validatePlan("g", fileWithSymbol.nodes)).toContain('a file hint uses symbol ""');
 
     const emptySymbol = plan([
       node("02-a", { hints: [{ path: "src/a.ts", symbol: "", kind: "value" }] }),
     ]);
-    expect(validatePlan(emptySymbol)).toContain("has an empty symbol");
+    expect(validatePlan("g", emptySymbol.nodes)).toContain("has an empty symbol");
 
     const unknownKind = plan([
       node("02-a", {
         hints: [{ path: "src/a.ts", symbol: "x", kind: "function" } as never],
       }),
     ]);
-    expect(validatePlan(unknownKind)).toContain("must use kind value, type, namespace, or file");
+    expect(validatePlan("g", unknownKind.nodes)).toContain(
+      "must use kind value, type, namespace, or file",
+    );
   });
 
   test("formats file and symbol hints", () => {
@@ -259,15 +270,17 @@ describe("hint validation", () => {
 describe("dependency validation", () => {
   test("rejects self, dangling, and duplicate after edges", () => {
     const self = plan([node("02-a", { after: ["02-a"] })]);
-    expect(validatePlan(self)).toContain(`node #02-a lists itself in after`);
+    expect(validatePlan("g", self.nodes)).toContain(`node #02-a lists itself in after`);
 
     const dangling = plan([node("02-a"), node("03-b", { after: ["09-missing"] })]);
-    expect(validatePlan(dangling)).toContain(
+    expect(validatePlan("g", dangling.nodes)).toContain(
       `node #03-b depends on #09-missing, which is not in the plan`,
     );
 
     const duplicate = plan([node("02-a"), node("03-b", { after: ["02-a", "02-a"] })]);
-    expect(validatePlan(duplicate)).toContain(`node #03-b lists dependency #02-a more than once`);
+    expect(validatePlan("g", duplicate.nodes)).toContain(
+      `node #03-b lists dependency #02-a more than once`,
+    );
   });
 
   test("rejects cycles and names every node in the cycle", () => {
@@ -276,7 +289,7 @@ describe("dependency validation", () => {
       node("03-b", { after: ["02-a"] }),
       node("04-c", { after: ["03-b"] }),
     ]);
-    const problems = validatePlan(cycle);
+    const problems = validateNodes(cycle.nodes);
     expect(problems).toContain("cycle");
     expect(problems).toContain("#02-a");
     expect(problems).toContain("#03-b");
@@ -291,55 +304,44 @@ describe("dependency validation", () => {
   });
 
   test("a self-dependency is not reported as a cycle as well", () => {
-    const problems = validatePlan(plan([node("02-a", { after: ["02-a"] })]));
+    const problems = validatePlan("g", [node("02-a", { after: ["02-a"] })]);
     expect(problems).toContain("lists itself");
     expect(problems).not.toContain("cycle");
   });
 });
 
-describe("finish validation", () => {
-  const lastTest = [node("02-a", { verify: "tsc" }), node("03-final")];
-
-  test("finish marks the last test node", () => {
-    const parsed = parsePlan(planText(lastTest, true));
-    if (!parsed.ok) {
-      throw new Error(parsed.diagnostics);
-    }
-    expect(parsed.finalNodeId).toBe("03-final");
-    expect(validateFinalNode(parsed.plan, "03-final")).toBeNull();
-  });
-
-  test("finish needs a node, a test last node, and must be last", () => {
-    const none = parsePlan('plan "01-main"\ngoal: g\nfinish');
-    expect(none.ok).toBe(false);
-    if (!none.ok) {
-      expect(none.diagnostics).toContain("at least one work node");
-    }
-
-    const tsc = parsePlan(planText([node("02-a", { verify: "tsc" })], true));
-    expect(tsc.ok).toBe(false);
-    if (!tsc.ok) {
-      expect(tsc.diagnostics).toContain('must verify "test"');
-    }
-
-    const trailing = parsePlan(
-      `${planText(lastTest, true)}\nnode "04-later" verify test\ninstruction: x\nend`,
-    );
-    expect(trailing.ok).toBe(false);
-    if (!trailing.ok) {
-      expect(trailing.diagnostics).toContain("finish must be the last line");
-    }
-  });
-
-  test("finish on a non-final node is reported by validateFinalNode", () => {
-    const content = plan([node("02-a"), node("03-b", { verify: "tsc" })]);
-    expect(validateFinalNode(content, "02-a")).toContain(
-      "finish must mark the last node in record order",
-    );
-  });
-});
-
 describe("legacy record rejection", () => {
+  test("rejects finish, patch, and node operator records with a repair hint", () => {
+    const finish = parsePlan(`plan
+goal: g
+node "02-a" verify test
+instruction: x
+end
+finish`);
+    expect(finish.ok).toBe(false);
+    if (!finish.ok) {
+      expect(finish.diagnostics).toContain("PLAN_LEGACY_RECORD");
+      expect(finish.diagnostics).toContain("last gate is a passing test");
+    }
+
+    const patch = parsePlan(`patch
+node+ "02-a" verify test
+instruction: x
+end`);
+    expect(patch.ok).toBe(false);
+    if (!patch.ok) {
+      expect(patch.diagnostics).toContain("PLAN_LEGACY_RECORD");
+    }
+
+    const update = parsePlan(`node~ "02-a"
+instruction: x
+end`);
+    expect(update.ok).toBe(false);
+    if (!update.ok) {
+      expect(update.diagnostics).toContain("PLAN_LEGACY_RECORD");
+    }
+  });
+
   test("rejects legacy stage/task/edit plan records", () => {
     const stageFirst = parsePlan(`stage "02-current" plan "01-main"
 goal: g
@@ -350,7 +352,7 @@ end`);
       expect(stageFirst.diagnostics).toContain("node");
     }
 
-    const taskAfterNode = parsePlan(`plan "01-main"
+    const taskAfterNode = parsePlan(`plan
 goal: g
 
 node "02-a" verify test
@@ -413,54 +415,51 @@ describe("scheduling", () => {
     expect(ids(readyNodes(state))).toEqual(["03-b"]);
   });
 
-  test("review is not terminal and is not runnable", () => {
-    const state = stateOf([node("02-a"), node("03-final")], "03-final");
-    state.nodeStatus.set("02-a", "review");
+  test("run completion is the last passing test gate with nothing ready", () => {
+    const state = stateOf([node("02-a", { verify: "tsc" }), node("03-final")]);
+    expect(runComplete(state)).toBe(false);
+    pass(state, "02-a");
+    gate(state, "02-a");
+    expect(runComplete(state)).toBe(false);
+
     pass(state, "03-final");
-    expect(isTerminalNodeStatus("review")).toBe(false);
-    expect(isTerminalNodeStatus("failed")).toBe(true);
+    gate(state, "03-final");
+    expect(runComplete(state)).toBe(true);
+
+    const failedTsc = stateOf([node("02-a", { verify: "tsc" }), node("03-final")]);
+    pass(failedTsc, "03-final");
+    gate(failedTsc, "03-final");
+    fail(failedTsc, "02-a");
+    expect(runComplete(failedTsc)).toBe(true);
+
+    failedTsc.nodeStatus.set("02-a", "pending");
+    expect(runComplete(failedTsc)).toBe(false);
+  });
+
+  test("a blocked pending node does not keep a green run open", () => {
+    const state = stateOf([
+      node("02-a", { verify: "tsc" }),
+      node("03-blocked", { after: ["02-a"] }),
+      node("04-final"),
+    ]);
+    fail(state, "02-a");
+    pass(state, "04-final");
+    gate(state, "04-final");
     expect(ids(readyNodes(state))).toEqual([]);
-    expect(allNodesTerminal(state)).toBe(false);
+    expect(runComplete(state)).toBe(true);
+  });
+
+  test("a passing tsc gate is not completion", () => {
+    const state = stateOf([node("02-a", { verify: "tsc" })]);
+    pass(state, "02-a");
+    gate(state, "02-a");
     expect(runComplete(state)).toBe(false);
   });
 
-  test("run success requires the final test node to pass and every node to be terminal", () => {
-    const state = stateOf([node("02-a", { verify: "tsc" }), node("03-final")], "03-final");
-    expect(finalNodePassed(state)).toBe(false);
-    pass(state, "02-a");
-    pass(state, "03-final");
-    expect(finalNodePassed(state)).toBe(true);
-    expect(runComplete(state)).toBe(true);
-
-    state.nodeStatus.set("02-a", "failed");
-    expect(runComplete(state)).toBe(true);
-
-    state.nodeStatus.set("02-a", "pending");
-    expect(runComplete(state)).toBe(false);
-
-    pass(state, "02-a");
-    state.nodeStatus.set("03-final", "review");
-    expect(finalNodePassed(state)).toBe(false);
-    expect(runComplete(state)).toBe(false);
-  });
-
-  test("earlier failed nodes are allowed but the finish node must be last and test", () => {
-    const state = stateOf([node("02-a", { verify: "tsc" }), node("03-final")], "03-final");
-    pass(state, "02-a");
-    pass(state, "03-final");
-    expect(finalNodePassed(state)).toBe(true);
-
-    state.nodeStatus.set("02-a", "failed");
-    expect(finalNodePassed(state)).toBe(true);
-    expect(runComplete(state)).toBe(true);
-
-    state.finalNodeId = "02-a";
-    expect(finalNodePassed(state)).toBe(false);
-
-    const tscLast = stateOf([node("02-a"), node("03-final", { verify: "tsc" })], "03-final");
-    pass(tscLast, "02-a");
-    pass(tscLast, "03-final");
-    expect(finalNodePassed(tscLast)).toBe(false);
+  test("review is not a graph status", () => {
+    expect(isTerminalNodeStatus("pending")).toBe(false);
+    expect(isTerminalNodeStatus("failed")).toBe(true);
+    expect(isTerminalNodeStatus("passed")).toBe(true);
   });
 
   test("renderNodeTree is stable and status renders separately", () => {
@@ -511,214 +510,174 @@ describe("scheduling", () => {
   });
 });
 
-describe("mergeReplan", () => {
-  function basePlan(): Plan {
-    return plan([node("02-a", { verify: "tsc" }), node("03-b", { after: ["02-a"] }), node("04-c")]);
-  }
-
+describe("applyPlanReply", () => {
   function baseState(): PlanRunState {
-    return initialState(basePlan(), "04-c");
+    return stateOf([
+      node("02-a", { verify: "tsc" }),
+      node("03-b", { after: ["02-a"] }),
+      node("04-c"),
+    ]);
   }
 
-  test("new nodes start pending and append after existing nodes", () => {
+  test("appends nodes after existing nodes with pending status", () => {
     const state = baseState();
     pass(state, "02-a");
-    const next = plan([...basePlan().nodes, node("05-d", { after: ["04-c"] })]);
-    const merged = mergeReplan(state, next);
-    if (!merged.ok) {
-      throw new Error(merged.diagnostics);
+    const applied = applyPlanReply(state, {
+      nodes: [node("05-d", { after: ["04-c"] })],
+      amends: [],
+    });
+    if (!applied.ok) {
+      throw new Error(applied.diagnostics);
     }
-    expect(merged.state.nodeStatus.get("02-a")).toBe("passed");
-    expect(merged.state.nodeStatus.get("05-d")).toBe("pending");
-    expect(merged.state.finalNodeId).toBe("04-c");
+    expect(applied.state.nodeStatus.get("02-a")).toBe("passed");
+    expect(applied.state.nodeStatus.get("05-d")).toBe("pending");
+    expect(applied.state.nodes.map((entry) => entry.id)).toEqual(["02-a", "03-b", "04-c", "05-d"]);
   });
 
-  test("a passed node is immutable and cannot be removed", () => {
+  test("rejects duplicate append ids and dangling edges", () => {
     const state = baseState();
-    pass(state, "02-a");
-
-    const changed = mergeReplan(
-      state,
-      plan([node("02-a", { verify: "test" }), node("03-b", { after: ["02-a"] }), node("04-c")]),
-    );
-    expect(changed.ok).toBe(false);
-    if (!changed.ok) {
-      expect(changed.diagnostics).toContain("passed node #02-a is immutable");
+    const duplicate = applyPlanReply(state, {
+      nodes: [node("02-a")],
+      amends: [],
+    });
+    expect(duplicate.ok).toBe(false);
+    if (!duplicate.ok) {
+      expect(duplicate.diagnostics).toContain("reuses node id");
     }
 
-    const removed = mergeReplan(state, plan([node("03-b"), node("04-c")]));
-    expect(removed.ok).toBe(false);
-    if (!removed.ok) {
-      expect(removed.diagnostics).toContain("passed node #02-a cannot be removed");
-    }
-  });
-
-  test("a failed node stays closed unchanged and reopens when repaired", () => {
-    const state = baseState();
-    fail(state, "03-b");
-    const unchanged = mergeReplan(state, basePlan());
-    if (!unchanged.ok) {
-      throw new Error(unchanged.diagnostics);
-    }
-    expect(unchanged.state.nodeStatus.get("03-b")).toBe("failed");
-
-    const repaired = mergeReplan(
-      state,
-      plan([
-        node("02-a", { verify: "tsc" }),
-        node("03-b", { after: ["02-a"], instruction: "Try a smaller repair." }),
-        node("04-c"),
-      ]),
-    );
-    if (!repaired.ok) {
-      throw new Error(repaired.diagnostics);
-    }
-    expect(repaired.state.nodeStatus.get("03-b")).toBe("pending");
-  });
-
-  test("changing after or hints counts as a repair", () => {
-    const state = baseState();
-    fail(state, "03-b");
-    const changedAfter = mergeReplan(
-      state,
-      plan([
-        node("02-a", { verify: "tsc" }),
-        node("03-b", { after: ["02-a", "04-c"] }),
-        node("04-c"),
-      ]),
-    );
-    if (!changedAfter.ok) {
-      throw new Error(changedAfter.diagnostics);
-    }
-    expect(changedAfter.state.nodeStatus.get("03-b")).toBe("pending");
-
-    fail(state, "03-b");
-    const changedHints = mergeReplan(
-      state,
-      plan([
-        node("02-a", { verify: "tsc" }),
-        node("03-b", {
-          after: ["02-a"],
-          hints: [{ path: "src/a.ts", symbol: "answer", kind: "value" }],
-        }),
-        node("04-c"),
-      ]),
-    );
-    if (!changedHints.ok) {
-      throw new Error(changedHints.diagnostics);
-    }
-    expect(changedHints.state.nodeStatus.get("03-b")).toBe("pending");
-  });
-
-  test("a review node reopens pending when a review patch changes it", () => {
-    const state = baseState();
-    state.nodeStatus.set("03-b", "review");
-    const unchanged = mergeReplan(state, basePlan());
-    if (!unchanged.ok) {
-      throw new Error(unchanged.diagnostics);
-    }
-    expect(unchanged.state.nodeStatus.get("03-b")).toBe("review");
-
-    const patched = mergeReplan(
-      state,
-      plan([
-        node("02-a", { verify: "tsc" }),
-        node("03-b", { after: ["02-a"], instruction: "Apply the review patch." }),
-        node("04-c"),
-      ]),
-    );
-    if (!patched.ok) {
-      throw new Error(patched.diagnostics);
-    }
-    expect(patched.state.nodeStatus.get("03-b")).toBe("pending");
-  });
-
-  test("an in-progress node is held and cannot be changed or removed", () => {
-    const state = baseState();
-    state.nodeStatus.set("03-b", "in-progress");
-    const unchanged = mergeReplan(state, basePlan());
-    if (!unchanged.ok) {
-      throw new Error(unchanged.diagnostics);
-    }
-    expect(unchanged.state.nodeStatus.get("03-b")).toBe("in-progress");
-
-    const changed = mergeReplan(
-      state,
-      plan([
-        node("02-a", { verify: "tsc" }),
-        node("03-b", { after: ["02-a"], instruction: "Changed." }),
-        node("04-c"),
-      ]),
-    );
-    expect(changed.ok).toBe(false);
-    if (!changed.ok) {
-      expect(changed.diagnostics).toMatch(/in[- ]progress/);
-    }
-
-    const removed = mergeReplan(state, plan([node("02-a"), node("04-c")]));
-    expect(removed.ok).toBe(false);
-    if (!removed.ok) {
-      expect(removed.diagnostics).toMatch(/in[- ]progress/);
-    }
-  });
-
-  test("a review node cannot be removed", () => {
-    const state = baseState();
-    state.nodeStatus.set("03-b", "review");
-    const removed = mergeReplan(state, plan([node("02-a"), node("04-c")]));
-    expect(removed.ok).toBe(false);
-    if (!removed.ok) {
-      expect(removed.diagnostics).toContain("is in review");
-    }
-  });
-
-  test("pending and failed nodes can be removed", () => {
-    const state = baseState();
-    fail(state, "03-b");
-    const removed = mergeReplan(state, plan([node("02-a"), node("04-c")]));
-    if (!removed.ok) {
-      throw new Error(removed.diagnostics);
-    }
-    expect(removed.state.nodes.map((entry) => entry.id)).toEqual(["02-a", "04-c"]);
-    expect(removed.state.nodeStatus.has("03-b")).toBe(false);
-  });
-
-  test("existing node order is preserved and new nodes cannot be inserted early", () => {
-    const state = baseState();
-    const reordered = mergeReplan(
-      state,
-      plan([node("04-c"), node("02-a"), node("03-b", { after: ["02-a"] })]),
-    );
-    expect(reordered.ok).toBe(false);
-    if (!reordered.ok) {
-      expect(reordered.diagnostics).toContain("existing nodes must keep their plan order");
-    }
-
-    const inserted = mergeReplan(
-      state,
-      plan([
-        node("02-a"),
-        node("05-new", { after: ["02-a"] }),
-        node("03-b", { after: ["02-a"] }),
-        node("04-c"),
-      ]),
-    );
-    expect(inserted.ok).toBe(false);
-    if (!inserted.ok) {
-      expect(inserted.diagnostics).toContain("new nodes must be appended after existing nodes");
-    }
-  });
-
-  test("the merge validates the resulting graph", () => {
-    const state = baseState();
-    const dangling = mergeReplan(
-      state,
-      plan([...basePlan().nodes, node("05-d", { after: ["09-missing"] })]),
-    );
+    const dangling = applyPlanReply(state, {
+      nodes: [node("05-d", { after: ["09-missing"] })],
+      amends: [],
+    });
     expect(dangling.ok).toBe(false);
     if (!dangling.ok) {
       expect(dangling.diagnostics).toContain("not in the plan");
     }
+  });
+
+  test("amends a failed node in place and reopens it", () => {
+    const state = baseState();
+    fail(state, "03-b");
+    const applied = applyPlanReply(state, {
+      nodes: [],
+      amends: [{ id: "03-b", instruction: "Try a smaller repair." }],
+    });
+    if (!applied.ok) {
+      throw new Error(applied.diagnostics);
+    }
+    expect(applied.state.nodeStatus.get("03-b")).toBe("pending");
+    expect(nodeById(applied.state, "03-b")?.instruction).toBe("Try a smaller repair.");
+  });
+
+  test("a passed node is immutable", () => {
+    const state = baseState();
+    pass(state, "02-a");
+    const changed = applyPlanReply(state, {
+      nodes: [],
+      amends: [{ id: "02-a", verify: "test" }],
+    });
+    expect(changed.ok).toBe(false);
+    if (!changed.ok) {
+      expect(changed.diagnostics).toContain("passed node #02-a is immutable");
+    }
+  });
+
+  test("a review reply may amend only the reviewed node and may not append", () => {
+    const state = baseState();
+    gate(state, "03-b");
+    const other = applyPlanReply(
+      state,
+      { nodes: [], amends: [{ id: "04-c", instruction: "No." }] },
+      { reviewTarget: "03-b" },
+    );
+    expect(other.ok).toBe(false);
+    if (!other.ok) {
+      expect(other.diagnostics).toContain("may amend only #03-b");
+    }
+
+    const appended = applyPlanReply(
+      state,
+      { nodes: [node("05-d")], amends: [] },
+      { reviewTarget: "03-b" },
+    );
+    expect(appended.ok).toBe(false);
+    if (!appended.ok) {
+      expect(appended.diagnostics).toContain("may not add nodes");
+    }
+
+    const reviewed = applyPlanReply(
+      state,
+      { nodes: [], amends: [{ id: "03-b", instruction: "Apply the review repair." }] },
+      { reviewTarget: "03-b" },
+    );
+    if (!reviewed.ok) {
+      throw new Error(reviewed.diagnostics);
+    }
+    expect(reviewed.state.nodeStatus.get("03-b")).toBe("pending");
+    expect(reviewed.state.lastGate).toBeNull();
+  });
+
+  test("an amend that changes nothing and an empty reply are rejected", () => {
+    const state = baseState();
+    const noop = applyPlanReply(state, {
+      nodes: [],
+      amends: [{ id: "03-b", instruction: "Do 03-b." }],
+    });
+    expect(noop.ok).toBe(false);
+    if (!noop.ok) {
+      expect(noop.diagnostics).toContain("changes nothing");
+    }
+
+    const empty = applyPlanReply(state, { nodes: [], amends: [] });
+    expect(empty.ok).toBe(false);
+    if (!empty.ok) {
+      expect(empty.diagnostics).toContain("no node or amend record");
+    }
+  });
+
+  test("amending after or hints validates the resulting graph", () => {
+    const state = baseState();
+    fail(state, "03-b");
+    const applied = applyPlanReply(state, {
+      nodes: [],
+      amends: [{ id: "03-b", after: ["09-missing"] }],
+    });
+    expect(applied.ok).toBe(false);
+    if (!applied.ok) {
+      expect(applied.diagnostics).toContain("not in the plan");
+    }
+
+    const cleared = applyPlanReply(state, {
+      nodes: [],
+      amends: [{ id: "03-b", after: [], hints: [] }],
+    });
+    if (!cleared.ok) {
+      throw new Error(cleared.diagnostics);
+    }
+    expect(nodeById(cleared.state, "03-b")?.after).toEqual([]);
+  });
+
+  test("the initial reply requires a goal and at least one node", () => {
+    const base: PlanRunState = { goal: "", nodes: [], nodeStatus: new Map(), lastGate: null };
+    const missingGoal = applyPlanReply(
+      base,
+      { nodes: [node("02-a")], amends: [] },
+      { requireGoal: true },
+    );
+    expect(missingGoal.ok).toBe(false);
+    if (!missingGoal.ok) {
+      expect(missingGoal.diagnostics).toContain("needs a non-empty goal: field");
+    }
+
+    const ok = applyPlanReply(
+      base,
+      { goal: "g", nodes: [node("02-a")], amends: [] },
+      { requireGoal: true },
+    );
+    if (!ok.ok) {
+      throw new Error(ok.diagnostics);
+    }
+    expect(ok.state.nodes.map((entry) => entry.id)).toEqual(["02-a"]);
   });
 });
 

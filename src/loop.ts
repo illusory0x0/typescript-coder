@@ -735,8 +735,9 @@ export interface LoopOptions {
   provider: ProviderLike;
   /**
    * Abort the run once accumulated cache-excluded USD cost exceeds this
-   * (#36). Defaults to `DEFAULT_COST_BUDGET_USD`; the final termination-summary
-   * call is not budgeted.
+   * (#36). Defaults to `DEFAULT_COST_BUDGET_USD`; pinned-repair's final
+   * termination-summary call is not budgeted, and plan-exec terminates without
+   * a summary call.
    */
   costBudgetUsd?: number;
   temperature?: number;
@@ -746,6 +747,12 @@ export interface LoopOptions {
   commandTimeoutMs?: number;
   /** Benchmark override: forces this effort on every Edit-loop call, bypassing the default policy (#35). */
   effortOverride?: ReasoningEffort;
+  /**
+   * Plan-exec only: approve a node without a review model call when its gate
+   * passed, every changed path is hinted, and the diff is untruncated. Defaults
+   * to `true`; set `false` to review every passing node.
+   */
+  autoApprove?: boolean;
   /**
    * Loop shape (`--mode`): `pinned-repair` (default) is the single-target
    * Edit → Verify loop; `plan-exec` runs the planning/execution/review
@@ -1471,7 +1478,7 @@ export function zeroLoopTokens(): LoopTokens {
 
 /**
  * Plan/execute provider spend by conversation bucket (#32): the planner's
- * initial/patch turns, the post-execution review turns, and the executor's
+ * initial/replan turns, the post-execution review turns, and the executor's
  * edit/self-check turns. The three totals sum to `LoopResult.tokens`.
  */
 export interface LoopUsage {

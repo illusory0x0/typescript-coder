@@ -576,7 +576,7 @@ on the same path in one reply.
 ### Tolerant recovery and error codes
 
 Edit-action recovery follows the shared parser discipline in
-[`plan-exec.md`](plan-exec.md) §5.2: recover structure to diagnose, never apply
+[`plan-exec.md`](plan-exec.md) §4.2: recover structure to diagnose, never apply
 a partial destructive result. In particular:
 
 - Clause splitting recognizes `select` … `end` and respects sentinel bodies, so
@@ -1023,7 +1023,7 @@ locator and path, and states that the whole reply was discarded, so the model
 must resend the full corrected reply. A `no-op` clause is the per-clause
 exception above: it is reported and ignored only when another clause applies;
 an all-inert reply still rejects. The `EDIT_*` parser codes are listed in §2;
-the Plan DSL's `PLAN_*` codes are owned by [`plan-exec.md`](plan-exec.md) §5.3.
+the Plan DSL's `PLAN_*` codes are owned by [`plan-exec.md`](plan-exec.md) §4.3.
 Retry policy around a rejection is owned by
 [`feedback-loop.md`](feedback-loop.md).
 

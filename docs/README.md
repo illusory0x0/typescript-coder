@@ -9,7 +9,7 @@ owner; this page is the map, the vocabulary, and the reading order.
 | Document                               | Owns                                                                                                                                                                                     |
 | -------------------------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
 | [`feedback-loop.md`](feedback-loop.md) | Cross-mode lifecycle: AgentMode, rounds/exchanges, pinned-repair Edit → Verify, failure/termination policy, caps, records/result, `runLoop`.                                             |
-| [`plan-exec.md`](plan-exec.md)         | Plan → Execute → Review: WorkNode DAG model, Plan/patch DSL, planning/review, validation, scheduling, executor autonomy, gates, progress bounds, CLI/result, limitations, verification.  |
+| [`plan-exec.md`](plan-exec.md)         | Plan → Execute: WorkNode DAG model, Plan DSL and amend records, planning/review, validation, scheduling, executor autonomy, gates, progress bounds, CLI/result, limitations, verification.  |
 | [`edit-protocol.md`](edit-protocol.md) | Edit-action reply language: edit-dsl, sentinel fence, select clause/file command grammar (BNF), cascade, viewers/editors, failure stages, application/gating, repair feedback, skeleton. |
 | [`glossary.yaml`](glossary.yaml)       | Benchmark/test/evaluation terminology: harnesses, judge, metrics, USD cost, replay, artifacts.                                                                                           |
 
@@ -47,7 +47,7 @@ Recommended reading order:
 - Each semantic has exactly one owner; other documents link instead of
   redefining it.
 - `feedback-loop.md` may summarize plan-exec, but the Plan model, Plan DSL,
-  patch DSL, and scheduling are owned by `plan-exec.md`.
+  amend records, and scheduling are owned by `plan-exec.md`.
 - `plan-exec.md` owns the WorkNode model, scheduling, executor autonomy, review, and gates, but the edit-action grammar, resolution cascade, and generic application/gating are owned by `edit-protocol.md`.
 - `feedback-loop.md` and `plan-exec.md` own retry and termination policy;
   `edit-protocol.md` owns the failure-stage vocabulary and repair-feedback

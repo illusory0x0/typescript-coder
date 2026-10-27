@@ -30,6 +30,8 @@ export interface RunMainOptions {
   testCommand?: string[];
   /** Timeout in ms for each check/test command; absent = the tools default. */
   commandTimeoutMs?: number;
+  /** plan-exec only: auto-approve in-hint passing nodes (default true). */
+  autoApprove?: boolean;
 }
 
 const NO_EXPLANATION = "the model did not provide an explanation";
@@ -86,9 +88,11 @@ function emitTextResult(io: MainIo, cwd: string, result: LoopResult): number {
   if (artifactPath !== null) {
     io.out(`failure artifact: ${artifactPath}`);
   }
-  const explanation = result.explanation ?? NO_EXPLANATION;
+  const explanation = result.explanation ?? (result.nodes === undefined ? NO_EXPLANATION : null);
   io.err(result.diagnostics ?? "verification failed");
-  io.out(explanation);
+  if (explanation !== null) {
+    io.out(explanation);
+  }
   return 1;
 }
 
@@ -101,7 +105,9 @@ function emitJsonResult(io: MainIo, cwd: string, result: LoopResult): number {
       io.err(`failure artifact: ${artifactPath}`);
     }
     io.err(result.diagnostics ?? "verification failed");
-    io.err(result.explanation ?? NO_EXPLANATION);
+    if (result.explanation !== null) {
+      io.err(result.explanation);
+    }
   }
   io.out(
     serializeSubagentResult(
@@ -146,6 +152,7 @@ export async function runMain(options: RunMainOptions): Promise<number> {
       checkCommand: options.checkCommand,
       testCommand: options.testCommand,
       commandTimeoutMs: options.commandTimeoutMs,
+      autoApprove: options.autoApprove,
     });
   } catch (error) {
     const message = `error: ${error instanceof Error ? error.message : String(error)}`;
@@ -231,6 +238,7 @@ if (import.meta.main) {
     checkCommand: cli.checkCommand ?? undefined,
     testCommand: cli.testCommand ?? undefined,
     commandTimeoutMs: cli.commandTimeoutMs ?? undefined,
+    autoApprove: cli.review === "auto",
   });
   process.exit(code);
 }

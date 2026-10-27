@@ -14,6 +14,8 @@ export interface CliOptions {
   checkCommand: string[] | null;
   /** Test command run after an edit (#80); null = the tools default. */
   testCommand: string[] | null;
+  /** plan-exec review policy: auto (default) or always. */
+  review: "auto" | "always";
   /** Working directory for the run (#80); null = the process cwd. */
   cwd: string | null;
   /** Timeout in ms for each check/test command; null = the tools default. */
@@ -74,6 +76,7 @@ export function parseArgs(argv: string[]): CliOptions {
   let costBudgetUsd: number | null = null;
   let checkCommand: string[] | null = null;
   let testCommand: string[] | null = null;
+  let review: "auto" | "always" = "auto";
   let cwd: string | null = null;
   let commandTimeoutMs: number | null = null;
   for (let index = 0; index < argv.length; index += 1) {
@@ -149,6 +152,15 @@ export function parseArgs(argv: string[]): CliOptions {
       index = next;
       continue;
     }
+    if (arg === "--review" || arg.startsWith("--review=")) {
+      const { value, next } = flagValue(argv, index, "--review");
+      if (value !== "auto" && value !== "always") {
+        throw new Error(`--review must be "auto" or "always" (got ${JSON.stringify(value)})`);
+      }
+      review = value;
+      index = next;
+      continue;
+    }
     if (arg === "--timeout" || arg.startsWith("--timeout=")) {
       const { value, next } = flagValue(argv, index, "--timeout");
       commandTimeoutMs = parseTimeout(value);
@@ -165,6 +177,7 @@ export function parseArgs(argv: string[]): CliOptions {
     costBudgetUsd,
     checkCommand,
     testCommand,
+    review,
     cwd,
     commandTimeoutMs,
   };
@@ -183,14 +196,18 @@ export function helpText(): string {
     "  --mode <pinned-repair|plan-exec>",
     "                     loop shape (default: pinned-repair); pinned-repair",
     "                     repairs one pinned selection through Edit -> Verify;",
-    "                     plan-exec plans, executes, and reviews a",
-    "                     hints-based WorkNode graph",
+    "                     plan-exec plans and executes a",
+    "                     hints-based WorkNode graph; review is a verdict",
     "                     (alias --agent-mode; deprecated alias: edit)",
+    "  --review <auto|always>",
+    "                     plan-exec review policy (default: auto); auto",
+    "                     approves in-hint, untruncated passing nodes without",
+    "                     a review call",
     "  --format <text|json>",
     "                     stdout format (default: text); json prints exactly one",
     "                     typescript-coder-result@3 object on stdout",
-    "  --budget-usd <usd> hard cache-excluded USD budget (peak pricing; the",
-    "                     final termination summary is not budgeted; default: 0.10)",
+    "  --budget-usd <usd> hard cache-excluded USD budget (peak pricing; default:",
+    "                     0.10; pinned-repair's termination summary is not budgeted)",
     "  --check <cmd>      verify command to run after an edit; the value is split",
     "                     on whitespace into argv",
     "  --test <cmd>       test command to run after an edit; the value is split",

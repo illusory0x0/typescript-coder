@@ -9,12 +9,13 @@
  * grammar (stable for the node) -> the work-node turn (instruction, hints,
  * approach, gate diagnostics, edit-strategy advisory, source views).
  *
- * The planner emits a flat work-node DAG as the Plan DSL, then patches it. A
- * WorkNode is the verification boundary. The executor owns the concrete edit
- * actions and their granularity; hints and `approach` are advice, never a hard
- * allowlist. The harness owns scheduling, gates, review, and the final result.
- * There are no Stage/Task/Edit records and no fixed exchange, viewer, review, or
- * planning-round caps.
+ * The planner emits a flat work-node DAG as `node` records, then appends more
+ * `node` records or revises an unsettled node with `amend`. A WorkNode is the
+ * verification boundary. The executor owns the concrete edit actions and their
+ * granularity; hints and `approach` are advice, never a hard allowlist. The
+ * harness owns scheduling, gates, review, and the final result. There are no
+ * Stage/Task/Edit records, no delete, no finish marker, and no fixed exchange,
+ * viewer, review, or planning-round caps.
  */
 
 import type { NodeId, PlanRunState, WorkNode, WorkVerify } from "../tasks";
@@ -32,14 +33,14 @@ export const TASK_PLANNING_WORKFLOW = `Workflow guidance (inspect -> contract ->
 1. Inspect the requirement, symbol index, and any source you need.
 2. Settle the public contract: types, signatures, and data shapes.
 3. For a large module, scaffold exported declarations and stub bodies first.
-4. When a visible test suite exists, consider an early \`verify test\` checkpoint after the scaffold/contract phase, once a compiling skeleton exists, so test feedback can arrive before most behavior is written. The graph shape is yours; a final \`test\` node is still the plan's success condition.
+4. When a visible test suite exists, consider an early \`verify test\` checkpoint after the scaffold/contract phase, once a compiling skeleton exists, so test feedback can arrive before most behavior is written. The graph shape is yours; the run succeeds only when the last gate is a passing \`test\` and no node is ready.
 5. Implement behavior in nodes whose gates can pass meaningfully, using early test feedback when it exists.
-6. End with a final \`test\` node marked by \`finish\`.
+6. End with a \`test\` node that depends on the work it verifies. There is no \`finish\` record: the harness completes the run from the graph and the last gate.
 
 A single node, a linear chain, and a branching DAG are all valid; do not force a fixed workflow. The early checkpoint is advice, not a required shape: a single-node task, or one with no visible test suite, may have only the final test node.`;
 
 export const TASK_PLANNER_VIEW = `Read-only inspection:
-Before a Plan or patch, you may reply with one or more read-only viewer requests:
+Before a plan reply, you may reply with one or more read-only viewer requests:
 
 select [kind] <symbol> in <path> [resolve value|type|namespace] [within <selecters>] end
 read <path> [within <selecters>] end
@@ -48,7 +49,7 @@ A viewer writes nothing. A declaration viewer shows an indentation-folded
 outline; add \`within <start>-<end>\` for an exact slice. \`read\` returns a file
 outline, or an exact slice with \`within\`. Ranges are 1-based, inclusive, and
 file-absolute. Each viewer consumes the run's USD cost budget; a repeated identical
-view or a no-progress cycle forces the Plan/patch reply. Never use \`replace\`,
+view or a no-progress cycle forces the plan reply. Never use \`replace\`,
 \`rename\`, \`write\`, \`create\`, or \`delete\` in a planner viewer.`;
 
 /**
@@ -75,7 +76,7 @@ Later techniques can be added; no technique is a gate.`;
 
 /**
  * The shared recovery criteria for a failed or unhelpful whole-file write.
- * Used by the execution decision guide and the failed-gate review turn.
+ * Used by the execution decision guide.
  */
 export const TASK_FAILED_WRITE_REPAIR_ADVICE = `After a failed or unhelpful whole-file write:
 - Read the diagnostics first; repair the named declarations with a targeted \`match\`/\`pick\` or a single-declaration rewrite.
@@ -98,18 +99,16 @@ export const TASK_EDIT_STRATEGY_GUIDE = `How to choose an edit (advice, not rule
 ${TASK_FAILED_WRITE_REPAIR_ADVICE}
 A planner \`approach\` hint is advice you may override, and \`write\` is always a valid action.`;
 
-const TASK_PLAN_EXAMPLE = `plan "01-main"
+const TASK_PLAN_EXAMPLE = `plan
 goal: Make the failing test pass.
 
 node "02-answer" verify test
 instruction: Make the failing test green.
 hint value answer in src/helper.ts
 approach: The file and requirement are small; one whole-file write is often cheapest.
-end
+end`;
 
-finish`;
-
-const TASK_SCAFFOLD_PLAN_EXAMPLE = `plan "01-main"
+const TASK_SCAFFOLD_PLAN_EXAMPLE = `plan
 goal: Implement the workbook module.
 
 node "02-contract" verify tsc
@@ -124,11 +123,9 @@ instruction: Implement evaluate and keep the suite green.
 hint value evaluate in src/workbook.ts
 hint type CellResult in src/workbook.ts
 phase: implement
-end
+end`;
 
-finish`;
-
-const TASK_PLAN_BRANCHING_EXAMPLE = `plan "01-main"
+const TASK_PLAN_BRANCHING_EXAMPLE = `plan
 goal: Add the parser and its formatter.
 
 node "02-parser" verify tsc
@@ -144,62 +141,48 @@ end
 node "04-final" after "02-parser" "03-format" verify test
 instruction: Wire the entry point and keep the suite green.
 hint value parseFile in src/parser.ts
-end
-
-finish`;
-
-const TASK_PATCH_EXAMPLE = `patch
-node+ "05-repair" after "03-impl" verify tsc
-instruction: Repair the return path the last gate reported.
-hint value parseValue in src/parser.ts
 end`;
 
-const TASK_PATCH_FINAL_EXAMPLE = `patch
-node+ "06-final" after "03-impl" verify test
+const TASK_AMEND_EXAMPLE = `amend "02-parser"
+instruction: Repair the return path the last gate reported; keep the module surface unchanged.
+end`;
+
+const TASK_FOLLOWUP_EXAMPLE = `node "05-final" after "03-impl" verify test
 instruction: Wire the final entry point and keep the suite green.
 hint value parseFile in src/parser.ts
-end
-finish`;
+end`;
 
-const TASK_PLAN_FIELDS = `- The initial reply is the flat Plan DSL. Start with the singleton header \`plan "<id>"\`, then a \`goal:\` label. The Plan header has no \`end\`.
+const TASK_FIELDS = `Records:
+- The initial reply starts with the singleton \`plan\` header, then \`goal:\`, then one or more \`node\` records. Later replies contain only \`node\` and \`amend\` records.
 - A work node is \`node "<id>" [after "<id>"…] verify tsc|test\`, then \`instruction:\`, optional \`hint\` lines, optional \`approach:\`, optional \`phase:\`, then \`end\`.
-- \`after\` lists dependency node ids; the executor runs only nodes whose dependencies passed. A node may depend on a node declared later in the same reply as long as the graph stays acyclic. Record order is the deterministic readiness tie-break.
+- \`after\` lists dependency node ids; the executor runs only nodes whose dependencies passed. A node may depend on an existing node or one declared later in the same reply, as long as the graph stays acyclic. Record order is the deterministic readiness tie-break.
 - \`verify\` is the node gate: \`tsc\` runs the type check, \`test\` runs the type check and the test suite after each applied executor reply.
 - \`instruction:\` is a self-contained local goal for the executor; it does not see the requirement. Do not paste a whole file into an instruction.
 - \`hint file <path>\` marks a whole-file target; \`hint <value|type|namespace> <symbol> in <path>\` marks a declaration, including a dotted member such as \`Parser.parseValue\`. Hints are advisory guidance, not an allowlist.
 - \`approach:\` is optional advisory strategy. \`phase:\` is an optional workflow label such as \`scaffold\` or \`implement\`; it never changes scheduling.
-- Every id is a quoted "NN-slug": two or more digits, a hyphen, then lowercase kebab words (for example "01-main"). Plan and node ids share one namespace and are globally unique.
-- \`goal:\`, \`instruction:\`, \`approach:\`, and \`phase:\` carry one-line text after the label, or an empty label followed by \`TC_EDIT_BEGIN\` on its own line, the raw text lines, then \`TC_EDIT_END\` on its own line. The body is raw: hyphen runs, backticks, \`done\`, and \`end\` are ordinary text lines. A node record ends with \`end\`.
-- A trailing \`finish\` line marks the last node final. It is valid only as the last line, and only when that node verifies \`test\`. A plan without \`finish\` may end in a \`tsc\` node, but the run cannot succeed until a final \`test\` node is marked and passes.`;
+- Every id is a quoted "NN-slug": two or more digits, a hyphen, then lowercase kebab words (for example "02-answer"). Work-node ids are globally unique.
+- \`goal:\`, \`instruction:\`, \`approach:\`, and \`phase:\` carry one-line text after the label, or an empty label followed by \`TC_EDIT_BEGIN\` on its own line, the raw text lines, then \`TC_EDIT_END\` on its own line. The body is raw: hyphen runs, backticks, \`done\`, and \`end\` are ordinary text lines. A record ends with \`end\`.
+- \`amend "<id>"\` revises a pending or failed node in place. It takes only the replacement fields (\`instruction:\`, \`verify\`, \`after\`, \`hint\` lines or \`hint clear\`, \`approach:\`/\`approach clear\`, \`phase:\`/\`phase clear\`), then \`end\`. Omitted fields are preserved. A passed node is immutable.
+- There is no \`finish\`, no delete, and no \`patch\` header. Use \`node\` to append work and \`amend\` to repair a node that has not settled.`;
 
-const TASK_PLAN_RULES = `Rules:
-1. Choose the smallest graph that keeps each gate meaningful. One node is valid when its change is cohesive; a large greenfield module often benefits from a compiling scaffold node before behavior is filled in. When a visible test suite exists, consider an early \`verify test\` checkpoint after that scaffold/contract phase so test feedback can arrive before most behavior is written; a final \`test\` node remains the success condition.
+const TASK_RULES = `Rules:
+1. Choose the smallest graph that keeps each gate meaningful. One node is valid when its change is cohesive; a large greenfield module often benefits from a compiling scaffold node before behavior is filled in. When a visible test suite exists, consider an early \`verify test\` checkpoint after that scaffold/contract phase so test feedback can arrive before most behavior is written; the run's success condition is a passing \`test\` as the last gate.
 2. Use \`after\` only for a real prerequisite. Independent work may be ready at the same time; do not invent edges to force a favorite order.
 3. Prefer top-level functions with explicit types. Extract a helper when it makes the code easier to read; keep the caller thin.
 4. Hints identify likely targets, not every file the instruction may touch. The executor may edit outside them when the instruction requires it; review sees those edits.
 5. \`approach\` may recommend a whole-file write for a small change or a new-file scaffold, scaffold-then-fill for a large existing module, or a parallel implementation for a risky refactor. Never make a technique mandatory.
-6. A \`create\` adds one named declaration or member. A top-level kind without a dot creates a new declaration; a member kind with a dotted \`Owner.name\` adds to an existing class/interface/namespace/enum, whose owner must already exist. A \`create\` never creates the owner itself.
-7. Do not target *.test.ts unless the requirement explicitly changes tests; copy required behavior into the instruction.
-8. End the run with a \`test\` node and a trailing \`finish\`. If the current last test node has passed, a bare \`patch\` + \`finish\` is enough.
-9. Do not plan a new class. If an existing class must change, prefer a minimal targeted edit; a named member \`create\` is valid when it is the smallest change.
-10. Emit only the Plan DSL records on a planning turn: no JSON, no markdown fence around the whole reply, and no prose. A read-only viewer request is the only non-Plan reply accepted before a Plan/patch.
-11. There is no node-count, planning-round, viewer, or exchange cap. Growth is bounded by the USD cost budget and repeated/no-progress detection.`;
+6. Do not target *.test.ts unless the requirement explicitly changes tests; copy required behavior into the instruction.
+7. Do not plan a new class. If an existing class must change, prefer a minimal targeted edit; a named member \`create\` is valid when it is the smallest change.
+8. When a node stops making progress or its gate fails, amend that node with a narrower instruction or different hints. Append independent work when the graph needs it.
+9. Emit only plan records on a planning turn: no JSON, no markdown fence around the whole reply, and no prose. A read-only viewer request is the only non-plan reply accepted before a plan reply.
+10. There is no node-count, planning-round, viewer, or exchange cap. Growth is bounded by the USD cost budget and repeated/no-progress detection.`;
 
-const TASK_PATCH_FIELDS = `Patch records (a later planning turn replies with one patch, not a complete Plan):
-- Start with the singleton header \`patch\`. Every operation ends with \`end\`; a trailing \`finish\` may follow the last operation. The patch header has no \`end\`.
-- \`node+ "<id>" [after "<id>"…] verify tsc|test\`, then \`instruction:\` and optional fields, appends one node. A patch may add any number of nodes.
-- \`node~ "<id>"\`, optional \`after\`, \`verify\`, \`instruction:\`, \`hint\` lines or \`hint clear\`, \`approach:\` or \`approach clear\`, \`phase:\` or \`phase clear\`, then \`end\` changes a node. A changed failed or review node reopens.
-- \`node- "<id>"\` + \`end\` removes a pending or failed node.
-- \`finish\` as the last line marks the current last node final; it must verify \`test\`. Adding work after the old final node requires a new \`finish\` on the new last test node.`;
-
-const TASK_PATCH_RULES = `Rules for a patch turn:
-1. Reply with exactly one \`patch\`. Do not re-emit the Plan or unchanged records.
-2. Add any number of nodes in one patch when the graph needs them; do not artificially serialize independent work.
-3. Prefer repairing a failed node in place (\`node~\`) or appending a targeted repair node. A passed node is immutable; a node in review reopens only when its definition changes.
-4. If an executor repeatedly cannot land work, narrow the instruction or hints, split the work, or change the approach. Prefer a targeted repair after a failed large write; do not hard-reject a strategy.
-5. Keep the ids of nodes you keep. New ids must be unused. Existing nodes keep their record order; new nodes append.
-6. If the last node is a passing test node and no work remains, emit \`patch\` + \`finish\`. Otherwise plan the remaining work (or one final \`test\` node) and emit \`finish\` when the graph is complete.
-7. There is no per-turn node cap and no planning-round cap. Stop planning and act; the USD cost budget and repeated/no-progress detection bound the run.`;
+const TASK_REPLAN_RULES = `Rules for a later planning turn:
+- Reply with \`node\` records to append work, or \`amend\` records to revise pending or failed nodes. Do not re-emit the plan.
+- Prefer repairing a failed node in place with \`amend\`, or appending a targeted repair node. A passed node is immutable.
+- If an executor repeatedly cannot land work, narrow the instruction or hints, split the work, or change the approach.
+- If no node is ready and the last gate is a failing or non-test gate, plan the missing work and end with a \`test\` node whose gate can pass.
+- There is no per-turn node cap and no planning-round cap. Stop planning and act; the USD cost budget and repeated/no-progress detection bound the run.`;
 
 export function buildTaskPlanningSystemPrompt(): string {
   return [
@@ -211,7 +194,7 @@ export function buildTaskPlanningSystemPrompt(): string {
     "",
     TASK_PLANNER_VIEW,
     "",
-    "Minimal initial Plan:",
+    "Minimal initial plan:",
     "",
     TASK_PLAN_EXAMPLE,
     "",
@@ -223,21 +206,19 @@ export function buildTaskPlanningSystemPrompt(): string {
     "",
     TASK_PLAN_BRANCHING_EXAMPLE,
     "",
-    "Repair patch example:",
+    "Amend a failed node:",
     "",
-    TASK_PATCH_EXAMPLE,
+    TASK_AMEND_EXAMPLE,
     "",
-    "Final test patch example:",
+    "Append follow-up work:",
     "",
-    TASK_PATCH_FINAL_EXAMPLE,
+    TASK_FOLLOWUP_EXAMPLE,
     "",
-    TASK_PLAN_FIELDS,
+    TASK_FIELDS,
     "",
-    TASK_PLAN_RULES,
+    TASK_RULES,
     "",
-    TASK_PATCH_FIELDS,
-    "",
-    TASK_PATCH_RULES,
+    TASK_REPLAN_RULES,
     "",
   ].join("\n");
 }
@@ -248,7 +229,7 @@ export function buildTaskPlanningUserPrompt(
   indexText: string,
   specFiles: readonly SourceFile[] = [],
 ): string {
-  const prompt = `# Requirement\n\n${requirement}\n\n# Symbol index\n\n\`\`\`text\n${indexText}\n\`\`\`\n\nReply with the initial Plan DSL: a \`plan\` header, one or more \`node\` records, and a trailing \`finish\` when the graph is complete. You may inspect with read-only viewers first.\n`;
+  const prompt = `# Requirement\n\n${requirement}\n\n# Symbol index\n\n\`\`\`text\n${indexText}\n\`\`\`\n\nReply with the initial plan: a \`plan\` header, a \`goal:\` line, and one or more \`node\` records. You may inspect with read-only viewers first.\n`;
   return appendSpecSection(prompt, specFiles);
 }
 
@@ -265,8 +246,7 @@ export interface TaskReplanInput {
 /**
  * A re-planning turn: the requirement stays in the cached prefix; this turn
  * carries the current graph, harness status, failed nodes, and the fresh symbol
- * index. It may add any number of nodes, update/remove pending or failed work,
- * or finish the graph.
+ * index. It may append nodes or amend pending/failed work.
  */
 export function buildTaskReplanPrompt(input: TaskReplanInput): string {
   const blocks = [
@@ -278,8 +258,6 @@ export function buildTaskReplanPrompt(input: TaskReplanInput): string {
     "",
     renderNodeStatus(input.state),
   ];
-  const finalId = input.state.finalNodeId;
-  blocks.push("", `Final node: ${finalId === null ? "(not marked)" : `#${finalId}`}`);
   const failed = renderFailedNodes(input.state, input.nodeFailures);
   if (failed !== "") {
     blocks.push("", "# Failed nodes and diagnostics", "", failed);
@@ -294,7 +272,7 @@ export function buildTaskReplanPrompt(input: TaskReplanInput): string {
     "",
     "# Amend the graph",
     "",
-    "Reply with exactly one `patch`, not a complete Plan. Add any number of ready nodes; update or remove pending/failed nodes; keep passed nodes and their ids unchanged. If the last node is a passing test node, `patch` + `finish` is enough. Use the USD cost budget and progress, not a fixed node count.",
+    "Reply with `node` records to append ready work, or `amend` records to revise pending/failed nodes. Do not re-emit the plan. There is no `finish`: the run completes when no node is ready and the last gate is a passing `test`.",
   );
   return blocks.join("\n");
 }
@@ -304,7 +282,7 @@ export function buildTaskReplanPrompt(input: TaskReplanInput): string {
  * illustrative plan is appended only when the reply shape has already failed.
  */
 export function buildTaskPlanRetryPrompt(diagnostics: string, help = true): string {
-  const example = help ? `\n\nExample of a valid initial Plan DSL:\n\n${TASK_PLAN_EXAMPLE}` : "";
+  const example = help ? `\n\nExample of a valid initial plan:\n\n${TASK_PLAN_EXAMPLE}` : "";
   return `The previous plan was rejected.
 
 Diagnostics:
@@ -317,68 +295,25 @@ Correct the graph:
 - Keep one \`plan\` header with a \`goal:\`.
 - Emit flat \`node\` records with \`after\`, \`verify\`, \`instruction\`, and optional hints/approach/phase.
 - End each node with \`end\`.
-- Mark the last \`test\` node with a trailing \`finish\` when the graph is complete.${example}
+- Do not emit \`finish\`, \`patch\`, \`node+\`, \`node~\`, or \`node-\`.${example}
 
-Reply with the complete, corrected initial Plan DSL only.`;
+Reply with the complete, corrected initial plan only.`;
 }
 
-/**
- * A concrete repair for a patch rejected by the final-node rule. Without a
- * targeted recovery the model tends to resend the same patch until the
- * exact-repeat stop; this names the two valid shapes while leaving the graph
- * size and shape advisory.
- */
-function finalNodeRecovery(diagnostics: string): string | null {
-  if (
-    !/PLAN_FINISH_NOT_LAST|final node must verify|finish must (?:be the last line|follow)|finish marks .*verif/i.test(
-      diagnostics,
-    )
-  ) {
-    return null;
-  }
-  const matches = [...diagnostics.matchAll(/#([0-9]{2,}-[a-z0-9]+(?:-[a-z0-9]+)*)/g)];
-  const id = matches.at(-1)?.[1];
-  const last = id ?? "06-last";
-  const appended = id === undefined ? "07-final" : `${id}-final`;
-  const after = id === undefined ? "" : ` after "${id}"`;
-  return [
-    "Recovery for this finish rejection:",
-    "- Keep the rejected patch available; change only the finish path, and do not resend the unchanged patch.",
-    "- Option A: append a new final node after the last node, then put `finish` on the last line:",
-    "",
-    "patch",
-    `node+ "${appended}"${after} verify test`,
-    "instruction: Run the full test suite and keep it green.",
-    "end",
-    "finish",
-    "",
-    "- Option B: change the last node's gate to `test`, then put `finish` on the last line:",
-    "",
-    "patch",
-    `node~ "${last}" verify test`,
-    "end",
-    "finish",
-    "",
-    "- `finish` is valid only as the last line, after every node record, and only when the last node verifies `test`. If the last node already verifies `test`, just move `finish` to the last line and remove anything after it. The node count and graph shape stay yours; these are recovery shapes, not a required shape.",
-  ].join("\n");
-}
-
-/** The patch correction: a rejected patch keeps the planning turn alive. */
-export function buildTaskPatchRetryPrompt(diagnostics: string, help = true): string {
-  const recovery = finalNodeRecovery(diagnostics);
-  // The final-node recovery already carries two valid patch shapes; the generic
-  // repair example would end on a non-final `tsc` node and invite a repeat.
-  const example =
-    help && recovery === null ? `\n\nExample of a valid patch:\n\n${TASK_PATCH_EXAMPLE}` : "";
-  return `The previous patch was rejected.
+/** The incremental correction: a rejected reply keeps the planning turn alive. */
+export function buildTaskReplanRetryPrompt(diagnostics: string, help = true): string {
+  const example = help
+    ? `\n\nExample of a valid amend:\n\n${TASK_AMEND_EXAMPLE}\n\nExample of appended work:\n\n${TASK_FOLLOWUP_EXAMPLE}`
+    : "";
+  return `The previous plan reply was rejected.
 
 Diagnostics:
 
 \`\`\`
 ${diagnostics}
 \`\`\`
-${recovery === null ? "" : `\n${recovery}\n`}
-Reply with exactly one corrected \`patch\` only. Do not re-emit the Plan. Add any number of nodes; update or remove pending/failed work; keep passed nodes and their ids unchanged.${example}`;
+
+Reply with corrected \`node\` or \`amend\` records only. Do not re-emit the plan and do not emit \`patch\`, \`finish\`, or \`node+\`/\`node~\`/\`node-\` records.${example}`;
 }
 
 /**
@@ -550,6 +485,10 @@ export function renderTaskContentView(source: string, startLine = 1): string {
  * The post-execution review turn. The planner already has the requirement and
  * graph in the cached prefix; this turn adds the gate verdict, the node's
  * advice, any out-of-hint paths, and the applied diff.
+ *
+ * The review is a verdict, not a second planning pass: approve the node, or
+ * amend this node and let it execute again. New work belongs to the next
+ * planning turn.
  */
 export interface TaskReviewInput {
   node: WorkNode;
@@ -571,9 +510,6 @@ export function buildTaskReviewPrompt(input: TaskReviewInput): string {
   const blocks = ["# Review", "", `Gate: ${verify} ${gate.ok ? "passed" : "failed"}.`];
   if (gate.diagnostics !== null && gate.diagnostics.trim() !== "") {
     blocks.push("", "```", gate.diagnostics.trim(), "```");
-  }
-  if (!gate.ok) {
-    blocks.push("", "# Failed-gate edit strategy", "", TASK_FAILED_WRITE_REPAIR_ADVICE);
   }
   blocks.push(
     "",
@@ -608,18 +544,16 @@ export function buildTaskReviewPrompt(input: TaskReviewInput): string {
     input.diff.trim() === "" ? "(no applied changes)" : input.diff.trim(),
     "```",
     "",
-    "Reply with exactly `approve` or one `patch`; no prose and no other format.",
+    "Reply with exactly `approve`, or one `amend` record for this node; no prose and no other format.",
     "- `approve` when the gate passed and the applied diff implements the instruction.",
-    "- A patch may repair this node, its hints, its dependencies, or add follow-up nodes. Prefer a targeted repair after a failed large write, but do not hard-reject a strategy.",
-    `- Use \`node~ "${node.id}"\` to change this node; a changed node reopens and executes again. \`node+\` adds work; \`node-\` removes pending or failed work. Keep passed nodes immutable.`,
-    "- A review patch may carry `finish` when the last node is a `test` node.",
+    `- If the work is wrong or incomplete, write \`amend "${node.id}"\` and the replacement instruction/hints, then \`end\`. The node reopens and executes again.`,
+    "- Do not add nodes or amend other nodes in a review reply; follow-up work belongs to the next planning turn.",
   );
   return blocks.join("\n");
 }
 
 /** A format retry for a malformed review reply. */
 export function buildTaskReviewRetryPrompt(diagnostics: string): string {
-  const recovery = finalNodeRecovery(diagnostics);
   return `# Review retry
 
 The previous review reply was rejected.
@@ -629,6 +563,6 @@ Diagnostics:
 \`\`\`
 ${diagnostics}
 \`\`\`
-${recovery === null ? "" : `\n${recovery}\n`}
-Reply with exactly \`approve\` or one corrected \`patch\`; no prose. A patch may repair the current node, its hints or dependencies, or add follow-up work.`;
+
+Reply with exactly \`approve\` or one \`amend\` record for the reviewed node; no prose.`;
 }

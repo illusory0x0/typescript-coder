@@ -140,15 +140,13 @@ function planExecProject(): string {
 function planExecResponses(): string[] {
   return [
     [
-      'plan "01-main"',
+      "plan",
       "goal: Make the failing answer test pass.",
       "",
       'node "02-answer" verify test',
       "instruction: Change answer so it returns 2.",
       "hint value answer in src/helper.ts",
       "end",
-      "",
-      "finish",
     ].join("\n"),
     [
       "select answer in src/helper.ts resolve value",

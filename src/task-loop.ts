@@ -55,7 +55,6 @@ import {
   cloneLoopUsage,
   discoverSourceFiles,
   editDslRegionToResolved,
-  explain,
   formatDiagnostics,
   loopTokensFromResponse,
   providerErrorDiagnostics,
@@ -88,33 +87,20 @@ import type { SelectionStage } from "./cascade";
 import type { ChatMessage, ChatResponse } from "./openai";
 import {
   buildTaskExecutionSystemPrompt,
-  buildTaskPatchRetryPrompt,
   buildTaskPlanRetryPrompt,
   buildTaskPlanningSystemPrompt,
   buildTaskPlanningUserPrompt,
   buildTaskReplanPrompt,
+  buildTaskReplanRetryPrompt,
   buildTaskReviewPrompt,
   buildTaskReviewRetryPrompt,
   buildTaskTurnPrompt,
   renderTaskContentView,
 } from "./prompts/task";
 import type { TaskSourceView } from "./prompts/task";
-import {
-  blockedNodes,
-  finalNode,
-  initialState,
-  nextReadyNode,
-  runComplete,
-  summaryOf,
-} from "./tasks";
-import type { NodeId, PlanRunState, WorkNode } from "./tasks";
-import {
-  applyPlanPatch,
-  parsePlanDslDetailed,
-  parsePlanPatchDetailed,
-  serializePlanDsl,
-} from "./plan-dsl";
-import type { PlanPatch } from "./plan-dsl";
+import { applyPlanReply, blockedNodes, nextReadyNode, runComplete, summaryOf } from "./tasks";
+import type { GateSnapshot, NodeId, PlanRunState, WorkNode } from "./tasks";
+import { parsePlanDslDetailed } from "./plan-dsl";
 import { renderDslIssues } from "./dsl-diagnostics";
 import type { DslParseResult } from "./dsl-diagnostics";
 
@@ -125,19 +111,18 @@ import type { DslParseResult } from "./dsl-diagnostics";
 type PlanningOutcome =
   | { kind: "planned"; state: PlanRunState }
   | { kind: "failed"; result: LoopResult };
-/** One review round: approve, a patched state, or a terminated run. */
+/** One review round: approve, an amended state, or a terminated run. */
 type ReviewOutcome =
   | { kind: "approve" }
-  | { kind: "patched"; state: PlanRunState }
+  | { kind: "amend"; state: PlanRunState }
   | { kind: "failed"; result: LoopResult };
 /** One work-node execution: its gate passed, it stopped making progress, or the run ended. */
 type ExecutionOutcome =
-  | { kind: "passed"; gateDiagnostics: null }
-  | { kind: "failed"; diagnostics: string }
+  | { kind: "passed"; gate: GateSnapshot }
+  | { kind: "failed"; diagnostics: string; gate: GateSnapshot | null }
   | { kind: "terminated"; result: LoopResult };
 
 interface Workspace {
-  cwd: string;
   files: SourceFile[];
   index: SymbolIndex;
   skipped: LoopResult["skipped"];
@@ -146,7 +131,7 @@ interface Workspace {
 function workspaceOf(cwd: string): Workspace {
   const files = discoverSourceFiles(cwd);
   const build = buildIndexTolerant(files);
-  return { cwd, files, index: build.index, skipped: build.skipped };
+  return { files, index: build.index, skipped: build.skipped };
 }
 
 /** One model conversation; token usage is accounted at the run level. */
@@ -415,7 +400,6 @@ function sourceLineCount(source: string): number {
 
 interface ExecutionContext {
   cwd: string;
-  workspace: Workspace;
   options: LoopOptions;
   records: LoopRecord[];
   /** Warnings recovered by a tolerant parser; recorded on the run result. */
@@ -1358,8 +1342,12 @@ function diffFile(
 }
 
 /** The applied diff for a node: only changed files, only changed hunks. */
-function appliedDiff(cwd: string, bases: ReadonlyMap<string, string>): string {
+function appliedDiff(
+  cwd: string,
+  bases: ReadonlyMap<string, string>,
+): { text: string; truncated: boolean } {
   const output: string[] = [];
+  let truncated = false;
   for (const [path, before] of bases) {
     const after = readTarget(cwd, path);
     if (after === before) {
@@ -1372,19 +1360,22 @@ function appliedDiff(cwd: string, bases: ReadonlyMap<string, string>): string {
     const room = MAX_DIFF_LINES - output.length;
     if (room <= 0) {
       output.push(DIFF_TRUNCATED);
+      truncated = true;
       break;
     }
     if (diff.lines.length > room) {
       output.push(...diff.lines.slice(0, room), DIFF_TRUNCATED);
+      truncated = true;
       break;
     }
     output.push(...diff.lines);
     if (diff.truncated) {
       output.push(DIFF_TRUNCATED);
+      truncated = true;
       break;
     }
   }
-  return output.join("\n");
+  return { text: output.join("\n"), truncated };
 }
 
 function changedPaths(cwd: string, bases: ReadonlyMap<string, string>): string[] {
@@ -1446,12 +1437,30 @@ function editStrategyAdvisory(
 // ---------------------------------------------------------------------------
 // The driver
 
-/** Compare the Plan wire form plus finish marker and harness statuses. */
+/** Hash of the graph, harness status, and gate history. */
 function fingerprintState(state: PlanRunState): string {
-  const statuses = state.nodes
-    .map((node) => `${node.id}=${state.nodeStatus.get(node.id) ?? "pending"}`)
-    .join(",");
-  return `${serializePlanDsl(state.plan)}\nfinish: ${state.finalNodeId ?? ""}\nstatus: ${statuses}`;
+  return hashText(
+    JSON.stringify({
+      goal: state.goal,
+      nodes: state.nodes,
+      statuses: state.nodes.map((node) => [node.id, state.nodeStatus.get(node.id) ?? "pending"]),
+      lastGate: state.lastGate,
+    }),
+  );
+}
+
+/** Hash of every discovered source file plus paths a node wrote, for the cycle guard. */
+function workspaceFingerprintAll(cwd: string, extraPaths: Iterable<string> = []): string {
+  const files = new Map(discoverSourceFiles(cwd).map((file) => [file.path, file.source]));
+  for (const path of extraPaths) {
+    files.set(path, readTarget(cwd, path));
+  }
+  return hashText(
+    [...files]
+      .map(([path, source]) => `${path}\u0000${source}`)
+      .sort()
+      .join("\u0001"),
+  );
 }
 
 /** Why no node is runnable, with the next graph action the planner can take. */
@@ -1463,31 +1472,23 @@ function blockedReason(state: PlanRunState): string {
       .map((node) => `#${node.id}`);
     return `Blocked node(s): ${blocked.map((node) => `#${node.id}`).join(", ")}.${
       failed.length === 0 ? "" : ` Failed dependency node(s): ${failed.join(", ")}.`
-    } Repair the failed dependency, repoint the edge, remove the dependent, or add independent work.`;
+    } Amend the failed dependency, or append independent work.`;
   }
   const pending = state.nodes.filter((node) => state.nodeStatus.get(node.id) === "pending");
   if (pending.length > 0) {
-    return `Pending node(s) ${pending.map((node) => `#${node.id}`).join(", ")} are waiting for dependencies that have not passed. Repair or repoint the dependency, or add ready work.`;
+    return `Pending node(s) ${pending.map((node) => `#${node.id}`).join(", ")} are waiting for dependencies that have not passed. Amend the dependency, or append ready work.`;
   }
-  const last = finalNode(state);
-  const finalId = state.finalNodeId;
-  if (finalId === null) {
-    if (
-      last !== undefined &&
-      last.verify === "test" &&
-      state.nodeStatus.get(last.id) === "passed"
-    ) {
-      return `Every node is terminal and the last node #${last.id} is a passing test node, but no final node is marked. Emit "patch" + "finish" to mark it final, or add more work.`;
-    }
-    return `Every node is terminal but no final test node is marked. Add a final test node and emit finish, or repair the last test node and finish it.`;
+  const gate = state.lastGate;
+  if (gate === null) {
+    return "No node has run yet and no node is ready. Append the work the run needs.";
   }
-  if (last === undefined || last.id !== finalId) {
-    return `The final node #${finalId} is no longer the last node; append a final test node and emit "finish" so finalNodeId moves.`;
+  if (gate.ok && gate.verify === "tsc") {
+    return `The last gate was a passing tsc gate for #${gate.nodeId}, but the run needs a passing test gate. Append a test node after the current work.`;
   }
-  if (state.nodeStatus.get(finalId) !== "passed") {
-    return `The final node #${finalId} has not passed. Repair it in place and keep it last, or append a new final test node and emit "finish".`;
+  if (!gate.ok) {
+    return `The last ${gate.verify} gate for #${gate.nodeId} failed. Amend that node or append a repair node, then end with a test node.`;
   }
-  return `The final node #${finalId} passed, but the run still has open work; repair the remaining nodes before finishing.`;
+  return "No node is ready and the last gate was not a passing test; append the remaining work and end with a test node.";
 }
 
 /** The first record locator of the current graph, for failure/result anchors. */
@@ -1506,6 +1507,7 @@ function anchorLocator(state: PlanRunState | null): Locator | null {
 export async function runTaskLoop(options: LoopOptions): Promise<LoopResult> {
   const cwd = options.cwd;
   const costBudgetUsd = options.costBudgetUsd ?? DEFAULT_COST_BUDGET_USD;
+  const autoApproveEnabled = options.autoApprove ?? true;
   const workspace = workspaceOf(cwd);
   const specFiles = selectSpecFiles(options.issue, workspace.files);
   const indexText = buildContextYaml(workspace.files, {
@@ -1531,22 +1533,27 @@ export async function runTaskLoop(options: LoopOptions): Promise<LoopResult> {
     }
   };
   const nodeFailures = new Map<NodeId, string>();
-  /** Review fingerprints per node, so a repeated patch/diff is detectable. */
+  /** Review fingerprints per node, so a repeated amend/diff is detectable. */
   const reviewSeen = new Map<NodeId, Set<string>>();
+  /** Per-node diff baseline; kept across an amend so review sees the whole node. */
+  const nodeBases = new Map<NodeId, Map<string, string>>();
+  /** Run-level graph/workspace fingerprints; a repeated key is a cycle. */
+  const cycleSeen = new Set<string>();
   let iteration = 0;
   let current: PlanRunState | null = null;
 
-  const terminated = async (
+  const pruneFailures = (state: PlanRunState): void => {
+    for (const id of [...nodeFailures.keys()]) {
+      if (state.nodeStatus.get(id) !== "failed") {
+        nodeFailures.delete(id);
+      }
+    }
+  };
+
+  const terminated = (
     reason: TerminationReason | "provider-error",
     diagnostics: string | null,
-  ): Promise<LoopResult> => {
-    const explanation = await explain(
-      options.provider,
-      planningMessages,
-      options.temperature,
-      reason,
-      diagnostics,
-    );
+  ): LoopResult => {
     const anchor = anchorLocator(current);
     return {
       ok: false,
@@ -1556,7 +1563,7 @@ export async function runTaskLoop(options: LoopOptions): Promise<LoopResult> {
       editedSource: null,
       records,
       diagnostics,
-      explanation,
+      explanation: null,
       messages: planningMessages,
       skipped: workspace.skipped,
       ...(reason === "provider-error" ? {} : { terminationReason: reason }),
@@ -1603,25 +1610,51 @@ export async function runTaskLoop(options: LoopOptions): Promise<LoopResult> {
     };
   };
 
-  const providerCall = async (): Promise<ChatResponse | LoopResult> => {
-    turnCounts.planning += 1;
+  /**
+   * The single provider-call wrapper: budget checks around one call, one usage
+   * bucket, one turn counter, and a tagged provider-error stop. No stage calls
+   * the provider directly.
+   */
+  const ask = async (
+    stage: "planning" | "review" | "execution",
+    messages: ChatMessage[],
+  ): Promise<{ kind: "ok"; response: ChatResponse } | { kind: "stop"; result: LoopResult }> => {
+    if (overBudget(usageState, costBudgetUsd)) {
+      return {
+        kind: "stop",
+        result: terminated(
+          "cost-budget",
+          costBudgetDiagnostics(usageState.consumed, costBudgetUsd),
+        ),
+      };
+    }
+    turnCounts[stage] += 1;
     turnCounts.total += 1;
     let response: ChatResponse;
     try {
       response = await callModel(
-        planningMessages,
-        usageState.usage.planning,
+        messages,
+        usageState.usage[stage],
         usageState,
         options.provider,
         options,
       );
     } catch (error) {
-      return terminated("provider-error", providerErrorDiagnostics(error));
+      return {
+        kind: "stop",
+        result: terminated("provider-error", providerErrorDiagnostics(error)),
+      };
     }
     if (overBudget(usageState, costBudgetUsd)) {
-      return terminated("cost-budget", costBudgetDiagnostics(usageState.consumed, costBudgetUsd));
+      return {
+        kind: "stop",
+        result: terminated(
+          "cost-budget",
+          costBudgetDiagnostics(usageState.consumed, costBudgetUsd),
+        ),
+      };
     }
-    return response;
+    return { kind: "ok", response };
   };
 
   const plannerViewerDeps: MultiEditorDeps = {
@@ -1634,7 +1667,7 @@ export async function runTaskLoop(options: LoopOptions): Promise<LoopResult> {
 
   /**
    * Resolve one planner viewer reply with the edit-protocol resolver and return
-   * source blocks, not a Plan/patch. The planner uses the same `select`/`read`
+   * source blocks, not a plan. The planner uses the same `select`/`read`
    * language as the executor; it just cannot write.
    */
   const plannerViewFeedback = (content: string, next: string): string => {
@@ -1687,21 +1720,20 @@ export async function runTaskLoop(options: LoopOptions): Promise<LoopResult> {
   /**
    * One planning turn: ask, parse, and retry a rejection with its diagnostics.
    * Viewer requests are unlimited except by the USD cost budget and repeated-view
-   * detection; a repeated view forces the Plan/patch reply. An initial plan
-   * becomes the run state; a patch turn applies one patch and returns the merged
-   * state.
+   * detection; a repeated view forces the plan reply. The initial reply must
+   * carry a goal; later replies append nodes or amend unsettled work.
    */
   const planningTurn = async (
-    request: { mode: "initial" } | { mode: "patch"; state: PlanRunState },
+    request: { mode: "initial" } | { mode: "replan"; state: PlanRunState },
   ): Promise<PlanningOutcome> => {
     const seen = new Set<string>();
     let forceReply = false;
     for (;;) {
-      const response = await providerCall();
-      if ("ok" in response) {
-        return { kind: "failed", result: response };
+      const asked = await ask("planning", planningMessages);
+      if (asked.kind === "stop") {
+        return { kind: "failed", result: asked.result };
       }
-      const content = response.content ?? "";
+      const content = asked.response.content ?? "";
       planningMessages.push({ role: "assistant", content });
 
       if (isPlannerViewerReply(content)) {
@@ -1712,7 +1744,7 @@ export async function runTaskLoop(options: LoopOptions): Promise<LoopResult> {
           planningMessages.push({
             role: "user",
             content:
-              "# Source view\n\nThe same or repeated viewer makes no progress. Reply with the Plan/patch now; the viewer request writes nothing.",
+              "# Source view\n\nThe same or repeated viewer makes no progress. Reply with node/amend records now; the viewer request writes nothing.",
           });
           continue;
         }
@@ -1721,54 +1753,46 @@ export async function runTaskLoop(options: LoopOptions): Promise<LoopResult> {
           role: "user",
           content: plannerViewFeedback(
             content,
-            "Reply with the initial Plan or the next patch. Each viewer consumes the run's USD cost budget; repeated views force the Plan/patch.",
+            "Reply with the initial plan or the next node/amend records. Each viewer consumes the run's USD cost budget; repeated views force the plan reply.",
           ),
         });
         continue;
       }
 
+      const initial = request.mode === "initial";
+      const parsed = parsePlanDslDetailed(content, { initial });
+      noteWarnings(parsed);
       let diagnostics: string;
-      if (request.mode === "initial") {
-        const parsed = parsePlanDslDetailed(content);
-        noteWarnings(parsed);
-        if (parsed.ok && parsed.value !== undefined) {
-          return {
-            kind: "planned",
-            state: initialState(parsed.value.plan, parsed.value.finalNodeId),
-          };
-        }
+      if (!parsed.ok || parsed.value === undefined) {
         diagnostics = renderDslIssues(parsed.issues);
       } else {
-        const parsed = parsePlanPatchDetailed(content);
-        noteWarnings(parsed);
-        if (!parsed.ok || parsed.value === undefined) {
-          diagnostics = renderDslIssues(parsed.issues);
-        } else {
-          const merged = applyPlanPatch(request.state, parsed.value);
-          if (merged.ok) {
-            return { kind: "planned", state: merged.state };
-          }
-          diagnostics = merged.diagnostics;
+        const base: PlanRunState = initial
+          ? { goal: "", nodes: [], nodeStatus: new Map(), lastGate: null }
+          : request.state;
+        const applied = applyPlanReply(base, parsed.value, initial ? { requireGoal: true } : {});
+        if (applied.ok) {
+          pruneFailures(applied.state);
+          return { kind: "planned", state: applied.state };
         }
+        diagnostics = applied.diagnostics;
       }
 
       const key = hashText(`${content}\n${diagnostics}`);
       if (seen.has(key)) {
         return {
           kind: "failed",
-          result: await terminated(
+          result: terminated(
             "task-exhausted",
-            `task-exhausted: the planner repeated the same rejected ${request.mode === "initial" ? "plan" : "patch"} reply; no progress is possible\n\n${diagnostics}`,
+            `task-exhausted: the planner repeated the same rejected ${initial ? "plan" : "reply"}; no progress is possible\n\n${diagnostics}`,
           ),
         };
       }
       seen.add(key);
       planningMessages.push({
         role: "user",
-        content:
-          request.mode === "initial"
-            ? buildTaskPlanRetryPrompt(diagnostics)
-            : buildTaskPatchRetryPrompt(diagnostics),
+        content: initial
+          ? buildTaskPlanRetryPrompt(diagnostics)
+          : buildTaskReplanRetryPrompt(diagnostics),
       });
     }
   };
@@ -1779,48 +1803,44 @@ export async function runTaskLoop(options: LoopOptions): Promise<LoopResult> {
   }
   current = first.state;
 
-  /** Ask for a patch after the graph settles; a patch that changes nothing is no progress. */
-  const requestPatch = async (blocked: string | undefined): Promise<LoopResult | null> => {
-    const state = current;
-    if (state === null) {
-      return terminated("task-exhausted", "task-exhausted: there is no current graph to patch");
-    }
+  /** Ask for appended work or an amend after the graph settles. */
+  const requestPlan = async (state: PlanRunState): Promise<LoopResult | null> => {
     const currentFiles = discoverSourceFiles(cwd);
     planningMessages.push({
       role: "user",
       content: buildTaskReplanPrompt({
         state,
         nodeFailures,
-        blocked,
+        blocked: blockedReason(state),
         symbolIndex: buildContextYaml(currentFiles),
       }),
     });
     const before = fingerprintState(state);
-    const planned = await planningTurn({ mode: "patch", state });
+    const planned = await planningTurn({ mode: "replan", state });
     if (planned.kind === "failed") {
       return planned.result;
     }
-    const next = planned.state;
-    if (fingerprintState(next) === before) {
+    if (fingerprintState(planned.state) === before) {
       return terminated(
         "task-exhausted",
-        "task-exhausted: the planner patch left the work graph and statuses unchanged; no progress is possible",
+        "task-exhausted: the planner reply left the work graph, statuses, and gate history unchanged; no progress is possible",
       );
     }
-    current = next;
+    current = planned.state;
     return null;
   };
 
-  /** One post-gate review round in the planner conversation. */
+  /**
+   * One post-gate review round in the planner conversation. Review is a
+   * verdict: approve the node, or amend this node and let it execute again.
+   * New work belongs to the next planning turn.
+   */
   const reviewNode = async (
     state: PlanRunState,
     node: WorkNode,
-    gate: GateResult,
-    bases: ReadonlyMap<string, string>,
+    diff: { text: string; truncated: boolean },
+    outOfHint: readonly string[],
   ): Promise<ReviewOutcome> => {
-    const diff = appliedDiff(cwd, bases);
-    const changed = changedPaths(cwd, bases);
-    const outOfHint = outOfHintPaths(node, changed);
     const seen = reviewSeen.get(node.id) ?? new Set<string>();
     reviewSeen.set(node.id, seen);
     for (;;) {
@@ -1828,38 +1848,16 @@ export async function runTaskLoop(options: LoopOptions): Promise<LoopResult> {
         role: "user",
         content: buildTaskReviewPrompt({
           node,
-          gate: { verify: node.verify, ok: gate.ok, diagnostics: gate.diagnostics },
-          diff,
+          gate: { verify: node.verify, ok: true, diagnostics: null },
+          diff: diff.text,
           outOfHint,
         }),
       });
-      turnCounts.review += 1;
-      turnCounts.total += 1;
-      let response: ChatResponse;
-      try {
-        response = await callModel(
-          planningMessages,
-          usageState.usage.review,
-          usageState,
-          options.provider,
-          options,
-        );
-      } catch (error) {
-        return {
-          kind: "failed",
-          result: await terminated("provider-error", providerErrorDiagnostics(error)),
-        };
+      const asked = await ask("review", planningMessages);
+      if (asked.kind === "stop") {
+        return { kind: "failed", result: asked.result };
       }
-      if (overBudget(usageState, costBudgetUsd)) {
-        return {
-          kind: "failed",
-          result: await terminated(
-            "cost-budget",
-            costBudgetDiagnostics(usageState.consumed, costBudgetUsd),
-          ),
-        };
-      }
-      const content = response.content ?? "";
+      const content = asked.response.content ?? "";
       planningMessages.push({ role: "assistant", content });
       if (content.trim().toLowerCase() === "approve") {
         return { kind: "approve" };
@@ -1869,7 +1867,7 @@ export async function runTaskLoop(options: LoopOptions): Promise<LoopResult> {
         if (seen.has(key)) {
           return {
             kind: "failed",
-            result: await terminated(
+            result: terminated(
               "task-exhausted",
               "task-exhausted: the review repeated the same viewer; no progress is possible",
             ),
@@ -1880,40 +1878,47 @@ export async function runTaskLoop(options: LoopOptions): Promise<LoopResult> {
           role: "user",
           content: plannerViewFeedback(
             content,
-            "Reply with `approve` or one repair patch. The viewer request writes nothing.",
+            "Reply with `approve` or one `amend` record for this node. The viewer request writes nothing.",
           ),
         });
         continue;
       }
-      const parsed = parsePlanPatchDetailed(content);
+
+      const parsed = parsePlanDslDetailed(content, { initial: false });
       noteWarnings(parsed);
       let diagnostics: string;
       let next: PlanRunState | null = null;
       if (!parsed.ok || parsed.value === undefined) {
         diagnostics = renderDslIssues(parsed.issues);
-      } else if (parsed.value.ops.length === 0 && !parsed.value.finish) {
+      } else if (parsed.value.goal !== undefined) {
         diagnostics =
-          "stage: plan-graph\nthe review patch is empty; reply with `approve` or a repair patch that changes the graph";
+          "stage: plan-protocol\ncode: PLAN_STRUCTURE\nmessage: a review reply may not set goal:";
+      } else if (parsed.value.nodes.length > 0) {
+        diagnostics =
+          "stage: plan-protocol\ncode: PLAN_STRUCTURE\nmessage: a review reply may not add nodes; follow-up work belongs to the next planning turn";
+      } else if (parsed.value.amends.length !== 1 || parsed.value.amends[0]?.id !== node.id) {
+        diagnostics = `stage: plan-protocol\ncode: PLAN_STRUCTURE\nmessage: a review reply must be \`approve\` or one amend for #${node.id}`;
       } else {
-        const merged = applyPlanPatch(state, parsed.value);
-        if (!merged.ok) {
-          diagnostics = merged.diagnostics;
-        } else {
-          next = merged.state;
+        const applied = applyPlanReply(state, parsed.value, { reviewTarget: node.id });
+        if (applied.ok) {
+          next = applied.state;
           diagnostics = "";
+        } else {
+          diagnostics = applied.diagnostics;
         }
       }
-      const key = hashText(`${content}\n${diagnostics}\n${diff}`);
-      if (diagnostics !== "" && seen.has(key)) {
+
+      const replyKey = hashText(`${content}\n${diagnostics}\n${diff.text}`);
+      if (diagnostics !== "" && seen.has(replyKey)) {
         return {
           kind: "failed",
-          result: await terminated(
+          result: terminated(
             "task-exhausted",
             `task-exhausted: the review repeated the same rejected reply; no progress is possible\n\n${diagnostics}`,
           ),
         };
       }
-      seen.add(key);
+      seen.add(replyKey);
       if (diagnostics !== "" || next === null) {
         planningMessages.push({
           role: "user",
@@ -1921,18 +1926,18 @@ export async function runTaskLoop(options: LoopOptions): Promise<LoopResult> {
         });
         continue;
       }
-      const stateKey = hashText(`${fingerprintState(next)}\n${diff}`);
+      const stateKey = hashText(`${fingerprintState(next)}\n${diff.text}`);
       if (seen.has(stateKey)) {
         return {
           kind: "failed",
-          result: await terminated(
+          result: terminated(
             "task-exhausted",
-            "task-exhausted: the review repeated the same patch and diff; no progress is possible",
+            "task-exhausted: the review repeated the same amend and diff; no progress is possible",
           ),
         };
       }
       seen.add(stateKey);
-      return { kind: "patched", state: next };
+      return { kind: "amend", state: next };
     }
   };
 
@@ -1958,6 +1963,7 @@ export async function runTaskLoop(options: LoopOptions): Promise<LoopResult> {
     const wholeFileWritesSinceEdit = new Set<string>();
     /** Whole-declaration shape failures already reported for this work node. */
     const shapeFailures = new Set<string>();
+    let lastGate: GateSnapshot | null = null;
     let priorGate: string | undefined;
     let priorDiagnostics: string | undefined;
     let feedback: string | undefined;
@@ -1965,38 +1971,15 @@ export async function runTaskLoop(options: LoopOptions): Promise<LoopResult> {
 
     try {
       for (;;) {
-        turnCounts.execution += 1;
-        turnCounts.total += 1;
-        let response: ChatResponse;
-        try {
-          response = await callModel(
-            chat.messages,
-            usageState.usage.execution,
-            usageState,
-            options.provider,
-            options,
-          );
-        } catch (error) {
-          return {
-            kind: "terminated",
-            result: await terminated("provider-error", providerErrorDiagnostics(error)),
-          };
+        const asked = await ask("execution", chat.messages);
+        if (asked.kind === "stop") {
+          return { kind: "terminated", result: asked.result };
         }
-        if (overBudget(usageState, costBudgetUsd)) {
-          return {
-            kind: "terminated",
-            result: await terminated(
-              "cost-budget",
-              costBudgetDiagnostics(usageState.consumed, costBudgetUsd),
-            ),
-          };
-        }
-        const content = response.content ?? "";
+        const content = asked.response.content ?? "";
         chat.messages.push({ role: "assistant", content });
 
         const context: ExecutionContext = {
           cwd,
-          workspace,
           options,
           records,
           warnings: runWarnings,
@@ -2025,7 +2008,7 @@ export async function runTaskLoop(options: LoopOptions): Promise<LoopResult> {
             outcome: "applied",
             replacement: content,
             diagnostics: outcome.diagnostics,
-            finishReason: response.finishReason,
+            finishReason: asked.response.finishReason,
             payloads: outcome.payloads,
             appliedLocators: outcome.appliedLocators,
             selectors: outcome.selectors,
@@ -2047,8 +2030,9 @@ export async function runTaskLoop(options: LoopOptions): Promise<LoopResult> {
             wholeFileWritesSinceEdit.clear();
           }
           const gate = await verifyNode(context, bases, outcome.paths);
+          lastGate = { nodeId: node.id, verify: node.verify, ok: gate.ok };
           if (gate.ok) {
-            return { kind: "passed", gateDiagnostics: null };
+            return { kind: "passed", gate: lastGate };
           }
           diagnostics = gate.diagnostics ?? "stage: gate\nthe work node gate failed";
           priorGate = diagnostics;
@@ -2073,7 +2057,7 @@ export async function runTaskLoop(options: LoopOptions): Promise<LoopResult> {
             outcome: rejectionOutcome,
             replacement: content,
             diagnostics,
-            finishReason: response.finishReason,
+            finishReason: asked.response.finishReason,
             payloads: outcome.payloads,
             selectors: outcome.selectors,
             stages: outcome.stages,
@@ -2099,6 +2083,7 @@ export async function runTaskLoop(options: LoopOptions): Promise<LoopResult> {
           if (seen.has(replyKey) || seen.has(stateKey)) {
             return {
               kind: "failed",
+              gate: lastGate,
               diagnostics: `stage: no-progress\nthe work node #${node.id} stopped making progress: the same reply/source/diagnostics fingerprint repeated; no fixed exchange cap applies\n\n${diagnostics ?? ""}`,
             };
           }
@@ -2128,21 +2113,36 @@ export async function runTaskLoop(options: LoopOptions): Promise<LoopResult> {
     if (runComplete(state)) {
       return success(state);
     }
+    const extraPaths = [...nodeBases.values()].flatMap((bases) => [...bases.keys()]);
+    const cycleKey = hashText(
+      `${fingerprintState(state)}\n${workspaceFingerprintAll(cwd, extraPaths)}`,
+    );
+    if (cycleSeen.has(cycleKey)) {
+      return terminated(
+        "task-exhausted",
+        "task-exhausted: the run returned to an earlier graph and workspace state; no progress is possible",
+      );
+    }
+    cycleSeen.add(cycleKey);
+
     const node = nextReadyNode(state);
     if (node === undefined) {
-      const patched = await requestPatch(blockedReason(state));
-      if (patched !== null) {
-        return patched;
+      const planned = await requestPlan(state);
+      if (planned !== null) {
+        return planned;
       }
       continue;
     }
 
     iteration += 1;
-    state.nodeStatus.set(node.id, "in-progress");
-    const bases = snapshotSources(cwd);
+    const bases = nodeBases.get(node.id) ?? snapshotSources(cwd);
+    nodeBases.set(node.id, bases);
     const executed = await executeNode(state, node, bases);
     if (executed.kind === "terminated") {
       return executed.result;
+    }
+    if (executed.gate !== null) {
+      state.lastGate = executed.gate;
     }
     if (executed.kind === "failed") {
       state.nodeStatus.set(node.id, "failed");
@@ -2150,31 +2150,33 @@ export async function runTaskLoop(options: LoopOptions): Promise<LoopResult> {
       continue;
     }
 
-    state.nodeStatus.set(node.id, "review");
-    let reviewedState: PlanRunState = state;
-    const gate: GateResult = { ok: true, diagnostics: null };
-    for (;;) {
-      const reviewed = await reviewNode(reviewedState, node, gate, bases);
-      if (reviewed.kind === "failed") {
-        return reviewed.result;
-      }
-      if (reviewed.kind === "approve") {
-        reviewedState.nodeStatus.set(node.id, "passed");
-        nodeFailures.delete(node.id);
-        break;
-      }
-      reviewedState = reviewed.state;
-      const status = reviewedState.nodeStatus.get(node.id);
-      if (status === "pending") {
-        // The review patch reopened the node; execute it again.
-        break;
-      }
-      // The patch added or adjusted other work but left this node's definition
-      // alone: the passing gate stands.
-      reviewedState.nodeStatus.set(node.id, "passed");
+    // The gate passed. In-hint, untruncated work is approved by the fast path;
+    // anything else gets one verdict-only review turn.
+    const changed = changedPaths(cwd, bases);
+    const outOfHint = outOfHintPaths(node, changed);
+    const diff = appliedDiff(cwd, bases);
+    const autoApprove =
+      autoApproveEnabled &&
+      node.hints.length > 0 &&
+      !diff.truncated &&
+      outOfHint.length === 0 &&
+      diff.text.trim() !== "";
+    if (autoApprove) {
+      state.nodeStatus.set(node.id, "passed");
       nodeFailures.delete(node.id);
-      break;
+      continue;
     }
-    current = reviewedState;
+
+    const reviewed = await reviewNode(state, node, diff, outOfHint);
+    if (reviewed.kind === "failed") {
+      return reviewed.result;
+    }
+    if (reviewed.kind === "approve") {
+      state.nodeStatus.set(node.id, "passed");
+      nodeFailures.delete(node.id);
+      continue;
+    }
+    current = reviewed.state;
+    pruneFailures(reviewed.state);
   }
 }

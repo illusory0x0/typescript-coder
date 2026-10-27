@@ -1,26 +1,29 @@
 /**
- * The flat Plan DSL (`docs/plan-exec.md` §3) and patch DSL (§4): strict parsers
- * and serializers for the planner's initial reply and incremental re-plans.
- * Records are independent: a `plan` header, then flat `node` records in record
- * order, then an optional trailing `finish`. A patch applies `node+` / `node~` /
- * `node-` operators and `finish` to a clone of the current graph. The graph
- * validator lives in `src/tasks.ts`; this module only turns the wire form into
- * that graph and runs the merge.
+ * The flat work-graph DSL (`docs/plan-exec.md` §3): strict parsers and
+ * serializers for the planner's replies.
  *
- * Both parsers are tolerant in the same ways as before: a whole-reply fence, a
+ * A reply is an optional `plan` header with a `goal:` label, then flat records
+ * in wire order: `node` appends one work node, and `amend` revises a pending,
+ * failed, or just-reviewed node. There is no patch algebra, no delete, and no
+ * `finish` marker: the run completes when no node is ready and the last gate was
+ * a passing `test`. The graph model and validator live in `src/tasks.ts`; this
+ * module only turns the wire form into that model.
+ *
+ * Parsing is tolerant in the same ways as the edit DSL: a whole-reply fence, a
  * bare id, and an unambiguous missing `end` recover with warnings; structure is
  * still rejected all-or-nothing, with shared bounded diagnostics (see
  * `src/dsl-diagnostics.ts`). There is no JSON fallback and no legacy
  * Stage/Task/Edit mode.
  */
-import {
-  finalNode,
-  HINT_SPACES,
-  mergeReplan,
-  NODE_ID_PATTERN,
-  validateFinalNode,
-  validatePlan,
-  WORK_VERIFIES,
+import { HINT_SPACES, NODE_ID_PATTERN, validateNodes, validatePlan, WORK_VERIFIES } from "./tasks";
+import type {
+  HintLoc,
+  NodeAmend,
+  NodeId,
+  PlanParse,
+  PlanReply,
+  WorkNode,
+  WorkVerify,
 } from "./tasks";
 import { renderDslIssues } from "./dsl-diagnostics";
 import type { DslIssue, DslParseResult, DslStage } from "./dsl-diagnostics";
@@ -30,20 +33,10 @@ import {
   EDIT_FENCE_END,
   isLegacyEditFence,
 } from "./selection";
-import type {
-  HintLoc,
-  NodeId,
-  Plan,
-  PlanMerge,
-  PlanParse,
-  PlanRunState,
-  WorkNode,
-  WorkVerify,
-} from "./tasks";
 import type { SymbolSpace } from "./utility";
 
 /**
- * Plan diagnostics use the shared `stage:` channel with WorkNode vocabulary
+ * Plan diagnostics use the shared `stage:` channel with work-node vocabulary
  * (`plan-protocol` and `plan-graph`).
  */
 type DiagnosticStage = DslStage;
@@ -52,14 +45,19 @@ const VERIFY_SET: ReadonlySet<string> = new Set(WORK_VERIFIES);
 const SPACE_SET: ReadonlySet<string> = new Set(HINT_SPACES);
 
 /**
- * Record headers from the old Stage/Task/Edit hierarchy. They are rejected with
- * a dedicated diagnostic instead of being guessed as unknown fields.
+ * Record headers from the old Stage/Task/Edit hierarchy and the removed patch
+ * algebra. They are rejected with a dedicated diagnostic instead of being
+ * guessed as unknown fields.
  */
 const LEGACY_KEYWORDS: ReadonlySet<string> = new Set([
   "stage",
   "task",
   "edit",
+  "patch",
   "plan~",
+  "node+",
+  "node~",
+  "node-",
   "stage+",
   "stage~",
   "stage-",
@@ -81,12 +79,9 @@ interface Line {
   number: number;
 }
 
-type ParseMode = "plan" | "patch";
-
 interface Cursor {
   lines: readonly Line[];
   position: number;
-  mode: ParseMode;
   /** Normalized reply; excerpts use the same line numbers as `lines`. */
   source: string;
   issues: DslIssue[];
@@ -103,17 +98,11 @@ class PlanSyntaxError extends Error {
   }
 }
 
-/** A successfully parsed initial Plan; `finalNodeId` is null without `finish`. */
-export interface ParsedPlan {
-  plan: Plan;
-  finalNodeId: NodeId | null;
-}
-
 function quote(value: string): string {
   return JSON.stringify(value);
 }
 
-function cursorOf(content: string, mode: ParseMode): Cursor {
+function cursorOf(content: string): Cursor {
   const lines = content
     .replace(/\r\n?/g, "\n")
     .split("\n")
@@ -121,7 +110,6 @@ function cursorOf(content: string, mode: ParseMode): Cursor {
   return {
     lines,
     position: 0,
-    mode,
     source: lines.map((line) => line.text).join("\n"),
     issues: [],
     truncated: false,
@@ -204,27 +192,6 @@ function peekNonBlank(cursor: Cursor): Line | null {
   return null;
 }
 
-function takeNonBlank(
-  cursor: Cursor,
-  expected: string,
-  code = "PLAN_MISSING_FIELD",
-  recordId?: string,
-): Line {
-  const line = peekNonBlank(cursor);
-  if (line === null) {
-    cursor.truncated = true;
-    fail(cursor, code, `expected ${expected}, but the reply ended`, {
-      line: Math.max(1, cursor.lines.length),
-      found: "<eof>",
-      expected: [expected],
-      recordId,
-      hint: "send the complete reply; do not stop mid-record",
-    });
-  }
-  cursor.position += 1;
-  return line;
-}
-
 function tokensOf(line: Line): string[] {
   return line.text.trim().split(/\s+/);
 }
@@ -232,28 +199,6 @@ function tokensOf(line: Line): string[] {
 function tokenColumn(line: Line, token: string): number {
   const index = line.text.indexOf(token);
   return index === -1 ? 1 : index + 1;
-}
-
-function nearestId(reference: string, ids: Iterable<string>): string | null {
-  let best: string | null = null;
-  let bestDistance = Number.POSITIVE_INFINITY;
-  for (const id of ids) {
-    if (id === reference) {
-      return id;
-    }
-    const width = Math.max(reference.length, id.length);
-    let distance = 0;
-    for (let index = 0; index < width; index += 1) {
-      if ((reference[index] ?? "") !== (id[index] ?? "")) {
-        distance += 1;
-      }
-    }
-    if (distance < bestDistance) {
-      bestDistance = distance;
-      best = id;
-    }
-  }
-  return best;
 }
 
 function quotedId(
@@ -332,19 +277,9 @@ function quotedId(
   return value;
 }
 
-function isPlanBoundary(trimmed: string): boolean {
-  return trimmed === "finish" || /^(plan|node|stage|task|edit)\b/.test(trimmed);
-}
-
-function isPatchBoundary(trimmed: string): boolean {
-  return (
-    trimmed === "finish" ||
-    /^(patch\b|node[+~-]|plan~|stage[+~-]|task[+~-]|edit[+~-])/.test(trimmed)
-  );
-}
-
-function isRecordBoundary(cursor: Cursor, trimmed: string): boolean {
-  return cursor.mode === "plan" ? isPlanBoundary(trimmed) : isPatchBoundary(trimmed);
+/** True for a line that starts a new record (or a removed legacy header). */
+function isRecordBoundary(trimmed: string): boolean {
+  return trimmed === "finish" || /^(plan|patch|node|amend|stage|task|edit)\b/.test(trimmed);
 }
 
 function looksLikeField(trimmed: string): boolean {
@@ -415,7 +350,7 @@ function readText(cursor: Cursor, label: TextFieldLabel, where: string, recordId
   const trimmed = line.text.trim();
   if (!trimmed.startsWith(label)) {
     const code =
-      isRecordBoundary(cursor, trimmed) || trimmed === "end"
+      isRecordBoundary(trimmed) || trimmed === "end"
         ? "PLAN_MISSING_FIELD"
         : looksLikeField(trimmed)
           ? "PLAN_UNKNOWN_FIELD"
@@ -556,7 +491,7 @@ function readText(cursor: Cursor, label: TextFieldLabel, where: string, recordId
       const next = peekNonBlank(cursor);
       if (next !== null) {
         const after = next.text.trim();
-        if (after !== "end" && !isRecordBoundary(cursor, after) && !looksLikeField(after)) {
+        if (after !== "end" && !isRecordBoundary(after) && !looksLikeField(after)) {
           fail(
             cursor,
             "PLAN_EMBEDDED_FENCE_END",
@@ -601,7 +536,7 @@ function expectEnd(cursor: Cursor, where: string, recordId?: string): void {
     cursor.position += 1;
     return;
   }
-  if (isRecordBoundary(cursor, trimmed)) {
+  if (isRecordBoundary(trimmed)) {
     warnMissingEnd(cursor, where, recordId, next);
     return;
   }
@@ -635,7 +570,7 @@ function claimId(
   report(
     cursor,
     "PLAN_DUPLICATE_ID",
-    `${kind} #${id} reuses node id ${quote(id)} on line ${header.number}; it was first declared on line ${first.number}. Plan and work-node ids must be globally unique`,
+    `${kind} #${id} reuses node id ${quote(id)} on line ${header.number}; it was first declared on line ${first.number}. Work-node ids must be globally unique`,
     {
       line: header.number,
       found: id,
@@ -762,7 +697,7 @@ function parseHintLine(cursor: Cursor, line: Line, nodeId: NodeId): HintLoc {
 }
 
 interface NodeBodyOptions {
-  /** `hint clear`, `approach clear`, and `phase clear` are patch-update only. */
+  /** `hint clear`, `approach clear`, and `phase clear` are amend-only. */
   allowClear: boolean;
   requireInstruction: boolean;
   /** True when the header already carried `after` or `verify`. */
@@ -780,10 +715,10 @@ interface NodeBody {
 }
 
 /**
- * Read the fields of a node record before `end`. Fields may come in any order;
- * `instruction:` is required for `node`/`node+`, optional for `node~`. A
+ * Read the fields of a node or amend record before `end`. Fields may come in
+ * any order; `instruction:` is required for `node`, optional for `amend`. A
  * replacement `after` line with no ids clears dependencies. `hint clear`,
- * `approach clear`, and `phase clear` are allowed only in a patch update.
+ * `approach clear`, and `phase clear` are allowed only in an amend record.
  */
 function parseNodeBody(cursor: Cursor, id: NodeId, options: NodeBodyOptions): NodeBody {
   const body: NodeBody = {};
@@ -844,10 +779,10 @@ function parseNodeBody(cursor: Cursor, id: NodeId, options: NodeBodyOptions): No
 
     if (trimmed === "hint clear") {
       if (!options.allowClear) {
-        fail(cursor, "PLAN_UNKNOWN_FIELD", `hint clear is allowed only in a node~ patch`, {
+        fail(cursor, "PLAN_UNKNOWN_FIELD", `hint clear is allowed only in an amend record`, {
           line: next.number,
           recordId: id,
-          hint: "drop the hint lines, or use node~ to replace the hint list",
+          hint: "drop the hint lines, or use amend to replace the hint list",
         });
       }
       if (hintsSeen) {
@@ -883,10 +818,10 @@ function parseNodeBody(cursor: Cursor, id: NodeId, options: NodeBodyOptions): No
 
     if (trimmed === "approach clear") {
       if (!options.allowClear) {
-        fail(cursor, "PLAN_UNKNOWN_FIELD", `approach clear is allowed only in a node~ patch`, {
+        fail(cursor, "PLAN_UNKNOWN_FIELD", `approach clear is allowed only in an amend record`, {
           line: next.number,
           recordId: id,
-          hint: "omit the approach field or use node~ to clear it",
+          hint: "omit the approach field or use amend to clear it",
         });
       }
       if (approachSeen) {
@@ -917,10 +852,10 @@ function parseNodeBody(cursor: Cursor, id: NodeId, options: NodeBodyOptions): No
 
     if (trimmed === "phase clear") {
       if (!options.allowClear) {
-        fail(cursor, "PLAN_UNKNOWN_FIELD", `phase clear is allowed only in a node~ patch`, {
+        fail(cursor, "PLAN_UNKNOWN_FIELD", `phase clear is allowed only in an amend record`, {
           line: next.number,
           recordId: id,
-          hint: "omit the phase field or use node~ to clear it",
+          hint: "omit the phase field or use amend to clear it",
         });
       }
       if (phaseSeen) {
@@ -971,24 +906,24 @@ interface NodeHeader {
   verify: WorkVerify;
 }
 
-/** Parse `node "id" [after "…"] verify tsc|test`, also used for `node+`. */
-function parseNodeHeader(cursor: Cursor, header: Line, keyword: "node" | "node+"): NodeHeader {
+/** Parse `node "id" [after "…"] verify tsc|test`. */
+function parseNodeHeader(cursor: Cursor, header: Line): NodeHeader {
   const tokens = tokensOf(header);
   const [actual, idToken] = tokens;
-  if (actual !== keyword || idToken === undefined) {
+  if (actual !== "node" || idToken === undefined) {
     fail(
       cursor,
       "PLAN_MISSING_FIELD",
-      `${keyword} record on line ${header.number} must be "${keyword} \\"NN-slug\\" [after \\"NN-slug\\"…] verify tsc|test"; got ${quote(header.text.trim())}`,
+      `node record on line ${header.number} must be "node \\"NN-slug\\" [after \\"NN-slug\\"…] verify tsc|test"; got ${quote(header.text.trim())}`,
       {
         line: header.number,
-        expected: [`${keyword} "NN-slug" [after "NN-slug"…] verify tsc|test`],
+        expected: ['node "NN-slug" [after "NN-slug"…] verify tsc|test'],
         found: header.text.trim(),
-        hint: `write ${keyword} "02-scaffold" verify tsc`,
+        hint: `write node "02-scaffold" verify tsc`,
       },
     );
   }
-  const id = quotedId(cursor, idToken, `${keyword} id on line ${header.number}`, header, idToken);
+  const id = quotedId(cursor, idToken, `node id on line ${header.number}`, header, idToken);
   let index = 2;
   let after: NodeId[] | undefined;
   if (tokens[index] === "after") {
@@ -1003,18 +938,13 @@ function parseNodeHeader(cursor: Cursor, header: Line, keyword: "node" | "node+"
       index += 1;
     }
     if (ids.length === 0) {
-      fail(
-        cursor,
-        "PLAN_MISSING_FIELD",
-        `after clause on ${keyword} ${id} needs at least one node id`,
-        {
-          line: header.number,
-          expected: ['after "NN-slug"'],
-          found: "after",
-          recordId: id,
-          hint: "list one or more dependency ids, or omit after",
-        },
-      );
+      fail(cursor, "PLAN_MISSING_FIELD", `after clause on node ${id} needs at least one node id`, {
+        line: header.number,
+        expected: ['after "NN-slug"'],
+        found: "after",
+        recordId: id,
+        hint: "list one or more dependency ids, or omit after",
+      });
     }
     after = ids;
   }
@@ -1022,13 +952,13 @@ function parseNodeHeader(cursor: Cursor, header: Line, keyword: "node" | "node+"
     fail(
       cursor,
       "PLAN_MISSING_FIELD",
-      `${keyword} ${id} needs "verify tsc|test" on its header line; got ${quote(header.text.trim())}`,
+      `node ${id} needs "verify tsc|test" on its header line; got ${quote(header.text.trim())}`,
       {
         line: header.number,
         expected: ["verify tsc|test"],
         found: tokens[index] ?? "<eof>",
         recordId: id,
-        hint: `write ${keyword} "${id}" verify test`,
+        hint: `write node "${id}" verify test`,
       },
     );
   }
@@ -1036,7 +966,7 @@ function parseNodeHeader(cursor: Cursor, header: Line, keyword: "node" | "node+"
   const verifyToken = tokens[index];
   index += 1;
   if (verifyToken === undefined) {
-    fail(cursor, "PLAN_MISSING_FIELD", `${keyword} ${id} needs a verify value after "verify"`, {
+    fail(cursor, "PLAN_MISSING_FIELD", `node ${id} needs a verify value after "verify"`, {
       line: header.number,
       expected: ["tsc", "test"],
       found: "<eof>",
@@ -1061,7 +991,7 @@ function parseNodeHeader(cursor: Cursor, header: Line, keyword: "node" | "node+"
     fail(
       cursor,
       "PLAN_UNKNOWN_FIELD",
-      `unexpected token ${quote(tokens[index] ?? "")} on ${keyword} ${id}'s header`,
+      `unexpected token ${quote(tokens[index] ?? "")} on node ${id}'s header`,
       {
         line: header.number,
         found: tokens[index] ?? "",
@@ -1078,7 +1008,7 @@ function optionalText(value: string | null | undefined): { approach?: string } {
 }
 
 function parseNode(cursor: Cursor, header: Line, ids: Map<NodeId, Line>): WorkNode {
-  const parsed = parseNodeHeader(cursor, header, "node");
+  const parsed = parseNodeHeader(cursor, header);
   claimId(cursor, ids, parsed.id, header, "node");
   const body = parseNodeBody(cursor, parsed.id, {
     allowClear: false,
@@ -1102,53 +1032,55 @@ function parseNode(cursor: Cursor, header: Line, ids: Map<NodeId, Line>): WorkNo
   };
 }
 
-function finishPlan(
-  cursor: Cursor,
-  line: Line,
-  nodes: readonly WorkNode[],
-): { nodes: WorkNode[]; finalNodeId: NodeId | null } {
-  const last = finalNode({ nodes });
-  if (last === undefined) {
-    report(cursor, "PLAN_FINISH_NOT_LAST", "finish must follow at least one work node", {
-      line: line.number,
-      expected: ["one node before finish"],
-      found: "finish",
-      hint: "plan at least one node and mark the final test node",
+/** Parse the `amend "id"` header; fields follow in the body. */
+function parseAmendHeader(cursor: Cursor, header: Line): NodeId {
+  const [keyword, idToken, ...extra] = tokensOf(header);
+  if (keyword !== "amend" || idToken === undefined || extra.length > 0) {
+    fail(
+      cursor,
+      extra.length > 0 ? "PLAN_UNKNOWN_FIELD" : "PLAN_MISSING_FIELD",
+      `amend record on line ${header.number} must be "amend \\"NN-slug\\""; got ${quote(header.text.trim())}`,
+      {
+        line: header.number,
+        expected: ['amend "NN-slug"'],
+        found: extra[0] ?? header.text.trim(),
+        hint: `write amend "03-impl" and put the replacement fields inside the record`,
+      },
+    );
+  }
+  return quotedId(cursor, idToken, `amend id on line ${header.number}`, header);
+}
+
+/** Parse one `amend` record: only the fields present are replaced. */
+function parseAmend(cursor: Cursor, header: Line): NodeAmend {
+  const id = parseAmendHeader(cursor, header);
+  const body = parseNodeBody(cursor, id, {
+    allowClear: true,
+    requireInstruction: false,
+    afterSeen: false,
+    verifySeen: false,
+  });
+  expectEnd(cursor, `amend ${id}`, id);
+  const amend: NodeAmend = {
+    id,
+    ...(body.after === undefined ? {} : { after: body.after }),
+    ...(body.verify === undefined ? {} : { verify: body.verify }),
+    ...(body.instruction === undefined ? {} : { instruction: body.instruction }),
+    ...(body.hints === undefined ? {} : { hints: body.hints }),
+    ...(body.approach === undefined ? {} : { approach: body.approach }),
+    ...(body.phase === undefined ? {} : { phase: body.phase }),
+  };
+  if (Object.keys(amend).length === 1) {
+    const next = peekNonBlank(cursor);
+    fail(cursor, "PLAN_MISSING_FIELD", `amend #${id} needs at least one replacement field`, {
+      line: next?.number ?? header.number,
+      expected: ["instruction:", "verify", "after", "hint", "approach:", "phase:"],
+      found: next?.text.trim() ?? "<eof>",
+      recordId: id,
+      hint: "change instruction, verify, dependencies, hints, approach, or phase",
     });
-    return { nodes: [...nodes], finalNodeId: null };
   }
-  const trailing = peekNonBlank(cursor);
-  if (trailing !== null) {
-    report(
-      cursor,
-      "PLAN_FINISH_NOT_LAST",
-      `finish must be the last line; found ${quote(trailing.text.trim())} after it`,
-      {
-        line: trailing.number,
-        expected: ["end of reply after finish"],
-        found: trailing.text.trim(),
-        recordId: last.id,
-        hint: "put finish on the last line",
-      },
-    );
-    return { nodes: [...nodes], finalNodeId: null };
-  }
-  if (last.verify !== "test") {
-    report(
-      cursor,
-      "PLAN_FINISH_NOT_LAST",
-      `finish marks node ${quote(last.id)}, which verifies ${last.verify}; the last node must verify "test"`,
-      {
-        line: line.number,
-        expected: ["test"],
-        found: last.verify,
-        recordId: last.id,
-        hint: "append a final test node and mark it with finish",
-      },
-    );
-    return { nodes: [...nodes], finalNodeId: null };
-  }
-  return { nodes: [...nodes], finalNodeId: last.id };
+  return amend;
 }
 
 function recoverLegacyRecord(cursor: Cursor): void {
@@ -1158,7 +1090,7 @@ function recoverLegacyRecord(cursor: Cursor): void {
       return;
     }
     const trimmed = line.text.trim();
-    if (trimmed === "finish" || /^(plan|node)\b/.test(trimmed)) {
+    if (isRecordBoundary(trimmed)) {
       return;
     }
     cursor.position += 1;
@@ -1169,12 +1101,27 @@ function legacyRecord(cursor: Cursor, line: Line, keyword: string): void {
   report(
     cursor,
     "PLAN_LEGACY_RECORD",
-    `legacy Stage/Task/Edit record ${quote(keyword)} on line ${line.number} is not supported; the plan DSL uses flat "node" records with after/verify/instruction/hint/approach/phase fields`,
+    `legacy record ${quote(keyword)} on line ${line.number} is not supported; the plan DSL uses flat "node" records and "amend" records`,
     {
       line: line.number,
-      expected: ["node", "finish"],
+      expected: ["node", "amend"],
       found: keyword,
-      hint: "replace stage/task/edit records with one node record, or restart the plan with a node DAG",
+      hint: "append work with node, or revise a pending/failed node with amend",
+    },
+  );
+  recoverLegacyRecord(cursor);
+}
+
+function finishRecord(cursor: Cursor, line: Line): void {
+  report(
+    cursor,
+    "PLAN_LEGACY_RECORD",
+    `finish on line ${line.number} is not part of the plan protocol; the run completes when no node is ready and the last gate is a passing test`,
+    {
+      line: line.number,
+      expected: ["node", "amend"],
+      found: "finish",
+      hint: "remove finish; a final test node is enough",
     },
   );
   recoverLegacyRecord(cursor);
@@ -1186,7 +1133,7 @@ function recoverRecord(cursor: Cursor): void {
     if (line === null) {
       return;
     }
-    if (isRecordBoundary(cursor, line.text.trim())) {
+    if (isRecordBoundary(line.text.trim())) {
       return;
     }
     cursor.position += 1;
@@ -1196,8 +1143,9 @@ function recoverRecord(cursor: Cursor): void {
 function parseRecords(
   cursor: Cursor,
   ids: Map<NodeId, Line>,
-): { planNodes: WorkNode[]; finalNodeId: NodeId | null } {
+): { nodes: WorkNode[]; amends: NodeAmend[] } {
   const nodes: WorkNode[] = [];
+  const amends: NodeAmend[] = [];
 
   for (;;) {
     const line = peekNonBlank(cursor);
@@ -1208,8 +1156,8 @@ function parseRecords(
     const trimmed = line.text.trim();
 
     if (trimmed === "finish") {
-      const finished = finishPlan(cursor, line, nodes);
-      return { planNodes: finished.nodes, finalNodeId: finished.finalNodeId };
+      finishRecord(cursor, line);
+      continue;
     }
     if (trimmed === "end") {
       report(
@@ -1218,7 +1166,7 @@ function parseRecords(
         `unexpected "end" on line ${line.number}; no node record is open`,
         {
           line: line.number,
-          expected: ["node", "finish"],
+          expected: ["node", "amend"],
           found: "end",
           hint: "remove the stray end",
         },
@@ -1229,12 +1177,12 @@ function parseRecords(
       report(
         cursor,
         "PLAN_MISSING_FIELD",
-        'JSON plan objects are not accepted; reply with the flat Plan DSL starting with plan "01-main"',
+        "JSON plan objects are not accepted; reply with the flat plan DSL using node and amend records",
         {
           line: line.number,
-          expected: ['plan "NN-slug"'],
+          expected: ["node", "amend"],
           found: "{",
-          hint: "send the flat Plan DSL, not JSON",
+          hint: "send the flat plan DSL, not JSON",
         },
       );
       recoverRecord(cursor);
@@ -1249,7 +1197,7 @@ function parseRecords(
         `the plan header is a singleton and must be the first line; found one on line ${line.number}`,
         {
           line: line.number,
-          expected: ["node", "finish"],
+          expected: ["node", "amend"],
           found: keyword,
           hint: "keep exactly one plan header at the top",
         },
@@ -1272,6 +1220,18 @@ function parseRecords(
       }
       continue;
     }
+    if (keyword === "amend") {
+      try {
+        amends.push(parseAmend(cursor, line));
+      } catch (error) {
+        if (!(error instanceof PlanSyntaxError)) {
+          throw error;
+        }
+        cursor.issues.push(error.issue);
+        recoverRecord(cursor);
+      }
+      continue;
+    }
     if (isLegacyKeyword(keyword)) {
       legacyRecord(cursor, line, keyword);
       continue;
@@ -1279,17 +1239,17 @@ function parseRecords(
     report(
       cursor,
       "PLAN_UNKNOWN_FIELD",
-      `unknown record header ${quote(keyword)} on line ${line.number}; expected "node" or a trailing "finish"`,
+      `unknown record header ${quote(keyword)} on line ${line.number}; expected "node" or "amend"`,
       {
         line: line.number,
-        expected: ["node", "finish"],
+        expected: ["node", "amend"],
         found: keyword,
-        hint: "use one of the Plan DSL record headers",
+        hint: "use node to append work or amend to revise a pending/failed node",
       },
     );
     recoverRecord(cursor);
   }
-  return { planNodes: nodes, finalNodeId: null };
+  return { nodes, amends };
 }
 
 /**
@@ -1325,7 +1285,7 @@ function stripWholeReplyFence(content: string): { text: string; stripped: boolea
     return { text: lines.join("\n"), stripped: false, line: first + 1 };
   }
   const inner = innerFirst.trim();
-  if (!/^(plan|patch|select|create|delete|read|write)\b/.test(inner)) {
+  if (!/^(plan|patch|node|amend|finish|select|create|delete|read|write)\b/.test(inner)) {
     return { text: lines.join("\n"), stripped: false, line: first + 1 };
   }
   lines[first] = "";
@@ -1333,51 +1293,58 @@ function stripWholeReplyFence(content: string): { text: string; stripped: boolea
   return { text: lines.join("\n"), stripped: true, line: first + 1 };
 }
 
-function parsePlanHeader(cursor: Cursor): { id: NodeId; goal: string; line: Line } {
-  const line = takeNonBlank(cursor, 'the plan header "plan \\"NN-slug\\""', "PLAN_MISSING_FIELD");
-  if (line.text.trim().startsWith("{")) {
+/**
+ * Parse the optional `plan` header and its `goal:` label. A legacy quoted plan
+ * id after `plan` is accepted and ignored: the run has no plan-root id. The
+ * goal is required only on the initial reply, which the apply layer enforces.
+ */
+function parsePlanHeader(cursor: Cursor): { goal: string | null; line: Line | null } {
+  const line = peekNonBlank(cursor);
+  if (line === null) {
+    return { goal: null, line: null };
+  }
+  const trimmed = line.text.trim();
+  if (trimmed.startsWith("{")) {
     fail(
       cursor,
       "PLAN_MISSING_FIELD",
-      'JSON plan objects are not accepted; reply with the flat Plan DSL starting with plan "01-main"',
+      "JSON plan objects are not accepted; reply with the flat plan DSL using node records",
       {
         line: line.number,
-        expected: ['plan "NN-slug"'],
+        expected: ["plan", "node"],
         found: "{",
-        hint: "send the flat Plan DSL, not JSON",
+        hint: "send the flat plan DSL, not JSON",
       },
     );
   }
-  const [keyword, idToken, ...extra] = tokensOf(line);
-  if (keyword !== "plan" && keyword !== undefined && isLegacyKeyword(keyword)) {
+  const tokens = tokensOf(line);
+  if (tokens[0] !== "plan") {
+    return { goal: null, line: null };
+  }
+  cursor.position += 1;
+  if (tokens.length > 2) {
     fail(
       cursor,
-      "PLAN_LEGACY_RECORD",
-      `legacy Stage/Task/Edit record ${quote(keyword)} is not supported; start with plan "01-main" and flat node records`,
+      "PLAN_UNKNOWN_FIELD",
+      `unexpected token ${quote(tokens[2] ?? "")} on the plan header line ${line.number}`,
       {
         line: line.number,
-        expected: ['plan "NN-slug"'],
-        found: keyword,
-        hint: "replace the old hierarchy with a node DAG",
+        expected: ["plan", 'plan "NN-slug"'],
+        found: tokens[2] ?? "",
+        hint: "put the goal on its own goal: line",
       },
     );
   }
-  if (keyword !== "plan" || idToken === undefined || extra.length > 0) {
-    fail(
-      cursor,
-      extra.length > 0 ? "PLAN_UNKNOWN_FIELD" : "PLAN_MISSING_FIELD",
-      `expected the plan header "plan \\"NN-slug\\"" on line ${line.number}; got ${quote(line.text.trim())}`,
-      {
-        line: line.number,
-        expected: ['plan "NN-slug"'],
-        found: extra[0] ?? line.text.trim(),
-        hint: 'start the reply with plan "01-main"',
-      },
-    );
+  if (tokens[1] !== undefined) {
+    // Legacy plan-root id: tolerated and ignored so older replies still parse.
+    quotedId(cursor, tokens[1], "plan.id", line, "plan");
   }
-  const id = quotedId(cursor, idToken, "plan.id", line, idToken);
-  const goal = readText(cursor, "goal:", `plan ${id}`, id);
-  return { id, goal, line };
+  const goalLine = peekNonBlank(cursor);
+  if (goalLine !== null && goalLine.text.trim().startsWith("goal:")) {
+    const goal = readText(cursor, "goal:", "plan", "plan");
+    return { goal, line };
+  }
+  return { goal: null, line };
 }
 
 function codeForProblem(message: string): string {
@@ -1398,22 +1365,13 @@ function codeForProblem(message: string): string {
 
 function reportGraphProblems(
   cursor: Cursor,
-  plan: Plan,
-  finalNodeId: NodeId | null,
+  problems: string | null,
   idLines: Map<NodeId, Line>,
 ): void {
-  const problems = validatePlan(plan);
-  const lines: string[] = [];
-  if (problems !== null) {
-    lines.push(...problems.split("\n").filter((line) => line.startsWith("- ")));
+  if (problems === null) {
+    return;
   }
-  if (finalNodeId !== null) {
-    const finalProblem = validateFinalNode(plan, finalNodeId);
-    if (finalProblem !== null) {
-      lines.push(`- ${finalProblem}`);
-    }
-  }
-  for (const problemLine of lines) {
+  for (const problemLine of problems.split("\n").filter((line) => line.startsWith("- "))) {
     const message = problemLine.slice(2);
     const idMatch = /#([0-9]{2,}-[a-z0-9]+(?:-[a-z0-9]+)*)/.exec(message);
     const recordId = idMatch?.[1];
@@ -1432,59 +1390,64 @@ function reportGraphProblems(
   }
 }
 
-function parsePlanDslDetailedUnchecked(content: string): DslParseResult<ParsedPlan> {
+export interface ParseOptions {
+  /**
+   * Validate this reply as a complete initial graph. Incremental replies are
+   * validated after they merge into the run state, because their `after` edges
+   * may name existing nodes that are not in the reply.
+   */
+  initial?: boolean;
+}
+
+function parsePlanDslDetailedUnchecked(
+  content: string,
+  options: ParseOptions,
+): DslParseResult<PlanReply> {
   const stripped = stripWholeReplyFence(content);
-  const cursor = cursorOf(stripped.text, "plan");
+  const cursor = cursorOf(stripped.text);
   if (stripped.stripped) {
     warn(
       cursor,
       "PLAN_WHOLE_REPLY_FENCE",
-      "the reply is wrapped in a markdown fence; stripped the fence and parsed the bare Plan DSL",
+      "the reply is wrapped in a markdown fence; stripped the fence and parsed the bare plan DSL",
       {
         line: stripped.line,
-        expected: ["bare Plan DSL"],
+        expected: ["bare plan DSL"],
         found: "```",
-        hint: "send the bare Plan DSL without a surrounding fence",
+        hint: "send the bare plan DSL without a surrounding fence",
       },
     );
   }
   if (stripped.text.trim() === "") {
-    report(
-      cursor,
-      "PLAN_MISSING_FIELD",
-      'the reply is empty; expected the Plan DSL starting with plan "NN-slug"',
-      {
-        line: 1,
-        expected: ['plan "NN-slug"'],
-        found: "<eof>",
-        hint: 'start the reply with plan "01-main"',
-      },
-    );
+    report(cursor, "PLAN_MISSING_FIELD", "the reply is empty; expected node or amend records", {
+      line: 1,
+      expected: ["node", "amend"],
+      found: "<eof>",
+      hint: "start the reply with node or amend",
+    });
     return { ok: false, issues: cursor.issues, truncated: false };
   }
   if (stripped.text.trimStart().startsWith("```")) {
     report(
       cursor,
       "PLAN_UNCLOSED_FENCE",
-      "the reply starts with a markdown fence that does not wrap the whole reply; send the bare Plan DSL without a surrounding fence",
+      "the reply starts with a markdown fence that does not wrap the whole reply; send the bare plan DSL without a surrounding fence",
       {
         line: 1,
-        expected: ["bare Plan DSL"],
+        expected: ["bare plan DSL"],
         found: "```",
         hint: "remove the markdown fence",
       },
     );
     return { ok: false, issues: cursor.issues, truncated: false };
   }
-  let plan: Plan;
-  let finalNodeId: NodeId | null = null;
+
   const idLines = new Map<NodeId, Line>();
+  let header: { goal: string | null; line: Line | null };
+  let records: { nodes: WorkNode[]; amends: NodeAmend[] };
   try {
-    const header = parsePlanHeader(cursor);
-    idLines.set(header.id, header.line);
-    const records = parseRecords(cursor, idLines);
-    plan = { id: header.id, goal: header.goal, nodes: records.planNodes };
-    finalNodeId = records.finalNodeId;
+    header = parsePlanHeader(cursor);
+    records = parseRecords(cursor, idLines);
   } catch (error) {
     if (!(error instanceof PlanSyntaxError)) {
       throw error;
@@ -1493,24 +1456,69 @@ function parsePlanDslDetailedUnchecked(content: string): DslParseResult<ParsedPl
     return { ok: false, issues: cursor.issues, truncated: cursor.truncated };
   }
 
-  reportGraphProblems(cursor, plan, finalNodeId, idLines);
+  const initial = options.initial ?? true;
+  const goal = header.goal;
+  if (records.nodes.length === 0 && records.amends.length === 0) {
+    report(cursor, "PLAN_MISSING_FIELD", "the reply contains no node or amend record", {
+      line: header.line?.number ?? 1,
+      expected: ["node", "amend"],
+      found: "<eof>",
+      hint: "append at least one node or amend a pending/failed node",
+    });
+  }
+  if (initial && goal === null) {
+    report(cursor, "PLAN_MISSING_FIELD", "the initial plan needs a non-empty goal: field", {
+      line: header.line?.number ?? 1,
+      expected: ["goal:"],
+      found: "<missing>",
+      hint: "add goal: <one-line goal> under the plan header",
+    });
+  }
+  if (initial && records.amends.length > 0) {
+    report(
+      cursor,
+      "PLAN_UNKNOWN_FIELD",
+      "the initial plan may not amend nodes; amend is for later turns",
+      {
+        line: header.line?.number ?? 1,
+        expected: ["node"],
+        found: "amend",
+        hint: "declare every initial node with a node record",
+      },
+    );
+  }
+
+  if (initial) {
+    const problems =
+      goal === null ? validateNodes(records.nodes) : validatePlan(goal, records.nodes);
+    reportGraphProblems(cursor, problems, idLines);
+  }
+
+  const reply: PlanReply = {
+    ...(goal === null ? {} : { goal }),
+    nodes: records.nodes,
+    amends: records.amends,
+  };
   const hasErrors = cursor.issues.some((issue) => issue.severity === "error");
   return {
     ok: !hasErrors,
-    value: { plan, finalNodeId },
+    value: reply,
     issues: cursor.issues,
     truncated: cursor.truncated,
   };
 }
 
-/** The detailed initial-Plan parse; `value` is best-effort when `ok` is false. */
-export function parsePlanDslDetailed(content: string): DslParseResult<ParsedPlan> {
-  return parsePlanDslDetailedUnchecked(content);
+/** The detailed plan parse; `value` is best-effort when `ok` is false. */
+export function parsePlanDslDetailed(
+  content: string,
+  options: ParseOptions = {},
+): DslParseResult<PlanReply> {
+  return parsePlanDslDetailedUnchecked(content, options);
 }
 
-/** Parse one tolerant Plan DSL reply, rejecting on any error but returning warnings. */
-export function parsePlanDsl(content: string): PlanParse {
-  const result = parsePlanDslDetailed(content);
+/** Parse one tolerant plan reply, rejecting on any error but returning warnings. */
+export function parsePlanDsl(content: string, options: ParseOptions = {}): PlanParse {
+  const result = parsePlanDslDetailed(content, options);
   const errors = result.issues.filter((issue) => issue.severity === "error");
   if (!result.ok || errors.length > 0) {
     return {
@@ -1525,403 +1533,16 @@ export function parsePlanDsl(content: string): PlanParse {
       ok: false,
       stage: "plan-protocol",
       diagnostics:
-        "stage: plan-protocol\ncode: PLAN_MISSING_FIELD\nmessage: the reply produced no Plan",
+        "stage: plan-protocol\ncode: PLAN_MISSING_FIELD\nmessage: the reply produced no plan",
     };
   }
-  return { ok: true, plan: value.plan, finalNodeId: value.finalNodeId };
+  return { ok: true, reply: value };
 }
 
 /** The initial-plan parser name used by the driver; the DSL is the only form. */
 export const parsePlan = parsePlanDsl;
-/** The full-graph Plan parser, kept for tests; the driver plans patches after the initial turn. */
+/** The plan parser, kept for tests; the driver reuses the same entry point. */
 export const readPlan = parsePlanDsl;
-
-// ---------------------------------------------------------------------------
-// Patch DSL (`docs/plan-exec.md` §4)
-
-/** One strict patch operation; `+` appends, `~` replaces present fields, `-` removes. */
-export type PlanPatchOp =
-  | {
-      kind: "node-add";
-      id: NodeId;
-      after: NodeId[];
-      verify: WorkVerify;
-      instruction: string;
-      hints: HintLoc[];
-      approach?: string;
-      phase?: string;
-    }
-  | {
-      kind: "node-update";
-      id: NodeId;
-      /** Present replaces the dependency list; an empty list clears it. */
-      after?: NodeId[];
-      verify?: WorkVerify;
-      instruction?: string;
-      /** Present replaces the whole hint list; an empty list clears it. */
-      hints?: HintLoc[];
-      /** Present replaces; `null` clears the optional field. */
-      approach?: string | null;
-      phase?: string | null;
-    }
-  | { kind: "node-remove"; id: NodeId };
-
-/** One parsed patch reply; ops are applied in wire order. */
-export interface PlanPatch {
-  ops: PlanPatchOp[];
-  /** True when the reply ended with `finish`. */
-  finish: boolean;
-}
-
-/** A patch rejection; parse failures are `plan-protocol`, apply/merge failures are `plan-graph`. */
-export type PatchParse =
-  | { ok: true; patch: PlanPatch }
-  | { ok: false; stage: "plan-protocol" | "plan-graph"; diagnostics: string };
-
-interface UpdateHeader {
-  id: NodeId;
-  /** `node~` accepts an inline `verify tsc|test`; the strict body form still works. */
-  verify?: WorkVerify;
-}
-
-function parseUpdateHeader(cursor: Cursor, header: Line, keyword: "node~" | "node-"): UpdateHeader {
-  const [actual, idToken, ...rest] = tokensOf(header);
-  let extra = rest;
-  let verify: WorkVerify | undefined;
-  if (keyword === "node~" && extra[0] === "verify") {
-    const value = extra[1];
-    if (value !== undefined && VERIFY_SET.has(value) && extra.length === 2) {
-      verify = value as WorkVerify;
-      extra = [];
-    }
-  }
-  if (actual !== keyword || extra.length > 0 || idToken === undefined) {
-    fail(
-      cursor,
-      extra.length > 0 ? "PLAN_UNKNOWN_FIELD" : "PLAN_MISSING_FIELD",
-      `${keyword} record on line ${header.number} must be "${keyword} \\"NN-slug\\""; got ${quote(header.text.trim())}`,
-      {
-        line: header.number,
-        expected: [`${keyword} "NN-slug"`],
-        found: extra[0] ?? header.text.trim(),
-        hint: `write ${keyword} ${idToken ?? `"03-impl"`}`,
-      },
-    );
-  }
-  return {
-    id: quotedId(cursor, idToken, `${keyword} id on line ${header.number}`, header, idToken),
-    ...(verify === undefined ? {} : { verify }),
-  };
-}
-
-function parseNodeAdd(cursor: Cursor, header: Line, ids: Map<NodeId, Line>): PlanPatchOp {
-  const parsed = parseNodeHeader(cursor, header, "node+");
-  claimId(cursor, ids, parsed.id, header, "node+");
-  const body = parseNodeBody(cursor, parsed.id, {
-    allowClear: false,
-    requireInstruction: true,
-    afterSeen: parsed.after !== undefined,
-    verifySeen: true,
-  });
-  expectEnd(cursor, `node ${parsed.id}`, parsed.id);
-  const instruction = body.instruction;
-  if (instruction === undefined) {
-    throw new Error(`node+ ${parsed.id} passed validation without an instruction`);
-  }
-  return {
-    kind: "node-add",
-    id: parsed.id,
-    after: parsed.after ?? body.after ?? [],
-    verify: parsed.verify,
-    instruction,
-    hints: body.hints ?? [],
-    ...optionalText(body.approach),
-    ...(body.phase === undefined || body.phase === null ? {} : { phase: body.phase }),
-  };
-}
-
-function parseNodeUpdate(cursor: Cursor, header: Line): PlanPatchOp {
-  const parsed = parseUpdateHeader(cursor, header, "node~");
-  const id = parsed.id;
-  const body = parseNodeBody(cursor, id, {
-    allowClear: true,
-    requireInstruction: false,
-    afterSeen: false,
-    verifySeen: parsed.verify !== undefined,
-  });
-  expectEnd(cursor, `node ${id}`, id);
-  const verify = parsed.verify ?? body.verify;
-  return {
-    kind: "node-update",
-    id,
-    ...(body.after === undefined ? {} : { after: body.after }),
-    ...(verify === undefined ? {} : { verify }),
-    ...(body.instruction === undefined ? {} : { instruction: body.instruction }),
-    ...(body.hints === undefined ? {} : { hints: body.hints }),
-    ...(body.approach === undefined ? {} : { approach: body.approach }),
-    ...(body.phase === undefined ? {} : { phase: body.phase }),
-  };
-}
-
-function parseNodeRemove(cursor: Cursor, header: Line): PlanPatchOp {
-  const id = parseUpdateHeader(cursor, header, "node-").id;
-  expectEnd(cursor, `node ${id}`, id);
-  return { kind: "node-remove", id };
-}
-
-function parsePatchOps(cursor: Cursor): { ops: PlanPatchOp[]; finish: boolean } {
-  const ops: PlanPatchOp[] = [];
-  let finish = false;
-  const ids = new Map<NodeId, Line>();
-
-  for (;;) {
-    const line = peekNonBlank(cursor);
-    if (line === null) {
-      break;
-    }
-    cursor.position += 1;
-    const trimmed = line.text.trim();
-
-    if (trimmed === "finish") {
-      finish = true;
-      const trailing = peekNonBlank(cursor);
-      if (trailing !== null) {
-        report(
-          cursor,
-          "PLAN_FINISH_NOT_LAST",
-          `finish must be the last line; found ${quote(trailing.text.trim())} after it`,
-          {
-            line: trailing.number,
-            expected: ["end of reply after finish"],
-            found: trailing.text.trim(),
-            hint: "put finish on the last line",
-          },
-        );
-      }
-      break;
-    }
-    if (trimmed === "end") {
-      report(
-        cursor,
-        "PLAN_UNKNOWN_FIELD",
-        `unexpected "end" on line ${line.number}; no patch record is open`,
-        {
-          line: line.number,
-          expected: ["node+", "node~", "node-", "finish"],
-          found: "end",
-          hint: "remove the stray end",
-        },
-      );
-      continue;
-    }
-    if (trimmed.startsWith("{")) {
-      report(
-        cursor,
-        "PLAN_MISSING_FIELD",
-        'JSON patch objects are not accepted; reply with the patch DSL starting with "patch"',
-        {
-          line: line.number,
-          expected: ["patch"],
-          found: "{",
-          hint: "send the patch DSL, not JSON",
-        },
-      );
-      recoverRecord(cursor);
-      continue;
-    }
-
-    const keyword = trimmed.split(/\s+/)[0] ?? "";
-    if (keyword === "patch") {
-      report(
-        cursor,
-        "PLAN_UNKNOWN_FIELD",
-        `the patch header is a singleton and must be the first line; found one on line ${line.number}`,
-        {
-          line: line.number,
-          expected: ["node+", "node~", "node-", "finish"],
-          found: keyword,
-          hint: "keep exactly one patch header at the top",
-        },
-      );
-      recoverRecord(cursor);
-      continue;
-    }
-    if (isLegacyKeyword(keyword)) {
-      legacyRecord(cursor, line, keyword);
-      continue;
-    }
-    try {
-      switch (keyword) {
-        case "node+":
-          ops.push(parseNodeAdd(cursor, line, ids));
-          continue;
-        case "node~":
-          ops.push(parseNodeUpdate(cursor, line));
-          continue;
-        case "node-":
-          ops.push(parseNodeRemove(cursor, line));
-          continue;
-        default:
-          report(
-            cursor,
-            "PLAN_UNKNOWN_FIELD",
-            `unknown patch record ${quote(keyword)} on line ${line.number}; expected node+|~|-, or a trailing finish`,
-            {
-              line: line.number,
-              expected: ["node+", "node~", "node-", "finish"],
-              found: keyword,
-              hint: "use one of the patch record operators",
-            },
-          );
-          recoverRecord(cursor);
-      }
-    } catch (error) {
-      if (!(error instanceof PlanSyntaxError)) {
-        throw error;
-      }
-      cursor.issues.push(error.issue);
-      recoverRecord(cursor);
-    }
-  }
-  return { ops, finish };
-}
-
-function parsePatchHeader(cursor: Cursor): void {
-  const line = takeNonBlank(cursor, 'the patch header "patch"', "PLAN_MISSING_FIELD");
-  const trimmed = line.text.trim();
-  if (trimmed.startsWith("{")) {
-    fail(
-      cursor,
-      "PLAN_MISSING_FIELD",
-      'JSON patch objects are not accepted; reply with the patch DSL starting with "patch"',
-      {
-        line: line.number,
-        expected: ["patch"],
-        found: "{",
-        hint: "send the patch DSL, not JSON",
-      },
-    );
-  }
-  if (trimmed !== "patch") {
-    const keyword = trimmed.split(/\s+/)[0] ?? "";
-    if (isLegacyKeyword(keyword)) {
-      fail(
-        cursor,
-        "PLAN_LEGACY_RECORD",
-        `legacy Stage/Task/Edit patch record ${quote(keyword)} is not supported; the patch DSL uses node+, node~, and node-`,
-        {
-          line: line.number,
-          expected: ["patch"],
-          found: keyword,
-          hint: "start with patch and replace the old records with node operators",
-        },
-      );
-    }
-    fail(
-      cursor,
-      "PLAN_MISSING_FIELD",
-      `expected the patch header "patch" on line ${line.number}; got ${quote(trimmed)}`,
-      {
-        line: line.number,
-        expected: ["patch"],
-        found: trimmed,
-        hint: 'start the reply with "patch"',
-      },
-    );
-  }
-}
-
-function parsePlanPatchDetailedUnchecked(content: string): DslParseResult<PlanPatch> {
-  const stripped = stripWholeReplyFence(content);
-  const cursor = cursorOf(stripped.text, "patch");
-  if (stripped.stripped) {
-    warn(
-      cursor,
-      "PLAN_WHOLE_REPLY_FENCE",
-      "the reply is wrapped in a markdown fence; stripped the fence and parsed the bare patch DSL",
-      {
-        line: stripped.line,
-        expected: ["bare patch DSL"],
-        found: "```",
-        hint: "send the bare patch DSL without a surrounding fence",
-      },
-    );
-  }
-  if (stripped.text.trim() === "") {
-    report(
-      cursor,
-      "PLAN_MISSING_FIELD",
-      'the reply is empty; expected the patch DSL starting with "patch"',
-      {
-        line: 1,
-        expected: ["patch"],
-        found: "<eof>",
-        hint: 'start the reply with "patch"',
-      },
-    );
-    return { ok: false, issues: cursor.issues, truncated: false };
-  }
-  if (stripped.text.trimStart().startsWith("```")) {
-    report(
-      cursor,
-      "PLAN_UNCLOSED_FENCE",
-      "the reply starts with a markdown fence that does not wrap the whole reply; send the bare patch DSL without a surrounding fence",
-      {
-        line: 1,
-        expected: ["bare patch DSL"],
-        found: "```",
-        hint: "remove the markdown fence",
-      },
-    );
-    return { ok: false, issues: cursor.issues, truncated: false };
-  }
-  try {
-    parsePatchHeader(cursor);
-  } catch (error) {
-    if (!(error instanceof PlanSyntaxError)) {
-      throw error;
-    }
-    cursor.issues.push(error.issue);
-    return { ok: false, issues: cursor.issues, truncated: cursor.truncated };
-  }
-  const { ops, finish } = parsePatchOps(cursor);
-  const patch: PlanPatch = { ops, finish };
-  const ok = !cursor.issues.some((issue) => issue.severity === "error");
-  return {
-    ok,
-    value: patch,
-    issues: cursor.issues,
-    truncated: cursor.truncated,
-  };
-}
-
-/** The detailed Plan-patch parse; `value` is best-effort when `ok` is false. */
-export function parsePlanPatchDetailed(content: string): DslParseResult<PlanPatch> {
-  return parsePlanPatchDetailedUnchecked(content);
-}
-
-/** Parse one tolerant Plan patch reply, rejecting on any error but returning warnings. */
-export function parsePlanPatch(content: string): PatchParse {
-  const result = parsePlanPatchDetailed(content);
-  const errors = result.issues.filter((issue) => issue.severity === "error");
-  if (!result.ok || errors.length > 0) {
-    return {
-      ok: false,
-      stage: errors.some((issue) => isPlanGraphStage(issue.stage)) ? "plan-graph" : "plan-protocol",
-      diagnostics: renderDslIssues([...result.issues]),
-    };
-  }
-  const value = result.value;
-  if (value === undefined) {
-    return {
-      ok: false,
-      stage: "plan-protocol",
-      diagnostics:
-        "stage: plan-protocol\ncode: PLAN_MISSING_FIELD\nmessage: the reply produced no patch",
-    };
-  }
-  return { ok: true, patch: value };
-}
 
 // ---------------------------------------------------------------------------
 // Serialization
@@ -1952,24 +1573,63 @@ function pushHints(lines: string[], hints: readonly HintLoc[]): void {
   }
 }
 
-function nodeHeaderWire(
-  id: NodeId,
-  after: readonly NodeId[],
-  verify: WorkVerify,
-  keyword: "node" | "node+" = "node",
-): string {
+function nodeHeaderWire(id: NodeId, after: readonly NodeId[], verify: WorkVerify): string {
   const edges = after.length === 0 ? "" : ` after ${after.map(quote).join(" ")}`;
-  return `${keyword} ${quote(id)}${edges} verify ${verify}`;
+  return `node ${quote(id)}${edges} verify ${verify}`;
+}
+
+/** The wire form of a reply; `goal` is present on the initial reply. */
+export interface PlanWire {
+  goal?: string;
+  nodes: readonly WorkNode[];
+  amends?: readonly NodeAmend[];
+}
+
+function pushAmend(lines: string[], amend: NodeAmend): void {
+  lines.push(`amend ${quote(amend.id)}`);
+  if (amend.after !== undefined) {
+    lines.push(amend.after.length === 0 ? "after" : `after ${amend.after.map(quote).join(" ")}`);
+  }
+  if (amend.verify !== undefined) {
+    lines.push(`verify ${amend.verify}`);
+  }
+  if (amend.instruction !== undefined) {
+    pushText(lines, "instruction:", amend.instruction);
+  }
+  if (amend.hints !== undefined) {
+    if (amend.hints.length === 0) {
+      lines.push("hint clear");
+    } else {
+      pushHints(lines, amend.hints);
+    }
+  }
+  if (amend.approach !== undefined) {
+    if (amend.approach === null) {
+      lines.push("approach clear");
+    } else {
+      pushText(lines, "approach:", amend.approach);
+    }
+  }
+  if (amend.phase !== undefined) {
+    if (amend.phase === null) {
+      lines.push("phase clear");
+    } else {
+      pushText(lines, "phase:", amend.phase);
+    }
+  }
+  lines.push("end");
 }
 
 /**
- * Serialize a Plan into the flat DSL. Text is emitted on the label line when
- * that round-trips exactly, otherwise in the sentinel fence. The serializer does
- * not emit `finish`; the run-state marker is separate from the plan graph.
+ * Serialize a reply into the flat DSL. Text is emitted on the label line when
+ * that round-trips exactly, otherwise in the sentinel fence. There is no
+ * `finish`: completion is derived from the scheduler and the last gate.
  */
-export function serializePlanDsl(plan: Plan): string {
-  const lines: string[] = [`plan ${quote(plan.id)}`];
-  pushText(lines, "goal:", plan.goal);
+export function serializePlanDsl(plan: PlanWire): string {
+  const lines: string[] = ["plan"];
+  if (plan.goal !== undefined) {
+    pushText(lines, "goal:", plan.goal);
+  }
   for (const node of plan.nodes) {
     lines.push("", nodeHeaderWire(node.id, node.after, node.verify));
     pushText(lines, "instruction:", node.instruction);
@@ -1982,206 +1642,9 @@ export function serializePlanDsl(plan: Plan): string {
     }
     lines.push("end");
   }
-  return lines.join("\n");
-}
-
-/** Serialize a patch in the strict wire form (`docs/plan-exec.md` §4). */
-export function serializePlanPatch(patch: PlanPatch): string {
-  const lines: string[] = ["patch"];
-  for (const op of patch.ops) {
-    switch (op.kind) {
-      case "node-add":
-        lines.push(nodeHeaderWire(op.id, op.after, op.verify, "node+"));
-        pushText(lines, "instruction:", op.instruction);
-        pushHints(lines, op.hints);
-        if (op.approach !== undefined) {
-          pushText(lines, "approach:", op.approach);
-        }
-        if (op.phase !== undefined) {
-          pushText(lines, "phase:", op.phase);
-        }
-        lines.push("end");
-        break;
-      case "node-update":
-        lines.push(`node~ ${quote(op.id)}`);
-        if (op.after !== undefined) {
-          lines.push(op.after.length === 0 ? "after" : `after ${op.after.map(quote).join(" ")}`);
-        }
-        if (op.verify !== undefined) {
-          lines.push(`verify ${op.verify}`);
-        }
-        if (op.instruction !== undefined) {
-          pushText(lines, "instruction:", op.instruction);
-        }
-        if (op.hints !== undefined) {
-          if (op.hints.length === 0) {
-            lines.push("hint clear");
-          } else {
-            pushHints(lines, op.hints);
-          }
-        }
-        if (op.approach !== undefined) {
-          if (op.approach === null) {
-            lines.push("approach clear");
-          } else {
-            pushText(lines, "approach:", op.approach);
-          }
-        }
-        if (op.phase !== undefined) {
-          if (op.phase === null) {
-            lines.push("phase clear");
-          } else {
-            pushText(lines, "phase:", op.phase);
-          }
-        }
-        lines.push("end");
-        break;
-      case "node-remove":
-        lines.push(`node- ${quote(op.id)}`);
-        lines.push("end");
-        break;
-    }
-  }
-  if (patch.finish) {
-    lines.push("finish");
+  for (const amend of plan.amends ?? []) {
+    lines.push("");
+    pushAmend(lines, amend);
   }
   return lines.join("\n");
-}
-
-// ---------------------------------------------------------------------------
-// Patch application
-
-function clonePlan(plan: Plan): Plan {
-  return {
-    id: plan.id,
-    goal: plan.goal,
-    nodes: plan.nodes.map((node) => ({
-      id: node.id,
-      after: [...node.after],
-      verify: node.verify,
-      instruction: node.instruction,
-      hints: node.hints.map((hint) => ({ ...hint })),
-      ...(node.approach === undefined ? {} : { approach: node.approach }),
-      ...(node.phase === undefined ? {} : { phase: node.phase }),
-    })),
-  };
-}
-
-function findNodeIndex(plan: Plan, id: NodeId): number {
-  return plan.nodes.findIndex((node) => node.id === id);
-}
-
-function patchTreeFailure(message: string): PlanMerge {
-  const code = /does not exist|not in the plan/.test(message)
-    ? "PLAN_UNKNOWN_PARENT"
-    : /reuses node id/.test(message)
-      ? "PLAN_DUPLICATE_ID"
-      : /cycle/.test(message)
-        ? "PLAN_CYCLE"
-        : /final node|finish/.test(message)
-          ? "PLAN_FINISH_NOT_LAST"
-          : "PLAN_STRUCTURE";
-  return { ok: false, diagnostics: `stage: plan-graph\ncode: ${code}\n- ${message}` };
-}
-
-function applyPatchOp(plan: Plan, op: PlanPatchOp): { ok: false; problem: string } | { ok: true } {
-  switch (op.kind) {
-    case "node-add": {
-      if (findNodeIndex(plan, op.id) !== -1) {
-        return {
-          ok: false,
-          problem: `node+ #${op.id} reuses node id "${op.id}"; ids must be globally unique`,
-        };
-      }
-      plan.nodes.push({
-        id: op.id,
-        after: [...op.after],
-        verify: op.verify,
-        instruction: op.instruction,
-        hints: op.hints.map((hint) => ({ ...hint })),
-        ...(op.approach === undefined ? {} : { approach: op.approach }),
-        ...(op.phase === undefined ? {} : { phase: op.phase }),
-      });
-      return { ok: true };
-    }
-    case "node-update": {
-      const index = findNodeIndex(plan, op.id);
-      const node = plan.nodes[index];
-      if (node === undefined) {
-        return { ok: false, problem: `node~ names node #${op.id}, which does not exist` };
-      }
-      const approach =
-        op.approach === undefined ? node.approach : op.approach === null ? undefined : op.approach;
-      const phase = op.phase === undefined ? node.phase : op.phase === null ? undefined : op.phase;
-      plan.nodes[index] = {
-        id: node.id,
-        after: op.after === undefined ? node.after : [...op.after],
-        verify: op.verify ?? node.verify,
-        instruction: op.instruction ?? node.instruction,
-        hints: op.hints === undefined ? node.hints : op.hints.map((hint) => ({ ...hint })),
-        ...(approach === undefined ? {} : { approach }),
-        ...(phase === undefined ? {} : { phase }),
-      };
-      return { ok: true };
-    }
-    case "node-remove": {
-      const index = findNodeIndex(plan, op.id);
-      if (index === -1) {
-        return { ok: false, problem: `node- names node #${op.id}, which does not exist` };
-      }
-      plan.nodes.splice(index, 1);
-      return { ok: true };
-    }
-  }
-}
-
-/**
- * Apply a parsed patch to a clone of the current graph, then run the same merge
- * validation as a full re-plan. The clone is local, so a rejected op or merge
- * leaves `previous` untouched.
- *
- * `finish` moves `finalNodeId` to the new last node; without `finish` the
- * previous final node must remain last (an in-place repair). Appending work
- * after it therefore needs a new `finish` on the new final test node.
- */
-export function applyPlanPatch(previous: PlanRunState, patch: PlanPatch): PlanMerge {
-  const nextPlan = clonePlan(previous.plan);
-  for (const op of patch.ops) {
-    const applied = applyPatchOp(nextPlan, op);
-    if (!applied.ok) {
-      return patchTreeFailure(applied.problem);
-    }
-  }
-
-  const merged = mergeReplan(previous, nextPlan);
-  if (!merged.ok) {
-    return merged;
-  }
-
-  const last = finalNode(nextPlan);
-  let finalNodeId: NodeId | null;
-  if (patch.finish) {
-    if (last === undefined) {
-      return patchTreeFailure("finish needs at least one work node in the merged graph");
-    }
-    if (last.verify !== "test") {
-      return patchTreeFailure(
-        `finish marks node #${last.id}, but it verifies "${last.verify}"; the final node must verify "test"`,
-      );
-    }
-    finalNodeId = last.id;
-  } else if (previous.finalNodeId !== null) {
-    if (last === undefined || last.id !== previous.finalNodeId) {
-      const now =
-        last === undefined ? "the merged graph has no nodes" : `the new last node is #${last.id}`;
-      return patchTreeFailure(
-        `the final node #${previous.finalNodeId} is no longer last (${now}); append a final "test" node and emit finish so finalNodeId moves`,
-      );
-    }
-    finalNodeId = previous.finalNodeId;
-  } else {
-    finalNodeId = null;
-  }
-
-  return { ok: true, state: { ...merged.state, finalNodeId } };
 }

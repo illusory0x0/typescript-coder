@@ -1,11 +1,11 @@
 import { describe, expect, test } from "bun:test";
 import {
   buildTaskExecutionSystemPrompt,
-  buildTaskPatchRetryPrompt,
   buildTaskPlanRetryPrompt,
   buildTaskPlanningSystemPrompt,
   buildTaskPlanningUserPrompt,
   buildTaskReplanPrompt,
+  buildTaskReplanRetryPrompt,
   buildTaskReviewPrompt,
   buildTaskReviewRetryPrompt,
   buildTaskTurnPrompt,
@@ -18,7 +18,7 @@ import {
   TASK_PLANNER_VIEW,
 } from "./task";
 import { initialState } from "../tasks";
-import type { Plan, WorkNode } from "../tasks";
+import type { PlanReply, WorkNode } from "../tasks";
 
 function node(id: string, overrides: Partial<Omit<WorkNode, "id">> = {}): WorkNode {
   return {
@@ -31,12 +31,12 @@ function node(id: string, overrides: Partial<Omit<WorkNode, "id">> = {}): WorkNo
   };
 }
 
-function plan(nodes: WorkNode[]): Plan {
-  return { id: "01-main", goal: "Make the failing test pass.", nodes };
+function plan(nodes: WorkNode[]): PlanReply {
+  return { goal: "Make the failing test pass.", nodes, amends: [] };
 }
 
 describe("planning prompts", () => {
-  test("the planning system prompt is WorkNode-based", () => {
+  test("the planning system prompt teaches append and amend records", () => {
     const prompt = buildTaskPlanningSystemPrompt();
     expect(prompt).toContain("work-graph planner");
     expect(prompt).toContain('node "02-answer" verify test');
@@ -44,14 +44,13 @@ describe("planning prompts", () => {
     expect(prompt).toContain("hint file src/workbook.ts");
     expect(prompt).toContain("approach:");
     expect(prompt).toContain("phase:");
-    expect(prompt).toContain("finish");
+    expect(prompt).toContain('amend "02-parser"');
+    expect(prompt).toContain("no `finish`");
     expect(prompt).not.toMatch(/\bstage\b/i);
     expect(prompt).not.toContain('edit "');
     expect(prompt).not.toContain("Stage -> Task");
     expect(prompt).toContain("no node-count, planning-round, viewer, or exchange cap");
-    expect(prompt).not.toContain("A dotted class member is not a create target");
-    expect(prompt).not.toContain("never plan a dotted `create`");
-    expect(prompt).toContain("A `create` adds one named declaration or member");
+    expect(prompt).not.toContain("node+");
   });
 
   test("the workflow recommends inspect -> contract -> scaffold -> implement -> verify without forcing a shape", () => {
@@ -72,19 +71,17 @@ describe("planning prompts", () => {
     expect(TASK_PLANNING_WORKFLOW).toContain(
       "test feedback can arrive before most behavior is written",
     );
-    expect(TASK_PLANNING_WORKFLOW).toContain("End with a final `test` node marked by `finish`");
-    expect(TASK_PLANNING_WORKFLOW).toContain("still the plan's success condition");
+    expect(TASK_PLANNING_WORKFLOW).toContain("There is no `finish` record");
+    expect(TASK_PLANNING_WORKFLOW).toContain("last gate is a passing `test`");
     expect(TASK_PLANNING_WORKFLOW).toContain("advice, not a required shape");
     expect(TASK_PLANNING_WORKFLOW).toContain("may have only the final test node");
     expect(TASK_PLANNING_WORKFLOW).not.toContain("Do not defer");
-    expect(TASK_PLANNING_WORKFLOW).not.toContain("place an early");
     expect(buildTaskPlanningSystemPrompt()).toContain(
       "often benefits from a compiling scaffold node",
     );
     expect(buildTaskPlanningSystemPrompt()).toContain(
       "consider an early `verify test` checkpoint after that scaffold/contract phase",
     );
-    expect(buildTaskPlanningSystemPrompt()).not.toContain("needs a compiling scaffold node");
   });
 
   test("planner inspection allows multiple read-only viewers", () => {
@@ -105,11 +102,11 @@ describe("planning prompts", () => {
     expect(prompt).toContain("Fix the answer.");
     expect(prompt).toContain("# Symbol index");
     expect(prompt).toContain("src/helper.test.ts");
-    expect(prompt).toContain("initial Plan DSL");
+    expect(prompt).toContain("initial plan");
   });
 
   test("a replan turn renders the graph, statuses, failures, blocked work, and index", () => {
-    const state = initialState(plan([node("02-answer")]), "02-answer");
+    const state = initialState(plan([node("02-answer")]));
     state.nodeStatus.set("02-answer", "failed");
     const prompt = buildTaskReplanPrompt({
       state,
@@ -125,61 +122,21 @@ describe("planning prompts", () => {
     expect(prompt).toContain("# Blocked");
     expect(prompt).toContain("Blocked node(s): #03-next.");
     expect(prompt).toContain("# Current symbol index");
-    expect(prompt).toContain("Reply with exactly one `patch`");
+    expect(prompt).toContain("Reply with `node` records to append ready work, or `amend` records");
+    expect(prompt).not.toContain("`patch`");
+    expect(prompt).not.toContain("`finish` is enough");
   });
 
-  test("retry prompts name the diagnostics and keep the DSL shape", () => {
+  test("retry prompts name the diagnostics and keep the record shape", () => {
     const planRetry = buildTaskPlanRetryPrompt("stage: plan-graph\n- cycle");
     expect(planRetry).toContain("stage: plan-graph");
     expect(planRetry).toContain("node");
-    expect(planRetry).toContain("finish");
-    const patchRetry = buildTaskPatchRetryPrompt("stage: plan-graph\n- dangling after");
-    expect(patchRetry).toContain("stage: plan-graph");
-    expect(patchRetry).toContain("Reply with exactly one corrected `patch`");
-    expect(patchRetry).not.toContain("at most one new Task");
-  });
+    expect(planRetry).toContain("Do not emit `finish`");
 
-  test("a finish rejection gets a concrete final-test patch recovery", () => {
-    const diagnostics = [
-      "stage: plan-graph",
-      "code: PLAN_FINISH_NOT_LAST",
-      '- finish marks node #06-eval, but it verifies "tsc"; the final node must verify "test"',
-    ].join("\n");
-    const prompt = buildTaskPatchRetryPrompt(diagnostics);
-    expect(prompt).toContain("Recovery for this finish rejection:");
-    expect(prompt).toContain('node+ "06-eval-final" after "06-eval" verify test');
-    expect(prompt).toContain('node~ "06-eval" verify test');
-    expect(prompt).toContain("Keep the rejected patch available");
-    expect(prompt).toContain("do not resend the unchanged patch");
-    expect(prompt).toContain("`finish` is valid only as the last line");
-    expect(prompt).toContain("graph shape stay yours");
-    expect(prompt).not.toContain("05-repair");
-    expect(prompt).not.toContain("at most one new Task");
-  });
-
-  test("a finish-placement rejection is actionable without inventing ids", () => {
-    const prompt = buildTaskPatchRetryPrompt(
-      'stage: plan-graph\ncode: PLAN_FINISH_NOT_LAST\n- finish must be the last line; found "node" after it',
-    );
-    expect(prompt).toContain("Recovery for this finish rejection:");
-    expect(prompt).toContain('node+ "07-final" verify test');
-    expect(prompt).toContain('node~ "06-last" verify test');
-    expect(prompt).toContain("move `finish` to the last line");
-  });
-
-  test("the final-node recovery anchors the new node on the actual last node", () => {
-    const prompt = buildTaskPatchRetryPrompt(
-      "stage: plan-graph\ncode: PLAN_FINISH_NOT_LAST\n- the final node #02-answer is no longer last (the new last node is #03-next); append a final test node",
-    );
-    expect(prompt).toContain('node+ "03-next-final" after "03-next" verify test');
-    expect(prompt).toContain('node~ "03-next" verify test');
-  });
-
-  test("an unrelated patch rejection keeps the generic retry", () => {
-    const prompt = buildTaskPatchRetryPrompt("stage: plan-graph\n- dangling after");
-    expect(prompt).not.toContain("Recovery for this finish rejection:");
-    expect(prompt).not.toContain("verify test");
-    expect(prompt).toContain('node+ "05-repair"');
+    const replanRetry = buildTaskReplanRetryPrompt("stage: plan-graph\n- dangling after");
+    expect(replanRetry).toContain("stage: plan-graph");
+    expect(replanRetry).toContain("corrected `node` or `amend` records");
+    expect(replanRetry).not.toContain("at most one new Task");
   });
 });
 
@@ -347,40 +304,18 @@ describe("review prompts", () => {
     expect(prompt).toContain("# Out-of-hint edits");
     expect(prompt).toContain("src/extra.ts");
     expect(prompt).toContain("# Applied diff");
-    expect(prompt).toContain("Reply with exactly `approve` or one `patch`");
-    expect(prompt).toContain("targeted repair after a failed large write");
-    expect(prompt).toContain("do not hard-reject a strategy");
-    expect(prompt).not.toContain("at most one patch per Task");
+    expect(prompt).toContain("Reply with exactly `approve`, or one `amend` record for this node");
+    expect(prompt).toContain('amend "03-impl"');
+    expect(prompt).not.toContain("`patch`");
+    expect(prompt).not.toContain("`finish`");
     expect(prompt).not.toContain("one review");
   });
 
-  test("a failed gate carries the targeted-repair criteria", () => {
-    const prompt = buildTaskReviewPrompt({
-      node: node("03-impl"),
-      gate: { verify: "tsc", ok: false, diagnostics: "src/helper.ts(2,3): error TS2322" },
-      diff: '--- a/src/helper.ts\n+++ b/src/helper.ts\n@@ -1 +1 @@\n-return 1;\n+return "bad";',
-    });
-    expect(prompt).toContain("Gate: tsc failed.");
-    expect(prompt).toContain("# Failed-gate edit strategy");
-    expect(prompt).toContain(TASK_FAILED_WRITE_REPAIR_ADVICE);
-    expect(prompt).toContain("broad structural breakage");
-    expect(prompt).toContain("not a gate");
-  });
-
-  test("a review retry keeps the approve-or-patch contract", () => {
+  test("a review retry keeps the approve-or-amend contract", () => {
     const prompt = buildTaskReviewRetryPrompt("stage: plan-protocol\nmissing end");
     expect(prompt).toContain("# Review retry");
     expect(prompt).toContain("missing end");
-    expect(prompt).toContain("`approve` or one corrected `patch`");
+    expect(prompt).toContain("`approve` or one `amend` record");
     expect(prompt).not.toContain("Recovery for this finish rejection:");
-  });
-
-  test("a review retry carries the final-node recovery when finish is rejected", () => {
-    const prompt = buildTaskReviewRetryPrompt(
-      'stage: plan-graph\ncode: PLAN_FINISH_NOT_LAST\n- finish marks node #04-final, but it verifies "tsc"; the final node must verify "test"',
-    );
-    expect(prompt).toContain("Recovery for this finish rejection:");
-    expect(prompt).toContain('node+ "04-final-final" after "04-final" verify test');
-    expect(prompt).toContain("`approve` or one corrected `patch`");
   });
 });
