@@ -1,7 +1,7 @@
 ---
 id: 55
 title: "Port plan-exec executor hardening and no-cap scheduling to pinned-repair"
-status: todo
+status: done
 priority: medium
 milestone: null
 parent: null
@@ -44,3 +44,4 @@ After implementation, a controlled pinned-repair 1-rep smoke can be requested se
 - Historical pinned-repair data: 0/5 at mean 56,523 cache-excluded tokens (2026-10-25); this umbrella is about architecture/termination and prompt parity, not a success guarantee.
 - Plan-exec remains the multi-file/long-horizon path; do not add plan graph invariants to pinned-repair.
 - `MAX_STALLED_ROUNDS` is a no-progress ask cadence, not a hard exchange/round cap. `MAX_CONSECUTIVE_LENGTH` is an output-length guard and may remain.
+- Resolved: children #56 (pinned output contract + soft scaffold guidance) and #57 (remove fixed 3/32 caps; token/no-progress scheduling) are done. Pinned-repair now has the portable executor contract and no fixed exchange/round termination; correctness guards stay hard; no plan DAG/final-test/early-checkpoint was added. Verified after #57: typecheck, 1665 tests pass, accept 9/9, diff check. No live smoke run; historical pinned 0/5 baseline unchanged.
