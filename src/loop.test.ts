@@ -17,8 +17,7 @@ import {
   buildRetryPrompt,
   buildSummaryPrompt,
   buildSystemPrompt,
-  budgetTokensFromResponse,
-  cacheExcludedTokens,
+  costBudgetFromResponse,
   classifyRejection,
   consecutiveLengthFinishes,
   createAttemptDigestState,
@@ -59,6 +58,7 @@ import {
   verificationFingerprint,
 } from "./loop";
 import type { LoopRecord, ProviderLike, RetryPromptInput, StalledAsk } from "./loop";
+import { billableCostForLoopTokens } from "./pricing";
 import type { ChatMessage, ChatOptions, ChatResponse, ToolDefinition } from "./openai";
 import { ChatContextOverflowError, ChatPayloadTooLargeError } from "./openai";
 import { Parser } from "./parser";
@@ -918,15 +918,15 @@ describe("prompt builders", () => {
     expect(prompt).toContain("- Next step:");
     expect(prompt).toContain("Do not output code.");
 
-    const bare = buildSummaryPrompt("token-budget", null);
-    expect(bare).toContain("the token budget was exceeded");
+    const bare = buildSummaryPrompt("cost-budget", null);
+    expect(bare).toContain("the USD cost budget was exceeded");
     expect(bare).not.toContain("Diagnostics:");
     expect(bare).toContain("- Accomplished:");
     expect(bare).toContain("- Next step:");
 
-    const wrapUp = buildSummaryPrompt("token-budget", null).split("\n").slice(-7);
+    const wrapUp = buildSummaryPrompt("cost-budget", null).split("\n").slice(-7);
     for (const reason of [
-      "token-budget",
+      "cost-budget",
       "edit-exhausted",
       "delete-verification-failed",
       "prev-broken",
@@ -1799,22 +1799,27 @@ describe("self-check and no-progress asks (#73/#65)", () => {
 
   test("a fast-burning storm reaches the second ask before the budget ends it", async () => {
     const dir = fixtureDir();
-    // 8k tokens per call against a 120k budget: the run is terminated around
-    // round 15, so a 16-round cadence could never show the second ask.
+    // 8k input-priced tokens per call costs $0.0024 at peak cache-miss input
+    // rates; a $0.036 budget terminates around round 16, so a 16-round cadence
+    // could never show the second ask.
     const provider = new UsageProvider(
       [selectionResponse(ANSWER, "modify"), ...chainedEdits(30)],
-      Array.from({ length: 40 }, () => ({ total_tokens: 8_000 })),
+      Array.from({ length: 40 }, () => ({
+        prompt_tokens: 8_000,
+        completion_tokens: 0,
+        total_tokens: 8_000,
+      })),
     );
     const result = await runLoop({
       cwd: dir,
       issue: "make the answer test pass",
       provider,
-      tokenBudget: 120_000,
+      costBudgetUsd: 0.036,
       checkCommand: stallingCheckCommand(dir, 40),
       testCommand: passingCommand,
     });
     expect(result.ok).toBe(false);
-    expect(result.terminationReason).toBe("token-budget");
+    expect(result.terminationReason).toBe("cost-budget");
     const asks = provider.calls.filter((call) =>
       (call.at(-1)?.content ?? "").includes("No progress:"),
     );
@@ -2627,24 +2632,29 @@ describe("runLoop", () => {
     expect(helperSource(dir)).toContain("return 35;");
   }, 60000);
 
-  test("the token budget stops a long failing content loop", async () => {
+  test("the USD cost budget stops a long failing content loop", async () => {
     const dir = fixtureDir();
     const provider = new UsageProvider(
       [selectionResponse(ANSWER, "modify"), ...chainedEdits(2), "the budget ran out"],
-      [{ total_tokens: 40 }, { total_tokens: 40 }, { total_tokens: 40 }, { total_tokens: 1 }],
+      [
+        { prompt_tokens: 40, completion_tokens: 0, total_tokens: 40 },
+        { prompt_tokens: 40, completion_tokens: 0, total_tokens: 40 },
+        { prompt_tokens: 40, completion_tokens: 0, total_tokens: 40 },
+        { prompt_tokens: 1, completion_tokens: 0, total_tokens: 1 },
+      ],
     );
     const result = await runLoop({
       cwd: dir,
       issue: "make the answer test pass",
       provider,
-      tokenBudget: 100,
+      costBudgetUsd: 0.00003,
       checkCommand: failingCommand,
       testCommand: passingCommand,
     });
     expect(result.ok).toBe(false);
-    expect(result.terminationReason).toBe("token-budget");
+    expect(result.terminationReason).toBe("cost-budget");
     expect(result.diagnostics).toContain(
-      "token-budget: accumulated 120 tokens exceeded the 100 token budget",
+      "cost-budget: accumulated $0.000036 exceeded the $0.00003 USD budget",
     );
     // Selection (40) + one applied content edit (80) fit; the second content
     // response crosses the budget before it can be applied.
@@ -3664,7 +3674,7 @@ describe("runLoop", () => {
     expect(result.records.filter((record) => record.kind === "exchange")).toHaveLength(10);
   }, 30000);
 
-  test("token budget: cache-excluded basis ignores cached prompt tokens", () => {
+  test("cost budget: cache-excluded USD ignores cached prompt tokens", () => {
     const response: ChatResponse = {
       content: null,
       toolCalls: [],
@@ -3678,9 +3688,7 @@ describe("runLoop", () => {
         },
       },
     };
-    expect(budgetTokensFromResponse(response)).toBe(120);
-    expect(budgetTokensFromResponse(response, "cache-excluded")).toBe(40);
-    expect(budgetTokensFromResponse(response, "raw")).toBe(120);
+    expect(costBudgetFromResponse(response)).toBeCloseTo(0.00003, 12);
     expect(loopTokensFromResponse(response)).toEqual({
       input: 100,
       output: 20,
@@ -3688,10 +3696,10 @@ describe("runLoop", () => {
       cacheRead: 80,
       reasoning: 0,
     });
-    expect(cacheExcludedTokens(loopTokensFromResponse(response))).toBe(40);
+    expect(billableCostForLoopTokens(loopTokensFromResponse(response))).toBeCloseTo(0.00003, 12);
   });
 
-  test("token budget: cache-excluded basis adds reasoning; raw keeps the reported total", () => {
+  test("cost budget: cache-excluded USD adds reasoning", () => {
     const nested: ChatResponse = {
       content: null,
       toolCalls: [],
@@ -3706,9 +3714,8 @@ describe("runLoop", () => {
         },
       },
     };
-    // (100 - 80) + 20 + 30 = 70; the raw safety cap keeps the reported total.
-    expect(budgetTokensFromResponse(nested, "cache-excluded")).toBe(70);
-    expect(budgetTokensFromResponse(nested, "raw")).toBe(150);
+    // (100 - 80) * $0.30 + (20 + 30) * $1.20, per 1M tokens = $0.000066.
+    expect(costBudgetFromResponse(nested)).toBeCloseTo(0.000066, 12);
     expect(loopTokensFromResponse(nested)).toEqual({
       input: 100,
       output: 20,
@@ -3731,7 +3738,7 @@ describe("runLoop", () => {
         },
       },
     };
-    expect(budgetTokensFromResponse(topLevel, "cache-excluded")).toBe(70);
+    expect(costBudgetFromResponse(topLevel)).toBeCloseTo(0.000066, 12);
     expect(loopTokensFromResponse(topLevel).reasoning).toBe(30);
 
     const unknown: ChatResponse = {
@@ -3741,32 +3748,32 @@ describe("runLoop", () => {
       raw: { usage: { prompt_tokens: 10, completion_tokens: 5, total_tokens: 15 } },
     };
     expect(loopTokensFromResponse(unknown).reasoning).toBe(0);
-    expect(budgetTokensFromResponse(unknown, "cache-excluded")).toBe(15);
+    expect(costBudgetFromResponse(unknown)).toBeCloseTo(0.000009, 12);
   });
 
-  test("token budget: terminates with exactly one summary call on a pick", async () => {
+  test("cost budget: terminates with exactly one summary call on a pick", async () => {
     const dir = fixtureDir();
     const provider = new UsageProvider(
       [selectionResponse(), "the budget ran out"],
-      [{ total_tokens: 60 }],
+      [{ prompt_tokens: 60, completion_tokens: 0, total_tokens: 60 }],
     );
     const result = await runLoop({
       cwd: dir,
       issue: "make the answer test pass",
       provider,
-      tokenBudget: 50,
+      costBudgetUsd: 0.00001,
       checkCommand: TSC,
       testCommand: ["bun", "test"],
     });
     expect(result.ok).toBe(false);
-    expect(result.terminationReason).toBe("token-budget");
+    expect(result.terminationReason).toBe("cost-budget");
     expect(result.locator).toBeNull();
     expect(result.filePath).toBeNull();
     expect(result.mode).toBeUndefined();
     expect(result.records).toEqual([]);
     expect(result.editedSource).toBeNull();
     expect(result.diagnostics).toBe(
-      "token-budget: accumulated 60 tokens exceeded the 50 token budget",
+      "cost-budget: accumulated $0.000018 exceeded the $0.00001 USD budget",
     );
     expect(provider.calls).toHaveLength(2);
     const summaryPrompt = provider.calls[1]?.at(-1)?.content ?? "";
@@ -3776,7 +3783,7 @@ describe("runLoop", () => {
     expect(helperSource(dir)).toContain("return 1;");
   }, 30000);
 
-  test("token budget: the termination summary stays out of result.tokens", async () => {
+  test("cost budget: the termination summary stays out of result.tokens", async () => {
     const dir = fixtureDir();
     const provider = new UsageProvider(
       [selectionResponse(), "the budget ran out"],
@@ -3796,15 +3803,14 @@ describe("runLoop", () => {
       cwd: dir,
       issue: "make the answer test pass",
       provider,
-      tokenBudget: 50,
-      tokenBudgetBasis: "cache-excluded",
+      costBudgetUsd: 0.00005,
       checkCommand: TSC,
       testCommand: ["bun", "test"],
     });
     expect(result.ok).toBe(false);
-    expect(result.terminationReason).toBe("token-budget");
+    expect(result.terminationReason).toBe("cost-budget");
     expect(result.diagnostics).toBe(
-      "token-budget: accumulated 70 cache-excluded tokens exceeded the 50 token budget",
+      "cost-budget: accumulated $0.000066 exceeded the $0.00005 USD budget",
     );
     // Exactly one summary call after the over-budget response.
     expect(provider.calls).toHaveLength(2);
@@ -3818,28 +3824,31 @@ describe("runLoop", () => {
       cacheRead: 80,
       reasoning: 30,
     });
-    expect(cacheExcludedTokens(result.tokens)).toBe(70);
+    expect(billableCostForLoopTokens(result.tokens)).toBeCloseTo(0.000066, 12);
   }, 30000);
 
-  test("token budget: terminates mid-edit without applying the in-flight replacement", async () => {
+  test("cost budget: terminates mid-edit without applying the in-flight replacement", async () => {
     const dir = fixtureDir();
     const original = helperSource(dir);
     const provider = new UsageProvider(
       [selectionResponse(), editResponse("return 1;", 'return "nope";'), "the budget ran out"],
-      [{ total_tokens: 60 }, { total_tokens: 41 }],
+      [
+        { prompt_tokens: 60, completion_tokens: 0, total_tokens: 60 },
+        { prompt_tokens: 41, completion_tokens: 0, total_tokens: 41 },
+      ],
     );
     const result = await runLoop({
       cwd: dir,
       issue: "make the answer test pass",
       provider,
-      tokenBudget: 100,
+      costBudgetUsd: 0.00003,
       checkCommand: TSC,
       testCommand: ["bun", "test"],
     });
     expect(result.ok).toBe(false);
-    expect(result.terminationReason).toBe("token-budget");
+    expect(result.terminationReason).toBe("cost-budget");
     expect(result.diagnostics).toBe(
-      "token-budget: accumulated 101 tokens exceeded the 100 token budget",
+      "cost-budget: accumulated $0.0000303 exceeded the $0.00003 USD budget",
     );
     expect(result.mode).toBe("modify");
     expect(result.locator).toEqual({ path: "src/helper.ts", name: "answer", kind: "function" });
@@ -3855,17 +3864,20 @@ describe("runLoop", () => {
     expect(helperSource(dir)).toBe(original);
   }, 30000);
 
-  test("token budget: runs through when usage lands exactly on the budget", async () => {
+  test("cost budget: runs through when usage lands exactly on the budget", async () => {
     const dir = fixtureDir();
     const provider = new UsageProvider(
       [selectionResponse(), editResponse("return 1;", "return 2;")],
-      [{ total_tokens: 60 }, { total_tokens: 40 }],
+      [
+        { prompt_tokens: 60, completion_tokens: 0, total_tokens: 60 },
+        { prompt_tokens: 40, completion_tokens: 0, total_tokens: 40 },
+      ],
     );
     const result = await runLoop({
       cwd: dir,
       issue: "make the answer test pass",
       provider,
-      tokenBudget: 100,
+      costBudgetUsd: 0.00003,
       checkCommand: TSC,
       testCommand: ["bun", "test"],
     });
@@ -3877,7 +3889,7 @@ describe("runLoop", () => {
     expect(provider.calls).toHaveLength(2);
   }, 30000);
 
-  test("token budget: sums prompt and completion tokens when no total is reported", async () => {
+  test("cost budget: sums prompt and completion tokens when no total is reported", async () => {
     const dir = fixtureDir();
     const provider = new UsageProvider(
       [selectionResponse(), editResponse("return 1;", 'return "nope";'), "summary"],
@@ -3890,14 +3902,14 @@ describe("runLoop", () => {
       cwd: dir,
       issue: "make the answer test pass",
       provider,
-      tokenBudget: 100,
+      costBudgetUsd: 0.00003,
       checkCommand: TSC,
       testCommand: ["bun", "test"],
     });
     expect(result.ok).toBe(false);
-    expect(result.terminationReason).toBe("token-budget");
+    expect(result.terminationReason).toBe("cost-budget");
     expect(result.diagnostics).toBe(
-      "token-budget: accumulated 101 tokens exceeded the 100 token budget",
+      "cost-budget: accumulated $0.0000303 exceeded the $0.00003 USD budget",
     );
     expect(provider.calls).toHaveLength(3);
   }, 30000);
@@ -5511,7 +5523,7 @@ describe("edit-dsl protocol (#111/#119)", () => {
       testCommand: ["bun", "test"],
     });
     expect(result.ok).toBe(true);
-    expect(result.terminationReason).not.toBe("token-budget");
+    expect(result.terminationReason).not.toBe("cost-budget");
     expect(readFileSync(join(dir, "src", "lisp.ts"), "utf8")).toContain(
       "export const MAX_TOKENS = 20;",
     );
@@ -6266,7 +6278,7 @@ describe("edit-dsl protocol (#111/#119)", () => {
     ]);
     const result = await runLoop({
       cwd: dir,
-      issue: "raise the token budget",
+      issue: "raise the USD cost budget",
       provider,
       checkCommand: TSC,
       testCommand: ["bun", "test"],
@@ -6305,7 +6317,7 @@ describe("edit-dsl protocol (#111/#119)", () => {
     ]);
     const result = await runLoop({
       cwd: dir,
-      issue: "raise the token budget",
+      issue: "raise the USD cost budget",
       provider,
       checkCommand: TSC,
       testCommand: ["bun", "test"],

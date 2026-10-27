@@ -1,9 +1,9 @@
 import { describe, expect, test } from "bun:test";
-import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import { existsSync, mkdtempSync, readFileSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { fileURLToPath } from "node:url";
-import { billableTokens } from "./benchmark-pricing";
+import { billableCost, peakCost } from "./pricing";
 
 // `benchmark/run.ts` lives outside the test root (`bunfig.toml` root = ./src).
 // The self-host smoke test copies only `src/` into a scratch workspace, so this
@@ -49,6 +49,8 @@ interface AggregateLike {
   runs: number;
   ok: number;
   tokens: { in: TokenStatsLike; out: TokenStatsLike; total: TokenStatsLike };
+  billableCost: { in: TokenStatsLike; out: TokenStatsLike; total: TokenStatsLike };
+  billableCostPerSuccess: number | null;
   cache?: { read: TokenStatsLike; hitRate: number | null };
   tokensPerSuccess: { in: number | null; out: number | null; total: number | null };
   selectors: { range: number; matcher: number; wholeSymbol: number };
@@ -98,7 +100,7 @@ interface RunModule {
     agentModes?: readonly string[],
   ): JobLike[];
   scheduleJobGroups(jobs: readonly JobLike[]): ScheduledJobLike[][];
-  billableForRun(
+  billableCostForRun(
     totalUsage: TokenUsageLike,
     loopTokens: LoopTokensLike | null,
     side: "tc" | "oc",
@@ -110,7 +112,7 @@ interface RunModule {
   ): Promise<Result[]>;
   parseAgentModes(value: string): string[];
   cacheBalanceWarning(rows: readonly AggregateLike[]): string | null;
-  tokenMultiplierSentence(
+  billableCostMultiplierSentence(
     bySide: readonly AggregateLike[],
     byTaskSide: readonly AggregateLike[],
   ): string;
@@ -134,10 +136,7 @@ interface RunModule {
     }[];
   };
   ocBaselineSavingsSentence(savings: unknown): string;
-  frozenDimensionError(
-    side: "tc" | "oc" | "both",
-    protocolFormats: readonly ("json" | "edit-dsl")[],
-  ): string | null;
+  frozenDimensionError(side: "tc" | "oc" | "both"): string | null;
   writeMarkdownReport(path: string, report: unknown, baselineRoot?: string): void;
   parseArgs(argv: string[]): {
     model: string;
@@ -154,7 +153,7 @@ async function loadRunModule(): Promise<RunModule> {
   return (await import(runModulePath)) as RunModule;
 }
 
-// A run carries raw provider buckets plus the normalized cache-excluded triple
+// A run carries raw provider buckets plus the normalized cache-excluded USD view
 // (#89); `makeRun` builds both so aggregate paths can be exercised directly.
 function makeRun(
   task: string,
@@ -172,7 +171,7 @@ function makeRun(
     reasoning: 0,
     total: buckets.input + buckets.output,
   };
-  const billable = billableTokens(raw, side);
+  const billable = billableCost(raw, side);
   return {
     task,
     side,
@@ -183,15 +182,15 @@ function makeRun(
     sideOk: true,
     // Synthetic runs have no post-termination summary: loop == total for tc,
     // and the oc side has no loop split (#47).
-    tokens: { ...raw, billable: { ...billable, loop: side === "tc" ? billable.total : null } },
+    tokens: raw,
+    billableCost: { ...billable, loop: side === "tc" ? billable.total : null },
     usageAvailable: true,
     usageSource: "test",
     rawUsage: null,
     durationMs: 1000,
     startedAt: "2026-10-20T00:00:00.000Z",
     finishedAt: "2026-10-20T00:01:00.000Z",
-    cost: 0.001,
-    rateClass: "off-peak",
+    cost: peakCost(raw, side),
     steps: 1,
     records: null,
     exchangeStats,
@@ -215,65 +214,75 @@ const sampleRuns = (): Record<string, unknown>[] => [
 ];
 
 // tc `input` includes cache hits (miss = input - cacheRead); oc `input` already
-// excludes them. The cache-excluded triple must match on both sides.
-describe("cache-excluded token triple (#89)", () => {
-  test("billableTokens subtracts cache on tc but not on oc", () => {
-    const tc = billableTokens(
+// excludes them. The cache-excluded USD triple must match on both sides.
+describe("cache-excluded USD triple (#89)", () => {
+  test("billableCost subtracts cache on tc but not on oc", () => {
+    const tc = billableCost(
       { input: 3073, output: 1613, cacheRead: 2816, cacheWrite: null, reasoning: 0 },
       "tc",
     );
-    expect(tc).toEqual({ in: 257, out: 1613, total: 1870 });
-    const oc = billableTokens(
+    expect(tc.in).toBeCloseTo(0.0000771, 12);
+    expect(tc.out).toBeCloseTo(0.0019356, 12);
+    expect(tc.total).toBeCloseTo(0.0020127, 12);
+    const oc = billableCost(
       { input: 9345, output: 2160, cacheRead: 22400, cacheWrite: null, reasoning: 0 },
       "oc",
     );
-    expect(oc).toEqual({ in: 9345, out: 2160, total: 11505 });
+    expect(oc.in).toBeCloseTo(0.0028035, 12);
+    expect(oc.out).toBeCloseTo(0.002592, 12);
+    expect(oc.total).toBeCloseTo(0.0053955, 12);
     for (const triple of [tc, oc] as BillableTriple[]) {
-      expect(triple.total).toBe(triple.in + triple.out);
+      expect(triple.total).toBeCloseTo(triple.in + triple.out, 12);
     }
   });
 
   test.skipIf(!runModulePresent)(
-    "aggregate in/out/total are cache-miss input / output / (miss + output)",
+    "aggregate raw tokens and billable USD stay on the same selected runs",
     async () => {
       const { aggregateRuns, computeAggregates } = await loadRunModule();
       const runs = sampleRuns();
       const aggregates = computeAggregates(runs, ["json-parser", "sexp-parser"], ["tc", "oc"]);
       const jsonTc = aggregateRuns(runs, "json-parser", "tc");
-      expect(jsonTc.tokens.in).toEqual({ mean: 200, total: 200 });
+      expect(jsonTc.tokens.in).toEqual({ mean: 1000, total: 1000 });
       expect(jsonTc.tokens.out).toEqual({ mean: 500, total: 500 });
-      expect(jsonTc.tokens.total).toEqual({ mean: 700, total: 700 });
-      expect(jsonTc.tokensPerSuccess).toEqual({ in: 200, out: 500, total: 700 });
+      expect(jsonTc.tokens.total).toEqual({ mean: 1500, total: 1500 });
+      expect(jsonTc.tokensPerSuccess).toEqual({ in: 1000, out: 500, total: 1500 });
+      expect(jsonTc.billableCost.in.mean).toBeCloseTo(0.00006, 12);
+      expect(jsonTc.billableCost.out.mean).toBeCloseTo(0.0006, 12);
+      expect(jsonTc.billableCost.total.mean).toBeCloseTo(0.00066, 12);
+      expect(jsonTc.billableCostPerSuccess).toBeCloseTo(0.00066, 12);
 
       const tcOverall = aggregates.bySide.find((row) => row.side === "tc");
       const ocOverall = aggregates.bySide.find((row) => row.side === "oc");
-      // tc: (700 + 200) = 900; oc: (1300 + 100) = 1400.
-      expect(tcOverall?.tokens.total.total).toBe(900);
+      // tc: 0.00066 + 0.00015; oc: 0.00075 + 0.000075. Raw totals are separate.
+      expect(tcOverall?.billableCost.total.total).toBeCloseTo(0.00081, 12);
+      expect(ocOverall?.billableCost.total.total).toBeCloseTo(0.000825, 12);
+      expect(tcOverall?.tokens.total.total).toBe(1900);
       expect(ocOverall?.tokens.total.total).toBe(1400);
     },
   );
 
   test.skipIf(!runModulePresent)(
-    "multiplier summary names the higher side overall and per task",
+    "multiplier summary names the higher side overall and per task in USD",
     async () => {
-      const { computeAggregates, tokenMultiplierSentence } = await loadRunModule();
+      const { computeAggregates, billableCostMultiplierSentence } = await loadRunModule();
       const aggregates = computeAggregates(
         sampleRuns(),
         ["json-parser", "sexp-parser"],
         ["tc", "oc"],
       );
-      const sentence = tokenMultiplierSentence(aggregates.bySide, aggregates.byTaskSide);
-      expect(sentence).toContain("oc 1.56x tc overall");
-      expect(sentence).toContain("json-parser oc 1.86x tc");
+      const sentence = billableCostMultiplierSentence(aggregates.bySide, aggregates.byTaskSide);
+      expect(sentence).toContain("oc 1.02x tc overall");
+      expect(sentence).toContain("json-parser oc 1.14x tc");
       expect(sentence).toContain("sexp-parser tc 2.00x oc");
     },
   );
 
   test.skipIf(!runModulePresent)("multiplier summary says so when only one side ran", async () => {
-    const { computeAggregates, tokenMultiplierSentence } = await loadRunModule();
+    const { computeAggregates, billableCostMultiplierSentence } = await loadRunModule();
     const runs = [makeRun("json-parser", "tc", { input: 10, output: 5 })];
     const aggregates = computeAggregates(runs, ["json-parser"], ["tc"]);
-    const sentence = tokenMultiplierSentence(aggregates.bySide, aggregates.byTaskSide);
+    const sentence = billableCostMultiplierSentence(aggregates.bySide, aggregates.byTaskSide);
     expect(sentence).toContain("not comparable");
   });
 
@@ -291,17 +300,16 @@ describe("cache-excluded token triple (#89)", () => {
         tasks,
         ["oc"],
       );
-      // tc: json-parser 700, sexp-parser 200.
       const current = computeAggregates(sampleRuns(), tasks, ["tc"]);
       const savings = savingsVsOcBaseline(current.byTaskSide, baseline.byTaskSide);
       expect(savings.rows.map((row) => [row.task, row.factor.toFixed(2)])).toEqual([
-        ["json-parser", "1.86"],
-        ["sexp-parser", "3.00"],
+        ["json-parser", "1.14"],
+        ["sexp-parser", "2.40"],
       ]);
       expect(savings.overall).toHaveLength(1);
-      expect(savings.overall[0]?.factor.toFixed(2)).toBe("2.11");
+      expect(savings.overall[0]?.factor.toFixed(2)).toBe("1.37");
       expect(savings.overall[0]?.tasks).toBe(2);
-      expect(ocBaselineSavingsSentence(savings)).toContain("2.11x fewer tokens across 2 tasks");
+      expect(ocBaselineSavingsSentence(savings)).toContain("1.37x fewer USD across 2 tasks");
     },
   );
 
@@ -356,27 +364,30 @@ describe("billable loop vs total split (#47)", () => {
     total: input + output + reasoning,
   });
 
-  test.skipIf(!runModulePresent)("a post-termination summary raises total above loop", async () => {
-    const { billableForRun } = await loadRunModule();
-    // Loop: (500 - 400) + 20 + 30 = 150. Total adds a 1000-in/100-out summary.
-    const billable = billableForRun(totalUsage(1500, 120, 30, 400), loopTokens(), "tc");
-    expect(billable.loop).toBe(150);
-    expect(billable.total).toBe(1250);
-    expect(billable.loop).toBeLessThan(billable.total);
-  });
+  test.skipIf(!runModulePresent)(
+    "a post-termination summary raises billable total above loop",
+    async () => {
+      const { billableCostForRun } = await loadRunModule();
+      // Loop: 100 miss * $0.30 + 50 output * $1.20 per 1M = $0.00009.
+      const billable = billableCostForRun(totalUsage(1500, 120, 30, 400), loopTokens(), "tc");
+      expect(billable.loop).toBeCloseTo(0.00009, 12);
+      expect(billable.total).toBeCloseTo(0.00051, 12);
+      expect(billable.loop).toBeLessThan(billable.total);
+    },
+  );
 
   test.skipIf(!runModulePresent)("loop equals total without a summary call", async () => {
-    const { billableForRun } = await loadRunModule();
-    const billable = billableForRun(totalUsage(500, 20, 30, 400), loopTokens(), "tc");
-    expect(billable.loop).toBe(150);
-    expect(billable.total).toBe(150);
+    const { billableCostForRun } = await loadRunModule();
+    const billable = billableCostForRun(totalUsage(500, 20, 30, 400), loopTokens(), "tc");
+    expect(billable.loop).toBeCloseTo(0.00009, 12);
+    expect(billable.total).toBeCloseTo(0.00009, 12);
   });
 
   test.skipIf(!runModulePresent)("the oc side has no loop split", async () => {
-    const { billableForRun } = await loadRunModule();
-    expect(billableForRun(totalUsage(100, 20, 0), null, "oc").loop).toBeNull();
+    const { billableCostForRun } = await loadRunModule();
+    expect(billableCostForRun(totalUsage(100, 20, 0), null, "oc").loop).toBeNull();
     // Even a stray loop tally never applies to oc.
-    expect(billableForRun(totalUsage(100, 20, 0), loopTokens(), "oc").loop).toBeNull();
+    expect(billableCostForRun(totalUsage(100, 20, 0), loopTokens(), "oc").loop).toBeNull();
   });
 });
 
@@ -398,8 +409,7 @@ describe("rendered report (#89)", () => {
         concurrency: 1,
         model: "deepseek-v4.1-flash",
         effort: null,
-        multiPayload: false,
-        tokenBudget: null,
+        costBudgetUsd: null,
         bunVersion: "1.0.0",
         opencodeVersion: null,
         pilotReference: null,
@@ -425,24 +435,24 @@ describe("rendered report (#89)", () => {
       try {
         writeMarkdownReport(mdPath, report);
         const markdown = readFileSync(mdPath, "utf8");
-        expect(markdown).toContain("Like-for-like tokens (#89)");
-        expect(markdown).toContain("Mean in (no cache)");
-        expect(markdown).toContain("decision-only");
-        // json-parser tc: in 200, out 500, total 700 (no protocol on this
-        // synthetic legacy record).
+        expect(markdown).toContain("## USD accounting");
+        expect(markdown).toContain("Billable in ($)");
+        expect(markdown).not.toContain("decision-only");
+        // json-parser tc: billable in $0.00006, out $0.00060, total $0.00066;
+        // full peak cost is $0.00066 too (the small cache hit is rounded).
         expect(markdown).toContain(
-          "| json-parser | tc | n/a | pinned-repair | 1/1 | 200 | 80.0% | 500 | 700 |",
+          "| json-parser | tc | n/a | pinned-repair | 1/1 | $0.00006 | 80.0% | $0.00060 | $0.00066 | $0.00066 | $0.00066 |",
         );
-        expect(markdown).toContain("oc 1.56x tc overall");
-        expect(markdown).toContain("json-parser oc 1.86x tc");
+        expect(markdown).toContain("oc 1.02x tc overall");
+        expect(markdown).toContain("json-parser oc 1.14x tc");
         // #47: the raw-runs table separates the budget basis from the all-calls
         // total; synthetic tc rows have loop == total and oc rows are n/a.
-        expect(markdown).toContain("Loop total");
+        expect(markdown).toContain("Loop billable $");
         expect(markdown).toContain(
-          "| json-parser | tc | n/a | n/a | 1 | yes | 1,000 | 500 | 1,500 | 700 |",
+          "| json-parser | tc | n/a | n/a | 1 | yes | 1,000 | 500 | 1,500 | $0.00066 | $0.00066 | $0.00066 | 1 | 1.0 |",
         );
         expect(markdown).toContain(
-          "| json-parser | oc | n/a | n/a | 1 | yes | 900 | 400 | 1,300 | n/a |",
+          "| json-parser | oc | n/a | n/a | 1 | yes | 900 | 400 | 1,300 | n/a | $0.00075 | $0.00078 | 1 | 1.0 |",
         );
         // #101: adoption surfaces per task/side and per side.
         expect(markdown).toContain("## Selector adoption (#101)");
@@ -600,13 +610,13 @@ describe("oc model override (--oc-model)", () => {
     expect(parseArgs([]).side).toBe("tc");
     expect(parseArgs([]).reps).toBe(5);
     expect(parseArgs(["--side", "tc"]).side).toBe("tc");
-    expect(frozenDimensionError("oc", ["edit-dsl"])).toContain(
-      "the oc side is frozen (benchmark/results/oc-baseline.json)",
+    expect(frozenDimensionError("oc")).toContain(
+      "the oc side is frozen and no oc baseline is committed",
     );
-    expect(frozenDimensionError("both", ["edit-dsl"])).toContain(
-      "the oc side is frozen (benchmark/results/oc-baseline.json)",
+    expect(frozenDimensionError("both")).toContain(
+      "the oc side is frozen and no oc baseline is committed",
     );
-    expect(frozenDimensionError("tc", ["edit-dsl"])).toBeNull();
+    expect(frozenDimensionError("tc")).toBeNull();
   });
 
   test.skipIf(!runModulePresent)("parses --oc-model and defaults to null", async () => {
@@ -647,8 +657,7 @@ describe("oc model override (--oc-model)", () => {
       model: "deepseek-v4.1-flash",
       ocModel,
       effort: null,
-      multiPayload: false,
-      tokenBudget: null,
+      costBudgetUsd: null,
       bunVersion: "1.0.0",
       opencodeVersion: null,
       pilotReference: null,
@@ -701,9 +710,8 @@ describe("report protocol label (#119)", () => {
       model: "deepseek-v4.1-flash",
       ocModel: null,
       effort: null,
-      multiPayload: false,
       protocolFormat: "edit-dsl",
-      tokenBudget: null,
+      costBudgetUsd: null,
       bunVersion: "1.0.0",
       opencodeVersion: null,
       pilotReference: null,
@@ -966,174 +974,9 @@ describe("concurrent protocol variants (#16)", () => {
   );
 
   test.skipIf(!runModulePresent)(
-    "renders oc-only savings against a fresh oc baseline",
-    async () => {
-      const { computeAggregates, writeMarkdownReport } = await loadRunModule();
-      const tasks = ["json-parser"];
-      const runs = [
-        makeRun("json-parser", "tc", { input: 500, output: 200 }, null, "edit-dsl", "edit"),
-        makeRun("json-parser", "tc", { input: 250, output: 100 }, null, "edit-dsl", "plan-exec"),
-      ];
-      const report = {
-        generatedAt: "2026-10-20T00:00:00.000Z",
-        date: "2026-10-20",
-        mode: "full",
-        tasks,
-        sides: ["tc"],
-        reps: 1,
-        concurrency: 1,
-        model: "deepseek-v4.1-flash",
-        ocModel: null,
-        effort: null,
-        multiPayload: false,
-        protocolFormat: "edit-dsl",
-        protocolFormats: ["edit-dsl"],
-        agentModes: ["pinned-repair", "plan-exec"],
-        tokenBudget: null,
-        bunVersion: "1.0.0",
-        opencodeVersion: null,
-        pilotReference: null,
-        infraErrors: [],
-        runs,
-        aggregates: computeAggregates(
-          runs,
-          tasks,
-          ["tc"],
-          ["edit-dsl"],
-          ["pinned-repair", "plan-exec"],
-        ),
-        provenance: null,
-        provenanceByAgentMode: {},
-      };
-      const dir = mkdtempSync(join(tmpdir(), "run-oc-baseline-"));
-      try {
-        // Stage the frozen oc baseline under the writeMarkdownReport baseline
-        // root seam; no JSON baseline participates in the comparison.
-        const baselineDir = join(dir, "benchmark", "results");
-        mkdirSync(baselineDir, { recursive: true });
-        const sourceOc = join(repoRoot, "benchmark", "results", "oc-baseline.json");
-        const baseline = JSON.parse(readFileSync(sourceOc, "utf8")) as {
-          aggregates: {
-            byTaskSide: {
-              side: string;
-              task: string | null;
-              tokens: { total: { mean: number | null } };
-            }[];
-          };
-        };
-        writeFileSync(join(baselineDir, "oc-baseline.json"), readFileSync(sourceOc, "utf8"));
-        const ocMean = baseline.aggregates.byTaskSide.find(
-          (row) => row.side === "oc" && row.task === "json-parser",
-        )?.tokens.total.mean;
-        if (ocMean === undefined || ocMean === null || ocMean <= 0) {
-          throw new Error("expected an oc baseline mean for json-parser");
-        }
-        // Current means: pinned-repair 700, plan-exec 350.
-        const pinnedFactor = (ocMean / 700).toFixed(2);
-        const planFactor = (ocMean / 350).toFixed(2);
-
-        const md = join(dir, "oc-baseline.md");
-        writeMarkdownReport(md, report, dir);
-        const markdown = readFileSync(md, "utf8");
-        expect(markdown).toContain("## Savings vs oc baseline");
-        expect(markdown).toContain("| json-parser | edit-dsl | pinned-repair |");
-        expect(markdown).toContain("| json-parser | edit-dsl | plan-exec |");
-        expect(markdown).toContain(`| 700 | ${pinnedFactor}x |`);
-        expect(markdown).toContain(`| 350 | ${planFactor}x |`);
-        expect(markdown).toContain(`${pinnedFactor}x fewer tokens across 1 task`);
-        expect(markdown).toContain(`${planFactor}x fewer tokens across 1 task`);
-        expect(markdown).not.toContain("## Four-way comparison");
-        expect(markdown).not.toContain("tc json");
-        expect(markdown).not.toContain("## Baseline comparison unavailable");
-      } finally {
-        rmSync(dir, { recursive: true, force: true });
-      }
-    },
-  );
-
-  test.skipIf(!runModulePresent)(
-    "withholds the oc comparison when the baseline spec hash is stale",
-    async () => {
-      const { computeAggregates, writeMarkdownReport } = await loadRunModule();
-      const tasks = ["json-parser"];
-      const runs = [
-        makeRun(
-          "json-parser",
-          "tc",
-          { input: 500, output: 200 },
-          null,
-          "edit-dsl",
-          "pinned-repair",
-        ),
-        makeRun("json-parser", "tc", { input: 250, output: 100 }, null, "edit-dsl", "plan-exec"),
-      ];
-      const aggregates = computeAggregates(
-        runs,
-        tasks,
-        ["tc"],
-        ["edit-dsl"],
-        ["pinned-repair", "plan-exec"],
-      );
-      const report = {
-        generatedAt: "2026-10-20T00:00:00.000Z",
-        date: "2026-10-20",
-        mode: "full",
-        tasks,
-        sides: ["tc"],
-        reps: 1,
-        concurrency: 1,
-        model: "deepseek-v4.1-flash",
-        ocModel: null,
-        effort: null,
-        multiPayload: false,
-        protocolFormat: "edit-dsl",
-        protocolFormats: ["edit-dsl"],
-        agentModes: ["pinned-repair", "plan-exec"],
-        tokenBudget: null,
-        bunVersion: "1.0.0",
-        opencodeVersion: null,
-        pilotReference: null,
-        infraErrors: [],
-        runs,
-        aggregates,
-        provenance: null,
-        provenanceByAgentMode: {},
-      };
-      const dir = mkdtempSync(join(tmpdir(), "run-stale-oc-"));
-      try {
-        // Keep the real frozen baseline untouched and stage a stale copy of it
-        // under the writeMarkdownReport baseline root seam.
-        const baselineDir = join(dir, "benchmark", "results");
-        mkdirSync(baselineDir, { recursive: true });
-        const sourceOc = join(repoRoot, "benchmark", "results", "oc-baseline.json");
-        const staleOc = JSON.parse(readFileSync(sourceOc, "utf8")) as {
-          provenance: { inputs: { taskIssue: string } };
-        };
-        staleOc.provenance.inputs.taskIssue = "stale";
-        writeFileSync(
-          join(baselineDir, "oc-baseline.json"),
-          `${JSON.stringify(staleOc, null, 2)}\n`,
-        );
-
-        const md = join(dir, "stale-oc.md");
-        writeMarkdownReport(md, report, dir);
-        const markdown = readFileSync(md, "utf8");
-        expect(markdown).toContain("- agent modes: pinned-repair, plan-exec");
-        expect(markdown).toContain("````\n# Task: JSON parser");
-        expect(markdown).toContain("## Baseline comparison unavailable");
-        expect(markdown).toContain("different task-spec text");
-        expect(markdown).not.toContain("## Savings vs oc baseline");
-        expect(markdown).not.toContain("## Four-way comparison");
-      } finally {
-        rmSync(dir, { recursive: true, force: true });
-      }
-    },
-  );
-
-  test.skipIf(!runModulePresent)(
     "multiplier sentence compares each tc variant with oc, never tc with tc",
     async () => {
-      const { computeAggregates, tokenMultiplierSentence } = await loadRunModule();
+      const { computeAggregates, billableCostMultiplierSentence } = await loadRunModule();
       const runs = multiRuns();
       const aggregates = computeAggregates(
         runs,
@@ -1141,12 +984,12 @@ describe("concurrent protocol variants (#16)", () => {
         ["tc", "oc"],
         ["json", "edit-dsl"],
       );
-      const sentence = tokenMultiplierSentence(aggregates.bySide, aggregates.byTaskSide);
-      // json 1800 vs oc 1300; edit-dsl 600 vs oc 1300.
-      expect(sentence).toContain("json tc 1.38x oc overall");
-      expect(sentence).toContain("oc 2.17x edit-dsl tc overall");
-      expect(sentence).toContain("json-parser json tc 1.38x oc");
-      expect(sentence).toContain("json-parser oc 2.17x edit-dsl tc");
+      const sentence = billableCostMultiplierSentence(aggregates.bySide, aggregates.byTaskSide);
+      // json $0.00108 vs oc $0.00075; edit-dsl $0.00036 vs oc $0.00075.
+      expect(sentence).toContain("json tc 1.44x oc overall");
+      expect(sentence).toContain("oc 2.08x edit-dsl tc overall");
+      expect(sentence).toContain("json-parser json tc 1.44x oc");
+      expect(sentence).toContain("json-parser oc 2.08x edit-dsl tc");
       // The bug compared the first two rows (json vs edit-dsl).
       expect(sentence).not.toContain("tc 3.00x");
       expect(sentence).not.toContain("json tc 3.00x edit-dsl tc");
@@ -1171,10 +1014,9 @@ describe("concurrent protocol variants (#16)", () => {
         model: "deepseek-v4.1-flash",
         ocModel: null,
         effort: null,
-        multiPayload: false,
         protocolFormat: null,
         protocolFormats: ["json", "edit-dsl"],
-        tokenBudget: null,
+        costBudgetUsd: null,
         bunVersion: "1.0.0",
         opencodeVersion: null,
         pilotReference: null,

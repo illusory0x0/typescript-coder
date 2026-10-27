@@ -133,7 +133,7 @@ give-up:
   correction sentence. The same class repeated escalates. Retries reuse the
   select-first `# Goal` + `# Symbol index` + `# details` shape. The correction
   text is owned by [`edit-protocol.md`](edit-protocol.md) §7. There is no fixed retry count: a
-  distinct failure is retried until the token budget or a no-progress stop.
+  distinct failure is retried until the USD cost budget or a no-progress stop.
 - **Self-check turns** — after a target is pinned, a standalone `check end` or
   `test end` reply runs the task's configured check/test command and writes
   nothing. Self-checks are repeatable with no fixed count and are bounded by the
@@ -141,18 +141,18 @@ give-up:
 - **Repeated no-progress fingerprint** — a failed reply repeated against the
   same source and diagnostics is no progress and ends the run with
   `edit-exhausted`; a cycle that keeps producing distinct replies is bounded by
-  the token budget instead. This replaces the old fixed exchange/round caps.
+  the USD cost budget instead. This replaces the old fixed exchange/round caps.
 - **No-progress ask** — after 8 consecutive failed attempts (then every 4), the
   model is told the failing set has not converged and must either change the
   cause or reply `STOP`. From the second such ask (or when the failing set is
   already unchanged/cycling), the turn becomes decision-only: the model states a
   re-approach, which the next edit prompt requires it to follow. A selection
   cycle gets the same `STOP` offer on its own no-progress ask.
-- **Termination (pinned-repair)** — the 120k default token budget, the repeated
+- **Termination (pinned-repair)** — the `$0.10` default USD cost budget, the repeated
   no-progress fingerprint, and a no-progress `STOP` end the run through the
   termination path: one summary prompt producing Accomplished / Failed and why /
   Remaining / Next step, plus a `TerminationReason` on the result. The
-  termination matrix emits `token-budget`, `edit-exhausted`,
+  termination matrix emits `cost-budget`, `edit-exhausted`,
   `delete-verification-failed`, `prev-broken`, `harness-fault`, `output-limit`,
   or (plan-exec) `task-exhausted`. The only remaining output-length guard is the
   three-consecutive-truncation strike (`MAX_CONSECUTIVE_LENGTH`); it is not an
@@ -187,7 +187,7 @@ async function runLoop(options: LoopOptions): Promise<LoopResult> {
       const reply = await options.provider.chat(messages, undefined, { effort: "none" });
 
       if (overBudget()) {
-        return terminate("token-budget", budgetDiagnostics());
+        return terminate("cost-budget", budgetDiagnostics());
       }
       if (offersStop(pinned) && reply === "STOP") {
         return terminate("edit-exhausted", diagnostics);

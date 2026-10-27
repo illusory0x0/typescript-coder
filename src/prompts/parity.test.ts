@@ -19,7 +19,7 @@ import type { SourceFile } from "../utility";
 // Golden hashes for the current prompt snapshots. They make intentional prompt
 // edits visible: a text change must update the matching hash in the same commit.
 const GOLDEN: Record<string, string> = {
-  systemEditDsl: "d99551532f1cda70f19b055552871b734a28496e6efad761862aff8c04f126e8",
+  systemEditDsl: "e7d9e6fbc853d4281cbadb4d19062a7f4af0f170d0fbc8b73d6e968be0411ce1",
   editDsl: "65a4303b59a2733cb159e5924ece031d0f266278b81ef52c04d3a5cb47e22c67",
   createDsl: "40abdf1a7b3a515b11489fb5cfcbaa06614f24f17b213aaba58feafed2702fea",
   dslSelectionRetry: "f98647d7bf2e5d118c70757673a6565de04de028d43269d72b9876825697ebac",

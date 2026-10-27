@@ -11,7 +11,7 @@ owner; this page is the map, the vocabulary, and the reading order.
 | [`feedback-loop.md`](feedback-loop.md) | Cross-mode lifecycle: AgentMode, rounds/exchanges, pinned-repair Edit → Verify, failure/termination policy, caps, records/result, `runLoop`.                                             |
 | [`plan-exec.md`](plan-exec.md)         | Plan → Execute → Review: WorkNode DAG model, Plan/patch DSL, planning/review, validation, scheduling, executor autonomy, gates, progress bounds, CLI/result, limitations, verification.  |
 | [`edit-protocol.md`](edit-protocol.md) | Edit-action reply language: edit-dsl, sentinel fence, select clause/file command grammar (BNF), cascade, viewers/editors, failure stages, application/gating, repair feedback, skeleton. |
-| [`glossary.yaml`](glossary.yaml)       | Benchmark/test/evaluation terminology: harnesses, judge, metrics, ledger, replay, artifacts.                                                                                             |
+| [`glossary.yaml`](glossary.yaml)       | Benchmark/test/evaluation terminology: harnesses, judge, metrics, USD cost, replay, artifacts.                                                                                           |
 
 Recommended reading order:
 
@@ -21,7 +21,7 @@ Recommended reading order:
    is applied.
 4. [`plan-exec.md`](plan-exec.md) for the plan-exec model and scheduling.
 5. [`glossary.yaml`](glossary.yaml) when working on tests, acceptance,
-   benchmarks, metrics, or the ledger.
+   benchmarks, metrics, or provenance.
 
 ## Canonical vocabulary
 

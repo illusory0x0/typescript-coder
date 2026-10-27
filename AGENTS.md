@@ -52,32 +52,29 @@ harness — deterministic tests, offline acceptance scenarios, replay fixtures,
 diagnostics — and reserve a targeted live run for the end of a change, when a
 human asks for it or the harness cannot answer the question.
 
-The oc side is the **frozen reference point**, re-frozen on 2026-10-25 against the
-current `benchmark/specs/`:
+The oc side is **frozen and currently has no committed baseline**: the historical
+`benchmark/results/` tree, `consumption.md`, and `oc-baseline.json` were removed
+on 2026-10-27. The benchmark still hard-rejects `--side oc`; a new oc reference
+run requires explicit human approval and a deliberate, temporary bypass of the
+guard. Restore the guard after the approved matrix, and verify it is restored
+before finishing. Never leave the bypass enabled.
 
-- `benchmark/results/oc-baseline.json` — oc, official `deepseek/deepseek-flash`,
-  4 tasks × 3 reps, 2026-10-25.
+**Live tests and any new baseline are human-gated.** Before running any benchmark
+with `--reps >= 1` (including `--pilot`) or `just accept --live`, ask the human
+first and warn that the run calls the real model and costs money. Do not run any
+of these unprompted, and do not use them as an iteration loop.
 
-**Baseline updates and live tests are human-gated.** Before overwriting or
-re-freezing the baseline, or running any benchmark with `--reps >= 1`
-(including `--pilot`) or `just accept --live`, ask the human first and warn that
-the run calls the real model and costs money. Do not run any of these
-unprompted, and do not use them as an iteration loop.
+Normal tc reports run `--side tc` with the edit-dsl protocol. Cost accounting is
+always at the official DeepSeek peak prices, even when the run happens
+off-peak; comparisons and the `--budget-usd` cap use cache-excluded USD, not
+tokens. `--agent-mode pinned-repair|plan-exec|both` selects the tc loop mode(s),
+where `both` is the benchmark's multi-mode selector; the `edit` alias is
+deprecated. With no committed baseline, a tc-only report does not render an oc
+savings comparison.
 
-Normal tc reports run `--side tc` with the edit-dsl protocol and compare their
-cache-excluded totals against the oc baseline only; `--agent-mode
-pinned-repair|plan-exec|both` selects the tc loop mode(s), where `both` is the
-benchmark's multi-mode selector; the `edit` alias is deprecated. The benchmark
-still hard-rejects `--side oc`: the oc baseline is frozen, and an authorized
-baseline re-freeze is the only exception. Implement it as a deliberate,
-temporary bypass of `frozenDimensionError`, run exactly the approved matrix,
-then restore the guard and verify it is restored before finishing. Never leave
-the bypass enabled.
-
-The oc baseline measures the ambient OpenCode configuration of this repo,
-including its registered skills. Changing `.opencode/skills` or other
-OpenCode-level inputs invalidates oc comparability; re-freeze oc with approval
-if that environment changes.
+The oc side measures the ambient OpenCode configuration of this repo, including
+its registered skills. If a baseline is re-created, keep `.opencode/skills` and
+other OpenCode-level inputs stable across the freeze.
 
 ## Layout / entrypoints
 
@@ -101,5 +98,5 @@ if that environment changes.
 - `tsconfig` is strict + `noUncheckedIndexedAccess` + `verbatimModuleSyntax`: use `import type`, handle possibly-undefined index results (code style follows this: `const x = arr[i]; if (x === undefined) …`).
 - Live checks cost tokens: `just accept --live` and `bun run benchmark/run.ts` call the real model (benchmark default `deepseek-flash` on the official endpoint). Don't run them unprompted, and don't use them as an iteration loop — see Evaluation. Measured benchmark runs default to 5 reps and warm only the stable system-prompt prefix; reports print cache-hit ratios and warn when they are badly imbalanced.
 - `csv-parser` benchmark fixture is held out — never tune prompts or code against it.
-- Benchmark artifacts (`benchmark/results/`, `failures/`, `tmp/`, `acceptance/report.json`) are generated; don't commit unless the ledger (`consumption.md`) cites them.
+- Benchmark artifacts (`benchmark/results/`, `failures/`, `tmp/`, `acceptance/report.json`) are generated; don't commit them unless a human explicitly asks.
 - Commits are titled by topic (`resolve-issue: …`, `Land #80: …`) and reference tracker issue numbers in comments as `(#NN)`; the tracker is the local coding-skills set, not GitHub.

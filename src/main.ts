@@ -22,8 +22,8 @@ export interface RunMainOptions {
   agentMode?: AgentMode;
   /** stdout format (#80); default "text". */
   format?: "text" | "json";
-  /** Hard raw provider-token budget (#80); defaults to the loop's own default. */
-  tokenBudget?: number;
+  /** Hard cache-excluded USD budget (#80); defaults to the loop’s own default. */
+  costBudgetUsd?: number;
   /** Verify command run after an edit (#80). */
   checkCommand?: string[];
   /** Test command run after an edit (#80). */
@@ -142,7 +142,7 @@ export async function runMain(options: RunMainOptions): Promise<number> {
       issue,
       provider: options.provider,
       agentMode: options.agentMode,
-      tokenBudget: options.tokenBudget,
+      costBudgetUsd: options.costBudgetUsd,
       checkCommand: options.checkCommand,
       testCommand: options.testCommand,
       commandTimeoutMs: options.commandTimeoutMs,
@@ -227,7 +227,7 @@ if (import.meta.main) {
     io,
     agentMode: cli.agentMode,
     format: cli.format,
-    tokenBudget: cli.tokenBudget ?? undefined,
+    costBudgetUsd: cli.costBudgetUsd ?? undefined,
     checkCommand: cli.checkCommand ?? undefined,
     testCommand: cli.testCommand ?? undefined,
     commandTimeoutMs: cli.commandTimeoutMs ?? undefined,

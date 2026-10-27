@@ -14,9 +14,9 @@ import { fileURLToPath } from "node:url";
 import { archiveFailureArtifacts, writeFailureArtifact } from "../src/failure-artifact";
 import {
   buildSystemPrompt,
-  cacheExcludedTokens,
   canonicalAgentMode,
   DEFAULT_AGENT_MODE,
+  DEFAULT_COST_BUDGET_USD,
   exchangeStats,
   runLoop,
 } from "../src/loop";
@@ -33,11 +33,12 @@ import { ReplayRecorder, usageFromRaw } from "../src/replay-format";
 import {
   PRICING_FETCHED_ON,
   PRICING_SOURCE_URL,
-  billableTokens,
-  runCost,
-} from "../src/benchmark-pricing";
+  billableCost,
+  billableCostForLoopTokens,
+  peakCost,
+} from "../src/pricing";
 import { currentInputHashes, normalizeText, stableStringify } from "../src/provenance";
-import type { BillableTokens, RateClass } from "../src/benchmark-pricing";
+import type { BillableCost } from "../src/pricing";
 import type { RecordedProvenance } from "../src/provenance";
 import type { ChatMessage, ChatResponse, ReasoningEffort, ToolDefinition } from "../src/openai";
 
@@ -66,7 +67,7 @@ interface CliArgs {
   keep: boolean;
   json: string | null;
   replayDir: string | null;
-  tokenBudget: number | null;
+  costBudgetUsd: number | null;
   effort: ReasoningEffort | null;
   /** tc loop modes to measure; `pinned-repair` is the default. */
   agentModes: AgentMode[];
@@ -83,38 +84,35 @@ interface TokenUsage {
 }
 
 /**
- * Cache-excluded, like-for-like token triple (#89): `in` is cache-miss input,
- * `out` is output (reasoning included), and `total = in + out`. Cache-hit input
- * is deliberately excluded so the two sides compare on the same basis.
+ * Cache-excluded, like-for-like USD triple (#89): `in` is cache-miss input,
+ * `out` is output (reasoning included), and `total = in + out`, all priced at
+ * the official peak rate. Cache-hit input is deliberately excluded so the two
+ * sides compare on the same basis.
  */
-export interface RunBillable extends BillableTokens {
+export interface RunBillableCost extends BillableCost {
   /**
-   * The cache-excluded total over loop calls only, excluding a tc run's final
-   * termination summary (#47): the `--token-budget` basis. Null on the oc side
+   * The cache-excluded USD cost over loop calls only, excluding a tc run's final
+   * termination summary (#47): the `--budget-usd` basis. Null on the oc side
    * and when the side reported no usage.
    */
   readonly loop: number | null;
 }
 
-export interface RunTokens extends TokenUsage {
-  readonly billable: RunBillable;
-}
-
 /**
  * Per-run billable split (#47): `total` covers every provider call the side
  * made (for tc that includes the final termination summary); `loop` applies the
- * same cache-excluded formula to the loop calls only — the `--token-budget`
+ * same cache-excluded USD formula to the loop calls only — the `--budget-usd`
  * basis. `loopTokens` is the tc loop result's tally, passed as null on the oc
  * side or when usage is unavailable.
  */
-export function billableForRun(
+export function billableCostForRun(
   totalUsage: TokenUsage,
   loopTokens: LoopTokens | null,
   side: Side,
-): RunBillable {
+): RunBillableCost {
   return {
-    ...billableTokens(totalUsage, side),
-    loop: side === "tc" && loopTokens !== null ? cacheExcludedTokens(loopTokens) : null,
+    ...billableCost(totalUsage, side),
+    loop: side === "tc" && loopTokens !== null ? billableCostForLoopTokens(loopTokens) : null,
   };
 }
 
@@ -227,7 +225,9 @@ export interface RunRecord {
   readonly rep: number;
   readonly ok: boolean;
   readonly sideOk: boolean;
-  readonly tokens: RunTokens;
+  readonly tokens: TokenUsage;
+  /** Cache-excluded peak-price USD triple (all calls, plus tc loop-only); null without usage. */
+  readonly billableCost: RunBillableCost | null;
   readonly usageAvailable: boolean;
   readonly usageSource: string;
   readonly rawUsage: unknown;
@@ -235,7 +235,6 @@ export interface RunRecord {
   readonly startedAt: string;
   readonly finishedAt: string;
   readonly cost: number | null;
-  readonly rateClass: RateClass | null;
   readonly steps: number | null;
   readonly records: readonly RecordSummary[] | null;
   /** Per-run rejected-vs-applied exchange counts (#69); null when no records. */
@@ -279,9 +278,11 @@ export interface AggregateRow {
   failed: number;
   successRate: number;
   usageRuns: number;
-  /** Cache-excluded token stats (#89): `in` = cache-miss input, `out` = output. */
+  /** Raw provider token stats: input, output, and total as reported. */
   tokens: { in: TokenStats; out: TokenStats; total: TokenStats };
-  /** USD cost stats over runs that carry a cost (same shape as tokens). */
+  /** Cache-excluded peak-price USD stats: miss input, output, and their sum. */
+  billableCost: { in: TokenStats; out: TokenStats; total: TokenStats };
+  /** Full peak-price USD cost stats over runs that carry a cost. */
   cost: TokenStats;
   /**
    * Provider cache counters. `hitRate` is cacheRead / raw prompt tokens, where
@@ -291,7 +292,10 @@ export interface AggregateRow {
   cache: { read: TokenStats; hitRate: number | null };
   durationMsMean: number | null;
   stepsMean: number | null;
+  /** Raw token sums divided by successful runs; diagnostic only. */
   tokensPerSuccess: { in: number | null; out: number | null; total: number | null };
+  /** Cache-excluded USD sums divided by successful runs; budget/comparison view. */
+  billableCostPerSuccess: number | null;
   costPerSuccess: number | null;
   /** Selector adoption summed over the selected runs' exchanges (#101). */
   selectors: { range: number; matcher: number; wholeSymbol: number };
@@ -326,8 +330,6 @@ export interface Report {
   /** oc-side model override (`--oc-model`); null when the oc side uses `model`. */
   ocModel: string | null;
   effort: ReasoningEffort | null;
-  /** Opt-in multi-payload exchanges (#69): whether the tc side batched edits. */
-  multiPayload: boolean;
   /**
    * Edit protocol (#119) the tc side used; scalar for single-protocol and
    * legacy reports, null when more than one variant was selected (#16).
@@ -340,8 +342,8 @@ export interface Report {
   protocolFormats?: ProtocolFormat[];
   /** Selected tc loop modes; absent on legacy reports (read as `["pinned-repair"]`). */
   agentModes?: AgentMode[];
-  /** Token budget forwarded to the tc side; null means `DEFAULT_TOKEN_BUDGET`. */
-  tokenBudget: number | null;
+  /** Cache-excluded USD budget forwarded to the tc side; null means the loop default. */
+  costBudgetUsd: number | null;
   bunVersion: string;
   opencodeVersion: string | null;
   pilotReference: string | null;
@@ -373,7 +375,7 @@ interface RunContext {
   readonly opencode: OpencodeContext | null;
   readonly runRoot: string;
   readonly replayDir: string | null;
-  readonly tokenBudget: number | null;
+  readonly costBudgetUsd: number | null;
   /** Selected tc protocol variants (#16); used to keep multi-variant run names unique. */
   readonly protocols: readonly ProtocolFormat[];
   /** Selected tc loop modes; used to keep multi-variant run names unique. */
@@ -423,7 +425,7 @@ export const TASK_SPECS: Record<TaskName, string> = {
   minilisp: readTaskSpec("minilisp"),
   // Held-out task (#67): never a target of prompt or loop iteration.
   "csv-parser": readTaskSpec("csv-parser"),
-  // Larger task added after the 2026-10-25 freeze; it has no baseline rows.
+  // Larger task kept outside the optional four-task baseline matrix.
   "mini-spreadsheet": readTaskSpec("mini-spreadsheet"),
 };
 
@@ -431,10 +433,9 @@ export const TASK_SPECS: Record<TaskName, string> = {
 export const TASK_ISSUES: Record<TaskName, string> = TASK_SPECS;
 
 /**
- * Tasks covered by the frozen 2026-10-25 oc baseline. The baseline spec hash
- * must stay pinned to exactly these four tasks: `mini-spreadsheet` was added
- * later and has no baseline run, so including it would falsely mark the frozen
- * baseline stale and withhold every existing oc comparison.
+ * Tasks covered by the optional oc baseline matrix. If a baseline is re-created,
+ * its spec hash stays pinned to exactly these four tasks; `mini-spreadsheet`
+ * is intentionally outside the comparison matrix.
  */
 const BASELINE_TASKS: readonly TaskName[] = [
   "json-parser",
@@ -444,9 +445,8 @@ const BASELINE_TASKS: readonly TaskName[] = [
 ];
 
 /**
- * Same text hash the provenance record uses for `taskIssue`. The frozen
- * baseline was measured against the old one-line issues; comparing its token
- * totals to spec-input runs would be apples-to-oranges.
+ * Same text hash the provenance record uses for `taskIssue`, retained for an
+ * optional baseline spec-identity check.
  */
 const TASK_SPEC_HASH = createHash("sha256")
   .update(
@@ -477,7 +477,7 @@ const PILOT_REPS = 1;
 const OPENCODE_PROVIDER = "honghong";
 // The fixed opencode reference point: the oc side is measured once against
 // the official DeepSeek endpoint, then tc-only reports compare their
-// cache-excluded totals against this file instead of re-running oc.
+// cache-excluded USD costs against this file instead of re-running oc.
 const OC_BASELINE_RELATIVE_PATH = "benchmark/results/oc-baseline.json";
 const OPENCODE_FALLBACK_BIN = "/home/illu/.opencode/bin/opencode";
 // Parallel runs multiplex one gateway, so the caps get headroom beyond the
@@ -523,17 +523,17 @@ Options:
   --concurrency <n>                          max parallel runs (default: ${DEFAULT_CONCURRENCY})
   --pilot                                    force 1 rep per task and side and write
                                              benchmark/results/pilot-<date>.json
-  --side tc                                  only tc is measured; oc is frozen at
-                                             benchmark/results/oc-baseline.json
+  --side tc                                  only tc is measured; the oc side is frozen and
+                                             no oc baseline is committed
   --model <id>                               gateway model id (default: ${DEFAULT_MODEL})
   --oc-model <id>                            frozen oc model id (accepted for compatibility;
                                              the oc side cannot run)
   --keep                                     keep workspaces and logs under ./tmp/benchmark/
   --json <path>                              report output path (default: benchmark/results/)
   --replay-dir <path>                        write per-run tc-side replay bundles to <path>
-  --token-budget <n>                         abort a tc-side run once accumulated cache-excluded
-                                             loop tokens exceed n; the final termination summary
-                                             is not budgeted (default: 120000)
+  --budget-usd <usd>                         abort a tc-side run once accumulated cache-excluded
+                                             USD cost exceeds <usd>; the final termination summary
+                                             is not budgeted (default: 0.10)
   --effort <none|low|high|max>               force this reasoning_effort on every tc-side
                                              model call (default: none)
   --agent-mode pinned-repair|plan-exec|both
@@ -567,13 +567,10 @@ function parseConcurrency(value: string): number {
   return concurrency;
 }
 
-function parseTokenBudget(value: string): number {
-  if (!/^\d+$/.test(value)) {
-    failUsage(`invalid --token-budget value: ${value}`);
-  }
+function parseCostBudget(value: string): number {
   const budget = Number(value);
-  if (!Number.isSafeInteger(budget) || budget < 1) {
-    failUsage(`invalid --token-budget value: ${value}`);
+  if (!/^(?:\d+(?:\.\d*)?|\.\d+)$/.test(value) || !Number.isFinite(budget) || budget <= 0) {
+    failUsage(`invalid --budget-usd value: ${value}`);
   }
   return budget;
 }
@@ -639,7 +636,7 @@ function parseSide(value: string): SideSelection {
 export function frozenDimensionError(side: SideSelection): string | null {
   return side === "tc"
     ? null
-    : "the oc side is frozen (benchmark/results/oc-baseline.json); benchmark only runs --side tc";
+    : "the oc side is frozen and no oc baseline is committed; benchmark only runs --side tc";
 }
 
 function parseTask(value: string): TaskName {
@@ -663,7 +660,7 @@ export function parseArgs(argv: string[]): CliArgs {
     keep: false,
     json: null,
     replayDir: null,
-    tokenBudget: null,
+    costBudgetUsd: null,
     effort: null,
     agentModes: [DEFAULT_AGENT_MODE],
     help: false,
@@ -763,12 +760,12 @@ export function parseArgs(argv: string[]): CliArgs {
         index += 1;
         break;
       }
-      case "--token-budget": {
+      case "--budget-usd": {
         const value = argv[index + 1];
         if (value === undefined || value.startsWith("-")) {
-          failUsage("missing value for --token-budget");
+          failUsage("missing value for --budget-usd");
         }
-        args.tokenBudget = parseTokenBudget(value);
+        args.costBudgetUsd = parseCostBudget(value);
         index += 1;
         break;
       }
@@ -915,23 +912,14 @@ function usageReported(usage: TokenUsage): boolean {
   );
 }
 
-// Per-run USD cost from the recorded window and buckets (see
-// src/benchmark-pricing.ts for the rate table and bucket normalization); null
-// when the side reported no usage, mirroring a null `tokens.total`.
-function costForOutcome(
-  outcome: SideOutcome,
-  side: Side,
-): { cost: number | null; rateClass: RateClass | null } {
+// Per-run full USD cost from the recorded buckets at the official peak rate
+// (see src/pricing.ts); null when the side reported no usage, mirroring a null
+// `tokens.total`. Off-peak wall-clock windows are deliberately ignored.
+function costForOutcome(outcome: SideOutcome, side: Side): number | null {
   if (!outcome.usageAvailable) {
-    return { cost: null, rateClass: null };
+    return null;
   }
-  const result = runCost(
-    outcome.tokens,
-    side,
-    new Date(outcome.startedAt),
-    new Date(outcome.finishedAt),
-  );
-  return { cost: result.cost, rateClass: result.rateClass };
+  return peakCost(outcome.tokens, side);
 }
 
 function summarizeOutput(text: string, limit = OUTPUT_LIMIT): string {
@@ -1126,7 +1114,7 @@ export function cacheBalanceWarning(rows: readonly AggregateRow[]): string | nul
     ? null
     : `cache hit rates span ${warnings.join(
         "; ",
-      )} across variants; billable token means may be distorted by cold-cache runs. Warm the stable prefix and repeat before comparing.`;
+      )} across variants; billable USD means may be distorted by cold-cache runs. Warm the stable prefix and repeat before comparing.`;
 }
 
 async function runTypescriptCoderSide(options: {
@@ -1138,7 +1126,7 @@ async function runTypescriptCoderSide(options: {
   rep: number;
   fixture: string;
   replayPath: string | null;
-  tokenBudget: number | null;
+  costBudgetUsd: number | null;
   effort: ReasoningEffort | null;
   /** Loop mode (`--agent-mode`); forwarded to the loop. */
   agentMode: AgentMode;
@@ -1167,10 +1155,7 @@ async function runTypescriptCoderSide(options: {
       temperature: 0,
       checkCommand: ["bun", options.tscBin, "--noEmit"],
       testCommand: ["bun", "test"],
-      tokenBudget: options.tokenBudget ?? undefined,
-      // The benchmark cap uses the same cache-excluded total as the report;
-      // the core CLI keeps its historical raw provider-token safety cap.
-      tokenBudgetBasis: "cache-excluded",
+      costBudgetUsd: options.costBudgetUsd ?? undefined,
       effortOverride: options.effort ?? undefined,
       agentMode: options.agentMode,
     });
@@ -1620,7 +1605,7 @@ async function runOnce(job: BenchmarkJob, context: RunContext): Promise<RunRecor
       rep,
       fixture: ["benchmark", "fixtures", task].join("/"),
       replayPath,
-      tokenBudget: context.tokenBudget,
+      costBudgetUsd: context.costBudgetUsd,
       effort: context.effort,
       agentMode,
       failureRoot: context.repoRoot,
@@ -1652,7 +1637,7 @@ async function runOnce(job: BenchmarkJob, context: RunContext): Promise<RunRecor
   }
 
   const asRelative = (path: string): string => relative(context.repoRoot, path);
-  const { cost, rateClass } = costForOutcome(outcome, side);
+  const cost = costForOutcome(outcome, side);
   return {
     task,
     side,
@@ -1663,16 +1648,10 @@ async function runOnce(job: BenchmarkJob, context: RunContext): Promise<RunRecor
     // on the state left on disk (#43); judge fields stay as recorded.
     ok: outcome.terminationReason === null && judge.ok,
     sideOk: outcome.sideOk,
-    tokens: {
-      ...outcome.tokens,
-      // The loop split is only meaningful with reported usage; `total` keeps
-      // its existing zero-bucket treatment when usage is unavailable.
-      billable: billableForRun(
-        outcome.tokens,
-        outcome.usageAvailable ? outcome.loopTokens : null,
-        side,
-      ),
-    },
+    tokens: outcome.tokens,
+    billableCost: outcome.usageAvailable
+      ? billableCostForRun(outcome.tokens, outcome.loopTokens, side)
+      : null,
     usageAvailable: outcome.usageAvailable,
     usageSource: outcome.usageSource,
     rawUsage: outcome.rawUsage,
@@ -1680,7 +1659,6 @@ async function runOnce(job: BenchmarkJob, context: RunContext): Promise<RunRecor
     startedAt: outcome.startedAt,
     finishedAt: outcome.finishedAt,
     cost,
-    rateClass,
     steps: outcome.steps,
     records: outcome.recordSummaries,
     exchangeStats: outcome.exchangeStats,
@@ -1735,14 +1713,13 @@ function writeReport(path: string, report: Report): void {
 }
 
 // Aggregates are computed from the final `runs` array (matrix order) so reruns
-// never leak in: only final records are listed. Token means/totals are the
-// cache-excluded triple (#89): `in` = cache-miss input, `out` = output
-// (reasoning included), `total = in + out`, normalized per side through
-// `src/benchmark-pricing.ts`. Stats cover runs whose `tokens.total` is non-null.
-// `tokensPerSuccess` and `costPerSuccess` divide those sums by the number of
-// passing runs (judge-passing and not aborted at the token budget; null when
-// there were no successes). `cost` (USD, decision-only) stats cover runs that
-// carry a USD cost.
+// never leak in: only final records are listed. `tokens` is the raw provider
+// total. `billableCost` is the cache-excluded peak-price USD view (#89): `in` =
+// cache-miss input, `out` = output (reasoning included), `total = in + out`;
+// `cost` is full peak-price USD including cache hits. Stats cover runs whose
+// usage was available. `billableCostPerSuccess` and `costPerSuccess` divide
+// those sums by the number of passing runs (judge-passing and not aborted at
+// the USD budget; null when there were no successes).
 /**
  * Cache-hit share of a run's raw prompt tokens. tc's `input` already includes
  * cached tokens; oc's export reports `input` as misses and `cacheRead`
@@ -1792,19 +1769,23 @@ export function aggregateRuns(
   );
   const usageRuns = selected.filter((run) => run.tokens.total !== null);
   const ok = selected.filter((run) => run.ok).length;
-  const tokenStats = (pick: (triple: BillableTokens) => number): TokenStats => {
-    const values = usageRuns.map((run) => pick(billableTokens(run.tokens, run.side)));
-    if (values.length === 0) {
-      return { mean: null, total: null };
-    }
-    const total = values.reduce((left, right) => left + right, 0);
-    return { mean: total / values.length, total };
-  };
+  const rawStats = (pick: (run: RunRecord) => number | null): TokenStats =>
+    numberStats(
+      selected.map((run) => pick(run)).filter((value): value is number => value !== null),
+    );
   const steps = selected.map((run) => run.steps).filter((value): value is number => value !== null);
   const tokens = {
-    in: tokenStats((triple) => triple.in),
-    out: tokenStats((triple) => triple.out),
-    total: tokenStats((triple) => triple.total),
+    in: rawStats((run) => run.tokens.input),
+    out: rawStats((run) => run.tokens.output),
+    total: rawStats((run) => run.tokens.total),
+  };
+  const billableRuns = selected
+    .map((run) => run.billableCost)
+    .filter((value): value is RunBillableCost => value !== null);
+  const billableCostStats = {
+    in: numberStats(billableRuns.map((run) => run.in)),
+    out: numberStats(billableRuns.map((run) => run.out)),
+    total: numberStats(billableRuns.map((run) => run.total)),
   };
   const costValues = selected
     .map((run) => run.cost)
@@ -1872,6 +1853,7 @@ export function aggregateRuns(
     successRate: selected.length === 0 ? 0 : ok / selected.length,
     usageRuns: usageRuns.length,
     tokens,
+    billableCost: billableCostStats,
     cost,
     cache,
     durationMsMean:
@@ -1885,6 +1867,7 @@ export function aggregateRuns(
       out: perSuccess(tokens.out),
       total: perSuccess(tokens.total),
     },
+    billableCostPerSuccess: perSuccess(billableCostStats.total),
     costPerSuccess: perSuccess(cost),
     selectors,
     stages,
@@ -2104,8 +2087,8 @@ function multiplierLabel(
   if (first === undefined || second === undefined) {
     return null;
   }
-  const firstTotal = first.tokens.total.total;
-  const secondTotal = second.tokens.total.total;
+  const firstTotal = first.billableCost.total.total;
+  const secondTotal = second.billableCost.total.total;
   if (firstTotal === null || secondTotal === null) {
     return null;
   }
@@ -2148,11 +2131,11 @@ function multiplierLabels(
 }
 
 /**
- * Token multiplier summary (#89): the cache-excluded total of the higher side
- * over the lower side, overall and per task. Says so plainly when both sides
- * did not run (no comparable pair).
+ * Cache-excluded USD multiplier summary (#89): the higher side's billable cost
+ * over the lower side, overall and per task. Says so plainly when both sides did
+ * not run (no comparable pair).
  */
-export function tokenMultiplierSentence(
+export function billableCostMultiplierSentence(
   bySide: readonly AggregateRow[],
   byTaskSide: readonly AggregateRow[],
 ): string {
@@ -2178,11 +2161,11 @@ export function tokenMultiplierSentence(
     }
   }
   if (overallLabels.length === 0 && taskParts.length === 0) {
-    return "Token multiplier (cache-excluded): not comparable (both sides must run).";
+    return "Cache-excluded USD multiplier: not comparable (both sides must run).";
   }
   const parts = overallLabels.map((label) => `${label} overall`);
   parts.push(...taskParts);
-  return `Token multiplier (cache-excluded total, higher/lower): ${parts.join("; ")}.`;
+  return `Cache-excluded USD multiplier (higher/lower): ${parts.join("; ")}.`;
 }
 
 export interface BaselineSavingsRow {
@@ -2191,7 +2174,7 @@ export interface BaselineSavingsRow {
   readonly agentMode: AgentMode | null;
   readonly baselineMean: number;
   readonly currentMean: number;
-  /** Baseline mean over the current mean: how many times fewer tokens tc uses. */
+  /** Baseline mean over the current mean: how many times fewer USD tc uses. */
   readonly factor: number;
 }
 
@@ -2211,8 +2194,8 @@ export interface BaselineSavings {
 
 /**
  * Savings against the fixed oc baseline: per task and overall, `factor` is the
- * oc baseline's mean cache-excluded total divided by the current tc mean, so
- * `2.5` reads as "tc uses 2.5x fewer tokens". Tasks absent from either side are
+ * oc baseline's mean cache-excluded USD cost divided by the current tc mean, so
+ * `2.5` reads as "tc uses 2.5x fewer dollars". Tasks absent from either side are
  * skipped instead of treated as zero, and a zero current mean never divides.
  */
 export function savingsVsOcBaseline(
@@ -2221,7 +2204,7 @@ export function savingsVsOcBaseline(
 ): BaselineSavings {
   const baseline = new Map<TaskName, number>();
   for (const row of baselineByTaskSide) {
-    const mean = row.tokens.total.mean;
+    const mean = row.billableCost.total.mean;
     if (row.side === "oc" && row.task !== null && mean !== null && mean > 0) {
       baseline.set(row.task, mean);
     }
@@ -2232,7 +2215,7 @@ export function savingsVsOcBaseline(
       continue;
     }
     const baselineMean = baseline.get(row.task);
-    const currentMean = row.tokens.total.mean;
+    const currentMean = row.billableCost.total.mean;
     if (baselineMean === undefined || currentMean === null || currentMean <= 0) {
       continue;
     }
@@ -2282,7 +2265,7 @@ export function savingsVsOcBaseline(
 
 export function ocBaselineSavingsSentence(savings: BaselineSavings): string {
   if (savings.overall.length === 0) {
-    return "Savings vs oc baseline: not comparable (no shared task reports a token total).";
+    return "Savings vs oc baseline: not comparable (no shared task reports a billable cost).";
   }
   const parts = savings.overall.map((entry) => {
     const mode = entry.agentMode === null ? null : modeOf(entry.agentMode);
@@ -2290,11 +2273,11 @@ export function ocBaselineSavingsSentence(savings: BaselineSavings): string {
       entry.protocol === null
         ? ""
         : `${entry.protocol}${mode !== null && mode !== DEFAULT_AGENT_MODE ? `/${mode}` : ""} `;
-    return `${label}${entry.factor.toFixed(2)}x fewer tokens across ${entry.tasks} task${
+    return `${label}${entry.factor.toFixed(2)}x fewer USD across ${entry.tasks} task${
       entry.tasks === 1 ? "" : "s"
     }`;
   });
-  return `Savings vs oc baseline (cache-excluded total, oc/tc): ${parts.join("; ")}.`;
+  return `Savings vs oc baseline (cache-excluded USD, oc/tc): ${parts.join("; ")}.`;
 }
 
 interface FrozenBaseline {
@@ -2414,7 +2397,7 @@ export function writeMarkdownReport(
       ? []
       : [`- oc model: ${report.ocModel}`]),
     `- effort: ${report.effort ?? "none (default)"}`,
-    `- multi-payload: ${report.multiPayload ? "on (#69)" : "off (default)"}`,
+    `- budget: ${formatUsd(report.costBudgetUsd ?? DEFAULT_COST_BUDGET_USD)} cache-excluded USD`,
     protocolLine,
     ...(modeLine === null ? [] : [modeLine]),
     `- concurrency: ${report.concurrency}`,
@@ -2469,20 +2452,26 @@ export function writeMarkdownReport(
     lines.push("");
   }
 
-  lines.push("## Token and cost accounting", "");
+  lines.push("## USD accounting", "");
   lines.push(
-    "Like-for-like tokens (#89): the comparison total is cache-excluded — total =",
-    "cache-miss input (`in`) + output, with reasoning counted as output — normalized for",
-    "both sides by the single bucket normalization in `src/benchmark-pricing.ts`.",
-    "Cache-hit input stays in each run's raw buckets but is excluded from the total, so",
-    "the two sides compare on the same basis.",
+    "All runs are priced at the official DeepSeek V4.1-Flash **peak** rates, even when",
+    "the run happened during an off-peak window; off-peak rates are never used. Rates",
+    `were fetched ${PRICING_FETCHED_ON} from ${PRICING_SOURCE_URL} (USD per 1M tokens):`,
+    "cache-hit input $0.006; cache-miss input $0.30; output $1.20. The pricing and",
+    "bucket normalization live in `src/pricing.ts`.",
+    "",
+    "Two USD views are reported. **Full cost** prices cache-hit input, cache-miss input,",
+    "and output. **Billable cost** (#89) is the cache-excluded, like-for-like view:",
+    "cache-miss input + output, with reasoning counted as output and cache-hit input",
+    "excluded. Billable cost is the comparison, multiplier, savings, and `--budget-usd`",
+    "basis; full cost records actual peak-price spend.",
     "",
     "tc: OpenAI-compatible `usage` from the provider, summed over every chat request",
     "(input/prompt, output/completion, total; cache and reasoning counters are kept per",
     "record). The loop enforces its budget before the termination summary call, so",
-    "`tokens.billable.total` includes that final summary while `tokens.billable.loop`",
-    "covers loop calls only: `tokens.billable.loop` is the `--token-budget` basis and",
-    "`tokens.billable.total` is the all-calls headline. The oc side has no loop split",
+    "`billableCost.total` includes that final summary while `billableCost.loop` covers",
+    "loop calls only; `billableCost.loop` is the `--budget-usd` basis and",
+    "`billableCost.total` is the all-calls headline. The oc side has no loop split",
     "(null).",
     "",
     "oc: usage read from `opencode session export` (`info.tokens`), falling back to",
@@ -2490,32 +2479,22 @@ export function writeMarkdownReport(
     "is derived from input + output + reasoning when the export reports none; the export's",
     "own `cost` stays verbatim in `rawUsage`.",
     "",
-    "Cost: USD per run, computed from the recorded buckets and the run's",
-    "`startedAt`/`finishedAt` window with the official DeepSeek V4.1-Flash peak/off-peak",
-    "prices (see `src/benchmark-pricing.ts`). Buckets: tc `input` includes cache hits",
-    "(miss = input - cacheRead); oc `input` excludes them (miss = input, hit = cacheRead);",
-    "output is priced together with reasoning; `cacheWrite` is priced at the cache-miss",
-    "rate. A run that crosses a peak/off-peak boundary splits by elapsed-time share",
-    "(uniform-spend approximation). USD columns are decision-only: cost is recorded in the",
-    "result JSON and `consumption.md` for decisions, but the headline comparison metric is",
-    "the cache-excluded token total above.",
-    "",
   );
 
   lines.push("## Per-task results", "");
   lines.push(
-    "| Task | Side | Protocol | Agent mode | Success | Mean in (no cache) | Cache hit | Mean out | Mean total | Mean $ | $/success | Mean dur (s) | Mean steps |",
+    "| Task | Side | Protocol | Agent mode | Success | Billable in ($) | Cache hit | Billable out ($) | Billable total ($) | Full $ | $/success | Mean dur (s) | Mean steps |",
     "| --- | --- | --- | --- | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: |",
   );
   for (const row of aggregates.byTaskSide) {
     lines.push(
-      `| ${row.task ?? "all"} | ${row.side ?? "all"} | ${row.protocol ?? "n/a"} | ${row.agentMode ?? "n/a"} | ${row.ok}/${row.runs} | ${formatTokenCount(
-        row.tokens.in.mean,
-      )} | ${formatCacheHit(row.cache.hitRate)} | ${formatTokenCount(
-        row.tokens.out.mean,
-      )} | ${formatTokenCount(
-        row.tokens.total.mean,
-      )} | ${formatUsd(row.cost?.mean ?? null)} | ${formatUsd(row.costPerSuccess)} | ${formatSeconds(
+      `| ${row.task ?? "all"} | ${row.side ?? "all"} | ${row.protocol ?? "n/a"} | ${row.agentMode ?? "n/a"} | ${row.ok}/${row.runs} | ${formatUsd(
+        row.billableCost.in.mean,
+      )} | ${formatCacheHit(row.cache.hitRate)} | ${formatUsd(
+        row.billableCost.out.mean,
+      )} | ${formatUsd(row.billableCost.total.mean)} | ${formatUsd(
+        row.cost.mean,
+      )} | ${formatUsd(row.costPerSuccess)} | ${formatSeconds(
         row.durationMsMean,
       )} | ${formatSteps(row.stepsMean)} |`,
     );
@@ -2524,18 +2503,18 @@ export function writeMarkdownReport(
 
   lines.push("## Overall comparison", "");
   lines.push(
-    "| Side | Protocol | Agent mode | Success | Mean in (no cache) | Cache hit | Mean out | Mean total | Total tokens | Mean $ | Total $ | $/success | Mean dur (s) | Mean steps |",
-    "| --- | --- | --- | --- | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: |",
+    "| Side | Protocol | Agent mode | Success | Mean billable in ($) | Cache hit | Mean billable out ($) | Mean billable total ($) | Total billable ($) | Mean full $ | Total full $ | $/success | Mean dur (s) | Mean steps |",
+    "| --- | --- | --- | --- | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: |",
   );
   for (const row of aggregates.bySide) {
     lines.push(
-      `| ${row.side ?? "all"} | ${row.protocol ?? "n/a"} | ${row.agentMode ?? "n/a"} | ${row.ok}/${row.runs} | ${formatTokenCount(
-        row.tokens.in.mean,
-      )} | ${formatCacheHit(row.cache.hitRate)} | ${formatTokenCount(row.tokens.out.mean)} | ${formatTokenCount(
-        row.tokens.total.mean,
-      )} | ${formatTokenCount(row.tokens.total.total)} | ${formatUsd(
-        row.cost?.mean ?? null,
-      )} | ${formatUsd(row.cost?.total ?? null)} | ${formatUsd(
+      `| ${row.side ?? "all"} | ${row.protocol ?? "n/a"} | ${row.agentMode ?? "n/a"} | ${row.ok}/${row.runs} | ${formatUsd(
+        row.billableCost.in.mean,
+      )} | ${formatCacheHit(row.cache.hitRate)} | ${formatUsd(
+        row.billableCost.out.mean,
+      )} | ${formatUsd(row.billableCost.total.mean)} | ${formatUsd(
+        row.billableCost.total.total,
+      )} | ${formatUsd(row.cost.mean)} | ${formatUsd(row.cost.total)} | ${formatUsd(
         row.costPerSuccess,
       )} | ${formatSeconds(row.durationMsMean)} | ${formatSteps(row.stepsMean)} |`,
     );
@@ -2543,16 +2522,14 @@ export function writeMarkdownReport(
   lines.push("");
   lines.push("Per success (usage-run sums divided by successful runs):", "");
   lines.push(
-    "| Side | Protocol | Agent mode | In (no cache) | Out | Total | Cost |",
-    "| --- | --- | --- | ---: | ---: | ---: | ---: |",
+    "| Side | Protocol | Agent mode | Billable total ($) | Full cost ($) | Full $/success |",
+    "| --- | --- | --- | ---: | ---: | ---: |",
   );
   for (const row of aggregates.bySide) {
     lines.push(
-      `| ${row.side ?? "all"} | ${row.protocol ?? "n/a"} | ${row.agentMode ?? "n/a"} | ${formatTokenCount(
-        row.tokensPerSuccess.in,
-      )} | ${formatTokenCount(
-        row.tokensPerSuccess.out,
-      )} | ${formatTokenCount(row.tokensPerSuccess.total)} | ${formatUsd(row.costPerSuccess)} |`,
+      `| ${row.side ?? "all"} | ${row.protocol ?? "n/a"} | ${row.agentMode ?? "n/a"} | ${formatUsd(
+        row.billableCostPerSuccess,
+      )} | ${formatUsd(row.cost.total)} | ${formatUsd(row.costPerSuccess)} |`,
     );
   }
   lines.push("");
@@ -2575,7 +2552,7 @@ export function writeMarkdownReport(
     lines.push(`> **Cache warning:** ${report.cacheWarning}`, "");
   }
   lines.push(successRateSentence(aggregates.bySide), "");
-  lines.push(tokenMultiplierSentence(aggregates.bySide, aggregates.byTaskSide), "");
+  lines.push(billableCostMultiplierSentence(aggregates.bySide, aggregates.byTaskSide), "");
   // The oc side is measured once; tc-only reports compare against that fixed
   // baseline instead of re-running it.
   const ranOpencode = aggregates.bySide.some((row) => row.side === "oc");
@@ -2584,7 +2561,7 @@ export function writeMarkdownReport(
     lines.push(
       "## Baseline comparison unavailable",
       "",
-      "The frozen oc baseline was measured with a different task-spec text and is not token-comparable to these spec runs. Re-freeze the baseline against `benchmark/specs/` before comparing totals.",
+      "The frozen oc baseline was measured with a different task-spec text and is not USD-comparable to these spec runs. Re-freeze the baseline against `benchmark/specs/` before comparing costs.",
       "",
     );
   } else if (ocBaseline !== null) {
@@ -2596,25 +2573,25 @@ export function writeMarkdownReport(
       lines.push(
         `Baseline: \`${ocBaseline.path}\` (${baselineModel}, ${baselineReps}, ${
           ocBaseline.date ?? "date n/a"
-        }). A factor above 1 means tc uses that many times fewer cache-excluded tokens.`,
+        }). A factor above 1 means tc uses that many times fewer cache-excluded USD.`,
         "",
       );
       lines.push(
-        "| Task | Protocol | Agent mode | oc baseline mean total | tc mean total | Savings (oc/tc) |",
+        "| Task | Protocol | Agent mode | oc baseline mean billable $ | tc mean billable $ | Savings (oc/tc) |",
         "| --- | --- | --- | ---: | ---: | ---: |",
       );
       for (const row of savings.rows) {
         lines.push(
-          `| ${row.task} | ${row.protocol ?? "n/a"} | ${row.agentMode ?? "n/a"} | ${formatTokenCount(
+          `| ${row.task} | ${row.protocol ?? "n/a"} | ${row.agentMode ?? "n/a"} | ${formatUsd(
             row.baselineMean,
-          )} | ${formatTokenCount(row.currentMean)} | ${row.factor.toFixed(2)}x |`,
+          )} | ${formatUsd(row.currentMean)} | ${row.factor.toFixed(2)}x |`,
         );
       }
       for (const row of savings.overall) {
         lines.push(
           `| **all ${row.tasks} task${row.tasks === 1 ? "" : "s"}** | ${
             row.protocol ?? "n/a"
-          } | ${row.agentMode ?? "n/a"} | ${formatTokenCount(row.baselineSum)} | ${formatTokenCount(
+          } | ${row.agentMode ?? "n/a"} | ${formatUsd(row.baselineSum)} | ${formatUsd(
             row.currentSum,
           )} | **${row.factor.toFixed(2)}x** |`,
         );
@@ -2623,12 +2600,11 @@ export function writeMarkdownReport(
     }
   }
   lines.push(
-    `*Pricing footnote (decision-only):* USD costs use the official DeepSeek V4.1-Flash peak/off-peak`,
-    `rates (fetched ${PRICING_FETCHED_ON} from ${PRICING_SOURCE_URL}; USD per 1M tokens):`,
-    "cache-hit input $0.006 peak / $0.003 off-peak; cache-miss input $0.30 / $0.15;",
-    "output $1.20 / $0.60. Peak hours are Mon-Fri 01:00-04:00 and 06:00-10:00 UTC,",
-    "excluding Chinese public holidays; every other hour is off-peak. A run straddling",
-    "a boundary splits its cost by elapsed-time share.",
+    `*Pricing footnote:* USD costs use the official DeepSeek V4.1-Flash **peak** rates`,
+    `(fetched ${PRICING_FETCHED_ON} from ${PRICING_SOURCE_URL}; USD per 1M tokens):`,
+    "cache-hit input $0.006; cache-miss input $0.30; output $1.20. Peak rates are used",
+    "unconditionally, including runs that happened during off-peak hours; no wall-clock",
+    "rate-class blend is applied.",
     "",
   );
 
@@ -2782,28 +2758,25 @@ export function writeMarkdownReport(
   lines.push("## Raw runs", "");
   lines.push(
     "Provider-reported buckets, verbatim: tc `Raw in`/`Raw total` include cache hits;",
-    "oc `Raw in` excludes them. `Loop total` is `tokens.billable.loop` (tc loop calls",
-    "only, the `--token-budget` basis; n/a for oc), while the cache-excluded",
-    "all-calls comparison total (`tokens.billable.total`, including a tc termination",
-    "summary) is in the tables above, not here.",
+    "oc `Raw in` excludes them. `Loop billable $` is `billableCost.loop` (tc loop",
+    "calls only, the `--budget-usd` basis; n/a for oc), `Billable $` is the",
+    "cache-excluded all-calls comparison total, and `Full $` includes cache-hit input.",
     "",
-    "| Task | Side | Protocol | Agent mode | Rep | OK | Raw in | Raw out | Raw total | Loop total | Cost | Rate | Steps | Dur (s) |",
-    "| --- | --- | --- | --- | ---: | --- | ---: | ---: | ---: | ---: | ---: | --- | ---: | ---: |",
+    "| Task | Side | Protocol | Agent mode | Rep | OK | Raw in | Raw out | Raw total | Loop billable $ | Billable $ | Full $ | Steps | Dur (s) |",
+    "| --- | --- | --- | --- | ---: | --- | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: |",
   );
   for (const run of report.runs) {
-    const loopTotal = run.tokens.billable.loop ?? null;
+    const loopCost = run.billableCost?.loop ?? null;
     lines.push(
       `| ${run.task} | ${run.side} | ${run.protocol ?? "n/a"} | ${run.agentMode ?? "n/a"} | ${run.rep} | ${
         run.ok ? "yes" : "no"
       } | ${formatTokenCount(
         run.tokens.input,
-      )} | ${formatTokenCount(run.tokens.output)} | ${formatTokenCount(run.tokens.total)} | ${
-        loopTotal === null ? "n/a" : formatTokenCount(loopTotal)
-      } | ${formatUsd(
-        run.cost ?? null,
-      )} | ${run.rateClass ?? "n/a"} | ${formatTokenCount(run.steps)} | ${formatSeconds(
-        run.durationMs,
-      )} |`,
+      )} | ${formatTokenCount(run.tokens.output)} | ${formatTokenCount(run.tokens.total)} | ${formatUsd(
+        loopCost,
+      )} | ${formatUsd(run.billableCost?.total ?? null)} | ${formatUsd(
+        run.cost,
+      )} | ${formatTokenCount(run.steps)} | ${formatSeconds(run.durationMs)} |`,
     );
   }
   lines.push("");
@@ -2942,7 +2915,7 @@ async function main(): Promise<number> {
   const pilotCandidate = join(repoRoot, "benchmark", "results", `pilot-${date}.json`);
 
   // #66/#16: pin the measured inputs per variant, so a multi-variant report can
-  // be checked against the prompt each ledger row actually measured.
+  // be checked against the prompt each result actually measured.
   const provenanceFor = (_protocol: ProtocolFormat, agentMode: AgentMode): RecordedProvenance => ({
     ...currentInputHashes(repoRoot, {
       tasks,
@@ -2951,7 +2924,7 @@ async function main(): Promise<number> {
       agentMode,
       effort: args.effort,
       reps,
-      tokenBudget: args.tokenBudget,
+      costBudgetUsd: args.costBudgetUsd,
     }),
     computedAt: generatedAt,
   });
@@ -2985,13 +2958,12 @@ async function main(): Promise<number> {
     model: args.model,
     ocModel: args.ocModel === null || args.ocModel === args.model ? null : args.ocModel,
     effort: args.effort,
-    multiPayload: false,
     // Scalar for today's single-protocol shape; null when variants are pooled
     // into no row, with the full selection in `protocolFormats` (#16).
     protocolFormat: singleProtocol ?? null,
     protocolFormats: [...protocols],
     agentModes: args.agentModes,
-    tokenBudget: args.tokenBudget,
+    costBudgetUsd: args.costBudgetUsd,
     bunVersion: Bun.version,
     opencodeVersion: null,
     pilotReference: existsSync(pilotCandidate) ? relative(repoRoot, pilotCandidate) : null,
@@ -3001,7 +2973,7 @@ async function main(): Promise<number> {
     // recomputes it from the final runs after the pool.
     aggregates: computeAggregates([], tasks, sides, protocols, args.agentModes),
     // #66: pin the measured inputs from the same tree the runs read, so the
-    // record is self-describing and the ledger check can flag staleness.
+    // record is self-describing.
     provenance: scalarProvenance,
     ...(singleProtocol === undefined ? { provenanceByProtocol } : {}),
     ...(args.agentModes.length > 1 ? { provenanceByAgentMode } : {}),
@@ -3063,7 +3035,7 @@ async function main(): Promise<number> {
     opencode,
     runRoot,
     replayDir,
-    tokenBudget: args.tokenBudget,
+    costBudgetUsd: args.costBudgetUsd,
     protocols,
     agentModes: args.agentModes,
   };

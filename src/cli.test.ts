@@ -53,7 +53,7 @@ describe("parseArgs", () => {
     model: "deepseek-v4.1-flash",
     agentMode: "pinned-repair" as const,
     format: "text" as const,
-    tokenBudget: null,
+    costBudgetUsd: null,
     checkCommand: null,
     testCommand: null,
     cwd: null,
@@ -114,16 +114,16 @@ describe("parseArgs", () => {
     expect(() => parseArgs(["--format="])).toThrow("--format requires a value");
   });
 
-  test("reads --token-budget as a positive integer in both value forms", () => {
-    expect(parseArgs(["--token-budget", "1234"]).tokenBudget).toBe(1234);
-    expect(parseArgs(["--token-budget=5000"]).tokenBudget).toBe(5000);
+  test("reads --budget-usd as a positive USD amount in both value forms", () => {
+    expect(parseArgs(["--budget-usd", "12.5"]).costBudgetUsd).toBe(12.5);
+    expect(parseArgs(["--budget-usd=0.25"]).costBudgetUsd).toBe(0.25);
   });
 
-  test("throws on a non-positive or non-numeric --token-budget", () => {
-    expect(() => parseArgs(["--token-budget", "0"])).toThrow("positive integer");
-    expect(() => parseArgs(["--token-budget", "-5"])).toThrow("positive integer");
-    expect(() => parseArgs(["--token-budget", "abc"])).toThrow("positive integer");
-    expect(() => parseArgs(["--token-budget="])).toThrow("--token-budget requires a value");
+  test("throws on a non-positive or non-numeric --budget-usd", () => {
+    expect(() => parseArgs(["--budget-usd", "0"])).toThrow("positive USD amount");
+    expect(() => parseArgs(["--budget-usd", "-5"])).toThrow("positive USD amount");
+    expect(() => parseArgs(["--budget-usd", "abc"])).toThrow("positive USD amount");
+    expect(() => parseArgs(["--budget-usd="])).toThrow("--budget-usd requires a value");
   });
 
   test("splits --check and --test into argv in both value forms", () => {
@@ -173,7 +173,7 @@ describe("parseArgs", () => {
       parseArgs([
         "--format",
         "json",
-        "--token-budget=2000",
+        "--budget-usd=0.05",
         "--check",
         "bun run typecheck",
         "--test=bun test",
@@ -185,7 +185,7 @@ describe("parseArgs", () => {
     ).toEqual({
       ...DEFAULTS,
       format: "json",
-      tokenBudget: 2000,
+      costBudgetUsd: 0.05,
       checkCommand: ["bun", "run", "typecheck"],
       testCommand: ["bun", "test"],
       cwd: "./work",
@@ -208,7 +208,7 @@ describe("helpText", () => {
     const text = helpText();
     expect(text).toContain("tc [");
     expect(text).toContain("--format <text|json>");
-    expect(text).toContain("--token-budget <n>");
+    expect(text).toContain("--budget-usd <usd>");
     expect(text).toContain("--check <cmd>");
     expect(text).toContain("--test <cmd>");
     expect(text).toContain("--cwd <dir>");

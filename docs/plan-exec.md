@@ -220,10 +220,10 @@ Prefer ML-style functional TypeScript:
 | Instruction length | 4,000 chars |
 | Approach length    | 2,000 chars |
 | Phase length       | 200 chars   |
-| Token budget       | 120,000     |
+| USD cost budget    | $0.10       |
 
 There is no WorkNode count cap in the DSL parser or graph validator, and no
-fixed per-turn node cap. Plan growth is bounded by the model's token budget and
+fixed per-turn node cap. Plan growth is bounded by the model's USD cost budget and
 the driver's repeated/no-progress detection, not by an arbitrary node count. The
 driver has no fixed exchange, viewer, review, or planning-round cap; the token
 budget and repeated fingerprints bound a run.
@@ -245,7 +245,7 @@ Planning, review, and execution are separate turns:
    -> or a patch.
 5. If the review returns a patch: validate it; if it changes the current node,
    the node reopens and executes again, then passes through review again. The
-   loop stops on approve, the token budget, or a repeated patch/diff
+   loop stops on approve, the USD cost budget, or a repeated patch/diff
    fingerprint. If it approves: finalize the node as `passed`.
 6. If finalNodeId passed and every node is terminal: success.
 7. Otherwise the planner emits a patch for the remaining work:
@@ -257,7 +257,7 @@ Planning, review, and execution are separate turns:
 ```
 
 A planning turn may add one or more new nodes. There is no fixed node count or
-per-turn batch cap; the token budget and no-progress detection bound growth. New
+per-turn batch cap; the USD cost budget and no-progress detection bound growth. New
 nodes may be ready immediately or depend on existing or newly added nodes. The
 initial Plan may declare the whole DAG or only the work that is ready now; neither
 shape is preferred by the contract.
@@ -267,7 +267,7 @@ The planner may make read-only edit-protocol viewer requests before a Plan/patch
 (optionally with `within`). A viewer writes nothing; the harness returns the
 indentation-folded source or exact slice in a `# Source view` message, then asks
 for the Plan/patch again. There is no arbitrary request count: each viewer
-consumes the token budget, and a repeated identical view or no-progress cycle
+consumes the USD cost budget, and a repeated identical view or no-progress cycle
 forces the Plan/patch reply. Planner viewer requests are not Plan records and do
 not create, edit, or delete files.
 
@@ -325,12 +325,12 @@ The review checks:
 The review reply is either `approve` or a patch. Review uses the same planner
 conversation in its own turn, not a fresh reviewer. There is no fixed review-turn
 or format-retry cap: a malformed reply gets its diagnostics back, and the loop
-stops on approve, the token budget, or a repeated patch/diff fingerprint. A
+stops on approve, the USD cost budget, or a repeated patch/diff fingerprint. A
 review patch may repair the current node, its hints, or its dependencies, add
 follow-up work, or carry `finish` for the current final node. The harness
 structurally validates the patch; if it changes the current node, the node
 reopens and executes again and goes through review again. If the current node is
-unchanged, its passing gate stands. Review calls count toward the token budget
+unchanged, its passing gate stands. Review calls count toward the USD cost budget
 and are tracked separately from planning turns.
 
 ## 3. Flat Plan DSL
@@ -508,7 +508,7 @@ Semantics:
 
 - `node+` appends a new node; `after` may be on the header or a body field.
   `instruction:` is required, `verify` is required, hints/approach/phase are
-  optional. A patch may add any number of nodes; the token budget and run
+  optional. A patch may add any number of nodes; the USD cost budget and run
   no-progress detection bound growth.
 - `node~` replaces only the fields present and preserves omitted fields.
   `after` present replaces the whole dependency list; `after` with no ids clears
@@ -596,7 +596,7 @@ Both initial Plan replies and patches pass through one graph validator:
 - a node may not change identity: repair it with `node~` or add a new id.
 
 The graph validator imposes no fixed node-count cap and no per-turn node cap.
-The token budget and the driver's repeated/no-progress detection bound plan
+The USD cost budget and the driver's repeated/no-progress detection bound plan
 growth.
 
 Status is harness-owned. The planner never emits `todo`, `pending`, `passed`,
@@ -798,7 +798,7 @@ Earlier failed nodes are allowed when later work supersedes them and the final
 test passes. A node in `review` or `in-progress`, or a still-pending blocked node,
 keeps the run open.
 
-A patch may add any number of nodes. Run growth is bounded by the token budget and
+A patch may add any number of nodes. Run growth is bounded by the USD cost budget and
 the driver's repeated/no-progress detection, not by a fixed node count.
 Patches may update or remove multiple existing nodes.
 
@@ -817,7 +817,7 @@ Patches may update or remove multiple existing nodes.
 
 The planning conversation persists across incremental turns. A planner may make
 read-only `select`/`read` viewer requests before every Plan/patch. There is no
-arbitrary per-turn viewer count: each view consumes the token budget, and a
+arbitrary per-turn viewer count: each view consumes the USD cost budget, and a
 repeated identical view or no-progress cycle forces the Plan/patch reply. Viewers
 never write.
 
@@ -833,7 +833,7 @@ the paths changed outside the hints, and the concise applied diff. It returns
 `approve` or a patch.
 
 There is no fixed review-turn or format-retry cap. A malformed review reply gets
-its diagnostics back; the loop stops on approve, the token budget, or a repeated
+its diagnostics back; the loop stops on approve, the USD cost budget, or a repeated
 patch/diff fingerprint. A review patch may repair the current node, its hints, or
 its dependencies, add follow-up work, or carry `finish` for the current final
 node. If it changes the current node, the node reopens, executes again, and goes
@@ -843,7 +843,7 @@ source, or full Plan grammar.
 
 Call usage is recorded in three `LoopTokens` buckets — `planning`, `review`, and
 `execution` — and exposed as `LoopResult.usage`. Their sum is
-`LoopResult.tokens`, and all three count toward the run token budget. The
+`LoopResult.tokens`, and all three count toward the run USD cost budget. The
 `typescript-coder-result@3` subagent result keeps its single `tokens` object and
 does not expose the per-bucket split or recovered warnings.
 
@@ -1012,7 +1012,7 @@ node cap. A node stops in one of these ways:
 
 - its gate passes;
 - a repeated reply/source/diagnostics fingerprint shows no progress;
-- the run token budget is exceeded;
+- the run USD cost budget is exceeded;
 - the provider errors.
 
 Repeated read-only replies are exempt from the no-progress fingerprint: `read`
@@ -1047,10 +1047,10 @@ Caps:
 | Instruction length        | 4,000 chars              |
 | Approach length           | 2,000 chars              |
 | Phase length              | 200 chars                |
-| Token budget              | 120,000 default          |
+| USD cost budget           | $0.10 default            |
 | Node/exchange/review caps | none (budget + progress) |
 
-Growth is bounded by the token budget, repeated/no-progress fingerprints, and the
+Growth is bounded by the USD cost budget, repeated/no-progress fingerprints, and the
 DSL/safety validation. There is no 3-exchange, 1-viewer, 1-review, 32-round, or
 3-consecutive-length cap in plan-exec. The 120-line whole-file advisory heuristic
 is not a cap: it never rejects an edit or ends a node.
@@ -1135,7 +1135,7 @@ summaries; the historical `@1` schema used numeric task/edit ids.
 Shipped design decisions:
 
 1. **No fixed driver caps:** node execution, review, planner viewers, and
-   planning rounds are bounded by the token budget and repeated/no-progress
+   planning rounds are bounded by the USD cost budget and repeated/no-progress
    fingerprints.
 2. **Review model:** post-execution review only after a passing gate, in the same
    planner conversation; gate result + concise diff + out-of-hint paths; approve
@@ -1199,7 +1199,7 @@ Implementation notes:
 - `bun test src/task-loop.test.ts` — initial/patched DAG scheduling, ready order,
   blocked dependents, executor autonomy (multiple clauses/actions, write vs
   targeted, out-of-hint diff), the large/repeated whole-file advisory and its
-  non-trigger/reset paths, gate retries, repeated/no-progress, token budget,
+  non-trigger/reset paths, gate retries, repeated/no-progress, USD cost budget,
   planner inspection, multi-node patches, review reopen, and final test/finish.
 - `bun test src/result.test.ts src/main.test.ts src/cli.test.ts` —
   `typescript-coder-result@3` node summaries and text/JSON output.

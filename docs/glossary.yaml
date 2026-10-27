@@ -1,7 +1,7 @@
 # Benchmark, test, and evaluation terminology used across this repository.
 #
 # Scope: unit tests (src/*.test.ts), the acceptance harness, the benchmark
-# harness, its judge, metrics, ledger, provenance, replay, and the generated
+# harness, its judge, metrics, provenance, replay, and the generated
 # artifacts they share.
 #
 # Canonical ownership: protocol and loop vocabulary lives in docs/README.md,
@@ -258,17 +258,16 @@ categories:
           `modifier already seen` signature; terminates as `harness-fault`.
       - term: TerminationReason
         definition: >-
-          `token-budget`, `edit-exhausted`, `delete-verification-failed`,
+          `cost-budget`, `edit-exhausted`, `delete-verification-failed`,
           `prev-broken`, `harness-fault`, `output-limit`, `task-exhausted`. A
           run ending through this matrix ends with one summary call. The
           termination path is in `docs/feedback-loop.md`; plan-exec adds
           `task-exhausted` (`docs/plan-exec.md` §9).
-      - term: token-budget
+      - term: cost-budget
         definition: >-
-          Accumulated tokens strictly exceed the configured budget (default
-          120000). The core CLI counts raw provider tokens; the benchmark counts
-          cache-excluded loop tokens. The in-flight response is not applied or
-          verified.
+          Accumulated cache-excluded USD strictly exceeds the configured budget (default
+          $0.10). Both the core CLI and the benchmark use the same peak-rate bucket
+          formula. The in-flight response is not applied or verified.
       - term: edit-exhausted
         definition: The run cannot produce a valid edit within the round/iteration caps.
       - term: task-exhausted
@@ -381,11 +380,11 @@ categories:
         definition: >-
           tc side only: writes one replay bundle per run to
           `<path>/<task>-tc-rep<n>.json`.
-      - term: benchmark --token-budget
+      - term: benchmark --budget-usd
         definition: >-
-          tc side only: aborts a run once accumulated cache-excluded loop tokens
-          (cache-miss input + output + reasoning) strictly exceed n; the final
-          termination summary is not counted; default 120000.
+          tc side only: aborts a run once accumulated cache-excluded USD
+          (cache-miss input + output + reasoning at peak rates) strictly exceeds
+          the amount; the final termination summary is not counted; default 0.10.
       - term: benchmark --effort
         definition: >-
           tc side only: forces `reasoning_effort` on every Edit-loop call,
@@ -467,15 +466,15 @@ categories:
         definition: >-
           Reported total when available, otherwise input plus output plus
           reasoning; cache counters are not added in.
-      - term: billable tokens
+      - term: billable USD
         definition: >-
-          The cache-excluded, like-for-like triple used by reports: `in` is
+          The cache-excluded, like-for-like USD triple used by reports: `in` is
           cache-miss input, `out` is output including reasoning, and
           `total = in + out`. `loop` is that same total over tc loop calls only
           (the budget basis; null on the oc side).
       - term: normalizeBuckets
         definition: >-
-          Shared normalization in `src/benchmark-pricing.ts` that converts each
+          Shared normalization in `src/pricing.ts` that converts each
           side's raw buckets to the same cache-excluded basis.
       - term: cache-excluded
         definition: Cache-hit input is excluded from comparison totals but kept in each run's raw buckets.
@@ -547,13 +546,16 @@ categories:
       - term: durationMs
         definition: Model work time only; judge time is not counted.
       - term: startedAt / finishedAt
-        definition: ISO wall clock of the same model work, the window used for pricing.
+        definition: ISO wall clock of the same model work.
       - term: cost
         definition: >-
-          USD for the run's buckets at the DeepSeek V4.1-Flash peak/off-peak
-          rates for its window; null when the side reported no usage.
-      - term: rateClass
-        definition: "`peak`, `off-peak`, or `mixed` when the run window crosses a rate boundary."
+          Full USD for the run's buckets at the official DeepSeek V4.1-Flash
+          peak rates; null when the side reported no usage.
+      - term: billableCost
+        definition: >-
+          Cache-excluded USD: cache-miss input plus output, at peak rates.
+          `billableCost.total` covers all calls; `billableCost.loop` covers tc
+          loop calls only and is the `--budget-usd` basis.
       - term: run ok
         definition: >-
           Judge verdict, forced to false when a termination reason is present.
@@ -591,91 +593,30 @@ categories:
           into one comparison row.
       - term: AggregateRow
         definition: >-
-          runs, ok, failed, successRate, usageRuns, tokens{in,out,total}, cost,
-          durationMsMean, stepsMean, tokensPerSuccess, costPerSuccess, selector
-          and stage counts, matcher-kind counts, and creates.
-      - term: token multiplier
+          runs, ok, failed, successRate, usageRuns, tokens{in,out,total},
+          billableCost{in,out,total}, cost, durationMsMean, stepsMean,
+          tokensPerSuccess, billableCostPerSuccess, costPerSuccess, selector and
+          stage counts, matcher-kind counts, and creates.
+      - term: USD multiplier
         definition: >-
-          Cache-excluded total of the higher side divided by the lower side,
+          Cache-excluded USD of the higher side divided by the lower side,
           reported overall and per task.
       - term: RateCard
         definition: Per-million-token price table for the benchmark model.
-      - term: peak / off-peak
+      - term: peak pricing
         definition: >-
-          Peak is Monday-Friday 01:00-04:00 and 06:00-10:00 UTC, excluding
-          Chinese public holidays; every other hour is off-peak.
-      - term: rateClassForInstant
-        definition: Classifies one instant as peak or off-peak.
-      - term: splitWindowByRateClass
-        definition: Splits a run window at rate boundaries for mixed-rate pricing.
-      - term: CN_2026_PUBLIC_HOLIDAYS
-        definition: >-
-          2026-only fixed holiday list; for another year it matches nothing, so
-          a holiday weekday prices as peak until updated.
-      - term: calculator estimate
-        definition: >-
-          USD figures are a calculator estimate, not provider billing; runs are
-          served through a relay that does not bill on DeepSeek's schedule.
-      - term: decision-only
-        definition: USD remains recorded for decisions but is not the headline comparison metric.
+          All runs use the official peak rates regardless of wall-clock time.
+          Off-peak rates are deliberately not applied.
+      - term: RateCard
+        definition: Peak per-million-token price table in `src/pricing.ts`.
       - term: cache-miss input
         definition: >-
           tc miss equals input minus cacheRead; oc miss equals input. Only this
           component counts toward the comparison total.
 
-  - id: ledger-provenance
-    title: Ledger and provenance
+  - id: provenance
+    title: Provenance
     terms:
-      - term: consumption ledger
-        definition: >-
-          `benchmark/results/consumption.md`, the canonical before/after
-          efficiency view; one row per measured result with a source file.
-      - term: ledger row
-        definition: >-
-          One measurement entry under `## Rows`; compared only against rows
-          with the same protocol and measured inputs.
-      - term: ledger columns
-        definition: >-
-          Date, Change set, the three tuned tasks, Overall, Source, Notes, and
-          Protocol.
-      - term: Overall column
-        definition: tc-side totals across all four tasks, including the held-out task.
-      - term: Protocol column
-        definition: >-
-          The tc edit protocol the row measured; historical rows keep their
-          `compact`/`json` labels, new rows are `edit-dsl`. Protocol vocabulary is canonical in `docs/README.md`.
-      - term: Source column
-        definition: Repository-relative path of the result JSON the row was copied from.
-      - term: Notes column
-        definition: Caveats, cross-side reference values, and the held-out result.
-      - term: baseline
-        definition: A reference row such as the fresh compact-era baseline, used for before/after comparisons.
-      - term: series
-        definition: A sequence of comparable rows measured under the same protocol and inputs.
-      - term: durable set
-        definition: >-
-          Result JSONs plus their Markdown reports cited by a ledger row or an
-          issue; they are source-of-truth artifacts and belong in version control.
-      - term: prunable artifacts
-        definition: >-
-          Unreferenced one-off artifacts such as superseded variants, smokes,
-          and ad-hoc sweeps; replay bundles under `tmp/` are prunable by
-          construction.
-      - term: checkLedger
-        definition: >-
-          Re-derives each row's per-task and overall costPerSuccess and ok/runs
-          from the cited source JSON, rounding to five decimals, and fails on a
-          mismatch or missing file.
-      - term: zero-API ledger pass
-        definition: >-
-          `bun benchmark/check.ts`, which validates fixtures and the ledger
-          without calling a model.
-      - term: fresh / stale / FAIL
-        definition: >-
-          fresh: recorded provenance matches the tree; stale: hashes differ or
-          are absent (warning only); FAIL: a re-derived number does not match.
-      - term: ledger override
-        definition: "`--ledger <path>` points the ledger pass at another copy, used to prove a corrupted row fails."
       - term: provenance block
         definition: >-
           Top-level `provenance` object on every result JSON:
@@ -689,25 +630,18 @@ categories:
       - term: computeInputHashes
         definition: Computes the digest object from an explicitly supplied measured input.
       - term: currentInputHashes
-        definition: Recomputes the digests from the current tree, used by the ledger pass.
+        definition: Recomputes the digests from the current tree.
       - term: provenanceByProtocol
         definition: >-
-          Multi-variant report map from protocol to provenance, so each ledger
-          row is checked against the prompt its protocol measured.
+          Multi-variant report map from protocol to provenance.
       - term: invalidated row
         definition: >-
-          A row becomes stale when fixture text, model-facing prompt, loop
+          A result becomes stale when fixture text, model-facing prompt, loop
           config, or pricing changes; it must be re-measured before comparison.
       - term: normalizeText / stableStringify
         definition: >-
           Text pieces are newline-normalized to `\n`; objects use recursively
           key-sorted JSON so insertion order never changes a hash.
-      - term: storm
-        definition: Informal ledger term for a run that burns to the token budget through repeated failures.
-      - term: residual
-        definition: A tracked leftover issue referenced from the benchmark notes.
-      - term: sample
-        definition: Informal label for one measurement batch in the efficiency series.
 
   - id: replay
     title: Replay
@@ -747,8 +681,8 @@ categories:
         definition: Emits the dated Markdown report next to the result JSON.
       - term: Frozen task specs section
         definition: Report section printing each verbatim task spec plus its fixture and reference paths.
-      - term: Token and cost accounting section
-        definition: Report section explaining the cache-excluded, like-for-like basis for both sides.
+      - term: USD accounting section
+        definition: Report section explaining the peak-rate, cache-excluded USD basis for both sides.
       - term: Per-task results section
         definition: Aggregate table per task and side.
       - term: Overall comparison section
@@ -758,12 +692,11 @@ categories:
       - term: Anomalies section
         definition: Report section listing unusual runs and explanations.
       - term: Raw runs section
-        definition: Per-run raw rows including rateClass, steps, tokens, cost, and judge detail.
+        definition: Per-run raw rows including steps, raw tokens, full cost, billable cost, and judge detail.
       - term: benchmark check
         definition: >-
           `bun benchmark/check.ts` validates every fixture is initially red,
-          turns green after the reference implementation, and type-checks, then
-          runs the ledger pass.
+          turns green after the reference implementation, and type-checks.
       - term: check red / check green
         definition: >-
           Red means `bun test` fails with `Cannot find module './<task>'` before
@@ -772,8 +705,8 @@ categories:
         definition: Per-fixture console verdict from the benchmark self-check.
       - term: benchmark results directory
         definition: >-
-          `benchmark/results/`: dated `<date>.json` results plus `.md` reports,
-          and the consumption ledger.
+          `benchmark/results/`: generated dated `<date>.json` results and `.md`
+          reports; currently empty.
       - term: benchmark tmp directories
         definition: >-
           Generated working areas: `tmp/benchmark/`, `tmp/replay/`,
@@ -784,37 +717,32 @@ categories:
       - term: generated artifacts
         definition: >-
           `benchmark/results/`, `failures/`, `tmp/`, and `acceptance/report.json`;
-          do not commit unless the ledger cites them.
+          do not commit unless a human explicitly asks.
 
   - id: caveats
     title: Cross-cutting caveats
     terms:
       - term: compact versus edit-dsl
         definition: >-
-          `compact` is the legacy name for `edit-dsl`; new reports and ledger
-          rows use `edit-dsl`, while historical rows may say `compact`. The
-          edit-dsl is defined in `docs/edit-protocol.md`; vocabulary is in
-          `docs/README.md`.
+          `compact` is the legacy name for `edit-dsl`; new reports use
+          `edit-dsl`. The edit-dsl is defined in `docs/edit-protocol.md`;
+          vocabulary is in `docs/README.md`.
       - term: ts versus tc
         definition: >-
           Old replay bundles say `side: "ts"`; current code and reports say `tc`.
-      - term: termination list drift
-        definition: >-
-          The benchmark README lists five termination reasons; `src/loop.ts`
-          defines six, adding `output-limit`.
       - term: ok versus sideOk
         definition: >-
           `ok` is the judge verdict with termination forcing false; `sideOk` is
           the side's own result.
-      - term: total versus billable total
+      - term: total versus billable
         definition: >-
-          `tokens.total` may include cache or be derived; `tokens.billable.total`
-          is the report's comparison basis, and `tokens.billable.loop` is the tc
+          `tokens.total` is raw provider usage; `billableCost.total` is the
+          cache-excluded USD comparison basis, and `billableCost.loop` is the tc
           budget basis excluding the final termination summary.
-      - term: duration versus window
+      - term: duration
         definition: >-
-          `durationMs` covers model work only; `startedAt`/`finishedAt` define
-          the pricing window.
+          `durationMs` covers model work only; pricing does not depend on the
+          wall-clock window.
       - term: keep semantics
         definition: >-
           `--keep` preserves the harness workspace in all three harnesses, but

@@ -11,7 +11,7 @@
  * contract, and `src/prompts/task.ts` owns the prompt text.
  *
  * There are no fixed exchange, viewer, review, or planning-round caps here.
- * The run is bounded by the token budget, repeated/no-progress fingerprints,
+ * The run is bounded by the USD cost budget, repeated/no-progress fingerprints,
  * and the DSL safety validation.
  */
 import { createHash } from "node:crypto";
@@ -49,9 +49,9 @@ import {
 } from "./export-modifier";
 import { buildContextYaml } from "./loop";
 import {
-  DEFAULT_TOKEN_BUDGET,
+  DEFAULT_COST_BUDGET_USD,
   addLoopTokens,
-  budgetTokensFromResponse,
+  costBudgetFromResponse,
   cloneLoopUsage,
   discoverSourceFiles,
   editDslRegionToResolved,
@@ -65,7 +65,7 @@ import {
   safeMutablePath,
   selectSpecFiles,
   selectorFromStage,
-  tokenBudgetDiagnostics,
+  costBudgetDiagnostics,
   totalLoopTokens,
   withEffort,
   writeTarget,
@@ -176,7 +176,7 @@ async function callModel(
     undefined,
     withEffort(chatOptions, options.effortOverride ?? "none"),
   );
-  usage.consumed += budgetTokensFromResponse(response, options.tokenBudgetBasis ?? "raw");
+  usage.consumed += costBudgetFromResponse(response);
   addLoopTokens(bucket, loopTokensFromResponse(response));
   return response;
 }
@@ -1471,8 +1471,7 @@ function anchorLocator(state: PlanRunState | null): Locator | null {
  */
 export async function runTaskLoop(options: LoopOptions): Promise<LoopResult> {
   const cwd = options.cwd;
-  const tokenBudget = options.tokenBudget ?? DEFAULT_TOKEN_BUDGET;
-  const tokenBudgetBasis = options.tokenBudgetBasis ?? "raw";
+  const costBudgetUsd = options.costBudgetUsd ?? DEFAULT_COST_BUDGET_USD;
   const workspace = workspaceOf(cwd);
   const specFiles = selectSpecFiles(options.issue, workspace.files);
   const indexText = buildContextYaml(workspace.files, {
@@ -1565,11 +1564,8 @@ export async function runTaskLoop(options: LoopOptions): Promise<LoopResult> {
     } catch (error) {
       return terminated("provider-error", providerErrorDiagnostics(error));
     }
-    if (overBudget(usageState, tokenBudget)) {
-      return terminated(
-        "token-budget",
-        tokenBudgetDiagnostics(usageState.consumed, tokenBudget, tokenBudgetBasis),
-      );
+    if (overBudget(usageState, costBudgetUsd)) {
+      return terminated("cost-budget", costBudgetDiagnostics(usageState.consumed, costBudgetUsd));
     }
     return response;
   };
@@ -1636,7 +1632,7 @@ export async function runTaskLoop(options: LoopOptions): Promise<LoopResult> {
 
   /**
    * One planning turn: ask, parse, and retry a rejection with its diagnostics.
-   * Viewer requests are unlimited except by the token budget and repeated-view
+   * Viewer requests are unlimited except by the USD cost budget and repeated-view
    * detection; a repeated view forces the Plan/patch reply. An initial plan
    * becomes the run state; a patch turn applies one patch and returns the merged
    * state.
@@ -1671,7 +1667,7 @@ export async function runTaskLoop(options: LoopOptions): Promise<LoopResult> {
           role: "user",
           content: plannerViewFeedback(
             content,
-            "Reply with the initial Plan or the next patch. Each viewer consumes the token budget; repeated views force the Plan/patch.",
+            "Reply with the initial Plan or the next patch. Each viewer consumes the run's USD cost budget; repeated views force the Plan/patch.",
           ),
         });
         continue;
@@ -1798,12 +1794,12 @@ export async function runTaskLoop(options: LoopOptions): Promise<LoopResult> {
           result: await terminated("provider-error", providerErrorDiagnostics(error)),
         };
       }
-      if (overBudget(usageState, tokenBudget)) {
+      if (overBudget(usageState, costBudgetUsd)) {
         return {
           kind: "failed",
           result: await terminated(
-            "token-budget",
-            tokenBudgetDiagnostics(usageState.consumed, tokenBudget, tokenBudgetBasis),
+            "cost-budget",
+            costBudgetDiagnostics(usageState.consumed, costBudgetUsd),
           ),
         };
       }
@@ -1927,12 +1923,12 @@ export async function runTaskLoop(options: LoopOptions): Promise<LoopResult> {
           result: await terminated("provider-error", providerErrorDiagnostics(error)),
         };
       }
-      if (overBudget(usageState, tokenBudget)) {
+      if (overBudget(usageState, costBudgetUsd)) {
         return {
           kind: "terminated",
           result: await terminated(
-            "token-budget",
-            tokenBudgetDiagnostics(usageState.consumed, tokenBudget, tokenBudgetBasis),
+            "cost-budget",
+            costBudgetDiagnostics(usageState.consumed, costBudgetUsd),
           ),
         };
       }

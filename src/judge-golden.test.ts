@@ -3,7 +3,7 @@ import { cpSync, existsSync, mkdirSync, readFileSync, rmSync, writeFileSync } fr
 import { join } from "node:path";
 import { fileURLToPath, pathToFileURL } from "node:url";
 
-// #68: every USD claim in the ledger rests on `judgeWorkspace` (tsc + bun test +
+// #68: every USD claim in a benchmark report rests on `judgeWorkspace` (tsc + bun test +
 // fixture byte-equality). This golden corpus pins its four verdicts with a
 // table, so a judge change that flips one now fails `bun test` at zero API cost.
 const REPO_ROOT = fileURLToPath(new URL("..", import.meta.url));

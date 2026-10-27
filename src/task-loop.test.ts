@@ -2,7 +2,8 @@ import { afterEach, describe, expect, test } from "bun:test";
 import { mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { cacheExcludedTokens, runLoop } from "./loop";
+import { runLoop } from "./loop";
+import { billableCostForLoopTokens } from "./pricing";
 import { runTaskLoop } from "./task-loop";
 import { serializePlanDsl } from "./plan-dsl";
 import type { Plan, WorkNode } from "./tasks";
@@ -231,7 +232,7 @@ function baseOptions(dir: string, provider: ProviderLike) {
     agentMode: "plan-exec" as const,
     checkCommand: TSC,
     testCommand: ["bun", "test"],
-    tokenBudget: 1_000_000,
+    costBudgetUsd: 1,
   };
 }
 
@@ -1254,19 +1255,19 @@ describe("gates and progress", () => {
     expect(result.diagnostics).toContain("unchanged");
   }, 30000);
 
-  test("a review call counts toward the run token budget", async () => {
+  test("a review call counts toward the run USD cost budget", async () => {
     const dir = project();
     const node = workNode(2, "answer");
     const rawUsage = { prompt_tokens: 10, completion_tokens: 5, total_tokens: 15 };
     const provider = new ScriptedProvider([planText([node]), GOOD_EDIT, "approve"], rawUsage);
-    const result = await runTaskLoop({ ...baseOptions(dir, provider), tokenBudget: 34 });
+    const result = await runTaskLoop({ ...baseOptions(dir, provider), costBudgetUsd: 0.00002 });
     expect(result.ok).toBe(false);
-    expect(result.terminationReason).toBe("token-budget");
+    expect(result.terminationReason).toBe("cost-budget");
     expect(result.usage?.review.total).toBe(15);
-    expect(result.diagnostics).toContain("token budget");
+    expect(result.diagnostics).toContain("USD budget");
   }, 30000);
 
-  test("a reasoning-bearing reply counts toward the cache-excluded budget", async () => {
+  test("a reasoning-bearing reply counts toward the cache-excluded USD budget", async () => {
     const dir = project();
     const node = workNode(2, "answer");
     const rawUsage = {
@@ -1279,13 +1280,12 @@ describe("gates and progress", () => {
     const provider = new ScriptedProvider([planText([node]), GOOD_EDIT, "approve"], rawUsage);
     const result = await runTaskLoop({
       ...baseOptions(dir, provider),
-      tokenBudget: 34,
-      tokenBudgetBasis: "cache-excluded",
+      costBudgetUsd: 0.00003,
     });
-    expect(result.terminationReason).toBe("token-budget");
-    expect(result.diagnostics).toContain("cache-excluded");
+    expect(result.terminationReason).toBe("cost-budget");
+    expect(result.diagnostics).toContain("cost-budget");
     expect(result.usage?.planning.reasoning).toBe(30);
-    expect(cacheExcludedTokens(result.tokens)).toBe(35);
+    expect(billableCostForLoopTokens(result.tokens)).toBeCloseTo(0.000042, 12);
   }, 30000);
 });
 

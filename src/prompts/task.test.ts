@@ -89,7 +89,7 @@ describe("planning prompts", () => {
 
   test("planner inspection allows multiple read-only viewers", () => {
     expect(TASK_PLANNER_VIEW).toContain("one or more read-only viewer requests");
-    expect(TASK_PLANNER_VIEW).toContain("Each viewer consumes the run token budget");
+    expect(TASK_PLANNER_VIEW).toContain("Each viewer consumes the run's USD cost budget");
     expect(TASK_PLANNER_VIEW).toContain("repeated identical");
     expect(TASK_PLANNER_VIEW).toContain("Never use `replace`");
     expect(buildTaskPlanningSystemPrompt()).toContain(TASK_PLANNER_VIEW);

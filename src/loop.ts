@@ -49,6 +49,7 @@ import {
 } from "./utility";
 import { buildSignatureViewFromEntry } from "./scroll";
 import { checkTool, testTool } from "./tools";
+import { billableCostForLoopTokens } from "./pricing";
 import { usageFromRaw } from "./replay-format";
 import { ChatContextOverflowError, ChatPayloadTooLargeError } from "./openai";
 import type {
@@ -281,7 +282,7 @@ export function buildContextYaml(files: SourceFile[], build?: TolerantIndex): st
  *
  * #57: this is a cadence, not a cap. `failedAttempts` counts consecutive
  * rejected exchanges and failed verifications; the run still ends through the
- * token budget or a repeated no-progress fingerprint, never because this count
+ * USD cost budget or a repeated no-progress fingerprint, never because this count
  * reached a fixed exchange/round limit.
  */
 export interface StalledAsk {
@@ -362,7 +363,7 @@ export interface RetryPromptInput {
  * original first sentence and offers STOP; from the second on (#65) it names the
  * unchanged/cycling failing set the `#71 Failure history` note carries and
  * requires the reply to address it or `STOP`. There is no round maximum: the
- * cadence only schedules the ask, and the run still ends on the token budget or
+ * cadence only schedules the ask, and the run still ends on the USD cost budget or
  * a repeated no-progress fingerprint.
  */
 function stalledAskHeader(stalled: StalledAsk): string {
@@ -476,7 +477,7 @@ ${instruction}`;
 }
 
 const TERMINATION_SUMMARY: Record<TerminationReason | "provider-error", string> = {
-  "token-budget": "the token budget was exceeded",
+  "cost-budget": "the USD cost budget was exceeded",
   "edit-exhausted": "the run ended without a verified edit",
   "delete-verification-failed": "the deletion could not be verified",
   "prev-broken": "the current source of the target no longer parses",
@@ -664,14 +665,15 @@ export function canonicalAgentMode(value: unknown): AgentMode | null {
   return AGENT_MODE_ALIASES[value] ?? null;
 }
 
-export const DEFAULT_TOKEN_BUDGET = 120_000;
+/** The hard per-run cache-excluded USD budget (#36). */
+export const DEFAULT_COST_BUDGET_USD = 0.1;
 /**
  * No-progress ask cadence (#54/#57), not an exchange or round cap: after this
  * many consecutive failed attempts (rejected exchanges plus failed verification
  * rounds), the next prompt asks the model to decide (reply `STOP` or take a
- * materially different approach). The run itself is bounded by the token budget
- * and the repeated no-progress fingerprint; no fixed exchange or round count
- * terminates it.
+ * materially different approach). The run itself is bounded by the USD cost
+ * budget and the repeated no-progress fingerprint; no fixed exchange or round
+ * count terminates it.
  */
 export const MAX_STALLED_ROUNDS = 8;
 /**
@@ -686,7 +688,7 @@ export const MAX_CONSECUTIVE_LENGTH = 3;
  * No-progress ask cadence after the first decision point (#65): the first ask
  * stays at `MAX_STALLED_ROUNDS`; later asks recur this many failed attempts
  * apart (4), so a fast-burning storm reaches the sharpened repeated ask before
- * the token budget can end the run.
+ * the USD cost budget can end the run.
  */
 export const STALLED_ASK_INTERVAL = Math.max(1, Math.floor(MAX_STALLED_ROUNDS / 2));
 
@@ -727,21 +729,16 @@ export function isDecisionAsk(stalled: StalledAsk): boolean {
 const IDENTICAL_RETRY_NOTE =
   'the previous attempt failed identically; change the shape of the edit (omit "matcher" for a whole-symbol rewrite, adjust the replacement, or re-pin to a different declaration)';
 
-/** Basis used by the hard per-run token budget (#36). */
-export type TokenBudgetBasis = "raw" | "cache-excluded";
-
 export interface LoopOptions {
   cwd: string;
   issue: string;
   provider: ProviderLike;
-  /** Abort the run once accumulated provider tokens exceed this (#36). */
-  tokenBudget?: number;
   /**
-   * Budget accounting basis. The core CLI keeps the historical raw provider
-   * total; benchmarks may request the cache-excluded loop total, which uses the
-   * same bucket formula as the report but sums loop calls only (#47).
+   * Abort the run once accumulated cache-excluded USD cost exceeds this
+   * (#36). Defaults to `DEFAULT_COST_BUDGET_USD`; the final termination-summary
+   * call is not budgeted.
    */
-  tokenBudgetBasis?: TokenBudgetBasis;
+  costBudgetUsd?: number;
   temperature?: number;
   checkCommand?: string[];
   testCommand?: string[];
@@ -892,7 +889,7 @@ const MATCHER_ESCALATION =
 
 // Repair-context shrink is opt-in: after a create fails verification the loop
 // enters create→repair mode and re-sends the whole target file on every repair
-// exchange, which can exhaust the token budget on a large file. With
+// exchange, which can exhaust the USD cost budget on a large file. With
 // TC_REPAIR_CONTEXT_SHRINK=on the repair prompt instead renders only the
 // declarations that matter. Off by default keeps every prompt byte-identical.
 // Read once per call so tests can flip it in-process; only on/1/true enable.
@@ -1440,7 +1437,7 @@ export function consecutiveLengthFinishes(records: readonly LoopRecord[]): numbe
  * with exactly one LLM-written summary as its final action.
  */
 export type TerminationReason =
-  | "token-budget"
+  | "cost-budget"
   | "edit-exhausted"
   | "delete-verification-failed"
   | "prev-broken"
@@ -1451,7 +1448,8 @@ export type TerminationReason =
 /**
  * Token spend of one run (#80): the component breakdown of every provider
  * response's raw usage, threaded onto the result so a sub-agent caller can
- * account for the call. The `total` still drives the hard budget.
+ * account for the call. The raw `total` is retained for reporting; the hard
+ * budget is charged from the cache-excluded USD cost instead.
  */
 export interface LoopTokens {
   input: number;
@@ -1461,8 +1459,7 @@ export interface LoopTokens {
   /**
    * Reasoning tokens when reported (#47), otherwise 0. Read from
    * `completion_tokens_details.reasoning_tokens` or a top-level
-   * `reasoning_tokens`; the cache-excluded basis adds it to output, matching
-   * the benchmark report's bucket formula.
+   * `reasoning_tokens`; the cache-excluded USD basis adds it to output.
    */
   reasoning: number;
 }
@@ -1501,7 +1498,7 @@ export function addLoopTokens(target: LoopTokens, delta: LoopTokens): void {
   target.reasoning += delta.reasoning;
 }
 
-/** Sum the three buckets; this is the run total that drives the token budget. */
+/** Sum the three buckets; this is the raw token total reported on the result. */
 export function totalLoopTokens(usage: LoopUsage): LoopTokens {
   const total = zeroLoopTokens();
   addLoopTokens(total, usage.planning);
@@ -1574,40 +1571,14 @@ export function providerErrorDiagnostics(error: unknown): string {
   return `provider error: ${errorMessage(error)}`;
 }
 
-// Tolerant provider usage reader (#36): prefer the reported total, fall back to
-// prompt + completion when both are reported; unknown shapes count as zero.
-export function tokensFromResponse(response: ChatResponse): number {
-  const usage = usageFromRaw(response.raw);
-  if (typeof usage !== "object" || usage === null) {
-    return 0;
-  }
-  const record = usage as Record<string, unknown>;
-  const total = record["total_tokens"];
-  if (typeof total === "number" && Number.isFinite(total)) {
-    return total;
-  }
-  const prompt = record["prompt_tokens"];
-  const completion = record["completion_tokens"];
-  if (
-    typeof prompt !== "number" ||
-    !Number.isFinite(prompt) ||
-    typeof completion !== "number" ||
-    !Number.isFinite(completion)
-  ) {
-    return 0;
-  }
-  return prompt + completion;
-}
-
 /** Tolerant component reader (#80): a finite number or 0. */
 function finiteTokenCount(value: unknown): number {
   return typeof value === "number" && Number.isFinite(value) ? value : 0;
 }
 
 /**
- * Component breakdown of one provider response's raw usage (#80), read from the
- * same shape `tokensFromResponse` consumes: `input`/`output` prefer
- * `prompt_tokens`/`completion_tokens` and fall back to
+ * Component breakdown of one provider response's raw usage (#80): `input`/`output`
+ * prefer `prompt_tokens`/`completion_tokens` and fall back to
  * `input_tokens`/`output_tokens`; `cacheRead` reads
  * `prompt_tokens_details.cached_tokens` or `cache_read_input_tokens`;
  * `reasoning` reads `completion_tokens_details.reasoning_tokens` or a top-level
@@ -1651,37 +1622,25 @@ export function loopTokensFromResponse(response: ChatResponse): LoopTokens {
 }
 
 /**
- * Cache-excluded token total of a component tally (#47): cache-miss input
- * (`input - cacheRead`, clamped at zero) plus output and reasoning. This is the
- * benchmark/report bucket formula and the `cache-excluded` budget basis; it is
- * shared so the budget stop and the report cannot drift.
+ * Cache-excluded USD charged against the hard budget for one provider response
+ * (#47): cache-miss input plus output/reasoning at the official peak rate.
+ * Cache-hit input is excluded, so the budget measures work rather than cache
+ * luck; the benchmark report uses the same formula for its billable columns.
  */
-export function cacheExcludedTokens(tokens: LoopTokens): number {
-  return Math.max(0, tokens.input - tokens.cacheRead) + tokens.output + tokens.reasoning;
+export function costBudgetFromResponse(response: ChatResponse): number {
+  return billableCostForLoopTokens(loopTokensFromResponse(response));
 }
 
-/**
- * Provider tokens charged against the hard budget. `raw` preserves the
- * historical total; `cache-excluded` uses the benchmark/report bucket formula
- * (#47, `cacheExcludedTokens`) and is passed only by the benchmark harness.
- */
-export function budgetTokensFromResponse(
-  response: ChatResponse,
-  basis: TokenBudgetBasis = "raw",
-): number {
-  if (basis === "raw") {
-    return tokensFromResponse(response);
-  }
-  return cacheExcludedTokens(loopTokensFromResponse(response));
+function formatUsdBudget(value: number): string {
+  const fixed = value.toFixed(8).replace(/0+$/, "").replace(/\.$/, "");
+  return `$${fixed === "" ? "0" : fixed}`;
 }
 
-export function tokenBudgetDiagnostics(
-  consumedTokens: number,
-  tokenBudget: number,
-  basis: TokenBudgetBasis = "raw",
-): string {
-  const label = basis === "cache-excluded" ? "cache-excluded " : "";
-  return `token-budget: accumulated ${consumedTokens} ${label}tokens exceeded the ${tokenBudget} token budget`;
+/** Human-readable stop reason for a cache-excluded USD budget overrun. */
+export function costBudgetDiagnostics(consumedUsd: number, budgetUsd: number): string {
+  return `cost-budget: accumulated ${formatUsdBudget(consumedUsd)} exceeded the ${formatUsdBudget(
+    budgetUsd,
+  )} USD budget`;
 }
 
 function diagnosticsHeadOf(diagnostics: string | null): string | null {
@@ -2984,7 +2943,7 @@ function editExhaustedDiagnostics(openedBy: string | null, last: string | null):
  * Repeated no-progress fingerprint (#57): the same reply, diagnostics, and
  * source state was already rejected. This is a no-progress termination path,
  * not a count cap: a run that keeps producing distinct attempts is bounded only
- * by the token budget and the no-progress ask cadence.
+ * by the USD cost budget and the no-progress ask cadence.
  */
 function repeatedNoProgressDiagnostics(context: string | null): string {
   const reason =
@@ -2995,7 +2954,7 @@ function repeatedNoProgressDiagnostics(context: string | null): string {
 // One fingerprint per rejected attempt. It includes the reply, the rejection
 // diagnostics, and the source the reply was resolved against, so a legitimate
 // retry after a state change is not mistaken for a repeat. Hash keeps the set's
-// memory bounded by the token budget rather than by reply size.
+// memory bounded by the USD cost budget rather than by reply size.
 function noProgressFingerprint(reply: string, diagnostics: string, state: string): string {
   return createHash("sha256")
     .update(`${reply}\u0000${diagnostics}\u0000${state}`, "utf8")
@@ -3023,8 +2982,7 @@ function isStopReply(response: ChatResponse): boolean {
 }
 
 async function runEditDslLoop(options: LoopOptions): Promise<LoopResult> {
-  const tokenBudget = options.tokenBudget ?? DEFAULT_TOKEN_BUDGET;
-  const tokenBudgetBasis = options.tokenBudgetBasis ?? "raw";
+  const costBudgetUsd = options.costBudgetUsd ?? DEFAULT_COST_BUDGET_USD;
   const temperature = options.temperature;
   const chatOptions: ChatOptions | undefined =
     temperature === undefined ? undefined : { temperature };
@@ -3075,9 +3033,8 @@ async function runEditDslLoop(options: LoopOptions): Promise<LoopResult> {
   const initialMessages: ChatMessage[] = [systemMessage, issueMessage];
   let messages: ChatMessage[] = initialMessages;
   const records: LoopRecord[] = [];
-  let consumedTokens = 0;
-  // Component token tally (#80), accumulated alongside `consumedTokens` (which
-  // keeps driving the budget unchanged).
+  let consumedCostUsd = 0;
+  // Raw component token tally (#80), reported alongside the USD budget spend.
   const tokens: LoopTokens = zeroLoopTokens();
   const addTokens = (delta: LoopTokens): void => {
     addLoopTokens(tokens, delta);
@@ -3115,7 +3072,7 @@ async function runEditDslLoop(options: LoopOptions): Promise<LoopResult> {
   let stalledAttempts = 0;
   // Edit-dsl self-check no-progress note: the same command, source, and result
   // repeated is surfaced to the model, but it never becomes a hard count. The
-  // token budget remains the stop.
+  // USD cost budget remains the stop.
   let lastEditDslSelfCheckFingerprint: string | null = null;
   // The failed-attempt count whose no-progress ask was already shown. A decision
   // turn or self-check reply does not increment the count, so without this guard
@@ -3166,7 +3123,7 @@ async function runEditDslLoop(options: LoopOptions): Promise<LoopResult> {
   };
   // Repeated-failure fingerprints (#57): a failed reply + diagnostics + source
   // state seen before is no progress and ends the run. This is the no-cap
-  // termination path; distinct attempts remain bounded by the token budget.
+  // termination path; distinct attempts remain bounded by the USD cost budget.
   const failedFingerprints = new Set<string>();
   const repeatFailure = (reply: string, diagnostics: string, state: string): boolean => {
     const key = noProgressFingerprint(reply, diagnostics, state);
@@ -3313,7 +3270,7 @@ async function runEditDslLoop(options: LoopOptions): Promise<LoopResult> {
     }
 
     // #57: one exchange loop, no fixed exchange budget. A rejection retries or
-    // ends through the no-progress fingerprint/token budget; the loop leaves
+    // ends through the no-progress fingerprint/USD cost budget; the loop leaves
     // only on an applied edit (then verification), success, or termination.
     for (let exchange = 1; ; exchange += 1) {
       const pick = pinned === null;
@@ -3360,12 +3317,12 @@ async function runEditDslLoop(options: LoopOptions): Promise<LoopResult> {
             tokens,
           };
         }
-        consumedTokens += budgetTokensFromResponse(response, tokenBudgetBasis);
+        consumedCostUsd += costBudgetFromResponse(response);
         addTokens(loopTokensFromResponse(response));
-        if (consumedTokens > tokenBudget) {
+        if (consumedCostUsd > costBudgetUsd) {
           return await terminate(
-            "token-budget",
-            tokenBudgetDiagnostics(consumedTokens, tokenBudget, tokenBudgetBasis),
+            "cost-budget",
+            costBudgetDiagnostics(consumedCostUsd, costBudgetUsd),
           );
         }
         // Only the selection no-progress ask offers STOP (#57).
@@ -3560,7 +3517,7 @@ async function runEditDslLoop(options: LoopOptions): Promise<LoopResult> {
           lastFailure = "edit";
           stalledAttempts += 1;
           // #57: a repeated selection reply is no progress and ends the run;
-          // distinct rejections are retried until the token budget or the
+          // distinct rejections are retried until the USD cost budget or the
           // no-progress ask cadence.
           // Only read the candidate's source when it is inside the editable
           // workspace; a path-escaping address contributes its raw path only.
@@ -3628,7 +3585,7 @@ async function runEditDslLoop(options: LoopOptions): Promise<LoopResult> {
           lastDiagnostics = fsReadFeedback;
           lastFailure = "edit";
           // A read-only reply is inspection, not a failed attempt: it does not
-          // advance the no-progress cadence and is bounded by the token budget.
+          // advance the no-progress cadence and is bounded by the USD cost budget.
           messages.push({ role: "assistant", content: response.content ?? "" });
           messages.push({
             role: "user",
@@ -3911,12 +3868,12 @@ async function runEditDslLoop(options: LoopOptions): Promise<LoopResult> {
             tokens,
           };
         }
-        consumedTokens += budgetTokensFromResponse(response, tokenBudgetBasis);
+        consumedCostUsd += costBudgetFromResponse(response);
         addTokens(loopTokensFromResponse(response));
-        if (consumedTokens > tokenBudget) {
+        if (consumedCostUsd > costBudgetUsd) {
           return await terminate(
-            "token-budget",
-            tokenBudgetDiagnostics(consumedTokens, tokenBudget, tokenBudgetBasis),
+            "cost-budget",
+            costBudgetDiagnostics(consumedCostUsd, costBudgetUsd),
           );
         }
       }
@@ -4000,7 +3957,7 @@ async function runEditDslLoop(options: LoopOptions): Promise<LoopResult> {
       const content = response.content ?? "";
       // Edit-dsl self-check turn: a standalone `check end` / `test end` runs
       // the configured command without writing. It has no fixed count; repeated
-      // identical results are surfaced as no progress, while the token budget is
+      // identical results are surfaced as no progress, while the USD cost budget is
       // the stop.
       const editDslSelfCheck = parseEditDslSelfCheck(content);
       if (editDslSelfCheck.kind !== "none") {
@@ -4378,7 +4335,7 @@ async function runEditDslLoop(options: LoopOptions): Promise<LoopResult> {
           lastDiagnostics = editDslViewerFeedback;
           lastFailure = "edit";
           // A viewer is inspection, not a failed attempt: it does not advance
-          // the no-progress cadence and is bounded by the token budget only.
+          // the no-progress cadence and is bounded by the USD cost budget only.
           continue;
         } else {
           carriedViewerFeedback = editDslViewerFeedback;
@@ -4580,9 +4537,9 @@ async function runEditDslLoop(options: LoopOptions): Promise<LoopResult> {
           // must not turn the run into a failure.
           return success(newSource);
         }
-        consumedTokens += budgetTokensFromResponse(confirmation, tokenBudgetBasis);
+        consumedCostUsd += costBudgetFromResponse(confirmation);
         addTokens(loopTokensFromResponse(confirmation));
-        if (consumedTokens > tokenBudget) {
+        if (consumedCostUsd > costBudgetUsd) {
           // The confirmation is advisory and the verification already passed:
           // an over-budget confirmation still reports the verified success.
           return success(newSource);
@@ -4675,7 +4632,7 @@ async function runEditDslLoop(options: LoopOptions): Promise<LoopResult> {
 
     // The exchange loop leaves only on a failed verification (the next round
     // opens with its diagnostics) or on success/termination. #57 has no fixed
-    // exchange or round cap and no round-continuation budget: the token budget,
+    // exchange or round cap and no round-continuation budget: the USD cost budget,
     // the repeated no-progress fingerprint, and the no-progress ask are the
     // only termination paths for a failed loop.
     if (verificationFailed) {

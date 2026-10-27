@@ -8,8 +8,8 @@ export interface CliOptions {
   agentMode?: AgentMode;
   /** stdout format (#80): `text` (default) or the machine-readable `json` result. */
   format: "text" | "json";
-  /** Hard raw provider-token budget (#80); null = the loop default. */
-  tokenBudget: number | null;
+  /** Hard cache-excluded USD budget (#80); null = the loop default. */
+  costBudgetUsd: number | null;
   /** Verify command run after an edit (#80); null = the tools default. */
   checkCommand: string[] | null;
   /** Test command run after an edit (#80); null = the tools default. */
@@ -50,10 +50,10 @@ function splitCommand(value: string, flag: string): string[] {
   return argv;
 }
 
-function parseTokenBudget(value: string): number {
+function parseUsdBudget(value: string): number {
   const parsed = Number(value);
-  if (!/^\d+$/.test(value) || !Number.isSafeInteger(parsed) || parsed <= 0) {
-    throw new Error(`--token-budget must be a positive integer (got ${JSON.stringify(value)})`);
+  if (!/^(?:\d+(?:\.\d*)?|\.\d+)$/.test(value) || !Number.isFinite(parsed) || parsed <= 0) {
+    throw new Error(`--budget-usd must be a positive USD amount (got ${JSON.stringify(value)})`);
   }
   return parsed;
 }
@@ -71,7 +71,7 @@ export function parseArgs(argv: string[]): CliOptions {
   let model = DEFAULT_MODEL;
   let agentMode: AgentMode = DEFAULT_AGENT_MODE;
   let format: "text" | "json" = "text";
-  let tokenBudget: number | null = null;
+  let costBudgetUsd: number | null = null;
   let checkCommand: string[] | null = null;
   let testCommand: string[] | null = null;
   let cwd: string | null = null;
@@ -125,9 +125,9 @@ export function parseArgs(argv: string[]): CliOptions {
       index = next;
       continue;
     }
-    if (arg === "--token-budget" || arg.startsWith("--token-budget=")) {
-      const { value, next } = flagValue(argv, index, "--token-budget");
-      tokenBudget = parseTokenBudget(value);
+    if (arg === "--budget-usd" || arg.startsWith("--budget-usd=")) {
+      const { value, next } = flagValue(argv, index, "--budget-usd");
+      costBudgetUsd = parseUsdBudget(value);
       index = next;
       continue;
     }
@@ -162,7 +162,7 @@ export function parseArgs(argv: string[]): CliOptions {
     model,
     agentMode,
     format,
-    tokenBudget,
+    costBudgetUsd,
     checkCommand,
     testCommand,
     cwd,
@@ -175,8 +175,8 @@ export function helpText(): string {
     "typescript-coder — read an issue on stdin and apply a verified LLM edit",
     "",
     "Usage:",
-    "  tc [--model <id>] [--mode <pinned-repair|plan-exec>] [--format <text|json>] [--token-budget <n>] < issue.txt",
-    "  bun run src/main.ts [--model <id>] [--mode <pinned-repair|plan-exec>] [--format <text|json>] [--token-budget <n>] < issue.txt",
+    "  tc [--model <id>] [--mode <pinned-repair|plan-exec>] [--format <text|json>] [--budget-usd <usd>] < issue.txt",
+    "  bun run src/main.ts [--model <id>] [--mode <pinned-repair|plan-exec>] [--format <text|json>] [--budget-usd <usd>] < issue.txt",
     "",
     "Options:",
     "  --model <id>       model id for the OpenAI-compatible provider (default: deepseek-v4.1-flash)",
@@ -189,9 +189,8 @@ export function helpText(): string {
     "  --format <text|json>",
     "                     stdout format (default: text); json prints exactly one",
     "                     typescript-coder-result@3 object on stdout",
-    "  --token-budget <n> hard raw-token budget as a positive integer (provider",
-    "                     total, or prompt+completion when total is absent;",
-    "                     default: 120000)",
+    "  --budget-usd <usd> hard cache-excluded USD budget (peak pricing; the",
+    "                     final termination summary is not budgeted; default: 0.10)",
     "  --check <cmd>      verify command to run after an edit; the value is split",
     "                     on whitespace into argv",
     "  --test <cmd>       test command to run after an edit; the value is split",

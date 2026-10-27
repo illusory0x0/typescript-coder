@@ -56,7 +56,7 @@ export const EDIT_DSL_FOLD_HINT =
   "A folded block names its hidden range and line counts; a whole-file `read` is folded the same way. Expand it with `read <path> within <start>-<end> end`, which returns those lines unfolded, instead of repeating the read; when a repair outgrows one declaration, use `write <path> with <fence>`.";
 
 export const EDIT_DSL_ROUNDS_SYSTEM_PARAGRAPH =
-  "There is no fixed exchange or round cap: the run continues while it makes progress and ends when an edit verifies, when the token budget is spent, or when the same reply/source/diagnostics repeats with no progress. When verification fails, the next attempt shows the current source and the failing diagnostics, and it may either revise the pinned declaration or re-pin to a different declaration in the same file by naming it in the clause's own `select` (the new address must resolve uniquely in the current source). A rejected or failing attempt is retried with its diagnostics and a correction; at a no-progress milestone the next attempt asks you to change the failing cause, or to reply `STOP` to end the run.";
+  "There is no fixed exchange or round cap: the run continues while it makes progress and ends when an edit verifies, when the USD cost budget is spent, or when the same reply/source/diagnostics repeats with no progress. When verification fails, the next attempt shows the current source and the failing diagnostics, and it may either revise the pinned declaration or re-pin to a different declaration in the same file by naming it in the clause's own `select` (the new address must resolve uniquely in the current source). A rejected or failing attempt is retried with its diagnostics and a correction; at a no-progress milestone the next attempt asks you to change the failing cause, or to reply `STOP` to end the run.";
 
 export function buildEditDslSystemPrompt(): string {
   return assembleSystemPrompt(
@@ -545,7 +545,7 @@ Reply with ONLY one \`select … end\` clause naming one symbol-index entry.
  * EditDsl selection no-progress ask (#B4/#57): a repeated selection failure
  * milestone offers `STOP` or one corrected select clause. It names a
  * no-progress cadence, never a fixed selection budget: a run that keeps making
- * progress is bounded by the token budget, not by this prompt.
+ * progress is bounded by the USD cost budget, not by this prompt.
  */
 export function buildEditDslSelectionContinuationPrompt(input: {
   failedAttempts: number;

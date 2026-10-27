@@ -377,7 +377,7 @@ It must be the whole reply: no arguments, edit, read, select, JSON, or prose.
 `check end` runs the configured check command (default `bunx tsc --noEmit`);
 `test end` runs the configured test command (default `bun test`). The command
 result is bounded and returned in the next prompt; the control turn writes
-nothing. It is repeatable, with no fixed self-check count: the token budget and
+nothing. It is repeatable, with no fixed self-check count: the USD cost budget and
 the repeated/no-progress policy are the bounds. The final edit still passes the
 ordinary automatic verification and judge.
 

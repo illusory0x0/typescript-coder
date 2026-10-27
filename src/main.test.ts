@@ -176,7 +176,7 @@ describe("plan-exec text and JSON output", () => {
       agentMode: "plan-exec",
       checkCommand: TSC,
       testCommand: ["bun", "test"],
-      tokenBudget: 1_000_000,
+      costBudgetUsd: 1,
     });
     expect(code).toBe(0);
     expect(err).toEqual([]);
@@ -196,7 +196,7 @@ describe("plan-exec text and JSON output", () => {
       agentMode: "plan-exec",
       checkCommand: TSC,
       testCommand: ["bun", "test"],
-      tokenBudget: 1_000_000,
+      costBudgetUsd: 1,
     });
     expect(code).toBe(0);
     expect(out).toHaveLength(1);

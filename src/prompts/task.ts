@@ -47,7 +47,7 @@ read <path> [within <selecters>] end
 A viewer writes nothing. A declaration viewer shows an indentation-folded
 outline; add \`within <start>-<end>\` for an exact slice. \`read\` returns a file
 outline, or an exact slice with \`within\`. Ranges are 1-based, inclusive, and
-file-absolute. Each viewer consumes the run token budget; a repeated identical
+file-absolute. Each viewer consumes the run's USD cost budget; a repeated identical
 view or a no-progress cycle forces the Plan/patch reply. Never use \`replace\`,
 \`rename\`, \`write\`, \`create\`, or \`delete\` in a planner viewer.`;
 
@@ -183,7 +183,7 @@ const TASK_PLAN_RULES = `Rules:
 8. End the run with a \`test\` node and a trailing \`finish\`. If the current last test node has passed, a bare \`patch\` + \`finish\` is enough.
 9. Do not plan a new class. If an existing class must change, prefer a minimal targeted edit; a named member \`create\` is valid when it is the smallest change.
 10. Emit only the Plan DSL records on a planning turn: no JSON, no markdown fence around the whole reply, and no prose. A read-only viewer request is the only non-Plan reply accepted before a Plan/patch.
-11. There is no node-count, planning-round, viewer, or exchange cap. Growth is bounded by the token budget and repeated/no-progress detection.`;
+11. There is no node-count, planning-round, viewer, or exchange cap. Growth is bounded by the USD cost budget and repeated/no-progress detection.`;
 
 const TASK_PATCH_FIELDS = `Patch records (a later planning turn replies with one patch, not a complete Plan):
 - Start with the singleton header \`patch\`. Every operation ends with \`end\`; a trailing \`finish\` may follow the last operation. The patch header has no \`end\`.
@@ -199,7 +199,7 @@ const TASK_PATCH_RULES = `Rules for a patch turn:
 4. If an executor repeatedly cannot land work, narrow the instruction or hints, split the work, or change the approach. Prefer a targeted repair after a failed large write; do not hard-reject a strategy.
 5. Keep the ids of nodes you keep. New ids must be unused. Existing nodes keep their record order; new nodes append.
 6. If the last node is a passing test node and no work remains, emit \`patch\` + \`finish\`. Otherwise plan the remaining work (or one final \`test\` node) and emit \`finish\` when the graph is complete.
-7. There is no per-turn node cap and no planning-round cap. Stop planning and act; the token budget and repeated/no-progress detection bound the run.`;
+7. There is no per-turn node cap and no planning-round cap. Stop planning and act; the USD cost budget and repeated/no-progress detection bound the run.`;
 
 export function buildTaskPlanningSystemPrompt(): string {
   return [
@@ -294,7 +294,7 @@ export function buildTaskReplanPrompt(input: TaskReplanInput): string {
     "",
     "# Amend the graph",
     "",
-    "Reply with exactly one `patch`, not a complete Plan. Add any number of ready nodes; update or remove pending/failed nodes; keep passed nodes and their ids unchanged. If the last node is a passing test node, `patch` + `finish` is enough. Use the token budget and progress, not a fixed node count.",
+    "Reply with exactly one `patch`, not a complete Plan. Add any number of ready nodes; update or remove pending/failed nodes; keep passed nodes and their ids unchanged. If the last node is a passing test node, `patch` + `finish` is enough. Use the USD cost budget and progress, not a fixed node count.",
   );
   return blocks.join("\n");
 }
@@ -428,7 +428,7 @@ export function buildTaskExecutionSystemPrompt(): string {
     "",
     taskEditDslInstruction(),
     "",
-    "The harness runs the node gate after every applied reply. There is no fixed attempt limit: a repeated no-progress reply or the token budget ends the node.",
+    "The harness runs the node gate after every applied reply. There is no fixed attempt limit: a repeated no-progress reply or the USD cost budget ends the node.",
     "",
     TASK_EXECUTION_OUTPUT_CONTRACT,
     "",
