@@ -1,3 +1,44 @@
 # Open issues in picking order. This order is authoritative: `reorder`
 # rewrites it; `add` appends; other writes keep it. `check` enforces it.
 # A dep, and every child of an umbrella, must be listed before its dependent.
+
+- id: 82
+  title: "Add unified diff output to tsed dry-run"
+  status: todo
+  priority: medium
+  milestone: null
+  parent: null
+  deps: []
+  file: 0082-add-unified-diff-output-to-tsed-dry-run.md
+- id: 83
+  title: "Edit arbitrary unique spans through file-level select and native flags"
+  status: todo
+  priority: medium
+  milestone: null
+  parent: null
+  deps: []
+  file: 0083-edit-arbitrary-unique-spans-through-file-level-select-and-native-flags.md
+- id: 84
+  title: "Add tsed --unify block markers and block-select editing"
+  status: todo
+  priority: medium
+  milestone: null
+  parent: null
+  deps: [83]
+  file: 0084-add-tsed-unify-block-markers-and-block-select-editing.md
+- id: 85
+  title: "Update namespace and import-equals references on cross-file rename"
+  status: todo
+  priority: medium
+  milestone: null
+  parent: null
+  deps: []
+  file: 0085-update-namespace-and-import-equals-references-on-cross-file-rename.md
+- id: 86
+  title: "Resolve path aliases and barrel re-export chains on cross-file rename"
+  status: todo
+  priority: medium
+  milestone: null
+  parent: null
+  deps: []
+  file: 0086-resolve-path-aliases-and-barrel-re-export-chains-on-cross-file-rename.md

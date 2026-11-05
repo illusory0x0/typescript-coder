@@ -86,6 +86,11 @@ digraph issues {
   "79" [label="#79 Use declared value names in tsed help synopsis"];
   "80" [label="#80 Update named imports and exports on a cross-file rename"];
   "81" [label="#81 Reject or honor match with rename"];
+  "82" [label="#82 Add unified diff output to tsed dry-run"];
+  "83" [label="#83 Edit arbitrary unique spans through file-level select and native flags"];
+  "84" [label="#84 Add tsed --unify block markers and block-select editing"];
+  "85" [label="#85 Update namespace and import-equals references on cross-file rename"];
+  "86" [label="#86 Resolve path aliases and barrel re-export chains on cross-file rename"];
 
   // parent edges (parent -> child), solid
   "1" -> "2";
@@ -202,4 +207,5 @@ digraph issues {
   "69" -> "72" [style=dashed, label="blocks"];
   "70" -> "72" [style=dashed, label="blocks"];
   "71" -> "72" [style=dashed, label="blocks"];
+  "83" -> "84" [style=dashed, label="blocks"];
 }
