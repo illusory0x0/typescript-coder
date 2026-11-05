@@ -1,12 +1,3 @@
 # Open issues in picking order. This order is authoritative: `reorder`
 # rewrites it; `add` appends; other writes keep it. `check` enforces it.
 # A dep, and every child of an umbrella, must be listed before its dependent.
-
-- id: 68
-  title: "Ship tsed as a scs-generated CLI and tool-use library"
-  status: todo
-  priority: medium
-  milestone: null
-  parent: null
-  deps: []
-  file: 0068-ship-tsed-as-a-scs-generated-cli-and-tool-use-library.md

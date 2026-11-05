@@ -1,7 +1,7 @@
 ---
 id: 68
 title: "Ship tsed as a scs-generated CLI and tool-use library"
-status: todo
+status: done
 priority: medium
 milestone: null
 parent: null
@@ -43,9 +43,9 @@ and write modes sharing one implementation.
 just typecheck && just test
 just accept
 just tsed-check
-printf 'read src/helper.ts end\n' | bun run typescript-editor/src/cli.ts --protocol-format dsl
-bun run typescript-editor/src/cli.ts --protocol-format flag --read src/helper.ts
-printf '{"operations":[{"op":"read","path":"src/helper.ts"}]}\n' | bun run typescript-editor/src/cli.ts --protocol-format json
+printf 'read typescript-editor/src/index.ts end\n' | bun run typescript-editor/src/cli.ts --protocol-format dsl
+bun run typescript-editor/src/cli.ts --protocol-format flag --read typescript-editor/src/index.ts
+printf '{"operations":[{"op":"read","path":"typescript-editor/src/index.ts"}]}\n' | bun run typescript-editor/src/cli.ts --protocol-format json
 ```
 
 The generated artifacts are committed, so a clone does not need the global
@@ -63,3 +63,4 @@ The generated artifacts are committed, so a clone does not need the global
 - `typescript-editor/` must never import `harness/`.
 - Do not change edit-dsl prompt text or benchmark behavior in this work.
 - Priorities default to `medium`; no milestone is set.
+- Shipped via children #69-#72: committed scs-generated tsed runtime/declaration/completions plus CLI (flag default; dsl/json stdin; --write only mutation opt-in), typed readEditDsl/applyEditDsl API, editorTool/dispatchEditorTool function-calling adapter registered by the harness, and docs/verification. Verified scs generate --check, just typecheck && just test (editor 871, harness 703, scripts 16, acceptance 9/9), and just accept. Edit-dsl prompts and benchmark behavior are unchanged; the editor package does not import the harness.
