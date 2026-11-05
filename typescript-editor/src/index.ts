@@ -9,3 +9,5 @@ export {
   renderEditRequest,
 } from "./protocol";
 export type { EditOperation, EditRequest } from "./protocol";
+export { EDITOR_TOOL_NAME, dispatchEditorTool, editorTool } from "./tool";
+export type { EditorToolDefinition, EditorToolOptions, EditorToolResult } from "./tool";

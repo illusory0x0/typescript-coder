@@ -1,4 +1,5 @@
 import { applyEdits } from "@tc/typescript-editor/editor";
+import { dispatchEditorTool, editorTool } from "@tc/typescript-editor/tool";
 import { buildIndex, findDefinition } from "@tc/typescript-editor/utility";
 import type { IndexEntry, Locator, SourceFile } from "@tc/typescript-editor/utility";
 import type {
@@ -20,6 +21,9 @@ import type {
   VariableDeclarator,
 } from "@tc/typescript-editor/parser";
 import type { ToolDefinition } from "./openai";
+
+export { dispatchEditorTool, editorTool };
+export type { EditorToolOptions, EditorToolResult } from "@tc/typescript-editor/tool";
 
 export interface CommandResult {
   ok: boolean;
@@ -299,4 +303,5 @@ export const tools: ToolDefinition[] = [
       },
     },
   },
+  editorTool,
 ];

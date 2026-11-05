@@ -1,10 +1,12 @@
-import { afterEach, describe, expect, test } from "bun:test";
-import { mkdtempSync, rmSync, writeFileSync } from "node:fs";
+import { afterEach, describe, expect, spyOn, test } from "bun:test";
+import { mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { buildSignatureView, expand } from "@tc/typescript-editor/scroll";
 import {
   checkTool,
+  dispatchEditorTool,
+  editorTool,
   findDefinitionTool,
   parseDiagnostics,
   renameTool,
@@ -282,7 +284,7 @@ describe("renameTool", () => {
 });
 
 describe("tools", () => {
-  test("exposes find-definition, scroll, rename, check, and test definitions", () => {
+  test("exposes find-definition, scroll, rename, check, test, and tsed definitions", () => {
     const byName = new Map(tools.map((tool) => [tool.function.name, tool]));
     expect([...byName.keys()].sort()).toEqual([
       "check",
@@ -290,6 +292,7 @@ describe("tools", () => {
       "rename",
       "scroll",
       "test",
+      "tsed",
     ]);
     for (const tool of tools) {
       expect(tool.type).toBe("function");
@@ -304,6 +307,39 @@ describe("tools", () => {
     expect(byName.get("rename")?.function.parameters["required"]).toContain("newName");
     expect(byName.get("check")?.function.description).toContain("tsc --noEmit");
     expect(byName.get("test")?.function.description).toContain("bun test");
+
+    expect(tools).toContain(editorTool);
+    expect(byName.get("tsed")).toBe(editorTool);
+    expect(editorTool.function.parameters["required"]).toContain("reply");
+    const properties = editorTool.function.parameters["properties"] as Record<string, unknown>;
+    expect(properties["write"]).toBeDefined();
+    expect(properties["cwd"]).toBeUndefined();
+  });
+
+  test("dispatchEditorTool reads a temp workspace without spawning", async () => {
+    const directory = mkdtempSync(join(tmpdir(), "tc-tools-"));
+    const target = join(directory, "src/helper.ts");
+    const source = "export function answer(): number {\n  return 1;\n}\n";
+    mkdirSync(join(directory, "src"), { recursive: true });
+    writeFileSync(target, source);
+    const spawn = spyOn(Bun, "spawn");
+
+    try {
+      const result = await dispatchEditorTool(
+        { reply: "read src/helper.ts end" },
+        { cwd: directory },
+      );
+
+      expect(result.ok).toBe(true);
+      expect(result.changed).toEqual([]);
+      expect(result.created).toEqual([]);
+      expect(result.deleted).toEqual([]);
+      expect(spawn).not.toHaveBeenCalled();
+      expect(readFileSync(target, "utf8")).toBe(source);
+    } finally {
+      spawn.mockRestore();
+      rmSync(directory, { recursive: true, force: true });
+    }
   });
 });
 

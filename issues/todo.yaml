@@ -2,14 +2,6 @@
 # rewrites it; `add` appends; other writes keep it. `check` enforces it.
 # A dep, and every child of an umbrella, must be listed before its dependent.
 
-- id: 71
-  title: "Expose edit-dsl as a harness tool/function"
-  status: todo
-  priority: medium
-  milestone: null
-  parent: 68
-  deps: [69]
-  file: 0071-expose-edit-dsl-as-a-harness-tool-function.md
 - id: 72
   title: "Document and verify the tsed CLI and library surface"
   status: todo

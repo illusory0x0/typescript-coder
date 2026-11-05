@@ -1,7 +1,7 @@
 ---
 id: 71
 title: "Expose edit-dsl as a harness tool/function"
-status: todo
+status: done
 priority: medium
 milestone: null
 parent: 68
@@ -52,3 +52,4 @@ just typecheck && just test
 - If the current loop cannot pass tools to the provider without a larger
   refactor, expose the tool and dispatcher and add harness registration now;
   leave loop integration to a separate issue and report the limitation.
+- Added typescript-editor/src/tool.ts: editorTool (OpenAI-compatible tsed function with reply and write:false-default schema) and dispatchEditorTool (object/JSON-string args, caller-supplied cwd only, structured read/apply result, ok false on readFailures, no spawn). Re-exported both and the result/option types from harness/src/tools.ts and appended editorTool to the harness tools array without changing loop/provider behavior. Added 13 tool tests plus harness registration/dispatch coverage: 43 tests pass. Verified just typecheck && just test (editor 871, harness 703, scripts 15, acceptance 9/9).
