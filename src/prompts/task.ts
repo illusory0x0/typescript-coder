@@ -33,9 +33,9 @@ export const TASK_PLANNING_WORKFLOW = `Workflow guidance (inspect -> contract ->
 1. Inspect the requirement, symbol index, and any source you need.
 2. Settle the public contract: types, signatures, and data shapes.
 3. For a large module, scaffold exported declarations and stub bodies first.
-4. When a visible test suite exists, consider an early \`verify test\` checkpoint after the scaffold/contract phase, once a compiling skeleton exists, so test feedback can arrive before most behavior is written. The graph shape is yours; the run succeeds only when the last gate is a passing \`test\` and no node is ready.
+4. When a visible test suite exists, consider an early \`verify test\` checkpoint after the scaffold/contract phase, once a compiling skeleton exists, so test feedback can arrive before most behavior is written. A greenfield module with multiple independently testable behaviors and visible test names may use \`test-filter:\` slice checkpoints, one per behavior; small or cohesive single-file changes stay one node. A filtered green gate is a checkpoint, not completion: the run succeeds only when the last gate is a passing, unfiltered \`test\` and no node is ready.
 5. Implement behavior in nodes whose gates can pass meaningfully, using early test feedback when it exists.
-6. End with a \`test\` node that depends on the work it verifies. There is no \`finish\` record: the harness completes the run from the graph and the last gate.
+6. End with an unfiltered \`test\` node that depends on the work it verifies. There is no \`finish\` record: the harness completes the run from the graph and the last gate.
 
 A single node, a linear chain, and a branching DAG are all valid; do not force a fixed workflow. The early checkpoint is advice, not a required shape: a single-node task, or one with no visible test suite, may have only the final test node.`;
 
@@ -143,6 +143,32 @@ instruction: Wire the entry point and keep the suite green.
 hint value parseFile in src/parser.ts
 end`;
 
+const TASK_SLICE_PLAN_EXAMPLE = `plan
+goal: Implement the expression-language parser, evaluator, and builtins.
+
+node "02-parser" verify test
+instruction: Implement the reader for numbers, booleans, symbols, and nested lists.
+hint value parseExpr in src/parser.ts
+test-filter: parser
+end
+
+node "03-evaluator" after "02-parser" verify test
+instruction: Implement evaluation and the special forms.
+hint value evaluate in src/evaluator.ts
+test-filter: evaluator
+end
+
+node "04-builtins" after "03-evaluator" verify test
+instruction: Implement the arithmetic, comparison, and pair builtins.
+hint value installBuiltins in src/builtins.ts
+test-filter: builtins
+end
+
+node "05-final" after "04-builtins" verify test
+instruction: Wire the public entry point and run the full suite.
+hint value runProgram in src/index.ts
+end`;
+
 const TASK_AMEND_EXAMPLE = `amend "02-parser"
 instruction: Repair the return path the last gate reported; keep the module surface unchanged.
 end`;
@@ -155,19 +181,20 @@ end`;
 const TASK_FIELDS = `Records:
 - The initial reply starts with the singleton \`plan\` header, then \`goal:\`, then one or more \`node\` records. Later replies contain only \`node\` and \`amend\` records.
 - The \`plan\` header and its \`goal:\` line have no terminator: never write \`end\` or \`</plan>\` after them. Only \`node\` and \`amend\` records end with \`end\`.
-- A work node is \`node "<id>" [after "<id>"…] verify tsc|test\`, then \`instruction:\`, optional \`hint\` lines, optional \`approach:\`, optional \`phase:\`, then \`end\`.
+- A work node is \`node "<id>" [after "<id>"…] verify tsc|test\`, then \`instruction:\`, optional \`hint\` lines, optional \`test-filter: <regex>\`, optional \`approach:\`, optional \`phase:\`, then \`end\`.
 - \`after\` lists dependency node ids; the executor runs only nodes whose dependencies passed. A node may depend on an existing node or one declared later in the same reply, as long as the graph stays acyclic. Record order is the deterministic readiness tie-break.
 - \`verify\` is the node gate: \`tsc\` runs the type check, \`test\` runs the type check and the test suite after each applied executor reply.
 - \`instruction:\` is a self-contained local goal for the executor; it does not see the requirement. Do not paste a whole file into an instruction.
 - \`hint file <path>\` marks a whole-file target; \`hint <value|type|namespace> <symbol> in <path>\` marks a declaration, including a dotted member such as \`Parser.parseValue\`. Hints are advisory guidance, not an allowlist.
+- \`test-filter: <regex>\` narrows a \`verify test\` gate to test names matching a JavaScript regular expression. The harness appends \`-t <regex>\` to the test command; the type check still covers the whole workspace. It is one line and is rejected on \`tsc\` nodes. A filtered green gate is a checkpoint, not completion.
 - \`approach:\` is optional advisory strategy. \`phase:\` is an optional workflow label such as \`scaffold\` or \`implement\`; it never changes scheduling.
 - Every id is a quoted "NN-slug": two or more digits, a hyphen, then lowercase kebab words (for example "02-answer"). Work-node ids are globally unique.
-- \`goal:\`, \`instruction:\`, \`approach:\`, and \`phase:\` carry one-line text after the label, or an empty label followed by \`TC_EDIT_BEGIN\` on its own line, the raw text lines, then \`TC_EDIT_END\` on its own line. The body is raw: hyphen runs, backticks, \`done\`, and \`end\` are ordinary text lines. A record ends with \`end\`.
-- \`amend "<id>"\` revises a pending or failed node in place. It takes only the replacement fields (\`instruction:\`, \`verify\`, \`after\`, \`hint\` lines or \`hint clear\`, \`approach:\`/\`approach clear\`, \`phase:\`/\`phase clear\`), then \`end\`. Omitted fields are preserved. A passed node is immutable.
+- \`goal:\`, \`instruction:\`, \`approach:\`, and \`phase:\` carry one-line text after the label, or an empty label followed by \`TC_EDIT_BEGIN\` on its own line, the raw text lines, then \`TC_EDIT_END\` on its own line. \`test-filter:\` is always a one-line regex and never a fenced body. The body is raw: hyphen runs, backticks, \`done\`, and \`end\` are ordinary text lines. A record ends with \`end\`.
+- \`amend "<id>"\` revises a pending or failed node in place. It takes only the replacement fields (\`instruction:\`, \`verify\`, \`after\`, \`hint\` lines or \`hint clear\`, \`test-filter: <regex>\`, \`approach:\`/\`approach clear\`, \`phase:\`/\`phase clear\`), then \`end\`. Omitted fields are preserved. A passed node is immutable.
 - There is no \`finish\`, no delete, and no \`patch\` header. Use \`node\` to append work and \`amend\` to repair a node that has not settled.`;
 
 const TASK_RULES = `Rules:
-1. Choose the smallest graph that keeps each gate meaningful. One node is valid when its change is cohesive; a large greenfield module often benefits from a compiling scaffold node before behavior is filled in. When a visible test suite exists, consider an early \`verify test\` checkpoint after that scaffold/contract phase so test feedback can arrive before most behavior is written; the run's success condition is a passing \`test\` as the last gate.
+1. Choose the smallest graph that keeps each gate meaningful. One node is valid when its change is cohesive; a large greenfield module often benefits from a compiling scaffold node before behavior is filled in. When a visible test suite exists, consider an early \`verify test\` checkpoint after that scaffold/contract phase so test feedback can arrive before most behavior is written; the run's success condition is a passing, unfiltered \`test\` as the last gate.
 2. Use \`after\` only for a real prerequisite. Independent work may be ready at the same time; do not invent edges to force a favorite order.
 3. Prefer top-level functions with explicit types. Extract a helper when it makes the code easier to read; keep the caller thin.
 4. Hints identify likely targets, not every file the instruction may touch. The executor may edit outside them when the instruction requires it; review sees those edits.
@@ -176,13 +203,15 @@ const TASK_RULES = `Rules:
 7. Do not plan a new class. If an existing class must change, prefer a minimal targeted edit; a named member \`create\` is valid when it is the smallest change.
 8. When a node stops making progress or its gate fails, amend that node with a narrower instruction or different hints. Append independent work when the graph needs it.
 9. Emit only plan records on a planning turn: no JSON, no markdown fence around the whole reply, and no prose. A read-only viewer request is the only non-plan reply accepted before a plan reply.
-10. There is no node-count, planning-round, viewer, or exchange cap. Growth is bounded by the USD cost budget and repeated/no-progress detection.`;
+10. There is no node-count, planning-round, viewer, or exchange cap. Growth is bounded by the USD cost budget and repeated/no-progress detection.
+11. Use \`test-filter:\` only for a greenfield module with multiple independently testable behaviors and visible test names; small or cohesive single-file changes stay one node. End with a final \`verify test\` node that has no \`test-filter\`: a filtered green gate does not complete the run.`;
 
 const TASK_REPLAN_RULES = `Rules for a later planning turn:
 - Reply with \`node\` records to append work, or \`amend\` records to revise pending or failed nodes. Do not re-emit the plan.
 - Prefer repairing a failed node in place with \`amend\`, or appending a targeted repair node. A passed node is immutable.
 - If an executor repeatedly cannot land work, narrow the instruction or hints, split the work, or change the approach.
-- If no node is ready and the last gate is a failing or non-test gate, plan the missing work and end with a \`test\` node whose gate can pass.
+- If no node is ready and the last gate is a failing or non-test gate, plan the missing work and end with an unfiltered \`test\` node whose gate can pass.
+- If the last gate is a filtered green \`test\`, append an unfiltered full-suite \`test\` node: a filtered green gate is a checkpoint, not completion.
 - There is no per-turn node cap and no planning-round cap. Stop planning and act; the USD cost budget and repeated/no-progress detection bound the run.`;
 
 export function buildTaskPlanningSystemPrompt(): string {
@@ -206,6 +235,10 @@ export function buildTaskPlanningSystemPrompt(): string {
     "Branching DAG example:",
     "",
     TASK_PLAN_BRANCHING_EXAMPLE,
+    "",
+    "Greenfield slice example:",
+    "",
+    TASK_SLICE_PLAN_EXAMPLE,
     "",
     "Amend a failed node:",
     "",
@@ -273,7 +306,7 @@ export function buildTaskReplanPrompt(input: TaskReplanInput): string {
     "",
     "# Amend the graph",
     "",
-    "Reply with `node` records to append ready work, or `amend` records to revise pending/failed nodes. Do not re-emit the plan. There is no `finish`: the run completes when no node is ready and the last gate is a passing `test`.",
+    "Reply with `node` records to append ready work, or `amend` records to revise pending/failed nodes. Do not re-emit the plan. There is no `finish`: the run completes when no node is ready and the last gate is a passing, unfiltered `test`.",
   );
   return blocks.join("\n");
 }
@@ -294,7 +327,7 @@ ${diagnostics}
 
 Correct the graph:
 - Keep one \`plan\` header with a \`goal:\`.
-- Emit flat \`node\` records with \`after\`, \`verify\`, \`instruction\`, and optional hints/approach/phase.
+- Emit flat \`node\` records with \`after\`, \`verify\`, \`instruction\`, optional hints, optional \`test-filter\`, and optional approach/phase.
 - End each node with \`end\`.
 - Do not write \`end\` or \`</plan>\` after the \`plan\` header or its \`goal:\` line; only \`node\` and \`amend\` records end with \`end\`.
 - Do not emit \`finish\`, \`patch\`, \`node+\`, \`node~\`, or \`node-\`.${example}

@@ -75,7 +75,7 @@ describe("planning prompts", () => {
       "test feedback can arrive before most behavior is written",
     );
     expect(TASK_PLANNING_WORKFLOW).toContain("There is no `finish` record");
-    expect(TASK_PLANNING_WORKFLOW).toContain("last gate is a passing `test`");
+    expect(TASK_PLANNING_WORKFLOW).toContain("last gate is a passing, unfiltered `test`");
     expect(TASK_PLANNING_WORKFLOW).toContain("advice, not a required shape");
     expect(TASK_PLANNING_WORKFLOW).toContain("may have only the final test node");
     expect(TASK_PLANNING_WORKFLOW).not.toContain("Do not defer");
@@ -85,6 +85,39 @@ describe("planning prompts", () => {
     expect(buildTaskPlanningSystemPrompt()).toContain(
       "consider an early `verify test` checkpoint after that scaffold/contract phase",
     );
+  });
+
+  test("the field reference teaches test-filter as a verify-test slice", () => {
+    const prompt = buildTaskPlanningSystemPrompt();
+    expect(prompt).toContain("test-filter: <regex>");
+    expect(prompt).toContain("JavaScript regular expression");
+    expect(prompt).toContain("-t <regex>");
+    expect(prompt).toContain("greenfield module");
+    expect(prompt).toContain("multiple independently testable behaviors");
+    expect(prompt).toContain("visible test names");
+    expect(prompt).toContain("small or cohesive single-file changes stay one node");
+    expect(prompt).toContain("final `verify test` node that has no `test-filter`");
+    expect(prompt).toContain("a filtered green gate does not complete the run");
+    expect(prompt).not.toContain("csv-parser");
+  });
+
+  test("the slice example shows parser, evaluator, and builtins slices plus a full final test", () => {
+    const prompt = buildTaskPlanningSystemPrompt();
+    const start = prompt.indexOf("Greenfield slice example:");
+    expect(start).toBeGreaterThanOrEqual(0);
+    const next = prompt.indexOf("Amend a failed node:", start);
+    expect(next).toBeGreaterThan(start);
+    const section = prompt.slice(start, next);
+    expect(section).toContain('node "02-parser"');
+    expect(section).toContain('node "03-evaluator"');
+    expect(section).toContain('node "04-builtins"');
+    expect(section).toContain('node "05-final"');
+    expect(section).toContain("test-filter: parser");
+    expect(section).toContain("test-filter: evaluator");
+    expect(section).toContain("test-filter: builtins");
+    const finalStart = section.indexOf('node "05-final"');
+    expect(finalStart).toBeGreaterThanOrEqual(0);
+    expect(section.slice(finalStart)).not.toContain("test-filter:");
   });
 
   test("planner inspection allows multiple read-only viewers", () => {
@@ -126,6 +159,7 @@ describe("planning prompts", () => {
     expect(prompt).toContain("Blocked node(s): #03-next.");
     expect(prompt).toContain("# Current symbol index");
     expect(prompt).toContain("Reply with `node` records to append ready work, or `amend` records");
+    expect(prompt).toContain("passing, unfiltered `test`");
     expect(prompt).not.toContain("`patch`");
     expect(prompt).not.toContain("`finish` is enough");
   });
@@ -135,6 +169,7 @@ describe("planning prompts", () => {
     expect(planRetry).toContain("stage: plan-graph");
     expect(planRetry).toContain("node");
     expect(planRetry).toContain("Do not emit `finish`");
+    expect(planRetry).toContain("test-filter");
     expect(planRetry).toContain(
       "Do not write `end` or `</plan>` after the `plan` header or its `goal:` line",
     );

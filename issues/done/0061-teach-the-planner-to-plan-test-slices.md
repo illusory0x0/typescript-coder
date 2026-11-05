@@ -1,7 +1,7 @@
 ---
 id: 61
 title: "Teach the planner to plan test slices"
-status: todo
+status: done
 priority: medium
 milestone: null
 parent: 59
@@ -39,3 +39,4 @@ just typecheck && just test
 - Depends on the slice-gate parser/gate/completion issue for the final grammar and semantics.
 - This is prompt-only; no driver behavior changes here.
 - The final full-suite node is the completion boundary, so a filtered checkpoint cannot be the last node.
+- 2026-11-05 implementation: src/prompts/task.ts now documents test-filter: <regex> (JavaScript regex matched against test names, harness appends -t <regex>, full-workspace type check, one line, rejected on tsc nodes, checkpoint not completion). TASK_FIELDS covers nodes and amends; TASK_PLANNING_WORKFLOW and TASK_RULES restrict slices to greenfield modules with multiple independently testable behaviors and visible test names, keeping small/cohesive single-file changes as one node, and require a final unfiltered verify test node. A new Greenfield slice example shows parser/evaluator/builtins slices plus the unfiltered full-suite final node; replan and plan-retry prompts carry the unfiltered completion wording. The prompt does not mention csv-parser. Verified: bun test src/prompts/task.test.ts = 19 pass / 0 fail; just typecheck && just test = 1506 pass / 0 fail; just accept = 8/8.
