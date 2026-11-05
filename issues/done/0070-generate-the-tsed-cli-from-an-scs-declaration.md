@@ -1,7 +1,7 @@
 ---
 id: 70
 title: "Generate the tsed CLI from an scs declaration"
-status: todo
+status: done
 priority: medium
 milestone: null
 parent: 68
@@ -59,3 +59,4 @@ just typecheck && just test
 - Do not add verification/check commands to the CLI in this issue; it applies
   edits and reports engine results only.
 - Keep prompt text and benchmark behavior unchanged.
+- Implemented the scs-generated tsed surface and CLI. Added typescript-editor/scs/tsed.scs with --protocol-format dsl|json|flag (default flag), --write, -C/--directory, and the native flag protocol; committed generated runtime, tsd declaration, and shell completions. Added src/protocol.ts (edit operation renderer plus JSON parser) and src/cli.ts (generated parser only, stdin formats, usage/exit-code handling, read-only default). Added protocol/CLI tests: 42 pass. Verified scs generate --check, tsc, just typecheck, and just test (editor 862, harness 702, scripts 15, acceptance 9/9).

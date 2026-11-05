@@ -1,0 +1,361 @@
+import { afterEach, describe, expect, test } from "bun:test";
+import { spawnSync } from "node:child_process";
+import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { dirname, join } from "node:path";
+
+const CLI = join(import.meta.dir, "cli.ts");
+const BEGIN = "TC_EDIT_BEGIN";
+const END = "TC_EDIT_END";
+
+const HELPER = [
+  "export function helper(): number {",
+  "  return 1;",
+  "}",
+  "",
+  "export function answer(): number {",
+  "  return 1;",
+  "}",
+  "",
+].join("\n");
+
+const ANSWER_TWO = ["export function answer(): number {", "  return 2;", "}", ""].join("\n");
+
+const AFTER_REPLACE = [
+  "export function helper(): number {",
+  "  return 1;",
+  "}",
+  "",
+  "export function answer(): number {",
+  "  return 2;",
+  "}",
+  "",
+].join("\n");
+
+const ANSWER_THREE = [
+  "export function helper(): number {",
+  "  return 1;",
+  "}",
+  "",
+  "export function answer(): number {",
+  "  return 3;",
+  "}",
+  "",
+].join("\n");
+
+const MUTATION_DSL = [
+  "select answer in src/helper.ts",
+  "replace with",
+  BEGIN,
+  "export function answer(): number {",
+  "  return 3;",
+  "}",
+  END,
+  "",
+].join("\n");
+
+let directories: string[] = [];
+
+function makeWorkspace(files: Record<string, string> = {}): string {
+  const directory = mkdtempSync(join(tmpdir(), "tc-tsed-"));
+  directories.push(directory);
+  const all = { "src/helper.ts": HELPER, ...files };
+  for (const [path, source] of Object.entries(all)) {
+    const target = join(directory, path);
+    mkdirSync(dirname(target), { recursive: true });
+    writeFileSync(target, source);
+  }
+  return directory;
+}
+
+interface Run {
+  status: number | null;
+  stdout: string;
+  stderr: string;
+}
+
+function run(cwd: string, args: readonly string[], input?: string): Run {
+  const result = spawnSync(process.execPath, [CLI, ...args], {
+    cwd,
+    input,
+    encoding: "utf8",
+  });
+  return {
+    status: result.status,
+    stdout: result.stdout ?? "",
+    stderr: result.stderr ?? "",
+  };
+}
+
+function read(path: string): string {
+  return readFileSync(path, "utf8");
+}
+
+afterEach(() => {
+  for (const directory of directories) {
+    rmSync(directory, { recursive: true, force: true });
+  }
+  directories = [];
+});
+
+describe("tsed flag protocol", () => {
+  test("--help lists the protocol, write, and read options", () => {
+    const workspace = makeWorkspace();
+    const result = run(workspace, ["--help"]);
+    expect(result.status).toBe(0);
+    expect(result.stdout).toContain("--protocol-format");
+    expect(result.stdout).toContain("--write");
+    expect(result.stdout).toContain("--read");
+    expect(result.stderr).toBe("");
+  });
+
+  test("--version prints the version", () => {
+    const workspace = makeWorkspace();
+    const result = run(workspace, ["--version"]);
+    expect(result.status).toBe(0);
+    expect(result.stdout).toBe("tsed 0.0.0\n");
+    expect(result.stderr).toBe("");
+  });
+
+  test("--read prints numbered lines", () => {
+    const workspace = makeWorkspace();
+    const result = run(workspace, ["--protocol-format", "flag", "--read", "src/helper.ts"]);
+    expect(result.status).toBe(0);
+    expect(result.stdout).toContain("src/helper.ts (whole file, 7 lines");
+    expect(result.stdout).toContain("1 | export function helper(): number {");
+    expect(result.stdout).toContain("5 | export function answer(): number {");
+    expect(result.stderr).toBe("");
+  });
+
+  test("--read is repeatable", () => {
+    const workspace = makeWorkspace({ "src/other.ts": "export const other = true;\n" });
+    const result = run(workspace, [
+      "--read",
+      "src/helper.ts",
+      "--read",
+      "src/other.ts",
+    ]);
+    expect(result.status).toBe(0);
+    expect(result.stdout).toContain("src/helper.ts (whole file");
+    expect(result.stdout).toContain("src/other.ts (whole file");
+    expect(result.stderr).toBe("");
+  });
+
+  test("--select --in prints a viewer", () => {
+    const workspace = makeWorkspace();
+    const result = run(workspace, ["--select", "answer", "--in", "src/helper.ts"]);
+    expect(result.status).toBe(0);
+    expect(result.stdout).toContain("select answer in src/helper.ts");
+    expect(result.stdout).toContain("src/helper.ts:5:");
+    expect(result.stderr).toBe("");
+  });
+
+  test("--replace-file --write applies a patch relative to the spawn cwd", () => {
+    const workspace = makeWorkspace({ "patch.txt": ANSWER_TWO });
+    const result = run(workspace, [
+      "--select",
+      "answer",
+      "--in",
+      "src/helper.ts",
+      "--replace-file",
+      "patch.txt",
+      "--write",
+    ]);
+    expect(result.status).toBe(0);
+    expect(result.stdout).toContain("changed: src/helper.ts");
+    expect(result.stderr).toBe("");
+    expect(read(join(workspace, "src/helper.ts"))).toBe(AFTER_REPLACE);
+  });
+
+  test("--rename applies a symbol rename with --write", () => {
+    const workspace = makeWorkspace();
+    const result = run(workspace, [
+      "--select",
+      "answer",
+      "--in",
+      "src/helper.ts",
+      "--rename",
+      "result",
+      "--write",
+    ]);
+    expect(result.status).toBe(0);
+    expect(result.stdout).toContain("changed: src/helper.ts");
+    expect(read(join(workspace, "src/helper.ts"))).toContain("export function result(): number {");
+    expect(read(join(workspace, "src/helper.ts"))).not.toContain("export function answer");
+  });
+
+  test("a flag mutation without --write is a usage error and changes nothing", () => {
+    const workspace = makeWorkspace({ "patch.txt": ANSWER_TWO });
+    const result = run(workspace, [
+      "--select",
+      "answer",
+      "--in",
+      "src/helper.ts",
+      "--replace-file",
+      "patch.txt",
+    ]);
+    expect(result.status).toBe(2);
+    expect(result.stderr).toContain("tsed:");
+    expect(result.stderr).toContain("--write");
+    expect(result.stderr).toContain("usage:");
+    expect(read(join(workspace, "src/helper.ts"))).toBe(HELPER);
+  });
+
+  test("--create and --delete apply with --write", () => {
+    const workspace = makeWorkspace({ "src/old.ts": "export const old = true;\n" });
+    const result = run(workspace, ["--create", "src/new.ts", "--delete", "src/old.ts", "--write"]);
+    expect(result.status).toBe(0);
+    expect(result.stdout).toContain("created: src/new.ts");
+    expect(result.stdout).toContain("deleted: src/old.ts");
+    expect(read(join(workspace, "src/new.ts"))).toBe("");
+    expect(existsSync(join(workspace, "src/old.ts"))).toBe(false);
+  });
+
+  test("--rewrite --content-file applies a whole-file replacement", () => {
+    const rewritten = "export const rewritten = true;\n";
+    const workspace = makeWorkspace({ "content.txt": rewritten });
+    const result = run(workspace, [
+      "--rewrite",
+      "src/helper.ts",
+      "--content-file",
+      "content.txt",
+      "--write",
+    ]);
+    expect(result.status).toBe(0);
+    expect(result.stdout).toContain("changed: src/helper.ts");
+    expect(read(join(workspace, "src/helper.ts"))).toBe(rewritten);
+  });
+
+  test("-C selects the workspace and payload files stay relative to the spawn cwd", () => {
+    const workspace = makeWorkspace({ "patch.txt": ANSWER_TWO });
+    const result = run(workspace, ["-C", "src", "--read", "helper.ts"]);
+    expect(result.status).toBe(0);
+    expect(result.stdout).toContain("helper.ts (whole file");
+
+    const applied = run(workspace, [
+      "-C",
+      "src",
+      "--select",
+      "answer",
+      "--in",
+      "helper.ts",
+      "--replace-file",
+      "patch.txt",
+      "--write",
+    ]);
+    expect(applied.status).toBe(0);
+    expect(read(join(workspace, "src/helper.ts"))).toBe(AFTER_REPLACE);
+  });
+});
+
+describe("tsed stdin protocols", () => {
+  test("dsl reads an edit-dsl reply from stdin", () => {
+    const workspace = makeWorkspace();
+    const result = run(workspace, ["--protocol-format", "dsl"], "read src/helper.ts end\n");
+    expect(result.status).toBe(0);
+    expect(result.stdout).toContain("1 | export function helper(): number {");
+    expect(result.stderr).toBe("");
+  });
+
+  test("dsl mutation without --write fails with stage: protocol", () => {
+    const workspace = makeWorkspace();
+    const result = run(workspace, ["--protocol-format", "dsl"], MUTATION_DSL);
+    expect(result.status).toBe(1);
+    expect(result.stderr).toContain("stage: protocol");
+    expect(result.stderr).toContain("read-only");
+    expect(read(join(workspace, "src/helper.ts"))).toBe(HELPER);
+  });
+
+  test("dsl mutation with --write applies the change", () => {
+    const workspace = makeWorkspace();
+    const result = run(workspace, ["--protocol-format", "dsl", "--write"], MUTATION_DSL);
+    expect(result.status).toBe(0);
+    expect(result.stdout).toContain("changed: src/helper.ts");
+    expect(read(join(workspace, "src/helper.ts"))).toBe(ANSWER_THREE);
+  });
+
+  test("json reads and rewrites an operation list", () => {
+    const workspace = makeWorkspace();
+    const readResult = run(
+      workspace,
+      ["--protocol-format", "json"],
+      '{"operations":[{"op":"read","path":"src/helper.ts"}]}\n',
+    );
+    expect(readResult.status).toBe(0);
+    expect(readResult.stdout).toContain("1 | export function helper(): number {");
+
+    const rewritten = "export const answer = 7;\n";
+    const writeResult = run(
+      workspace,
+      ["--protocol-format", "json", "--write"],
+      JSON.stringify({
+        operations: [{ op: "rewrite", path: "src/helper.ts", content: rewritten }],
+      }),
+    );
+    expect(writeResult.status).toBe(0);
+    expect(writeResult.stdout).toContain("changed: src/helper.ts");
+    expect(read(join(workspace, "src/helper.ts"))).toBe(rewritten);
+  });
+
+  test("malformed JSON is a usage error", () => {
+    const workspace = makeWorkspace();
+    const result = run(workspace, ["--protocol-format", "json"], "{");
+    expect(result.status).toBe(2);
+    expect(result.stderr).toContain("tsed:");
+    expect(result.stderr).toContain("invalid JSON");
+    expect(result.stderr).toContain("usage:");
+  });
+
+  test("a clean edit plus a failing edit exits 1 and changes nothing", () => {
+    const workspace = makeWorkspace();
+    const reply = [
+      "select helper in src/helper.ts",
+      "replace with",
+      BEGIN,
+      "export function helper(): number {",
+      "  return 5;",
+      "}",
+      END,
+      "",
+      "select answer in src/helper.ts",
+      "pick 99",
+      "replace with",
+      BEGIN,
+      "return 9;",
+      END,
+      "",
+    ].join("\n");
+    const result = run(workspace, ["--protocol-format", "dsl", "--write"], reply);
+    expect(result.status).toBe(1);
+    expect(result.stderr).toContain("stage: range");
+    expect(read(join(workspace, "src/helper.ts"))).toBe(HELPER);
+  });
+
+  test("unknown flags and empty stdin are usage errors", () => {
+    const workspace = makeWorkspace();
+
+    const unknown = run(workspace, ["--bogus"]);
+    expect(unknown.status).toBe(2);
+    expect(unknown.stderr).toContain("unexpected argument '--bogus'");
+
+    const emptyDsl = run(workspace, ["--protocol-format", "dsl"], "   \n");
+    expect(emptyDsl.status).toBe(2);
+    expect(emptyDsl.stderr).toContain("non-empty payload");
+
+    const emptyJson = run(workspace, ["--protocol-format", "json"], "");
+    expect(emptyJson.status).toBe(2);
+    expect(emptyJson.stderr).toContain("non-empty payload");
+  });
+
+  test("native operation flags are rejected with a stdin format", () => {
+    const workspace = makeWorkspace();
+    const result = run(
+      workspace,
+      ["--protocol-format", "dsl", "--read", "src/helper.ts"],
+      "read src/helper.ts end\n",
+    );
+    expect(result.status).toBe(2);
+    expect(result.stderr).toContain("--read");
+    expect(result.stderr).toContain("--protocol-format dsl");
+  });
+});

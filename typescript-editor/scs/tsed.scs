@@ -1,0 +1,69 @@
+// tsed.scs — declaration of the `tsed` CLI surface.
+// Source of truth for its generated parser, help text and shell completions;
+// the artifacts under `scs/generated/` are committed. Regenerate them with:
+//   scs generate typescript-editor/scs/tsed.scs \
+//     --out typescript-editor/scs/generated \
+//     --targets ts,runtime,bash,zsh,fish,elvish,pwsh,nu
+// Never hand-edit anything under `scs/generated/`.
+
+enum ProtocolFormat : values {
+  Flag
+  Dsl
+  Json
+}
+
+interface TsedArgs {
+  @arg({ help: "Input encoding: native flags, edit-dsl on stdin, or JSON on stdin" })
+  protocol-format: ProtocolFormat = ProtocolFormat.Flag
+
+  @arg({ help: "Apply mutations (default is read-only)" })
+  write: boolean
+
+  @arg({ short: "C", valueName: "DIR", help: "Workspace root (default: the current directory)" })
+  directory: string?
+
+  @arg({ help: "Read a workspace file", valueName: "PATH", multiple: true })
+  read: string[]?
+
+  @arg({ help: "Select a declaration for a viewer or edit", valueName: "SYMBOL" })
+  select: string?
+
+  @arg({ long: "in", valueName: "PATH", help: "File that contains the selected declaration" })
+  input: string?
+
+  @arg({ help: "Declaration kind filter", valueName: "KIND" })
+  kind: string?
+
+  @arg({ help: "TypeScript symbol space filter", valueName: "SPACE" })
+  resolve: "value" | "type" | "namespace"?
+
+  @arg({ help: "Snippet that must match inside the declaration", valueName: "SNIPPET" })
+  match: string?
+
+  @arg({ help: "Line or column range to edit", valueName: "RANGE" })
+  pick: string?
+
+  @arg({ help: "File holding the replacement text", valueHint: "file", valueName: "FILE" })
+  replace-file: string?
+
+  @arg({ help: "New name for a symbol rename", valueName: "NAME" })
+  rename: string?
+
+  @arg({ help: "Create an empty workspace file", valueName: "PATH", multiple: true })
+  create: string[]?
+
+  @arg({ help: "Delete a workspace file", valueName: "PATH", multiple: true })
+  delete: string[]?
+
+  @arg({ help: "Rewrite a whole workspace file", valueName: "PATH" })
+  rewrite: string?
+
+  @arg({ help: "File holding the content for --rewrite", valueHint: "file", valueName: "FILE" })
+  content-file: string?
+}
+
+cli tsed {
+  about: "Edit TypeScript with the tc engine"
+  version: "0.0.0"
+  args: TsedArgs
+}
