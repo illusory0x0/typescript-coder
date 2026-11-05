@@ -2,14 +2,6 @@
 # rewrites it; `add` appends; other writes keep it. `check` enforces it.
 # A dep, and every child of an umbrella, must be listed before its dependent.
 
-- id: 82
-  title: "Add unified diff output to tsed dry-run"
-  status: todo
-  priority: medium
-  milestone: null
-  parent: null
-  deps: []
-  file: 0082-add-unified-diff-output-to-tsed-dry-run.md
 - id: 83
   title: "Edit arbitrary unique spans through file-level select and native flags"
   status: todo

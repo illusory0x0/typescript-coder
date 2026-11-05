@@ -210,6 +210,12 @@ function renderFlagRequest(values: TsedArgs, workspaceRoot: string): string {
 }
 
 function buildPayload(values: TsedArgs, workspaceRoot: string): string {
+  if (values.diff && values.write) {
+    throw new UsageError("--diff is preview-only and cannot be combined with --write");
+  }
+  if (values.diff && !values.dry_run) {
+    throw new UsageError("--diff requires --dry-run");
+  }
   if (values.write && values.dry_run) {
     throw new UsageError("--write and --dry-run are mutually exclusive");
   }
@@ -251,6 +257,14 @@ function reportResult(result: EditDslReadResult | EditDslApplyResult, mode: Repo
     for (const path of [...apply.deleted].sort()) {
       process.stdout.write(`${prefixes.deleted}: ${path}\n`);
     }
+    if (mode === "preview") {
+      for (const entry of apply.diffs) {
+        if (entry.diff === "") {
+          continue;
+        }
+        process.stdout.write(`\n${entry.diff.endsWith("\n") ? entry.diff : `${entry.diff}\n`}`);
+      }
+    }
   }
   return failed ? 1 : 0;
 }
@@ -279,7 +293,11 @@ async function main(argv: readonly string[]): Promise<number> {
     const values = parsed.values as unknown as TsedArgs;
     const cwd = resolve(values.directory ?? process.cwd());
     const payload = buildPayload(values, cwd);
-    const options = { cwd, ...(values.dry_run ? { dryRun: true } : {}) };
+    const options = {
+      cwd,
+      ...(values.dry_run ? { dryRun: true } : {}),
+      ...(values.dry_run && values.diff ? { diff: true } : {}),
+    };
     if (values.write || values.dry_run) {
       const result = await applyEditDsl(payload, options);
       return reportResult(result, values.dry_run ? "preview" : "apply");

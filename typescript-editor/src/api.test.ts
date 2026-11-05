@@ -358,6 +358,127 @@ describe("applyEditDsl", () => {
   });
 });
 
+describe("applyEditDsl dry-run diffs", () => {
+  test("a dry run with diff describes a modification and leaves every byte unchanged", async () => {
+    const directory = makeWorkspace({ "src/helper.ts": HELPER });
+    const target = join(directory, "src/helper.ts");
+
+    const result = await applyEditDsl(
+      replacement("export function answer(): number {\n  return 2;\n}"),
+      { cwd: directory, dryRun: true, diff: true },
+    );
+
+    expect(result.ok).toBe(true);
+    expect(result.diffs.map((entry) => entry.path)).toEqual(["src/helper.ts"]);
+    const diff = result.diffs[0]?.diff ?? "";
+    expect(diff).toContain("--- a/src/helper.ts");
+    expect(diff).toContain("+++ b/src/helper.ts");
+    expect(diff).toContain("@@ -");
+    expect(diff).toContain("-  return 1;");
+    expect(diff).toContain("+  return 2;");
+    expect(read(target)).toBe(HELPER);
+  });
+
+  test("diffs are empty unless the dry run asks for them", async () => {
+    const directory = makeWorkspace({ "src/helper.ts": HELPER });
+    const target = join(directory, "src/helper.ts");
+    const reply = replacement("export function answer(): number {\n  return 2;\n}");
+
+    const preview = await applyEditDsl(reply, { cwd: directory, dryRun: true });
+    expect(preview.diffs).toEqual([]);
+
+    const applied = await applyEditDsl(reply, { cwd: directory });
+    expect(applied.diffs).toEqual([]);
+    expect(read(target)).toContain("return 2;");
+  });
+
+  test("create and delete sides use /dev/null, sorted by path", async () => {
+    const directory = makeWorkspace({
+      "src/helper.ts": HELPER,
+      "src/old.ts": "export const old = 1;\n",
+    });
+    const oldSource = "export const old = 1;\n";
+    const text = [
+      writeFileReply("src/new.ts", "export const created = 1;\n"),
+      writeFileReply("src/helper.ts", "export const helper = 1;\n"),
+      "delete src/old.ts end",
+    ].join("\n");
+
+    const result = await applyEditDsl(text, { cwd: directory, dryRun: true, diff: true });
+
+    expect(result.ok).toBe(true);
+    expect(result.diffs.map((entry) => entry.path)).toEqual([
+      "src/helper.ts",
+      "src/new.ts",
+      "src/old.ts",
+    ]);
+    expect(result.diffs[0]?.diff.startsWith("--- a/src/helper.ts\n+++ b/src/helper.ts\n")).toBe(
+      true,
+    );
+    expect(result.diffs[1]?.diff.startsWith("--- /dev/null\n+++ b/src/new.ts\n")).toBe(true);
+    expect(result.diffs[2]?.diff.startsWith("--- a/src/old.ts\n+++ /dev/null\n")).toBe(true);
+    expect(read(join(directory, "src/helper.ts"))).toBe(HELPER);
+    expect(read(join(directory, "src/old.ts"))).toBe(oldSource);
+    expect(existsSync(join(directory, "src/new.ts"))).toBe(false);
+  });
+
+  test("separated changes produce multiple hunks", async () => {
+    const lines = Array.from(
+      { length: 20 },
+      (_, index) => `export const value${index + 1} = ${index + 1};`,
+    );
+    const oldSource = `${lines.join("\n")}\n`;
+    const changed = [...lines];
+    changed[1] = "export const value2 = 200;";
+    changed[16] = "export const value17 = 1700;";
+    const newSource = `${changed.join("\n")}\n`;
+    const directory = makeWorkspace({ "src/values.ts": oldSource });
+
+    const result = await applyEditDsl(writeFileReply("src/values.ts", newSource), {
+      cwd: directory,
+      dryRun: true,
+      diff: true,
+    });
+
+    expect(result.ok).toBe(true);
+    const diff = result.diffs[0]?.diff ?? "";
+    expect(diff.match(/^@@ /gm)).toHaveLength(2);
+    expect(read(join(directory, "src/values.ts"))).toBe(oldSource);
+  });
+
+  test("a deleted file without a trailing newline gets the marker", async () => {
+    const source = "export const value = 1;";
+    const directory = makeWorkspace({ "src/nonl.ts": source });
+
+    const result = await applyEditDsl("delete src/nonl.ts end", {
+      cwd: directory,
+      dryRun: true,
+      diff: true,
+    });
+
+    expect(result.ok).toBe(true);
+    const diff = result.diffs[0]?.diff ?? "";
+    expect(diff).toContain("-export const value = 1;");
+    expect(diff).toContain("\\ No newline at end of file");
+    expect(read(join(directory, "src/nonl.ts"))).toBe(source);
+  });
+
+  test("diff without dryRun is rejected and writes nothing", async () => {
+    const directory = makeWorkspace({ "src/helper.ts": HELPER });
+    const target = join(directory, "src/helper.ts");
+
+    const result = await applyEditDsl(
+      replacement("export function answer(): number {\n  return 2;\n}"),
+      { cwd: directory, diff: true },
+    );
+
+    expect(result.ok).toBe(false);
+    expect(result.failures.some((failure) => failure.stage === "protocol")).toBe(true);
+    expect(result.diffs).toEqual([]);
+    expect(read(target)).toBe(HELPER);
+  });
+});
+
 describe("workspace path safety", () => {
   test("rejects traversal, absolute, protected, hidden-directory and node_modules paths", async () => {
     const directory = makeWorkspace({

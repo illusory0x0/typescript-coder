@@ -11,6 +11,7 @@ _tsed() {
     '--protocol-format=[Input encoding\: native flags, edit-dsl on stdin, or JSON on stdin]:protocol format:(flag dsl json)' \
     '--write[Apply mutations (default is read-only)]' \
     '--dry-run[Preview mutations without writing]' \
+    '--diff[Show a unified diff for planned mutations (requires --dry-run)]' \
     '(-C --directory)-C=[Workspace root (default\: the current directory)]:dir:' \
     '(-C --directory)--directory=[Workspace root (default\: the current directory)]:dir:' \
     '*--read=[Read a workspace file]:path:' \

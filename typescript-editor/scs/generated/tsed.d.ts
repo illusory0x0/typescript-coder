@@ -11,6 +11,8 @@ export interface TsedArgs {
   write: boolean;
   /** Preview mutations without writing */
   dry_run: boolean;
+  /** Show a unified diff for planned mutations (requires --dry-run) */
+  diff: boolean;
   /** Workspace root (default: the current directory) */
   directory?: string;
   /** Read a workspace file */
@@ -44,7 +46,7 @@ export interface TsedArgs {
 }
 
 /** Flag-shaped options (no value token). */
-export type FlagName = "write" | "dry_run";
+export type FlagName = "write" | "dry_run" | "diff";
 
 /** Value-shaped options (consume one token). */
 export type ValueName =

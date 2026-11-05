@@ -48,7 +48,8 @@ workspace:
   collisions instead of guessing from text.
 - **Preview/apply parity.** `--dry-run` runs the same resolve/format/gate/
   preflight pipeline as `--write`, lists every affected path, and leaves the
-  workspace byte-identical. It is a path preview, not a unified diff.
+  workspace byte-identical. Add `--diff` to render a per-file unified diff from
+  the same plan.
 - **Repair-oriented failures.** Failures identify the stage; syntax failures add
   a code, line, column, source excerpt, expected/found values, and a hint. A
   failed reply writes nothing.
@@ -90,6 +91,7 @@ tsed --delete src/old.ts --write
 tsed --rewrite src/helper.ts \
   --content-file content.txt --write            # whole file
 tsed --create src/new.ts --dry-run              # preview only
+tsed --create src/new.ts --dry-run --diff       # preview with a unified diff
 tsed --select answer --in src/helper.ts \
   --rename result --dry-run                     # preview a rename
 ```
@@ -97,9 +99,27 @@ tsed --select answer --in src/helper.ts \
 `--dry-run` runs the same pipeline as `--write` and then stops before any
 write, create, or delete. It prints `would change:`, `would create:`, and
 `would delete:` lines for the planned paths, and the workspace stays
-byte-identical. It is mutually exclusive with `--write`; a mutation needs one
-of them. Dry-run is a path preview, not a unified diff. The mode works with all
-three formats: add it to a flag command or to a `dsl`/`json` stdin command.
+byte-identical. Add `--diff` to follow those lines with a standard unified diff
+for each planned file, generated from the pre-reply snapshot and the planned
+source:
+
+```text
+would change: src/helper.ts
+
+--- a/src/helper.ts
++++ b/src/helper.ts
+@@ -5,3 +5,3 @@
+ export function answer(): number {
+-  return 1;
++  return 2;
+ }
+```
+
+Create and delete diffs use `/dev/null` for the missing side. `--diff` is
+preview-only: it requires `--dry-run` and is rejected with `--write`. `--dry-run`
+is mutually exclusive with `--write`; a mutation needs one of them. The mode
+works with all three formats: add it to a flag command or to a `dsl`/`json`
+stdin command.
 
 `--select` supports optional `--kind`, `--resolve value|type|namespace`,
 `--match <snippet>`, and `--pick <range>`. Without `--match`/`--pick`, the
@@ -186,8 +206,10 @@ expresses operations; `--write` still controls whether mutations are applied.
 Successful inspection text goes to stdout. Failure diagnostics go to stderr.
 Apply runs also print `changed:`, `created:`, and `deleted:` lines for the paths
 that were written; dry runs print `would change:`, `would create:`, and
-`would delete:` instead and write nothing. A failed reply writes nothing; a
-failed read is reported but does not discard a clean mutation.
+`would delete:` instead and write nothing. A dry run with `--diff` adds a blank
+line and the per-file unified diff after those path lines; apply output never
+includes a diff. A failed reply writes nothing; a failed read is reported but
+does not discard a clean mutation.
 
 ### Renames
 
@@ -225,8 +247,8 @@ if (!read.ok) console.error(read.text);
 const applied = await applyEditDsl(reply, { cwd: process.cwd() });
 console.log(applied.changed, applied.created, applied.deleted);
 
-const preview = await applyEditDsl(reply, { cwd: process.cwd(), dryRun: true });
-console.log(preview.changed, preview.created, preview.deleted);
+const preview = await applyEditDsl(reply, { cwd: process.cwd(), dryRun: true, diff: true });
+console.log(preview.changed, preview.created, preview.deleted, preview.diffs);
 ```
 
 `readEditDsl` resolves reads/viewers and rejects mutation clauses with
@@ -235,9 +257,12 @@ whole reply through the shared format/gate pipeline atomically. With
 `dryRun: true` it runs the same pipeline and returns the planned
 `changed`/`created`/`deleted` arrays without calling a mutation method. Both
 return `ok`, `text`, `reads`, `viewers`, `failures`, and `readFailures`; the
-apply result also has sorted `changed`, `created`, and `deleted` arrays. A
-failed read is returned in `readFailures` and does not discard a clean
-mutation.
+apply result also has sorted `changed`, `created`, and `deleted` arrays and a
+`diffs` array. Set `diff: true` together with `dryRun: true` to fill `diffs`
+with sorted `{ path, diff }` entries; otherwise it stays empty. `diff` is
+preview-only, so `applyEditDsl` rejects it without `dryRun`. Diffs are rendered
+in-process from the pre-reply snapshot and the planned source. A failed read is
+returned in `readFailures` and does not discard a clean mutation.
 
 `renderEditRequest` and `parseJsonEditRequest` build the edit-dsl form from the
 typed operation list used by the JSON and flag formats.
@@ -297,5 +322,7 @@ just typecheck && just test
 
 The `src/cli.test.ts` suite covers flag reads, read/select `--within`
 expansion, flag/dsl/json dry runs, dsl read-only/dsl `--write`, JSON
-reads/writes, usage errors, the `--write`/`--dry-run` conflict, and failed
-writes that leave files unchanged.
+reads/writes, usage errors, the `--write`/`--dry-run` conflict, `--dry-run
+--diff`, and failed writes that leave files unchanged. `src/api.test.ts`
+covers the API plan and `diffs` results, and `src/unified-diff.test.ts` covers
+the renderer's hunk, `/dev/null`, and missing-newline cases.

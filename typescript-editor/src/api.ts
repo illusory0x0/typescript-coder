@@ -10,6 +10,7 @@ import { parseMultiEditorDetailed } from "./selection";
 import type { EditStatement } from "./selection";
 import type { Locator } from "./utility";
 import { createWorkspace } from "./workspace";
+import { unifiedDiff } from "./unified-diff";
 import type { Workspace } from "./workspace";
 
 export interface EditDslOptions {
@@ -19,6 +20,8 @@ export interface EditDslOptions {
   protectedPaths?: readonly string[];
   /** Resolve and validate mutations, but do not write anything. */
   dryRun?: boolean;
+  /** Include per-file unified diffs in a dry-run result. Requires `dryRun`. */
+  diff?: boolean;
 }
 
 export interface EditDslReadResult {
@@ -31,10 +34,17 @@ export interface EditDslReadResult {
   text: string;
 }
 
+export interface EditDslDiff {
+  path: string;
+  diff: string;
+}
+
 export interface EditDslApplyResult extends EditDslReadResult {
   changed: string[];
   created: string[];
   deleted: string[];
+  /** Sorted per-file unified diffs; empty unless a dry run requested them. */
+  diffs: EditDslDiff[];
 }
 
 type ParsedReply = { ok: true; statements: EditStatement[] } | { ok: false; text: string };
@@ -200,7 +210,7 @@ function emptyReadResult(): EditDslReadResult {
 }
 
 function emptyApplyResult(): EditDslApplyResult {
-  return { ...emptyReadResult(), changed: [], created: [], deleted: [] };
+  return { ...emptyReadResult(), changed: [], created: [], deleted: [], diffs: [] };
 }
 
 function applyFailureResult(
@@ -217,11 +227,33 @@ function applyFailureResult(
     changed: [],
     created: [],
     deleted: [],
+    diffs: [],
   };
 }
 
 function comparePaths(left: string, right: string): number {
   return left < right ? -1 : left > right ? 1 : 0;
+}
+
+function planDiffs(
+  writePlan: ReadonlyMap<string, { source: string }>,
+  deletePlan: ReadonlySet<string>,
+  originals: ReadonlyMap<string, { exists: boolean; source: string }>,
+): EditDslDiff[] {
+  const paths = [...new Set([...writePlan.keys(), ...deletePlan])].sort(comparePaths);
+  return paths.map((path) => {
+    const original = originals.get(path);
+    const planned = writePlan.get(path);
+    const deleting = deletePlan.has(path);
+    const diff = unifiedDiff({
+      path,
+      oldSource: original?.source ?? "",
+      newSource: deleting ? "" : (planned?.source ?? ""),
+      oldMissing: original?.exists !== true,
+      newMissing: deleting,
+    });
+    return { path, diff };
+  });
 }
 
 /**
@@ -270,6 +302,15 @@ export async function applyEditDsl(
   options: EditDslOptions,
 ): Promise<EditDslApplyResult> {
   const workspace = createWorkspace(options);
+  if (options.diff === true && options.dryRun !== true) {
+    const failure = protocolFailure(
+      0,
+      "",
+      syntheticLocator(""),
+      "the diff option is preview-only: set dryRun: true with diff; nothing was written",
+    );
+    return { ...emptyApplyResult(), failures: [failure], text: failure.diagnostics };
+  }
   const parsed = parseReply(text);
   if (!parsed.ok) {
     return { ...emptyApplyResult(), text: parsed.text };
@@ -478,10 +519,14 @@ export async function applyEditDsl(
     changed: changed.sort(comparePaths),
     created: created.sort(comparePaths),
     deleted: deleted.sort(comparePaths),
+    diffs: [],
   };
 
   // A dry run stops before any mutation method: the result is the plan above.
   if (options.dryRun === true) {
+    if (options.diff === true) {
+      result.diffs = planDiffs(writePlan, deletePlan, originals);
+    }
     return result;
   }
 

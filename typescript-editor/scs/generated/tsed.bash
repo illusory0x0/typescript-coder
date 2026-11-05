@@ -132,7 +132,7 @@ _tsed() {
     # again after it has been given.
     case "$cmd" in
         *)
-            pool="--protocol-format --write --dry-run --directory -C --read --select --in --kind --resolve --match --pick --within --replace-file --rename --create --delete --rewrite --content-file --help -h --version -V"
+            pool="--protocol-format --write --dry-run --diff --directory -C --read --select --in --kind --resolve --match --pick --within --replace-file --rename --create --delete --rewrite --content-file --help -h --version -V"
             vpool="--protocol-format --directory -C --read --select --in --kind --resolve --match --pick --within --replace-file --rename --create --delete --rewrite --content-file"
             always="--read --create --delete --help -h --version -V"
             ;;

@@ -22,6 +22,9 @@ interface TsedArgs {
   @arg({ help: "Preview mutations without writing" })
   dry-run: boolean
 
+  @arg({ help: "Show a unified diff for planned mutations (requires --dry-run)" })
+  diff: boolean
+
   @arg({ short: "C", valueName: "DIR", help: "Workspace root (default: the current directory)" })
   directory: string?
 

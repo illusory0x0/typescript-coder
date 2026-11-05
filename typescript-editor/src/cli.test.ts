@@ -543,8 +543,75 @@ describe("tsed stdin protocols", () => {
     expect(result.status).toBe(0);
     expect(result.stdout).toContain("would change: src/helper.ts");
     expect(result.stdout).not.toContain("changed: src/helper.ts");
+    expect(result.stdout).not.toContain("--- a/src/helper.ts");
     expect(result.stderr).toBe("");
     expect(read(join(workspace, "src/helper.ts"))).toBe(HELPER);
+  });
+
+  test("dsl --dry-run --diff prints planned paths and a unified diff", () => {
+    const workspace = makeWorkspace();
+    const result = run(
+      workspace,
+      ["--protocol-format", "dsl", "--dry-run", "--diff"],
+      MUTATION_DSL,
+    );
+    expect(result.status).toBe(0);
+    expect(result.stdout).toContain("would change: src/helper.ts");
+    expect(result.stdout).toContain("\n--- a/src/helper.ts\n+++ b/src/helper.ts\n");
+    expect(result.stdout).toContain("@@ -");
+    expect(result.stdout).toContain("-  return 1;");
+    expect(result.stdout).toContain("+  return 3;");
+    expect(result.stderr).toBe("");
+    expect(read(join(workspace, "src/helper.ts"))).toBe(HELPER);
+  });
+
+  test("flag --dry-run --diff prints the diff too", () => {
+    const workspace = makeWorkspace({ "patch.txt": ANSWER_TWO });
+    const result = run(workspace, [
+      "--select",
+      "answer",
+      "--in",
+      "src/helper.ts",
+      "--replace-file",
+      "patch.txt",
+      "--dry-run",
+      "--diff",
+    ]);
+    expect(result.status).toBe(0);
+    expect(result.stdout).toContain("would change: src/helper.ts");
+    expect(result.stdout).toContain("--- a/src/helper.ts");
+    expect(result.stdout).toContain("@@ -");
+    expect(result.stderr).toBe("");
+    expect(read(join(workspace, "src/helper.ts"))).toBe(HELPER);
+  });
+
+  test("--diff without --dry-run is a usage error", () => {
+    const workspace = makeWorkspace();
+    const result = run(workspace, ["--protocol-format", "dsl", "--diff"], MUTATION_DSL);
+    expect(result.status).toBe(2);
+    expect(result.stderr).toContain("--diff requires --dry-run");
+    expect(result.stderr).toContain("usage:");
+    expect(read(join(workspace, "src/helper.ts"))).toBe(HELPER);
+  });
+
+  test("--diff with --write is a usage error", () => {
+    const workspace = makeWorkspace();
+    const result = run(workspace, ["--protocol-format", "dsl", "--write", "--diff"], MUTATION_DSL);
+    expect(result.status).toBe(2);
+    expect(result.stderr).toContain("--diff is preview-only");
+    expect(result.stderr).toContain("--write");
+    expect(result.stderr).toContain("usage:");
+    expect(read(join(workspace, "src/helper.ts"))).toBe(HELPER);
+  });
+
+  test("apply output stays diff-free", () => {
+    const workspace = makeWorkspace();
+    const result = run(workspace, ["--protocol-format", "dsl", "--write"], MUTATION_DSL);
+    expect(result.status).toBe(0);
+    expect(result.stdout).toContain("changed: src/helper.ts");
+    expect(result.stdout).not.toContain("--- a/src/helper.ts");
+    expect(result.stdout).not.toContain("@@ -");
+    expect(read(join(workspace, "src/helper.ts"))).toBe(ANSWER_THREE);
   });
 
   test("json mutation with --dry-run previews and leaves the file unchanged", () => {

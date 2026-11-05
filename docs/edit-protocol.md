@@ -1089,6 +1089,20 @@ goes to verification. A failed verification does **not** roll back: the attempte
 state stays on disk and its diagnostics open the next round (see
 [`feedback-loop.md`](feedback-loop.md)).
 
+### Dry-run diff preview
+
+`tsed --dry-run` runs the same resolution, gate, and preflight pipeline but
+stops before the first write/create/delete method. It reports the planned paths
+as `would change:`, `would create:`, and `would delete:` lines. Add `--diff` to
+also print a standard unified diff for each planned path, rendered in-process
+from the pre-reply snapshot and the planned source; the workspace stays
+byte-identical. A create uses `/dev/null` on the old side, a delete uses it on
+the new side, and a source without a trailing newline carries the usual
+`\ No newline at end of file` marker. `--diff` is preview-only: `tsed` rejects
+it without `--dry-run` and with `--write`. The library equivalent is
+`applyEditDsl(reply, { cwd, dryRun: true, diff: true })`, whose sorted `diffs`
+array contains `{ path, diff }` entries (empty unless requested).
+
 **Implicit create (edit-dsl only).** Any editor select clause (a non-empty
 `replace`) whose symbol is absent, or is declared only in another symbol space,
 appends the fence body as a new top-level declaration, creating the file and its
