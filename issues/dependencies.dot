@@ -81,6 +81,11 @@ digraph issues {
   "74" [label="#74 Install tsed globally and document the install path"];
   "75" [label="#75 Resolve tsed payload files from the workspace root"];
   "76" [label="#76 Add a dry-run preview to tsed mutations"];
+  "77" [label="#77 Handle non-regular paths in tsed create/delete and dry-run"];
+  "78" [label="#78 Expose read/select within ranges in native flag mode"];
+  "79" [label="#79 Use declared value names in tsed help synopsis"];
+  "80" [label="#80 Update named imports and exports on a cross-file rename"];
+  "81" [label="#81 Reject or honor match with rename"];
 
   // parent edges (parent -> child), solid
   "1" -> "2";
