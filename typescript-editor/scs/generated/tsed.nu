@@ -24,6 +24,7 @@ module completions {
     --resolve: string@"nu-complete tsed resolve" # TypeScript symbol space filter
     --match: string           # Snippet that must match inside the declaration
     --pick: string            # Line or column range to edit
+    --within: string          # Line or column range to view
     --replace-file: path      # File holding the replacement text
     --rename: string          # New name for a symbol rename
     --create: string          # Create an empty workspace file

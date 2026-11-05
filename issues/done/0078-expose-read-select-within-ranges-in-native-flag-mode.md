@@ -1,7 +1,7 @@
 ---
 id: 78
 title: "Expose read/select within ranges in native flag mode"
-status: todo
+status: done
 priority: medium
 milestone: null
 parent: null
@@ -65,3 +65,4 @@ just typecheck && just test
 - `within` is viewer-only; a mutation uses `pick` for a narrowed rewrite.
 - Keep the fold hint pointing at the same command so the message stays
   actionable from either format.
+- Added native --within <RANGES> to the scs surface and regenerated all committed artifacts. CLI attaches the range to repeated reads and to a select viewer; mutation flags are rejected as viewer-only; stdin protocols reject --within as a native flag. Extended the JSON/native select operation model with within (validate/render/parse), and documented the flag and JSON field in typescript-editor/README.md. Tests cover read expansion, select expansion, all mutation rejections, missing read/select, select+match parser rejection, and stdin-format rejection. Verification: just tsed-check up to date; targeted cli+protocol 60 pass; just typecheck && just test green (editor 891, harness 703, scripts 16, acceptance 9); manual read/select expansion and mutation rejection checked.

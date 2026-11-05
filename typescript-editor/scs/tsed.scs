@@ -46,6 +46,9 @@ interface TsedArgs {
   @arg({ help: "Line or column range to edit", valueName: "RANGE" })
   pick: string?
 
+  @arg({ help: "Line or column range to view", valueName: "RANGES" })
+  within: string?
+
   @arg({ help: "File holding the replacement text", valueHint: "file", valueName: "FILE" })
   replace-file: string?
 

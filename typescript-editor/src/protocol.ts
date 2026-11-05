@@ -15,6 +15,7 @@ export type EditOperation =
       resolve?: "value" | "type" | "namespace";
       match?: string;
       pick?: string;
+      within?: string;
       replace?: string;
       rename?: string;
     }
@@ -40,7 +41,18 @@ type SelectOperation = Extract<EditOperation, { op: "select" }>;
 
 const OPERATION_FIELDS: Record<OperationKind, readonly string[]> = {
   read: ["op", "path", "within"],
-  select: ["op", "symbol", "path", "kind", "resolve", "match", "pick", "replace", "rename"],
+  select: [
+    "op",
+    "symbol",
+    "path",
+    "kind",
+    "resolve",
+    "within",
+    "match",
+    "pick",
+    "replace",
+    "rename",
+  ],
   create: ["op", "path"],
   delete: ["op", "path"],
   rewrite: ["op", "path", "content"],
@@ -121,6 +133,9 @@ function validateOperation(operation: EditOperation): void {
       if (operation.pick !== undefined) {
         rangeToken(operation.op, "pick", operation.pick);
       }
+      if (operation.within !== undefined) {
+        rangeToken(operation.op, "within", operation.within);
+      }
       if (operation.replace !== undefined && operation.rename !== undefined) {
         reject("select: replace and rename are mutually exclusive");
       }
@@ -161,6 +176,9 @@ function renderOperation(operation: EditOperation): string {
       let head = `select ${kind}${operation.symbol} in ${operation.path}`;
       if (operation.resolve !== undefined) {
         head += ` resolve ${operation.resolve}`;
+      }
+      if (operation.within !== undefined) {
+        head += ` within ${operation.within}`;
       }
       if (operation.match !== undefined) {
         head += ` match \`${escapeSnippet(operation.match)}\``;
@@ -272,6 +290,7 @@ function parseJsonOperation(raw: unknown, index: number): EditOperation {
       const kind = optionalField("kind");
       const match = optionalField("match");
       const pick = optionalField("pick");
+      const within = optionalField("within");
       const replace = optionalField("replace");
       const rename = optionalField("rename");
       if (kind !== undefined) {
@@ -285,6 +304,9 @@ function parseJsonOperation(raw: unknown, index: number): EditOperation {
       }
       if (pick !== undefined) {
         selection.pick = pick;
+      }
+      if (within !== undefined) {
+        selection.within = within;
       }
       if (replace !== undefined) {
         selection.replace = replace;

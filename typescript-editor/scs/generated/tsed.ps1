@@ -22,6 +22,7 @@ $tsedOwners['--kind'] = '--kind'
 $tsedOwners['--resolve'] = '--resolve'
 $tsedOwners['--match'] = '--match'
 $tsedOwners['--pick'] = '--pick'
+$tsedOwners['--within'] = '--within'
 $tsedOwners['--replace-file'] = '--replace-file'
 $tsedOwners['--rename'] = '--rename'
 $tsedOwners['--create'] = '--create'
@@ -54,7 +55,7 @@ Register-ArgumentCompleter -Native -CommandName tsed -ScriptBlock {
     # context; only their name is withheld from the subcommand list.
     # Only root options may precede the subcommand, so the root's
     # value-taking set is named before the context is known.
-    $rootTaking = @('--protocol-format', '--directory', '-C', '--read', '--select', '--in', '--kind', '--resolve', '--match', '--pick', '--replace-file', '--rename', '--create', '--delete', '--rewrite', '--content-file')
+    $rootTaking = @('--protocol-format', '--directory', '-C', '--read', '--select', '--in', '--kind', '--resolve', '--match', '--pick', '--within', '--replace-file', '--rename', '--create', '--delete', '--rewrite', '--content-file')
 
     # The subcommand: the first word that is neither an option nor the value
     # of one. Only root options can come before it.
@@ -67,7 +68,7 @@ Register-ArgumentCompleter -Native -CommandName tsed -ScriptBlock {
     $repeatable = @()
     switch ($sub) {
         default {
-            $pool = @('--protocol-format', '--write', '--dry-run', '--directory', '-C', '--read', '--select', '--in', '--kind', '--resolve', '--match', '--pick', '--replace-file', '--rename', '--create', '--delete', '--rewrite', '--content-file', '--help', '-h', '--version', '-V')
+            $pool = @('--protocol-format', '--write', '--dry-run', '--directory', '-C', '--read', '--select', '--in', '--kind', '--resolve', '--match', '--pick', '--within', '--replace-file', '--rename', '--create', '--delete', '--rewrite', '--content-file', '--help', '-h', '--version', '-V')
             $taking = $rootTaking
             $repeatable = @('--read', '--create', '--delete', '--help', '-h', '--version', '-V')
         }

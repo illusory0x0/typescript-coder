@@ -55,7 +55,10 @@ Native `flag` operations:
 
 ```sh
 tsed --read src/helper.ts                       # read, repeatable
+tsed --read src/helper.ts --within 4-7          # unfold selected lines
 tsed --select answer --in src/helper.ts         # viewer
+tsed --select answer --in src/helper.ts \
+  --within 5-7                                  # unfold a viewer slice
 tsed --select answer --in src/helper.ts \
   --replace-file patch.txt --write              # editor
 tsed --select answer --in src/helper.ts \
@@ -85,6 +88,13 @@ and requires a replacement. One `--select` group is allowed per invocation; use
 exclusive. Relative `--replace-file` and `--content-file` paths resolve against
 the `--directory` workspace root (the process cwd when `--directory` is
 omitted); absolute paths are used as-is.
+
+`--read` accepts `--within <RANGES>` to print only those file lines, unfolded;
+the same range applies to every repeated `--read` path. `--select` accepts
+`--within <RANGES>` for a bare viewer slice, using the same range syntax as
+`--pick` and the fold markers. `within` is viewer-only: it requires `--read` or
+`--select`, and it is rejected with `--replace-file`, `--rename`, `--create`,
+`--delete`, or `--rewrite`. Use `--pick` for a narrowed rewrite.
 
 The stdin formats:
 
@@ -126,19 +136,20 @@ An apply request uses the same shape; `--write` is required:
 
 Operation fields:
 
-| Operation | Fields                                                                                          |
-| --------- | ----------------------------------------------------------------------------------------------- |
-| `read`    | `path` (required), `within` (optional)                                                          |
-| `select`  | `symbol`, `path` (required); `kind`, `resolve`, `match`, `pick`, `replace`, `rename` (optional) |
-| `create`  | `path` (required)                                                                               |
-| `delete`  | `path` (required)                                                                               |
-| `rewrite` | `path`, `content` (required)                                                                    |
+| Operation | Fields                                                                                                    |
+| --------- | --------------------------------------------------------------------------------------------------------- |
+| `read`    | `path` (required), `within` (optional)                                                                    |
+| `select`  | `symbol`, `path` (required); `kind`, `resolve`, `within`, `match`, `pick`, `replace`, `rename` (optional) |
+| `create`  | `path` (required)                                                                                         |
+| `delete`  | `path` (required)                                                                                         |
+| `rewrite` | `path`, `content` (required)                                                                              |
 
-A `select` is a viewer without `replace`/`rename`; `replace` and `rename` are
-mutually exclusive. `match` narrows a replacement to the matched snippet;
-`pick` requires a replacement and narrows it to a line/column range. Unknown
-fields and malformed JSON are usage errors. The operation list only expresses
-operations; `--write` still controls whether mutations are applied.
+A `select` is a viewer without `replace`/`rename`; `within` slices a bare viewer
+and is rejected with `match`, `pick`, `replace`, or `rename`. `replace` and
+`rename` are mutually exclusive. `match` narrows a replacement to the matched
+snippet; `pick` requires a replacement and narrows it to a line/column range.
+Unknown fields and malformed JSON are usage errors. The operation list only
+expresses operations; `--write` still controls whether mutations are applied.
 
 ### Exit codes and output
 
@@ -242,6 +253,7 @@ bun test typescript-editor/src
 just typecheck && just test
 ```
 
-The `src/cli.test.ts` suite covers flag reads, flag/dsl/json dry runs, dsl
-read-only/dsl `--write`, JSON reads/writes, usage errors, the `--write`/
-`--dry-run` conflict, and failed writes that leave files unchanged.
+The `src/cli.test.ts` suite covers flag reads, read/select `--within`
+expansion, flag/dsl/json dry runs, dsl read-only/dsl `--write`, JSON
+reads/writes, usage errors, the `--write`/`--dry-run` conflict, and failed
+writes that leave files unchanged.

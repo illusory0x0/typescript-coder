@@ -107,6 +107,7 @@ describe("tsed flag protocol", () => {
     expect(result.stdout).toContain("--write");
     expect(result.stdout).toContain("--dry-run");
     expect(result.stdout).toContain("--read");
+    expect(result.stdout).toContain("--within");
     expect(result.stderr).toBe("");
   });
 
@@ -137,6 +138,17 @@ describe("tsed flag protocol", () => {
     expect(result.stderr).toBe("");
   });
 
+  test("--read --within prints only the selected lines unfolded", () => {
+    const workspace = makeWorkspace();
+    const result = run(workspace, ["--read", "src/helper.ts", "--within", "2-3"]);
+    expect(result.status).toBe(0);
+    expect(result.stdout).toContain("src/helper.ts (selected lines, 2 lines):");
+    expect(result.stdout).toContain("2 |   return 1;");
+    expect(result.stdout).toContain("3 | }");
+    expect(result.stdout).not.toContain("1 | export function helper");
+    expect(result.stderr).toBe("");
+  });
+
   test("--select --in prints a viewer", () => {
     const workspace = makeWorkspace();
     const result = run(workspace, ["--select", "answer", "--in", "src/helper.ts"]);
@@ -144,6 +156,113 @@ describe("tsed flag protocol", () => {
     expect(result.stdout).toContain("select answer in src/helper.ts");
     expect(result.stdout).toContain("src/helper.ts:5:");
     expect(result.stderr).toBe("");
+  });
+
+  test("--select --in --within prints the viewer slice unfolded", () => {
+    const workspace = makeWorkspace();
+    const result = run(workspace, [
+      "--select",
+      "answer",
+      "--in",
+      "src/helper.ts",
+      "--within",
+      "6-7",
+    ]);
+    expect(result.status).toBe(0);
+    expect(result.stdout).toContain("select answer in src/helper.ts within 6-7");
+    expect(result.stdout).toContain("6 |   return 1;");
+    expect(result.stdout).toContain("7 | }");
+    expect(result.stdout).not.toContain("5 | export function answer");
+    expect(result.stderr).toBe("");
+  });
+
+  test("--within is rejected with every mutation", () => {
+    const workspace = makeWorkspace({
+      "src/old.ts": "export const old = true;\n",
+      "patch.txt": ANSWER_TWO,
+      "content.txt": "export const rewritten = true;\n",
+    });
+    const cases: { flag: string; args: string[] }[] = [
+      {
+        flag: "--replace-file",
+        args: [
+          "--select",
+          "answer",
+          "--in",
+          "src/helper.ts",
+          "--within",
+          "6-7",
+          "--replace-file",
+          "patch.txt",
+          "--write",
+        ],
+      },
+      {
+        flag: "--rename",
+        args: [
+          "--select",
+          "answer",
+          "--in",
+          "src/helper.ts",
+          "--within",
+          "6-7",
+          "--rename",
+          "result",
+          "--write",
+        ],
+      },
+      { flag: "--create", args: ["--create", "src/new.ts", "--within", "1-2", "--write"] },
+      { flag: "--delete", args: ["--delete", "src/old.ts", "--within", "1-2", "--write"] },
+      {
+        flag: "--rewrite",
+        args: [
+          "--rewrite",
+          "src/helper.ts",
+          "--content-file",
+          "content.txt",
+          "--within",
+          "1-2",
+          "--write",
+        ],
+      },
+    ];
+
+    for (const { flag, args } of cases) {
+      const result = run(workspace, args);
+      expect(result.status).toBe(2);
+      expect(result.stderr).toContain("--within is viewer-only");
+      expect(result.stderr).toContain(flag);
+      expect(result.stderr).toContain("usage:");
+    }
+    expect(read(join(workspace, "src/helper.ts"))).toBe(HELPER);
+    expect(existsSync(join(workspace, "src/new.ts"))).toBe(false);
+    expect(existsSync(join(workspace, "src/old.ts"))).toBe(true);
+  });
+
+  test("--within requires --read or --select", () => {
+    const workspace = makeWorkspace();
+    const result = run(workspace, ["--within", "2-3"]);
+    expect(result.status).toBe(2);
+    expect(result.stderr).toContain("--within requires --read or --select");
+    expect(result.stderr).toContain("usage:");
+  });
+
+  test("--within with --match is rejected by the selection parser", () => {
+    const workspace = makeWorkspace();
+    const result = run(workspace, [
+      "--select",
+      "answer",
+      "--in",
+      "src/helper.ts",
+      "--within",
+      "6-7",
+      "--match",
+      "return 1;",
+    ]);
+    expect(result.status).toBe(1);
+    expect(result.stderr).toContain("EDIT_WITHIN_EDITOR");
+    expect(result.stderr).toContain("viewer-only");
+    expect(read(join(workspace, "src/helper.ts"))).toBe(HELPER);
   });
 
   test("--replace-file --write applies a patch relative to the workspace root", () => {
@@ -592,5 +711,13 @@ describe("tsed stdin protocols", () => {
     expect(result.status).toBe(2);
     expect(result.stderr).toContain("--read");
     expect(result.stderr).toContain("--protocol-format dsl");
+  });
+
+  test("--within is rejected with a stdin format", () => {
+    const workspace = makeWorkspace();
+    const result = run(workspace, ["--protocol-format", "json", "--within", "1-2"], "[]");
+    expect(result.status).toBe(2);
+    expect(result.stderr).toContain("--within");
+    expect(result.stderr).toContain("--protocol-format json");
   });
 });

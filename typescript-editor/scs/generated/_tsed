@@ -20,6 +20,7 @@ _tsed() {
     '--resolve=[TypeScript symbol space filter]:space:(value type namespace)' \
     '--match=[Snippet that must match inside the declaration]:snippet:' \
     '--pick=[Line or column range to edit]:range:' \
+    '--within=[Line or column range to view]:ranges:' \
     '--replace-file=[File holding the replacement text]:file:_files' \
     '--rename=[New name for a symbol rename]:name:' \
     '*--create=[Create an empty workspace file]:path:' \

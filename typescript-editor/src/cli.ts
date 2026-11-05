@@ -50,6 +50,7 @@ const NATIVE_FLAGS: readonly { flag: string; used: (values: TsedArgs) => boolean
   { flag: "--resolve", used: (values) => values.resolve !== undefined },
   { flag: "--match", used: (values) => values.match !== undefined },
   { flag: "--pick", used: (values) => values.pick !== undefined },
+  { flag: "--within", used: (values) => values.within !== undefined },
   { flag: "--replace-file", used: (values) => values.replace_file !== undefined },
   { flag: "--rename", used: (values) => values.rename !== undefined },
   { flag: "--create", used: (values) => (values.create ?? []).length > 0 },
@@ -80,6 +81,32 @@ function readStdin(format: StdinFormat): string {
 }
 
 function renderFlagRequest(values: TsedArgs, workspaceRoot: string): string {
+  if (values.within !== undefined) {
+    const mutatingFlags: string[] = [];
+    if (values.replace_file !== undefined) {
+      mutatingFlags.push("--replace-file");
+    }
+    if (values.rename !== undefined) {
+      mutatingFlags.push("--rename");
+    }
+    if ((values.create ?? []).length > 0) {
+      mutatingFlags.push("--create");
+    }
+    if ((values.delete ?? []).length > 0) {
+      mutatingFlags.push("--delete");
+    }
+    if (values.rewrite !== undefined) {
+      mutatingFlags.push("--rewrite");
+    }
+    if (mutatingFlags.length > 0) {
+      throw new UsageError(
+        `--within is viewer-only; it cannot be combined with ${mutatingFlags.join(", ")}`,
+      );
+    }
+    if ((values.read ?? []).length === 0 && values.select === undefined) {
+      throw new UsageError("--within requires --read or --select");
+    }
+  }
   const selectOnly: readonly { flag: string; present: boolean }[] = [
     { flag: "--kind", present: values.kind !== undefined },
     { flag: "--resolve", present: values.resolve !== undefined },
@@ -133,7 +160,11 @@ function renderFlagRequest(values: TsedArgs, workspaceRoot: string): string {
 
   const operations: EditOperation[] = [];
   for (const path of values.read ?? []) {
-    operations.push({ op: "read", path });
+    const operation: Extract<EditOperation, { op: "read" }> = { op: "read", path };
+    if (values.within !== undefined) {
+      operation.within = values.within;
+    }
+    operations.push(operation);
   }
   for (const path of values.create ?? []) {
     operations.push({ op: "create", path });
@@ -155,6 +186,9 @@ function renderFlagRequest(values: TsedArgs, workspaceRoot: string): string {
     }
     if (values.resolve !== undefined) {
       selection.resolve = values.resolve;
+    }
+    if (values.within !== undefined) {
+      selection.within = values.within;
     }
     if (values.match !== undefined) {
       selection.match = values.match;

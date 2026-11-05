@@ -2,14 +2,6 @@
 # rewrites it; `add` appends; other writes keep it. `check` enforces it.
 # A dep, and every child of an umbrella, must be listed before its dependent.
 
-- id: 78
-  title: "Expose read/select within ranges in native flag mode"
-  status: todo
-  priority: medium
-  milestone: null
-  parent: null
-  deps: []
-  file: 0078-expose-read-select-within-ranges-in-native-flag-mode.md
 - id: 79
   title: "Use declared value names in tsed help synopsis"
   status: todo

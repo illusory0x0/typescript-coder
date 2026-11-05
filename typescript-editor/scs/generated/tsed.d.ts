@@ -27,6 +27,8 @@ export interface TsedArgs {
   match?: string;
   /** Line or column range to edit */
   pick?: string;
+  /** Line or column range to view */
+  within?: string;
   /** File holding the replacement text */
   replace_file?: string;
   /** New name for a symbol rename */
@@ -55,6 +57,7 @@ export type ValueName =
   | "resolve"
   | "match"
   | "pick"
+  | "within"
   | "replace_file"
   | "rename"
   | "create"
@@ -69,9 +72,9 @@ export interface Tsed {
 /**
  * Runtime-boundary note:
  * Only enum- and union-typed options have narrow types. `directory`,
- * `read`, `select`, `input`, `kind`, `match`, `pick`, `replace_file`,
- * `rename`, `create`, `delete`, `rewrite` and `content_file` are
- * `number`/`string` because the .scs source carries no value range or
- * format information. Narrowing those would make the .d.ts assert more
- * than the completion script can guarantee.
+ * `read`, `select`, `input`, `kind`, `match`, `pick`, `within`,
+ * `replace_file`, `rename`, `create`, `delete`, `rewrite` and
+ * `content_file` are `number`/`string` because the .scs source carries no
+ * value range or format information. Narrowing those would make the .d.ts
+ * assert more than the completion script can guarantee.
  */

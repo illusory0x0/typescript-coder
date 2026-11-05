@@ -44,7 +44,15 @@ describe("renderEditRequest", () => {
     );
   });
 
-  test("renders kind, resolve, match, and pick in grammar order", () => {
+  test("renders a viewer select with a within range", () => {
+    expect(
+      renderEditRequest(
+        request({ op: "select", symbol: "answer", path: "src/a.ts", within: "4-7" }),
+      ),
+    ).toBe("select answer in src/a.ts within 4-7\nend");
+  });
+
+  test("renders kind, resolve, within, match, and pick in grammar order", () => {
     const rendered = renderEditRequest(
       request({
         op: "select",
@@ -52,12 +60,13 @@ describe("renderEditRequest", () => {
         path: "src/a.ts",
         kind: "function",
         resolve: "value",
+        within: "1-2",
         match: "return 1;",
         pick: "2:3-2:10",
       }),
     );
     expect(rendered).toBe(
-      "select function answer in src/a.ts resolve value match `return 1;` pick 2:3-2:10\nend",
+      "select function answer in src/a.ts resolve value within 1-2 match `return 1;` pick 2:3-2:10\nend",
     );
   });
 
@@ -161,6 +170,13 @@ describe("renderEditRequest", () => {
       () => renderEditRequest(request({ op: "read", path: "src/a.ts", within: "1-2\n3-4" })),
       "line break",
     );
+    expectProtocolError(
+      () =>
+        renderEditRequest(
+          request({ op: "select", symbol: "a", path: "src/a.ts", within: "1-2\n3-4" }),
+        ),
+      "line break",
+    );
   });
 
   test("rejects replace and rename together", () => {
@@ -214,6 +230,22 @@ describe("parseJsonEditRequest", () => {
       { op: "read", path: "src/a.ts" },
       { op: "select", symbol: "answer", path: "src/a.ts", resolve: "value", replace: "x" },
     ]);
+  });
+
+  test("accepts select and read within ranges", () => {
+    const parsed = parseJsonEditRequest(
+      JSON.stringify([
+        { op: "read", path: "src/a.ts", within: "1-3" },
+        { op: "select", symbol: "answer", path: "src/a.ts", within: "4-7" },
+      ]),
+    );
+    expect(parsed.operations).toEqual([
+      { op: "read", path: "src/a.ts", within: "1-3" },
+      { op: "select", symbol: "answer", path: "src/a.ts", within: "4-7" },
+    ]);
+    expect(renderEditRequest(parsed)).toBe(
+      "read src/a.ts within 1-3 end\n\nselect answer in src/a.ts within 4-7\nend",
+    );
   });
 
   test("accepts the operations wrapper", () => {
@@ -274,6 +306,13 @@ describe("parseJsonEditRequest", () => {
     );
     expectProtocolError(
       () => parseJsonEditRequest(JSON.stringify([{ op: "read", path: 3 }])),
+      "must be a string",
+    );
+    expectProtocolError(
+      () =>
+        parseJsonEditRequest(
+          JSON.stringify([{ op: "select", symbol: "a", path: "src/a.ts", within: 7 }]),
+        ),
       "must be a string",
     );
   });
