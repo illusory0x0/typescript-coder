@@ -115,13 +115,16 @@ categories:
       - term: OPENCODE_BIN
         definition: Environment override for the oc-side CLI binary.
       - term: test name filter
-        definition: The `-t "pattern"` flag passed to `bun test` selects tests by name.
+        definition: >-
+          The `-t "pattern"` flag passed to `bun test` selects tests by name.
+          Plan-exec's `test-filter` node field uses this flag; see
+          `docs/plan-exec.md` §1.3.
 
   - id: unit-tests
     title: Unit tests and specification files
     terms:
       - term: colocated test
-        definition: A `*.test.ts` file next to the implementation it exercises, e.g. `src/loop.test.ts`.
+        definition: A `*.test.ts` file next to the implementation it exercises, e.g. `harness/src/loop.test.ts`.
       - term: test file as specification
         definition: >-
           In fixtures, `src/*.test.ts` is the specification and a read-only
@@ -230,9 +233,30 @@ categories:
       - term: WorkNode
         definition: >-
           One task-level unit of work in plan-exec: `id`, `after` dependency
-          ids, `verify` (`tsc` or `test`), `instruction`, advisory `hints`, and
-          optional advisory `approach`/`phase`. The planner owns it; the
-          executor owns the concrete edit actions. See `docs/plan-exec.md` §1.
+          ids, `verify` (`tsc` or `test`), optional `testFilter` (a test-name
+          regex allowed only with `verify: "test"`), `instruction`, advisory
+          `hints`, and optional advisory `approach`/`phase`. The planner owns
+          it; the executor owns the concrete edit actions. See
+          `docs/plan-exec.md` §1.
+      - term: test-filter
+        definition: >-
+          Optional one-line JavaScript `RegExp` on a `verify test` WorkNode.
+          The harness appends `-t <regex>` to the configured test command; the
+          check command still covers the whole workspace. Invalid, empty, or
+          `tsc`-node filters are rejected.
+      - term: filtered test gate
+        definition: >-
+          A passing `verify test` gate that ran with a `testFilter`. It is a
+          checkpoint, not completion: the check command passed and the selected
+          tests passed, but the rest of the suite was not run. Zero matching
+          tests fail because Bun exits 1.
+      - term: fullSuite
+        definition: >-
+          Gate snapshot flag on `lastGate`: true when the gate ran the check and
+          the full, unfiltered test suite (check passed), even if the test step
+          itself failed; run completion also requires the gate to be `ok`. A
+          filtered test gate carries `fullSuite: false`, and run completion
+          requires `fullSuite: true`.
       - term: HintLoc
         definition: >-
           `{path, symbol, kind}` target hint. `kind` is a symbol space
@@ -243,7 +267,8 @@ categories:
           Harness-owned node status: `pending`, `passed`, or `failed`.
           `review` is a driver phase, not a graph status: a node stays pending
           while it executes and while the review turn decides. `lastGate` drives
-          completion (`no ready node` plus a passing `test`). Blocked is
+          completion (`no ready node` plus a passing, unfiltered `test`); a
+          filtered green gate is a checkpoint, not completion. Blocked is
           derived from failed dependencies, not stored.
       - term: approach
         definition: >-

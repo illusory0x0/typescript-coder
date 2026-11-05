@@ -1,9 +1,11 @@
 # Plan → execute loop
 
 Status: **implemented.** This document describes the plan-exec loop.
-[`harness/src/tasks.ts`](../harness/src/tasks.ts), [`harness/src/plan-dsl.ts`](../harness/src/plan-dsl.ts), and
-[`harness/src/task-loop.ts`](../harness/src/task-loop.ts) are the source of truth for the model,
-wire grammar, and driver; prompts are [`harness/src/prompts/task.ts`](../harness/src/prompts/task.ts).
+[`harness/src/tasks.ts`](../harness/src/tasks.ts),
+[`harness/src/plan-dsl.ts`](../harness/src/plan-dsl.ts), and
+[`harness/src/task-loop.ts`](../harness/src/task-loop.ts) are the source of truth
+for the model, wire grammar, and driver; prompts are
+[`harness/src/prompts/task.ts`](../harness/src/prompts/task.ts).
 
 Canonical ownership: this document owns the WorkNode DAG model, target and
 approach hints, the flat plan DSL and `amend` records, planning, validation and
@@ -40,17 +42,25 @@ type PlanRunState = {
   goal: string;
   nodes: WorkNode[]; // record order is the readiness tie-break
   nodeStatus: Map<NodeId, NodeStatus>;
-  lastGate: GateSnapshot | null; // { nodeId, verify, ok }
+  lastGate: GateSnapshot | null; // { nodeId, verify, ok, fullSuite }
 };
 
 type WorkNode = {
   id: NodeId;
   after: NodeId[]; // dependency ids; empty means ready at the start
   verify: "tsc" | "test";
+  testFilter?: string; // optional test-name regex; only with verify "test"
   instruction: string; // self-contained local goal for the executor
   hints: HintLoc[]; // advisory target hints; never a hard allowlist
   approach?: string; // advisory strategy
   phase?: string; // optional workflow label; not a scheduling input
+};
+
+type GateSnapshot = {
+  nodeId: NodeId;
+  verify: "tsc" | "test";
+  ok: boolean;
+  fullSuite: boolean; // true only for an unfiltered test gate
 };
 
 type HintLoc = {
@@ -79,20 +89,22 @@ the executor holds it and while the review turn decides, then settles as
 `passed` or `failed`. Blocked is derived from status and edges, not stored.
 There is no `deferred` status; deferred work is simply not appended.
 
-`lastGate` records the most recent gate (`tsc` or `test`, pass/fail). Run
-success is derived from it:
+`lastGate` records the most recent gate (`tsc` or `test`, pass/fail, and whether
+the gate ran the full suite). Run success is derived from it:
 
 ```ts
 complete =
   nextReadyNode(state) === undefined &&
   state.lastGate?.verify === "test" &&
-  state.lastGate.ok;
+  state.lastGate.ok &&
+  state.lastGate.fullSuite;
 ```
 
 Only the executor writes source, and every applied reply runs the node gate.
-So "nothing runnable + the last gate was a passing test" means the current
-workspace is green. Earlier failed nodes and blocked pending nodes are
-superseded/abandoned by a later green test; they do not keep the run open. This
+So "nothing runnable + the last gate was a passing, unfiltered test" means the
+current workspace is green. Earlier failed nodes and blocked pending nodes are
+superseded/abandoned by a later full-suite green test; they do not keep the run
+open. A filtered green gate is a checkpoint, not completion (§1.3). This
 replaces the old `finish` / `finalNodeId` protocol and its "final node must be
 last and verify test" invariant.
 
@@ -130,14 +142,40 @@ The planner recommends a workflow (inspect → contract → scaffold → impleme
 verify) but does not impose it. A single node, a linear chain, and a branching
 DAG are all valid shapes.
 
-### 1.3 Editing decision guide
+### 1.3 Test filters are checkpoints
+
+A node may set an optional `testFilter` to narrow its `verify: "test"` gate to
+tests whose names match a JavaScript `RegExp`:
+
+- it is allowed only on `verify "test"` and is rejected on `tsc`;
+- it must be a non-empty, valid JavaScript regular expression;
+- the check command still covers the whole workspace; the test command is run
+  with `-t <regex>` appended, so a custom test command must accept that flag;
+- zero matching tests fail the gate because Bun exits 1 for an unmatched `-t`;
+- a filtered green gate is a checkpoint, not completion: `lastGate.fullSuite`
+  is true only for an unfiltered test gate, and the run still needs a final
+  unfiltered `verify test` node;
+- earlier failed and blocked work is abandoned only by a full-suite green gate,
+  never by a filtered one.
+
+```text
+node "02-parser" verify test
+instruction: Implement parseValue and make the parser tests pass.
+hint value parseValue in src/parser.ts
+test-filter: parser
+end
+```
+
+`NodeSummary` does not expose the filter; the result schema is unchanged.
+
+### 1.4 Editing decision guide
 
 The executor owns the action and granularity. The full grammar and coverage
 matrix are owned by [`edit-protocol.md`](edit-protocol.md); the decision guide
 is repeated in the execution prompt. `write` is always valid. No edit is
 rejected merely for its size or shape.
 
-### 1.4 Functional style
+### 1.5 Functional style
 
 Planner and executor prefer ML-style functional TypeScript:
 
@@ -169,7 +207,7 @@ Prefer ML-style functional TypeScript:
 - If an existing class must change, modify it minimally.
 ```
 
-### 1.5 Limits
+### 1.6 Limits
 
 | Limit              | Value       |
 | ------------------ | ----------- |
@@ -198,7 +236,8 @@ unsettled work.
    - the fast path approves an in-hint, untruncated change without a model call;
    - otherwise one review turn returns `approve` or one `amend` for this node.
 6. If review amends the node, it re-executes and gates again.
-7. If the node settles passed and the run is green, success.
+7. If the node settles passed and the last gate is a passing, unfiltered test,
+   success.
 8. Otherwise, when no node is ready, the planner appends work or amends a
    pending/failed node; repeat from step 3.
 ```
@@ -224,12 +263,16 @@ verify**:
 - scaffold declarations and stub bodies for a large module when useful;
 - when a visible test suite exists, consider an early `verify test` checkpoint
   after the scaffold/contract phase, once a compiling skeleton exists;
+- for a greenfield module with multiple independently testable behaviors and
+  visible test names, consider `test-filter:` slice checkpoints; a small or
+  cohesive single-file change stays one node;
 - implement behavior in node-sized work;
-- finish with a `test` node that depends on the work it verifies.
+- finish with an unfiltered `test` node that depends on the work it verifies.
 
 This is guidance. A one-node plan is valid when its gate can pass; a branching
 DAG is valid when two pieces of work are genuinely independent. There is no
-`finish` record: the driver completes from the scheduler and the last gate.
+`finish` record: the driver completes from the scheduler and the last unfiltered
+test gate.
 
 ### 2.1 Amending a node
 
@@ -238,6 +281,8 @@ DAG is valid when two pieces of work are genuinely independent. There is no
 - allowed when the node is `pending`, `failed`, or the current review target;
 - forbidden for a `passed` node (it is immutable);
 - fields present replace their values; omitted fields are preserved;
+- `test-filter: <regex>` replaces the node's filter; omitting it preserves the
+  current filter, and there is no `test-filter clear` form;
 - `after` with no ids clears dependencies; `hint clear`, `approach clear`, and
   `phase clear` clear the list/optional field;
 - at least one field must change, otherwise the amend is rejected;
@@ -249,8 +294,8 @@ A review amend reopens the reviewed node. A passed node is never rewritten; add
 a new node instead.
 
 There is no node-delete operation. A blocked or unwanted node is either amended
-into useful work, superseded by later work, or left pending: a green last test
-completes the run whether or not abandoned nodes remain.
+into useful work, superseded by later work, or left pending: a green,
+full-suite last test completes the run whether or not abandoned nodes remain.
 
 ### 2.2 Post-execution review
 
@@ -302,6 +347,7 @@ nesting, no JSON fallback, and no legacy Stage/Task/Edit mode.
                 | "after" ( <id>+ )? NL
                 | "approach:" <text> NL
                 | "phase:" <text> NL
+                | "test-filter:" <line-text> NL
 
 <amend-field> ::= "after" ( <id>+ )? NL
                 | "verify" <verify> NL
@@ -310,6 +356,7 @@ nesting, no JSON fallback, and no legacy Stage/Task/Edit mode.
                 | "hint clear" NL
                 | "approach:" <text> NL | "approach clear" NL
                 | "phase:" <text> NL | "phase clear" NL
+                | "test-filter:" <line-text> NL
 
 <hint>        ::= "hint file" <path> NL
                 | "hint" <space> <symbol> "in" <path> NL
@@ -343,6 +390,9 @@ Rules:
 - `instruction:` is required once in a `node`. `approach:` and `phase:` are
   optional and may appear at most once. Fields may appear in any order after
   `instruction:`.
+- `test-filter:` may appear at most once in a `node` or `amend` body. It is a
+  one-line JavaScript regular expression (never a fenced body), is valid only on
+  `verify test`, and is rejected on `tsc`.
 - `goal:`, `instruction:`, `approach:`, and `phase:` accept one-line text or a
   following sentinel fence. The opener may also share the label line when it is
   the last token; the raw body still starts on the next line. The fence body is
@@ -352,8 +402,8 @@ Rules:
 - `hint file <path>` creates `{path, symbol: "", kind: "file"}`;
   `hint <space> <symbol> in <path>` creates a symbol hint. Duplicate hints are
   rejected. Hints are advisory.
-- `amend` has no header `verify`; any replacement field may appear in the body.
-  At least one field is required.
+- `amend` has no header `verify`; any replacement field, including
+  `test-filter:`, may appear in the body. At least one field is required.
 - Legacy `stage`, `task`, `edit`, `patch`, `node+`, `node~`, `node-`, and
   `finish` are rejected with `PLAN_LEGACY_RECORD`. There is no dual mode.
 
@@ -476,6 +526,8 @@ Both initial plans and later replies pass through one apply layer:
 - `after` edges are duplicate-free, non-self, non-dangling, and acyclic; cycle
   diagnostics name every node in the cycle;
 - `verify` is `tsc` or `test`;
+- `testFilter` is non-empty, a valid JavaScript regular expression, and allowed
+  only with `verify: "test"`;
 - instructions are non-empty (≤4,000 chars); `approach` (≤2,000) and `phase`
   (≤200) are non-empty when present;
 - the run goal is non-empty (≤1,000 chars);
@@ -612,7 +664,8 @@ status map.
 5. On a passing gate, the fast path or one review turn decides:
    - `approve`: finalize the node as `passed`;
    - `amend`: validate, reopen the node, execute again, gate again.
-6. If no node is ready and the last gate is a passing `test` → success.
+6. If no node is ready and the last gate is a passing, unfiltered `test` →
+   success.
 7. Otherwise the planner appends work or amends pending/failed work; repeat.
 
 A failed dependency blocks its dependents. Blocked is derived; the scheduler
@@ -624,11 +677,13 @@ hang on one.
 Run success requires:
 
 - no node is ready;
-- the most recent gate is a passing `test`.
+- the most recent gate is a passing, unfiltered `test` (`fullSuite`).
 
-Earlier failed nodes and blocked pending nodes do not keep the run open once the
-suite is green. A node that is still executing or in review keeps the run open
-because the driver has not settled it yet.
+Earlier failed nodes and blocked pending nodes do not keep the run open once a
+full-suite gate is green. A filtered green gate is only a checkpoint and keeps
+the run open until an unfiltered `test` gate passes. A node that is still
+executing or in review keeps the run open because the driver has not settled it
+yet.
 
 ## 6. Mode contexts
 
@@ -735,13 +790,23 @@ rejection, not an applied exchange.
 Every node has a gate that runs after **every applied reply**:
 
 - `verify: "tsc"` runs the check command (default `bunx tsc --noEmit`);
-- `verify: "test"` runs the check command and then the test suite.
+- `verify: "test"` runs the check command and then the test suite. With a
+  node's `testFilter`, the configured test command (default `bun test`) is run
+  with `-t <regex>` appended, so a custom test command must accept that flag.
+  Zero matching tests fail the gate because Bun exits 1. The check command is
+  never filtered: it always covers the whole workspace.
 
 A passing gate finishes node execution and enters review. A failing gate returns
 its formatted diagnostics to the next execution attempt; the node stays
 `pending`. The gate is the only place a type/test failure becomes executor
 diagnostics. There is no separate advisory check and no implicit whole-graph test
 outside node gates.
+
+A passing **filtered** test gate is a checkpoint: the gate snapshot carries
+`fullSuite: false` and the run does not complete. Only a passing **unfiltered**
+`test` gate carries `fullSuite: true` and can complete the run. Inspect the
+gate's `fullSuite` flag rather than assuming a green test means the whole suite
+is green.
 
 ### 7.4 Progress and termination
 
@@ -780,7 +845,7 @@ writes stay, and the gate decides whether the node settles.
 The planner is re-invoked when:
 
 - a node cannot progress (repeated fingerprint, so it is marked `failed`);
-- no node is ready and the last gate is not a passing `test`;
+- no node is ready and the last gate is not a passing, unfiltered `test`;
 - a reply is structurally rejected and the retry repeats;
 - the graph needs final work.
 
@@ -847,8 +912,8 @@ summaries; the historical `@1` schema used numeric task/edit ids.
   Consumers of `@2` task/edit summaries must migrate; the status union is now
   `pending`/`passed`/`failed`.
 - **No node delete and no finish.** Work is appended or amended; abandoned
-  pending nodes are ignored once the last test is green. A planner that needs to
-  cancel ready work should amend that node into useful work.
+  pending nodes are ignored once a full-suite test gate is green. A planner that
+  needs to cancel ready work should amend that node into useful work.
 - **Review is a verdict.** It cannot add follow-up work; the next planning turn
   owns new nodes.
 - **Anonymous and object-literal member creates are deferred.** Named
@@ -866,6 +931,11 @@ summaries; the historical `@1` schema used numeric task/edit ids.
 - **Intermediate type errors are expected between replies.** An applied reply may
   leave the file type-broken; the node gate is the type-correct boundary, and the
   next attempt receives its diagnostics.
+- **Test filters are test-name regexes only.** `test-filter` narrows a test gate
+  through `-t <regex>`; zero matches fail, and the check command stays
+  whole-workspace. File-level selectors are out of scope because the benchmark
+  fixtures are single-file tests. A custom test command must accept
+  `-t <regex>`.
 - **Test-file edits are allowed but discouraged.** The planner prompt treats
   `*.test.ts` as specification; a requirement that asks for test changes still
   needs them.
@@ -878,8 +948,11 @@ summaries; the historical `@1` schema used numeric task/edit ids.
 ## 11. As-built implementation notes
 
 1. **Three statuses, derived completion:** `pending`/`passed`/`failed`;
-   `review` is a driver phase. Success is "no ready node + last gate is a passing
-   `test`", not a `finish` marker.
+   `review` is a driver phase. Success is "no ready node + the last gate is a
+   passing, unfiltered `test`", not a `finish` marker. A filtered gate carries
+   `fullSuite: false`; completion requires `fullSuite: true`. `NodeSummary` is
+   unchanged: `id`, `verify`, `status`, and optional `phase`/`approach`, with no
+   filter field.
 2. **One mutation:** `amend` a pending, failed, or just-reviewed node; append
    otherwise. Passed nodes are immutable; there is no delete.
 3. **Review model:** post-gate verdict in the same planner conversation;
@@ -900,9 +973,9 @@ summaries; the historical `@1` schema used numeric task/edit ids.
 9. **Execution application:** edit-dsl clauses and file commands apply
    atomically through the shared resolver/commit pipeline; the
    one-declaration-per-reply guardrail is hard.
-10. **Driver modules:** `harness/src/task-loop.ts` owns scheduling, node execution,
-    gates, review, and the final result; `harness/src/prompts/task.ts` owns all
-    planner/executor/review prompt text.
+10. **Driver modules:** `harness/src/task-loop.ts` owns scheduling, node
+    execution, gates, review, and the final result;
+    `harness/src/prompts/task.ts` owns all planner/executor/review prompt text.
 
 ## 12. Verification
 
@@ -910,19 +983,24 @@ summaries; the historical `@1` schema used numeric task/edit ids.
   scheduling, completion, amend application, and immutability.
 - `bun test harness/src/plan-dsl.test.ts` — grammar, fences, node/amend replies,
   tolerant recovery, issue codes, and all-or-nothing parsing.
-- `bun test harness/src/prompts/task.test.ts` — planning, execution, and review prompt
-  shape; workflow and editing-technique guidance; WorkNode examples; no fixed
-  caps.
-- `bun test typescript-editor/src/edit-dsl.test.ts` / `typescript-editor/src/selection.test.ts` — tolerant statement
-  boundaries, unclosed fences, matcher/pick/rename diagnostics, per-statement
-  issues, no partial writes.
-- `bun test harness/src/task-loop.test.ts` — initial/replan scheduling, ready order,
-  blocked dependents, executor autonomy, out-of-hint diff, gates and retries,
-  review auto-approval and amend reopen, no-progress, USD cost budget, planner
-  inspection, multi-node append, and completion.
-- `bun test harness/src/result.test.ts harness/src/main.test.ts harness/src/cli.test.ts` —
-  `typescript-coder-result@3` node summaries and text/JSON output.
+- `bun test harness/src/prompts/task.test.ts` — planning, execution, and review
+  prompt shape; workflow and editing-technique guidance; WorkNode examples; no
+  fixed caps.
+- `bun test typescript-editor/src/edit-dsl.test.ts` /
+  `typescript-editor/src/selection.test.ts` — tolerant statement boundaries,
+  unclosed fences, matcher/pick/rename diagnostics, per-statement issues, no
+  partial writes.
+- `bun test harness/src/task-loop.test.ts` — initial/replan scheduling, ready
+  order, blocked dependents, executor autonomy, out-of-hint diff, gates and
+  retries, filtered test gates, review auto-approval and amend reopen,
+  no-progress, USD cost budget, planner inspection, multi-node append, and
+  completion.
+- `bun test harness/src/result.test.ts harness/src/main.test.ts
+  harness/src/cli.test.ts` — `typescript-coder-result@3` node summaries and
+  text/JSON output.
 - `just typecheck && just test`.
-- `just accept` (offline), including the `plan-exec-fix-answer` and
-  `plan-exec-write-fix-answer` scenarios driven by the WorkNode DSL.
+- `just accept` (offline), including the `plan-exec-fix-answer`,
+  `plan-exec-write-fix-answer`, and `plan-exec-slice-gate` scenarios driven by
+  the WorkNode DSL. The slice scenario passes a filtered gate while the full
+  suite is red, then finishes with an unfiltered `test` node.
 - This verification is offline; it makes no benchmark or live-model claim.

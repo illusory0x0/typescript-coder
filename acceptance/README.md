@@ -41,6 +41,7 @@ live lane is covered in [Live checks](#live-checks).
 | -------------------------- | ------- | ------------------------------------------------------------------------------------------------------ | ---- | ---- |
 | fix-answer                 | offline | failing test becomes green                                                                             | no   | no   |
 | plan-exec-fix-answer       | offline | flat-DSL plan/execute plans one task and the executor makes the failing test green                     | no   | no   |
+| plan-exec-slice-gate       | offline | filtered slice checkpoint passes while the full suite is red, then an unfiltered test finishes the run | no   | no   |
 | plan-exec-write-fix-answer | offline | flat-DSL plan/execute accepts sentinel goal, instruction, and whole-file write fences                  | no   | no   |
 | edit-dsl-viewer-edit       | offline | edit-dsl select viewer opens details then an edit lands                                                | no   | no   |
 | edit-dsl-rename            | offline | edit-dsl rename updates a declaration and its references                                               | no   | no   |

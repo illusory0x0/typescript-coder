@@ -54,7 +54,8 @@ Recommended reading order:
 | **region**         | The final splice range: the half-open source span a `replace` or `write` rewrites.                                                                          |
 | **AgentMode**      | The loop shape: `pinned-repair` (default) or `plan-exec`.                                                                                                   |
 | **selection mode** | The pinned target mode: `modify`, `create`, or `delete`.                                                                                                    |
-| **WorkNode**       | One task-level unit in the plan-exec DAG: `id`, `after`, `verify`, `instruction`, `hints`, optional `approach`/`phase`.              |
+| **WorkNode**       | One task-level unit in the plan-exec DAG: `id`, `after`, `verify`, optional `testFilter`, `instruction`, `hints`, optional `approach`/`phase`.              |
+| **test filter**    | Optional `test-filter` on a plan-exec `verify test` node: a one-line test-name regex passed as `-t`; a filtered green gate is a checkpoint, not completion. |
 | **fence**          | The sentinel edit-action fence: exact `TC_EDIT_BEGIN` and `TC_EDIT_END` lines around a raw body.                                                            |
 | **outer wrapper**  | A whole-reply Markdown fence tolerated around a complete reply; it is not a `<fence>`.                                                                      |
 

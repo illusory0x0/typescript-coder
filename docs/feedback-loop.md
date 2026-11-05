@@ -22,8 +22,8 @@ Implementation: `runLoop` in `harness/src/loop.ts` is a dispatcher. The default
 routes to `runTaskLoop` in `harness/src/task-loop.ts`. Each driver owns its run
 lifecycle (budget, rounds, records) and shares the lower-level primitives (index
 and context, selection resolution, gates). Edit-dsl prompt text lives in
-`harness/src/prompts/edit-dsl.ts`, task prompts in `harness/src/prompts/task.ts`, and the
-commit/gate pipeline in `typescript-editor/src/commit.ts`.
+`harness/src/prompts/edit-dsl.ts`, task prompts in `harness/src/prompts/task.ts`,
+and the commit/gate pipeline in `typescript-editor/src/commit.ts`.
 
 ## Loop modes
 
@@ -53,14 +53,16 @@ at a time, and the planner reviews the applied result after its gate passes. The
 plan is a living graph: ready nodes run in record order, a failed node blocks its
 dependents, and the planner may repair or add pending/failed work between
 execution rounds. There is no node delete: a failed node is amended in place or
-superseded by later work, and a green last test completes the run.
+superseded by later work, and a green, unfiltered last test completes the run; a
+filtered test gate is only a checkpoint.
 
 [`plan-exec.md`](plan-exec.md) owns the Plan/WorkNode model, the Plan DSL and
 amend records, planning and review, validation/apply, scheduling, execution context,
 application and gates, progress termination, and plan-exec-specific limits.
 
-Both modes share tolerant parser diagnostics (`typescript-editor/src/dsl-diagnostics.ts`), the
-commit/gate pipeline (`typescript-editor/src/commit.ts`), and the result contract
+Both modes share tolerant parser diagnostics
+(`typescript-editor/src/dsl-diagnostics.ts`), the commit/gate pipeline
+(`typescript-editor/src/commit.ts`), and the result contract
 (`harness/src/result.ts`). Plan-exec additionally splits spend into `planning`, `review`,
 and `execution` `LoopTokens` buckets; their sum is `LoopResult.tokens` and all
 count toward the budget. Recovered parser warnings are on

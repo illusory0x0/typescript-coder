@@ -1,7 +1,7 @@
 ---
 id: 62
 title: "Document, accept, and benchmark slice gates"
-status: todo
+status: done
 priority: medium
 milestone: null
 parent: 59
@@ -43,3 +43,7 @@ bun run benchmark/run.ts --all --side tc --agent-mode plan-exec --reps 5 --keep
 - Benchmark artifacts are generated; do not commit them unless the human asks.
 - `csv-parser` is held out; a sliced plan must not be tuned to its test names.
 - Report a negative result if slices increase turns/cost without reducing retries.
+- Verification 2026-11-05: `just typecheck && just test` passes; `just accept` passes 9/9 offline scenarios, including `plan-exec-slice-gate`.
+- Human-approved minilisp replay run (5 reps, plan-exec, `benchmark/results/2026-11-05-minilisp-slices-replay.json`): 5/5 success. Plan shapes: 4 monolithic (`02-impl`/`02-implement`), 1 contract-only (`02-scaffold` -> `03-impl`), 0 sliced; no plan emitted `test-filter`. Contract-only used 17 steps, 14 turns, $0.0407 billable; monolith runs used 4-9 steps, 4-7 turns, $0.0059-$0.0198. Negative result: slices were not selected, so this run gives no evidence that slicing reduces execution retries; contract-only was more expensive.
+- Full 4x5 run (`benchmark/results/2026-11-05-4task-5rep-slices.json`): json-parser 5/5, sexp-parser 5/5, minilisp 4/5 (one run hit the $0.10 cost budget), csv-parser 5/5. Overall 19/20. `csv-parser` is held out and was not used for tuning.
+- Generated benchmark artifacts remain untracked; they are not committed.

@@ -1,20 +1,3 @@
 # Open issues in picking order. This order is authoritative: `reorder`
 # rewrites it; `add` appends; other writes keep it. `check` enforces it.
 # A dep, and every child of an umbrella, must be listed before its dependent.
-
-- id: 62
-  title: "Document, accept, and benchmark slice gates"
-  status: todo
-  priority: medium
-  milestone: null
-  parent: 59
-  deps: [58, 60, 61]
-  file: 0062-document-accept-and-benchmark-slice-gates.md
-- id: 59
-  title: "Add slice-level test gates to plan-exec"
-  status: todo
-  priority: medium
-  milestone: null
-  parent: null
-  deps: []
-  file: 0059-add-slice-level-test-gates-to-plan-exec.md

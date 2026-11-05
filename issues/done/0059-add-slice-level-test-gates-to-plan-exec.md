@@ -1,7 +1,7 @@
 ---
 id: 59
 title: "Add slice-level test gates to plan-exec"
-status: todo
+status: done
 priority: medium
 milestone: null
 parent: null
@@ -44,3 +44,4 @@ A targeted minilisp slice run and the 4×5 matrix are human-gated; ask before ru
 - No prompt tuning against `csv-parser`; it is the held-out task.
 - The umbrella is additive; the existing `verify tsc` and unfiltered `verify test` behavior stay unchanged.
 - Slicing is optional: a cohesive small task stays one node.
+- Verification 2026-11-05: `just typecheck && just test` passes (editor 804, harness 702, scripts 15, acceptance 9); `just accept` passes 9/9 offline scenarios including `plan-exec-slice-gate`. Parser/serializer/validation carry `testFilter` (`harness/src/plan-dsl.ts`, `harness/src/tasks.ts`); filtered gates run the check plus `-t <regex>`, no-match fails (`harness/src/task-loop.ts`); `lastGate.fullSuite` gates completion (`harness/src/tasks.ts`); the planner prompt teaches slices and the mandatory final unfiltered test (`harness/src/prompts/task.ts`). #62 supplies docs, acceptance, and benchmark evidence; minilisp replay 5/5 with 0 sliced plans (negative adoption result), full 4x5 19/20 with held-out csv 5/5. Children #60, #61, #62 are done.

@@ -54,7 +54,7 @@ view or a no-progress cycle forces the plan reply. Never use \`replace\`,
 
 /**
  * The functional style shared by the planner and executor prompts
- * (`docs/plan-exec.md` §1.4). Keep this literal identical to the plan-exec block.
+ * (`docs/plan-exec.md` §1.5). Keep this literal identical to the plan-exec block.
  */
 export const TASK_FUNCTIONAL_STYLE = `Prefer ML-style functional TypeScript:
 - Data + functions over classes and prototypes.

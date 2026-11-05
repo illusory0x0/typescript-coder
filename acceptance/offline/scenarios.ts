@@ -73,6 +73,57 @@ end`,
     ],
   },
   {
+    id: "plan-exec-slice-gate",
+    title:
+      "flat-DSL plan/execute runs a filtered slice checkpoint, then finishes with the full suite",
+    fixture: "slice-gate",
+    agentMode: "plan-exec",
+    issue: TEST_ISSUE,
+    responses: [
+      `plan
+goal: Finish the helper module.
+
+node "02-answer" verify test
+instruction: Change answer so it returns 2.
+hint value answer in src/helper.ts
+test-filter: answer
+end`,
+      [
+        "select answer in src/helper.ts resolve value",
+        "replace with",
+        "TC_EDIT_BEGIN",
+        "export function answer(): number {",
+        "  return 2;",
+        "}",
+        "TC_EDIT_END",
+      ].join("\n"),
+      `node "03-final" verify test
+instruction: Change label so the full suite passes.
+hint value label in src/helper.ts
+end`,
+      [
+        "select label in src/helper.ts resolve value",
+        "replace with",
+        "TC_EDIT_BEGIN",
+        "export function label(): string {",
+        '  return "helper";',
+        "}",
+        "TC_EDIT_END",
+      ].join("\n"),
+    ],
+    assertions: [
+      hasOk(true),
+      fileContains("src/helper.ts", "return 2;"),
+      fileContains("src/helper.ts", 'return "helper";'),
+      fileEqualsOriginal("src/helper.test.ts"),
+      hasCallCount(4),
+      messageContains(1, "Change answer so it returns 2."),
+      messageContains(2, "The last gate was a filtered test"),
+      messageContains(2, "unfiltered verify test node"),
+      messageContains(3, "Change label so the full suite passes."),
+    ],
+  },
+  {
     id: "plan-exec-write-fix-answer",
     title: "flat-DSL plan/execute accepts sentinel goal, instruction, and whole-file write fences",
     fixture: "fix-answer",
