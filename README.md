@@ -11,7 +11,8 @@ bun install
 just typecheck
 just test
 tc < task.txt
-bun run typescript-editor/src/cli.ts --help
+just tsed-install
+tsed --help
 ```
 
 The root `package.json` `bin` entry points `tc` at `harness/src/main.ts`. The
@@ -27,11 +28,20 @@ read-only by default; `--write` is the only file-modification opt-in. Input is
 selected with `--protocol-format flag|dsl|json` (`flag` is the default), and
 `dsl`/`json` read their payload from stdin.
 
+Install it on `PATH` from the repository root, then run it from any directory:
+
 ```sh
-bun run typescript-editor/src/cli.ts --read typescript-editor/src/index.ts
+just tsed-install
+tsed --version
+tsed --read typescript-editor/src/index.ts
 printf 'read typescript-editor/src/index.ts end\n' | \
-  bun run typescript-editor/src/cli.ts --protocol-format dsl
+  tsed --protocol-format dsl
 ```
+
+`tsed-install` runs `bun add -g` against the absolute local package path; nothing
+is published. The global entry points at this checkout, so rerun
+`just tsed-install` after moving it. Without installing, substitute
+`bun run typescript-editor/src/cli.ts` for `tsed`.
 
 See [`typescript-editor/README.md`](typescript-editor/README.md) for the formats,
 exit codes, path-safety rules, library API, and tool schema.
@@ -57,6 +67,7 @@ Root configuration lives in `package.json`, `justfile`, `tsconfig.json`,
 | ------------------------------------------ | --------------------------------------------------------------------------------------------------------------- |
 | `just typecheck`                           | Typecheck the root harnesses and both workspace packages.                                                       |
 | `just test`                                | Run the offline suites with bounded file-level workers; never calls the model.                                  |
+| `just tsed-install`                        | Install the local `tsed` CLI globally with Bun; points at this checkout, so rerun after moving it.              |
 | `just tsed-generate`                       | Regenerate the committed `tsed` parser, help, and completions from `typescript-editor/scs/tsed.scs`.            |
 | `just tsed-check`                          | Verify the committed `tsed` generated artifacts with `scs generate --check`.                                    |
 | `just test --api llm`                      | Run only the real-model suites (costs money; owner lanes are serial).                                           |

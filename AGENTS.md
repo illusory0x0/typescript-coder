@@ -20,6 +20,7 @@ just test --api llm|all  # opt-in real-model suites; costs money, owner lanes ar
 just test --include-slow # add the slow self-host acceptance suite
 just test --list # show every suite, its api lane, and its owner
 just test-parallel [n]   # alias for `just test --jobs <n>`
+just tsed-install  # bun add -g the local typescript-editor package; points at this checkout
 just tsed-check  # scs generate --check for the committed tsed CLI surface
 just tsed-generate  # regenerate tsed parser/help/completions from scs/tsed.scs
 just format      # bunx oxfmt  — formatter is oxfmt, NOT prettier/biome; repo-wide, rewrites human/
@@ -124,6 +125,7 @@ harness.
 - `bun test` at the root discovers both package suites (`bunfig.toml` `root = "."`) and ignores fixture/tmp paths; each package has its own `bunfig.toml` scoping its suite to that package's sources. `just test` runs the registered offline suites; acceptance/benchmark also run their own commands.
 - `benchmark/` is excluded from `tsc` (`benchmark/fixtures`), and `judge-golden.test.ts` imports it through a computed specifier so the self-host copy of just `harness/src` stays green — preserve that trick when touching `benchmark/`.
 - `typescript-editor/scs/tsed.scs` owns the `tsed` argument surface. The generated artifacts are committed, so a clone does not need `scs` to typecheck/test; regenerate with `just tsed-generate` and verify with `just tsed-check`. Never hand-edit `scs/generated/`.
+- `just tsed-install` runs `bun add -g` on the local private package; the global `tsed` entry points at this checkout, so rerun it after moving the checkout. It is not a registry publish.
 - `tsconfig` is strict + `noUncheckedIndexedAccess` + `verbatimModuleSyntax`: use `import type`, handle possibly-undefined index results (code style follows this: `const x = arr[i]; if (x === undefined) …`).
 - Live checks cost tokens: `just test --api llm|all`, `just accept --live`, and benchmark runs call the real model (benchmark default `deepseek-v4.1-flash` on the official endpoint). Don't run them unprompted, and don't use them as an iteration loop — see Evaluation. Measured benchmark runs default to 5 reps and warm only the stable system-prompt prefix; reports print cache-hit ratios and warn when they are badly imbalanced.
 - `csv-parser` benchmark fixture is held out — never tune prompts or code against it.

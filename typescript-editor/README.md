@@ -6,16 +6,31 @@ cascade, and the splice/format/commit gate. It never imports `harness/`.
 
 ## `tsed`
 
-From the repository root (the first read uses an existing file):
+### Install globally
+
+The package is private and is not published. `just tsed-install` adds the local
+`typescript-editor` package with `bun add -g` so `tsed` resolves on `PATH` from
+any directory:
+
+```sh
+just tsed-install
+tsed --version
+tsed --help
+```
+
+The global entry points at this checkout, so rerun `just tsed-install` after
+moving the checkout; the target replaces the previous entry rather than
+duplicating it.
+
+To run from the repository root without installing:
 
 ```sh
 bun run typescript-editor/src/cli.ts --help
 bun run typescript-editor/src/cli.ts --read typescript-editor/src/index.ts
 ```
 
-The package declares a `tsed` bin; if your workspace install links it, `tsed`
-runs directly. Otherwise invoke `bun run typescript-editor/src/cli.ts`. The
-examples below use `tsed` as shorthand for that command.
+The examples below use `tsed`; install it globally or substitute
+`bun run typescript-editor/src/cli.ts`.
 
 `tsed` reads edit-dsl replies, the same language the agent loop uses. Every
 format is **read-only by default**; `--write` is the only file-modification

@@ -17,6 +17,15 @@ test-parallel jobs=`nproc`:
 accept *args:
     bun run acceptance/run.ts {{args}}
 
+# Install the local tsed CLI globally with Bun; the entry points at this checkout.
+tsed-install:
+    #!/usr/bin/env bash
+    set -euo pipefail
+    # `bun add -g` appends duplicate keys on a repeat install, so replace the
+    # entry instead of adding to it.
+    bun remove -g @tc/typescript-editor >/dev/null 2>&1 || true
+    bun add -g "{{justfile_directory()}}/typescript-editor"
+
 # Regenerate the committed tsed parser/help/completions from its .scs source.
 tsed-generate:
     scs generate typescript-editor/scs/tsed.scs --out typescript-editor/scs/generated --targets ts,runtime,bash,zsh,fish,elvish,pwsh,nu

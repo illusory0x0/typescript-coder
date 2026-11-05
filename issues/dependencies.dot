@@ -77,6 +77,10 @@ digraph issues {
   "70" [label="#70 Generate the tsed CLI from an scs declaration"];
   "71" [label="#71 Expose edit-dsl as a harness tool/function"];
   "72" [label="#72 Document and verify the tsed CLI and library surface"];
+  "73" [label="#73 Polish the tsed CLI UX"];
+  "74" [label="#74 Install tsed globally and document the install path"];
+  "75" [label="#75 Resolve tsed payload files from the workspace root"];
+  "76" [label="#76 Add a dry-run preview to tsed mutations"];
 
   // parent edges (parent -> child), solid
   "1" -> "2";
@@ -130,6 +134,9 @@ digraph issues {
   "68" -> "70";
   "68" -> "71";
   "68" -> "72";
+  "73" -> "74";
+  "73" -> "75";
+  "73" -> "76";
 
   // dependency edges (blocker -> blocked), dashed
   "2" -> "3" [style=dashed, label="blocks"];
