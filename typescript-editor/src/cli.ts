@@ -119,14 +119,15 @@ function renderFlagRequest(values: TsedArgs, workspaceRoot: string): string {
     (values.create ?? []).length > 0 ||
     (values.delete ?? []).length > 0 ||
     values.rewrite !== undefined;
-  if (mutating && !values.write) {
+  if (mutating && !values.write && !values.dry_run) {
     throw new UsageError(
-      "the requested operation mutates a workspace file; pass --write to apply it",
+      "the requested operation mutates a workspace file; pass --write to apply it or --dry-run to preview it",
     );
   }
-  if (values.write && !mutating) {
+  if ((values.write || values.dry_run) && !mutating) {
+    const mode = values.write ? "--write" : "--dry-run";
     throw new UsageError(
-      "--write requires a mutation (--replace-file, --rename, --create, --delete, or --rewrite)",
+      `${mode} requires a mutation (--replace-file, --rename, --create, --delete, or --rewrite)`,
     );
   }
 
@@ -175,6 +176,9 @@ function renderFlagRequest(values: TsedArgs, workspaceRoot: string): string {
 }
 
 function buildPayload(values: TsedArgs, workspaceRoot: string): string {
+  if (values.write && values.dry_run) {
+    throw new UsageError("--write and --dry-run are mutually exclusive");
+  }
   const format = values.protocol_format;
   if (format === "flag") {
     return renderFlagRequest(values, workspaceRoot);
@@ -184,22 +188,34 @@ function buildPayload(values: TsedArgs, workspaceRoot: string): string {
   return format === "dsl" ? text : renderEditRequest(parseJsonEditRequest(text));
 }
 
-function reportResult(result: EditDslReadResult | EditDslApplyResult, applied: boolean): number {
+type ReportMode = "read" | "apply" | "preview";
+
+const PLAN_PREFIXES: Readonly<
+  Record<Exclude<ReportMode, "read">, { changed: string; created: string; deleted: string }>
+> = {
+  apply: { changed: "changed", created: "created", deleted: "deleted" },
+  preview: { changed: "would change", created: "would create", deleted: "would delete" },
+};
+
+function reportResult(result: EditDslReadResult | EditDslApplyResult, mode: ReportMode): number {
   const failed = !result.ok || result.readFailures.length > 0;
   if (result.text !== "") {
     const stream = failed ? process.stderr : process.stdout;
     stream.write(result.text.endsWith("\n") ? result.text : `${result.text}\n`);
   }
-  if (applied) {
+  // A preview shows no plan for a failed run; an apply keeps its existing
+  // behavior (its plan arrays are empty on a hard failure anyway).
+  if (mode !== "read" && (mode === "apply" || !failed)) {
+    const prefixes = PLAN_PREFIXES[mode];
     const apply = result as EditDslApplyResult;
     for (const path of [...apply.changed].sort()) {
-      process.stdout.write(`changed: ${path}\n`);
+      process.stdout.write(`${prefixes.changed}: ${path}\n`);
     }
     for (const path of [...apply.created].sort()) {
-      process.stdout.write(`created: ${path}\n`);
+      process.stdout.write(`${prefixes.created}: ${path}\n`);
     }
     for (const path of [...apply.deleted].sort()) {
-      process.stdout.write(`deleted: ${path}\n`);
+      process.stdout.write(`${prefixes.deleted}: ${path}\n`);
     }
   }
   return failed ? 1 : 0;
@@ -229,13 +245,13 @@ async function main(argv: readonly string[]): Promise<number> {
     const values = parsed.values as unknown as TsedArgs;
     const cwd = resolve(values.directory ?? process.cwd());
     const payload = buildPayload(values, cwd);
-    const options = { cwd };
-    if (values.write) {
+    const options = { cwd, ...(values.dry_run ? { dryRun: true } : {}) };
+    if (values.write || values.dry_run) {
       const result = await applyEditDsl(payload, options);
-      return reportResult(result, true);
+      return reportResult(result, values.dry_run ? "preview" : "apply");
     }
     const result = await readEditDsl(payload, options);
-    return reportResult(result, false);
+    return reportResult(result, "read");
   } catch (error) {
     return reportError(error);
   }

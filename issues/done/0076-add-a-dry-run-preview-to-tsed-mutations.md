@@ -1,7 +1,7 @@
 ---
 id: 76
 title: "Add a dry-run preview to tsed mutations"
-status: todo
+status: done
 priority: medium
 milestone: null
 parent: 73
@@ -54,3 +54,4 @@ just accept
 - Dry-run is a preview, not a full unified diff renderer. Rich diff/TUI output
   remains out of scope.
 - No prompt, loop, or benchmark behavior changes.
+- Added EditDslOptions.dryRun; applyEditDsl now builds the final changed/created/deleted plan after resolution, format/gate, preflight, and the pre-write snapshot, then returns before any write/create/delete/rollback call when dryRun is true. Added --dry-run to scs/tsed.scs and regenerated all 8 committed artifacts. CLI rejects --write with --dry-run for every format, allows mutating flag sets with --dry-run, and previews flag/dsl/json through reportResult with would change/create/delete lines while suppressing the plan on failed runs. Tests cover API plan/no-mutation, flag replace, flag create/delete, dsl, json, mutual exclusion, and a failed dsl dry-run. Docs explain the mode and that it is a path preview, not a unified diff. Verified: just tsed-check (8 up to date), targeted tests 44 pass, just typecheck, just test (editor 880, harness 703, scripts 16, acceptance 9/9), just accept (9/9), and a global tsed smoke test from /tmp confirmed dry-run leaves files unchanged and --write --dry-run exits 2.

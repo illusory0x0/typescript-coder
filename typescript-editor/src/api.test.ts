@@ -182,6 +182,46 @@ describe("applyEditDsl", () => {
     expect(existsSync(join(directory, "src/old.ts"))).toBe(false);
   });
 
+  test("a dry run reports the plan without mutating the workspace", async () => {
+    const directory = makeWorkspace({
+      "src/helper.ts": HELPER,
+      "src/old.ts": "export const old = 1;\n",
+    });
+    const target = join(directory, "src/helper.ts");
+    const oldFile = join(directory, "src/old.ts");
+    const before = read(target);
+    const oldBefore = read(oldFile);
+    const text = [
+      writeFileReply("src/helper.ts", "export const helper = 1;\n"),
+      writeFileReply("src/new.ts", "export const created = 1;"),
+      "create src/empty.ts end",
+      "delete src/old.ts end",
+    ].join("\n");
+
+    const preview = await applyEditDsl(text, { cwd: directory, dryRun: true });
+
+    expect(preview.ok).toBe(true);
+    expect(preview.failures).toEqual([]);
+    expect(preview.changed).toEqual(["src/empty.ts", "src/helper.ts", "src/new.ts"]);
+    expect(preview.created).toEqual(["src/empty.ts", "src/new.ts"]);
+    expect(preview.deleted).toEqual(["src/old.ts"]);
+    expect(read(target)).toBe(before);
+    expect(read(oldFile)).toBe(oldBefore);
+    expect(existsSync(join(directory, "src/new.ts"))).toBe(false);
+    expect(existsSync(join(directory, "src/empty.ts"))).toBe(false);
+
+    const applied = await applyEditDsl(text, { cwd: directory });
+
+    expect(applied.ok).toBe(true);
+    expect(applied.changed).toEqual(preview.changed);
+    expect(applied.created).toEqual(preview.created);
+    expect(applied.deleted).toEqual(preview.deleted);
+    expect(read(target)).toBe("export const helper = 1;\n");
+    expect(read(join(directory, "src/new.ts"))).toContain("export const created = 1;");
+    expect(read(join(directory, "src/empty.ts"))).toBe("");
+    expect(existsSync(oldFile)).toBe(false);
+  });
+
   test("a mixed reply applies the edit and returns read feedback", async () => {
     const directory = makeWorkspace({ "src/helper.ts": HELPER });
     const target = join(directory, "src/helper.ts");

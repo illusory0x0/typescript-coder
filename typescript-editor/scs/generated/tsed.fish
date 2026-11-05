@@ -3,7 +3,7 @@
 
 # --- helpers ---
 function __fish_tsed_root_options
-    string join \n protocol-format= write C/directory= read= select= in= kind= resolve= match= pick= replace-file= rename= create= delete= rewrite= content-file= h/help V/version
+    string join \n protocol-format= write dry-run C/directory= read= select= in= kind= resolve= match= pick= replace-file= rename= create= delete= rewrite= content-file= h/help V/version
 end
 
 function __fish_tsed_needs_command
@@ -79,6 +79,7 @@ end
 # --- root ---
 complete -c tsed -n '__fish_tsed_offer \'\' \'protocol-format\'' -l protocol-format -r -f -a 'flag dsl json' -d 'Input encoding: native flags, edit-dsl on stdin, or JSON on stdin'
 complete -c tsed -n 'not __fish_seen_argument -l write' -l write -d 'Apply mutations (default is read-only)'
+complete -c tsed -n 'not __fish_seen_argument -l dry-run' -l dry-run -d 'Preview mutations without writing'
 complete -c tsed -n '__fish_tsed_offer \'C\' \'directory\'' -s C -l directory -r -d 'Workspace root (default: the current directory)'
 complete -c tsed -n '' -l read -r -d 'Read a workspace file'
 complete -c tsed -n '__fish_tsed_offer \'\' \'select\'' -l select -r -d 'Select a declaration for a viewer or edit'

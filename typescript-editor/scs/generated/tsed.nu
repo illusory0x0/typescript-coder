@@ -15,6 +15,7 @@ module completions {
   export extern tsed [
     --protocol-format: string@"nu-complete tsed protocol_format" # Input encoding: native flags, edit-dsl on stdin, or JSON on stdin
     --write                   # Apply mutations (default is read-only)
+    --dry-run                 # Preview mutations without writing
     --directory(-C): string   # Workspace root (default: the current directory)
     --read: string            # Read a workspace file
     --select: string          # Select a declaration for a viewer or edit

@@ -34,7 +34,8 @@ The examples below use `tsed`; install it globally or substitute
 
 `tsed` reads edit-dsl replies, the same language the agent loop uses. Every
 format is **read-only by default**; `--write` is the only file-modification
-opt-in.
+opt-in, and `--dry-run` previews a mutation through the full resolve/format/
+gate/preflight pipeline without writing.
 
 The native-flag and stdin examples below assume a project workspace containing
 `src/helper.ts`, `src/new.ts`, `patch.txt`, and `content.txt`; run them from
@@ -63,7 +64,17 @@ tsed --create src/new.ts --write                # empty file
 tsed --delete src/old.ts --write
 tsed --rewrite src/helper.ts \
   --content-file content.txt --write            # whole file
+tsed --create src/new.ts --dry-run              # preview only
+tsed --select answer --in src/helper.ts \
+  --rename result --dry-run                     # preview a rename
 ```
+
+`--dry-run` runs the same pipeline as `--write` and then stops before any
+write, create, or delete. It prints `would change:`, `would create:`, and
+`would delete:` lines for the planned paths, and the workspace stays
+byte-identical. It is mutually exclusive with `--write`; a mutation needs one
+of them. Dry-run is a path preview, not a unified diff. The mode works with all
+three formats: add it to a flag command or to a `dsl`/`json` stdin command.
 
 `--select` supports optional `--kind`, `--resolve value|type|namespace`,
 `--match <snippet>`, and `--pick <range>`. Without `--match`/`--pick`, the
@@ -82,6 +93,9 @@ printf 'read src/helper.ts end\n' | tsed --protocol-format dsl
 
 printf 'select answer in src/helper.ts\nreplace with\nTC_EDIT_BEGIN\nexport function answer(): number {\n  return 2;\n}\nTC_EDIT_END\n' \
   | tsed --protocol-format dsl --write
+
+printf 'select answer in src/helper.ts\nreplace with\nTC_EDIT_BEGIN\nexport function answer(): number {\n  return 2;\n}\nTC_EDIT_END\n' \
+  | tsed --protocol-format dsl --dry-run
 
 printf '{"operations":[{"op":"read","path":"src/helper.ts"}]}\n' \
   | tsed --protocol-format json
@@ -136,8 +150,9 @@ operations; `--write` still controls whether mutations are applied.
 
 Successful inspection text goes to stdout. Failure diagnostics go to stderr.
 Apply runs also print `changed:`, `created:`, and `deleted:` lines for the paths
-that were written. A failed reply writes nothing; a failed read is reported but
-does not discard a clean mutation.
+that were written; dry runs print `would change:`, `would create:`, and
+`would delete:` instead and write nothing. A failed reply writes nothing; a
+failed read is reported but does not discard a clean mutation.
 
 ### Workspace and path safety
 
@@ -158,14 +173,20 @@ if (!read.ok) console.error(read.text);
 
 const applied = await applyEditDsl(reply, { cwd: process.cwd() });
 console.log(applied.changed, applied.created, applied.deleted);
+
+const preview = await applyEditDsl(reply, { cwd: process.cwd(), dryRun: true });
+console.log(preview.changed, preview.created, preview.deleted);
 ```
 
 `readEditDsl` resolves reads/viewers and rejects mutation clauses with
 `stage: protocol`; it never writes. `applyEditDsl` resolves and applies the
-whole reply through the shared format/gate pipeline atomically. Both return
-`ok`, `text`, `reads`, `viewers`, `failures`, and `readFailures`; the apply
-result also has sorted `changed`, `created`, and `deleted` arrays. A failed read
-is returned in `readFailures` and does not discard a clean mutation.
+whole reply through the shared format/gate pipeline atomically. With
+`dryRun: true` it runs the same pipeline and returns the planned
+`changed`/`created`/`deleted` arrays without calling a mutation method. Both
+return `ok`, `text`, `reads`, `viewers`, `failures`, and `readFailures`; the
+apply result also has sorted `changed`, `created`, and `deleted` arrays. A
+failed read is returned in `readFailures` and does not discard a clean
+mutation.
 
 `renderEditRequest` and `parseJsonEditRequest` build the edit-dsl form from the
 typed operation list used by the JSON and flag formats.
@@ -221,5 +242,6 @@ bun test typescript-editor/src
 just typecheck && just test
 ```
 
-The `src/cli.test.ts` suite covers flag reads, dsl read-only/dsl `--write`, JSON
-reads/writes, usage errors, and failed writes that leave files unchanged.
+The `src/cli.test.ts` suite covers flag reads, flag/dsl/json dry runs, dsl
+read-only/dsl `--write`, JSON reads/writes, usage errors, the `--write`/
+`--dry-run` conflict, and failed writes that leave files unchanged.

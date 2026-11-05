@@ -17,6 +17,8 @@ export interface EditDslOptions {
   cwd: string;
   /** Workspace-relative paths that are always read-only. Defaults to ["human"]. */
   protectedPaths?: readonly string[];
+  /** Resolve and validate mutations, but do not write anything. */
+  dryRun?: boolean;
 }
 
 export interface EditDslReadResult {
@@ -257,7 +259,9 @@ export async function readEditDsl(
 /**
  * Resolve and apply a reply atomically. A parse failure, any resolution
  * failure, any apply failure, or a no-op discards every write. A failed `read`
- * is feedback and never discards a clean mutation.
+ * is feedback and never discards a clean mutation. With `dryRun`, the same
+ * pipeline runs but no write/create/delete method is called; the returned
+ * `changed`/`created`/`deleted` arrays describe what would happen.
  */
 export async function applyEditDsl(
   text: string,
@@ -450,6 +454,35 @@ export async function applyEditDsl(
     comparePaths(left, right),
   );
   const deletesToApply = [...deletePlan].sort(comparePaths);
+
+  // The plan is final at this point: preflight passed and `originals` records
+  // which paths already existed, so it describes an apply without performing one.
+  const changed: string[] = [];
+  const created: string[] = [];
+  for (const [path, plan] of writePlan) {
+    changed.push(path);
+    if (plan.emptyCreate || originals.get(path)?.exists === false) {
+      created.push(path);
+    }
+  }
+  const deleted = [...deletePlan];
+  const result: EditDslApplyResult = {
+    ok: true,
+    reads: resolution.reads,
+    viewers: resolution.viewers,
+    failures: [],
+    readFailures: resolution.readFailures,
+    text: combineText([], resolution.viewers, resolution.reads, resolution.readFailures),
+    changed: changed.sort(comparePaths),
+    created: created.sort(comparePaths),
+    deleted: deleted.sort(comparePaths),
+  };
+
+  // A dry run stops before any mutation method: the result is the plan above.
+  if (options.dryRun === true) {
+    return result;
+  }
+
   const applied: { path: string; kind: "write" | "create" | "delete" }[] = [];
   let inFlight: { path: string; kind: "write" | "create" | "delete" } | null = null;
   try {
@@ -502,24 +535,5 @@ export async function applyEditDsl(
     ]);
   }
 
-  const changed: string[] = [];
-  const created: string[] = [];
-  for (const [path, plan] of writePlan) {
-    changed.push(path);
-    if (plan.emptyCreate || originals.get(path)?.exists === false) {
-      created.push(path);
-    }
-  }
-  const deleted = [...deletePlan];
-  return {
-    ok: true,
-    reads: resolution.reads,
-    viewers: resolution.viewers,
-    failures: [],
-    readFailures: resolution.readFailures,
-    text: combineText([], resolution.viewers, resolution.reads, resolution.readFailures),
-    changed: changed.sort(comparePaths),
-    created: created.sort(comparePaths),
-    deleted: deleted.sort(comparePaths),
-  };
+  return result;
 }

@@ -34,9 +34,14 @@ Install it on `PATH` from the repository root, then run it from any directory:
 just tsed-install
 tsed --version
 tsed --read typescript-editor/src/index.ts
+tsed --create typescript-editor/src/preview.ts --dry-run
 printf 'read typescript-editor/src/index.ts end\n' | \
   tsed --protocol-format dsl
 ```
+
+`--dry-run` previews a mutation through the same pipeline as `--write`, prints
+`would change:`/`would create:`/`would delete:` lines, and writes nothing. The
+two flags are mutually exclusive.
 
 `tsed-install` runs `bun add -g` against the absolute local package path; nothing
 is published. The global entry points at this checkout, so rerun

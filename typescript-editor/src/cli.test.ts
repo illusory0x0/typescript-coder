@@ -99,12 +99,13 @@ afterEach(() => {
 });
 
 describe("tsed flag protocol", () => {
-  test("--help lists the protocol, write, and read options", () => {
+  test("--help lists the protocol, write, dry-run, and read options", () => {
     const workspace = makeWorkspace();
     const result = run(workspace, ["--help"]);
     expect(result.status).toBe(0);
     expect(result.stdout).toContain("--protocol-format");
     expect(result.stdout).toContain("--write");
+    expect(result.stdout).toContain("--dry-run");
     expect(result.stdout).toContain("--read");
     expect(result.stderr).toBe("");
   });
@@ -204,6 +205,62 @@ describe("tsed flag protocol", () => {
     expect(result.stdout).toContain("deleted: src/old.ts");
     expect(read(join(workspace, "src/new.ts"))).toBe("");
     expect(existsSync(join(workspace, "src/old.ts"))).toBe(false);
+  });
+
+  test("--replace-file --dry-run previews a change and writes nothing", () => {
+    const workspace = makeWorkspace({ "patch.txt": ANSWER_TWO });
+    const result = run(workspace, [
+      "--select",
+      "answer",
+      "--in",
+      "src/helper.ts",
+      "--replace-file",
+      "patch.txt",
+      "--dry-run",
+    ]);
+    expect(result.status).toBe(0);
+    expect(result.stdout).toContain("would change: src/helper.ts");
+    expect(result.stdout).not.toContain("changed: src/helper.ts");
+    expect(result.stderr).toBe("");
+    expect(read(join(workspace, "src/helper.ts"))).toBe(HELPER);
+  });
+
+  test("--create and --delete dry-run previews and changes nothing", () => {
+    const workspace = makeWorkspace({ "src/old.ts": "export const old = true;\n" });
+    const oldSource = read(join(workspace, "src/old.ts"));
+    const result = run(workspace, [
+      "--create",
+      "src/new.ts",
+      "--delete",
+      "src/old.ts",
+      "--dry-run",
+    ]);
+    expect(result.status).toBe(0);
+    expect(result.stdout).toContain("would create: src/new.ts");
+    expect(result.stdout).toContain("would delete: src/old.ts");
+    expect(result.stdout).not.toContain("created: src/new.ts");
+    expect(result.stdout).not.toContain("deleted: src/old.ts");
+    expect(existsSync(join(workspace, "src/new.ts"))).toBe(false);
+    expect(read(join(workspace, "src/old.ts"))).toBe(oldSource);
+  });
+
+  test("--write and --dry-run are mutually exclusive", () => {
+    const workspace = makeWorkspace({ "patch.txt": ANSWER_TWO });
+    const result = run(workspace, [
+      "--select",
+      "answer",
+      "--in",
+      "src/helper.ts",
+      "--replace-file",
+      "patch.txt",
+      "--write",
+      "--dry-run",
+    ]);
+    expect(result.status).toBe(2);
+    expect(result.stderr).toContain("tsed:");
+    expect(result.stderr).toContain("--write and --dry-run are mutually exclusive");
+    expect(result.stderr).toContain("usage:");
+    expect(read(join(workspace, "src/helper.ts"))).toBe(HELPER);
   });
 
   test("--rewrite --content-file applies a whole-file replacement", () => {
@@ -321,6 +378,59 @@ describe("tsed stdin protocols", () => {
     expect(result.status).toBe(0);
     expect(result.stdout).toContain("changed: src/helper.ts");
     expect(read(join(workspace, "src/helper.ts"))).toBe(ANSWER_THREE);
+  });
+
+  test("dsl mutation with --dry-run previews and leaves the file unchanged", () => {
+    const workspace = makeWorkspace();
+    const result = run(workspace, ["--protocol-format", "dsl", "--dry-run"], MUTATION_DSL);
+    expect(result.status).toBe(0);
+    expect(result.stdout).toContain("would change: src/helper.ts");
+    expect(result.stdout).not.toContain("changed: src/helper.ts");
+    expect(result.stderr).toBe("");
+    expect(read(join(workspace, "src/helper.ts"))).toBe(HELPER);
+  });
+
+  test("json mutation with --dry-run previews and leaves the file unchanged", () => {
+    const workspace = makeWorkspace();
+    const rewritten = "export const answer = 7;\n";
+    const result = run(
+      workspace,
+      ["--protocol-format", "json", "--dry-run"],
+      JSON.stringify({
+        operations: [{ op: "rewrite", path: "src/helper.ts", content: rewritten }],
+      }),
+    );
+    expect(result.status).toBe(0);
+    expect(result.stdout).toContain("would change: src/helper.ts");
+    expect(result.stdout).not.toContain("changed: src/helper.ts");
+    expect(result.stderr).toBe("");
+    expect(read(join(workspace, "src/helper.ts"))).toBe(HELPER);
+  });
+
+  test("a failed dsl dry-run exits 1 and prints no preview", () => {
+    const workspace = makeWorkspace();
+    const reply = [
+      "select helper in src/helper.ts",
+      "replace with",
+      BEGIN,
+      "export function helper(): number {",
+      "  return 5;",
+      "}",
+      END,
+      "",
+      "select answer in src/helper.ts",
+      "pick 99",
+      "replace with",
+      BEGIN,
+      "return 9;",
+      END,
+      "",
+    ].join("\n");
+    const result = run(workspace, ["--protocol-format", "dsl", "--dry-run"], reply);
+    expect(result.status).toBe(1);
+    expect(result.stderr).toContain("stage: range");
+    expect(result.stdout).not.toContain("would change:");
+    expect(read(join(workspace, "src/helper.ts"))).toBe(HELPER);
   });
 
   test("json reads and rewrites an operation list", () => {

@@ -9,6 +9,8 @@ export interface TsedArgs {
   protocol_format: ProtocolFormat;
   /** Apply mutations (default is read-only) */
   write: boolean;
+  /** Preview mutations without writing */
+  dry_run: boolean;
   /** Workspace root (default: the current directory) */
   directory?: string;
   /** Read a workspace file */
@@ -40,7 +42,7 @@ export interface TsedArgs {
 }
 
 /** Flag-shaped options (no value token). */
-export type FlagName = "write";
+export type FlagName = "write" | "dry_run";
 
 /** Value-shaped options (consume one token). */
 export type ValueName =

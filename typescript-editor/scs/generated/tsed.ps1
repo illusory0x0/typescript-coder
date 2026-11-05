@@ -12,6 +12,7 @@ $tsedSlots = @{
 $tsedOwners = [System.Collections.Generic.Dictionary[string,string]]::new()
 $tsedOwners['--protocol-format'] = '--protocol-format'
 $tsedOwners['--write'] = '--write'
+$tsedOwners['--dry-run'] = '--dry-run'
 $tsedOwners['--directory'] = '--directory'
 $tsedOwners['-C'] = '--directory'
 $tsedOwners['--read'] = '--read'
@@ -66,7 +67,7 @@ Register-ArgumentCompleter -Native -CommandName tsed -ScriptBlock {
     $repeatable = @()
     switch ($sub) {
         default {
-            $pool = @('--protocol-format', '--write', '--directory', '-C', '--read', '--select', '--in', '--kind', '--resolve', '--match', '--pick', '--replace-file', '--rename', '--create', '--delete', '--rewrite', '--content-file', '--help', '-h', '--version', '-V')
+            $pool = @('--protocol-format', '--write', '--dry-run', '--directory', '-C', '--read', '--select', '--in', '--kind', '--resolve', '--match', '--pick', '--replace-file', '--rename', '--create', '--delete', '--rewrite', '--content-file', '--help', '-h', '--version', '-V')
             $taking = $rootTaking
             $repeatable = @('--read', '--create', '--delete', '--help', '-h', '--version', '-V')
         }

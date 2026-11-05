@@ -19,6 +19,9 @@ interface TsedArgs {
   @arg({ help: "Apply mutations (default is read-only)" })
   write: boolean
 
+  @arg({ help: "Preview mutations without writing" })
+  dry-run: boolean
+
   @arg({ short: "C", valueName: "DIR", help: "Workspace root (default: the current directory)" })
   directory: string?
 

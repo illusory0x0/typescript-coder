@@ -58,7 +58,7 @@ set edit:completion:arg-completer[tsed] = {|@words|
     # What the root offers (docs/spec §9.1); a commandless CLI has no
     # subcommand contexts, so the empty key is the only one.
     var pool-map = [
-        &''= ['--protocol-format' '--write' '--directory' '-C' '--read' '--select' '--in' '--kind' '--resolve' '--match' '--pick' '--replace-file' '--rename' '--create' '--delete' '--rewrite' '--content-file' '--help' '-h' '--version' '-V']
+        &''= ['--protocol-format' '--write' '--dry-run' '--directory' '-C' '--read' '--select' '--in' '--kind' '--resolve' '--match' '--pick' '--replace-file' '--rename' '--create' '--delete' '--rewrite' '--content-file' '--help' '-h' '--version' '-V']
     ]
     var valuetaking-map = [
         &''= ['--protocol-format' '--directory' '-C' '--read' '--select' '--in' '--kind' '--resolve' '--match' '--pick' '--replace-file' '--rename' '--create' '--delete' '--rewrite' '--content-file']
