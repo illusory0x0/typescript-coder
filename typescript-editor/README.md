@@ -37,6 +37,28 @@ format is **read-only by default**; `--write` is the only file-modification
 opt-in, and `--dry-run` previews a mutation through the full resolve/format/
 gate/preflight pipeline without writing.
 
+### What it is good at
+
+`tsed` is not a replacement for an IDE or for quick `grep`/`sed` navigation. It
+is at its best when an agent needs a small, auditable edit against a known
+workspace:
+
+- **Semantic renames.** A top-level named export rename follows relative named
+  imports and re-exports, preserves aliases, and rejects duplicate-export
+  collisions instead of guessing from text.
+- **Preview/apply parity.** `--dry-run` runs the same resolve/format/gate/
+  preflight pipeline as `--write`, lists every affected path, and leaves the
+  workspace byte-identical. It is a path preview, not a unified diff.
+- **Repair-oriented failures.** Failures identify the stage; syntax failures add
+  a code, line, column, source excerpt, expected/found values, and a hint. A
+  failed reply writes nothing.
+- **Atomic multi-file applies.** A reply resolves as a unit; if a later write
+  fails, earlier writes are rolled back. Rollback only rewrites files whose
+  contents actually changed.
+- **One contract across formats.** Native flags, edit-dsl, and JSON operations
+  share the same validation and output behavior, so a mutation that works in
+  one entry point does not quietly behave differently in another.
+
 The native-flag and stdin examples below assume a project workspace containing
 `src/helper.ts`, `src/new.ts`, `patch.txt`, and `content.txt`; run them from
 that workspace.
