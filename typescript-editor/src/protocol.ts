@@ -139,6 +139,11 @@ function validateOperation(operation: EditOperation): void {
       if (operation.replace !== undefined && operation.rename !== undefined) {
         reject("select: replace and rename are mutually exclusive");
       }
+      if (operation.match !== undefined && operation.rename !== undefined) {
+        reject(
+          "select: match and rename are mutually exclusive; a rename resolves the symbol semantically",
+        );
+      }
       if (operation.rename !== undefined) {
         wordToken(operation.op, "rename", operation.rename);
       }

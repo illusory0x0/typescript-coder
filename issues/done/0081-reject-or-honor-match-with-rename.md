@@ -1,7 +1,7 @@
 ---
 id: 81
 title: "Reject or honor match with rename"
-status: todo
+status: done
 priority: medium
 milestone: null
 parent: null
@@ -64,3 +64,5 @@ just typecheck && just test
   blesses a rename after a match.
 - This is a semantic no-op bug; do not broaden it into the cross-file rename
   issue.
+- - Chose rejection: the edit-dsl reader throws EDIT_RENAME_MATCHED for match + rename, the native/JSON protocol rejects it as a usage error, the serializer refuses to emit the combination, and resolveMultiEditor has a defensive address-stage guard for direct callers. Both matching and non-matching matchers are rejected, and docs now show rename as a separate grammar line.
+- - Verification: native --match ... --rename exits 2 and the DSL form exits 1 with stage: syntax / EDIT_RENAME_MATCHED; neither changes the file. Targeted selection/protocol/cli/multi-editor tests 255 pass. just tsed-check up to date; just typecheck && just test green (editor 913, harness 703, scripts 16, acceptance 9/9). Prompt text was left untouched.

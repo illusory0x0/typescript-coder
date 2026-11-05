@@ -146,8 +146,10 @@ Operation fields:
 
 A `select` is a viewer without `replace`/`rename`; `within` slices a bare viewer
 and is rejected with `match`, `pick`, `replace`, or `rename`. `replace` and
-`rename` are mutually exclusive. `match` narrows a replacement to the matched
-snippet; `pick` requires a replacement and narrows it to a line/column range.
+`rename` are mutually exclusive, and `match` is rejected with `rename` (a
+rename resolves the symbol semantically). `match` narrows a viewer or
+replacement to the matched snippet; `pick` requires a replacement and narrows
+it to a line/column range.
 Unknown fields and malformed JSON are usage errors. The operation list only
 expresses operations; `--write` still controls whether mutations are applied.
 
@@ -168,6 +170,7 @@ failed read is reported but does not discard a clean mutation.
 ### Renames
 
 `--rename` rewrites the selected declaration and every same-file reference. A
+rename is semantic: `match` and `pick` are rejected rather than ignored. A
 top-level declaration that the target file exports as a named export also
 updates workspace files that import or re-export it through a relative
 specifier: unaliased named imports (and their local uses), aliased imports (only

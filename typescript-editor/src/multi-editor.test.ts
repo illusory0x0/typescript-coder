@@ -3,6 +3,7 @@ import { applyResolvedRegions, parseCheck } from "./commit";
 import { renderReadFailureFeedback, renderReadFeedback, resolveMultiEditor } from "./multi-editor";
 import type { MultiEditorDeps } from "./multi-editor";
 import { parseMultiEditor } from "./selection";
+import type { Selection } from "./selection";
 import { buildIndexTolerant } from "./utility";
 import type { Locator, SymbolSpace } from "./utility";
 
@@ -1237,5 +1238,24 @@ describe("cross-file rename (#80)", () => {
       expect(source.slice(region.start, region.end)).toBe("helper");
       expect(region.text).toBe("helper2");
     }
+  });
+});
+
+describe("match with rename (#81)", () => {
+  test("rejects a rename selection that still carries a matcher", () => {
+    const files = { "src/b.ts": "export function helper(): number { return 1; }\n" };
+    const selection: Selection = {
+      locator: { path: "src/b.ts", name: "helper", kind: "function" },
+      space: null,
+      matcher: { kind: "snippet", value: "helper" },
+      pick: null,
+      replacement: null,
+      rename: { from: "helper", to: "helper2" },
+    };
+    const result = resolveMultiEditor([{ type: "editor", selection }], deps(files));
+    expect(result.regions).toEqual([]);
+    expect(result.failures).toHaveLength(1);
+    expect(result.failures[0]?.diagnostics).toContain("stage: address");
+    expect(result.failures[0]?.diagnostics).toContain("rename cannot be combined with `match`");
   });
 });

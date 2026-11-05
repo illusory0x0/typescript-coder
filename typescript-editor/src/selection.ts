@@ -13,7 +13,7 @@ export interface SelectionMatcher {
   value: string;
 }
 
-/** The `rename <from> to <to>` renamer clause: a semantic rename, not a rewrite. */
+/** The `rename <from> to <to>` renamer clause: semantic and mutually exclusive with `match`. */
 export interface RenameSpec {
   from: string;
   to: string;
@@ -1017,10 +1017,20 @@ class SelectionReader {
     let replacement: string | null = null;
     let rename: RenameSpec | null = null;
 
-    // The grammar places `match` before `replacer | renamer`, so a rename is
-    // the alternative branch after the optional match, not a suffix of a
-    // replace.
+    // The grammar places `match` before the replacer. A rename is semantic,
+    // so it rejects a preceding matcher instead of silently ignoring it.
     if (this.matchKeyword("rename")) {
+      if (matcher !== null) {
+        this.syntax(
+          "EDIT_RENAME_MATCHED",
+          "rename cannot be combined with `match`; a rename resolves the declaration semantically and never uses a matcher",
+          {
+            expected: ["rename <from> to <to>", "a viewer or replacement with match"],
+            found: "rename",
+            hint: "remove `match`; use `pick … replace with …` for a matcher-scoped rewrite",
+          },
+        );
+      }
       rename = this.parseRename();
       this.skipWhitespace();
       if (this.keywordAt("pick")) {
@@ -1825,6 +1835,11 @@ function renderFence(body: string): string {
 
 /** Render one selection back to the edit-dsl grammar (one `select … end` clause). */
 export function serializeSelection(selection: Selection): string {
+  if (selection.matcher !== null && selection.rename !== undefined && selection.rename !== null) {
+    throw new SelectionSyntaxError(
+      "cannot serialize a rename with a match; a rename is a semantic whole-symbol edit; remove `match` or use `pick … replace with …`",
+    );
+  }
   const { locator } = selection;
   let head: string;
   if (locator.kind === "file" && locator.name === "") {

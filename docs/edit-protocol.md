@@ -50,7 +50,8 @@ the failing line, column, and a short excerpt so the retry can see exactly
 where the reply stopped. A partial selection is never returned.
 
 ```text
-select [kind] <symbol> in <path> [ resolve (value|type|namespace) ] [ within <selecters> ] [ match <snippet> | match /<regex>/ ] [ [ pick <selecters> ] replace with <fence> | rename <old> to <new> end | end ]
+select [kind] <symbol> in <path> [ resolve (value|type|namespace) ] [ within <selecters> ] [ match <snippet> | match /<regex>/ ] [ [ pick <selecters> ] replace with <fence> | end ]
+select [kind] <symbol> in <path> [ resolve (value|type|namespace) ] rename <old> to <new> end
 ```
 
 The module-boundary form is the separate file-level editor:
@@ -60,7 +61,9 @@ select file <path> [ match <snippet> | match /<regex>/ ] [ pick <selecters> ] re
 ```
 
 A select clause is never a file command. A select clause with `replace` or
-`rename` is an **editor**; with neither it is a **viewer**.
+`rename` is an **editor**; with neither it is a **viewer**. `match` narrows a
+viewer or replacement; it is not part of a rename, and `rename` also cannot
+carry `within`.
 
 - **Header**: `select`, then one or two bare tokens, then `in <path>`. One token
   is the symbol; two are `<kind> <symbol>`. The admitted kinds are `function`,
@@ -124,7 +127,9 @@ A select clause is never a file command. A select clause with `replace` or
   for namespaces, enum members, and class fields (`this.field` plus same-class
   static accesses). A collision with an existing binding at the same scope or
   qualified path, or a duplicate public export name, is an `address` failure,
-  and a rename cannot be combined with `pick` or `replace`.
+  and a rename cannot be combined with `match`, `pick`, or `replace`. A
+  `match` on a rename is an `EDIT_RENAME_MATCHED` syntax error: remove the
+  matcher, or use `pick … replace with …` for a matcher-scoped rewrite.
 - **`end`** terminates a viewer or rename select clause. `create <path> end`,
   `delete <path> end`, and `read <path> end` use it too. A `replace with`,
   `create … with`, or `write … with` body ends at its `TC_EDIT_END` close, not

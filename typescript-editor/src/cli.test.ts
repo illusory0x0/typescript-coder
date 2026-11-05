@@ -796,3 +796,40 @@ describe("tsed cross-file rename", () => {
     expect(read(join(workspace, "human/b.ts"))).toBe(TARGET);
   });
 });
+
+describe("tsed match with rename", () => {
+  test("native flags reject match with rename", () => {
+    const workspace = makeWorkspace();
+    const result = run(workspace, [
+      "--select",
+      "answer",
+      "--in",
+      "src/helper.ts",
+      "--match",
+      "THIS DOES NOT EXIST",
+      "--rename",
+      "result",
+      "--dry-run",
+    ]);
+    expect(result.status).toBe(2);
+    expect(result.stderr).toContain("match and rename are mutually exclusive");
+    expect(result.stdout).toBe("");
+    expect(read(join(workspace, "src/helper.ts"))).toBe(HELPER);
+  });
+
+  test("DSL rejects match with rename", () => {
+    const workspace = makeWorkspace();
+    const reply = [
+      "select answer in src/helper.ts",
+      "match `THIS DOES NOT EXIST`",
+      "rename answer to result",
+      "end",
+      "",
+    ].join("\n");
+    const result = run(workspace, ["--protocol-format", "dsl", "--dry-run"], reply);
+    expect(result.status).toBe(1);
+    expect(result.stderr).toContain("stage: syntax");
+    expect(result.stderr).toContain("rename cannot be combined with `match`");
+    expect(read(join(workspace, "src/helper.ts"))).toBe(HELPER);
+  });
+});

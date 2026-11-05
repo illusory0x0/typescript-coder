@@ -134,12 +134,16 @@ describe("parseSelection", () => {
     expect(selection.replacement).toBeNull();
   });
 
-  test("parses a rename after a match", () => {
-    const selection = first(
+  test("rejects a rename after a match", () => {
+    const error = expectSyntax(
       "select function clamp in src/math.ts\nmatch `Number.isNaN`\nrename clamp to clampTo\nend",
+      "rename cannot be combined with `match`",
     );
-    expect(selection.matcher).toEqual({ kind: "snippet", value: "Number.isNaN" });
-    expect(selection.rename).toEqual({ from: "clamp", to: "clampTo" });
+    expect(error.issues[0]?.code).toBe("EDIT_RENAME_MATCHED");
+    expectSyntax(
+      "select helper in src/b.ts\nmatch `helper`\nrename helper to helper2\nend",
+      "rename cannot be combined with `match`",
+    );
   });
 
   test("parses a dotted rename symbol", () => {
@@ -702,7 +706,23 @@ describe("serializeSelection", () => {
     expect(parseSelection(serializeSelections(table))).toEqual(table);
   });
 
-  test("round-trips a rename clause with a dotted symbol and a match", () => {
+  test("round-trips a rename clause with a dotted symbol", () => {
+    const selection: Selection = {
+      locator: { path: "src/a.ts", name: "std.array.length", kind: "" },
+      space: null,
+      matcher: null,
+      pick: null,
+      replacement: null,
+      rename: { from: "length", to: "size" },
+    };
+    const text = serializeSelection(selection);
+    expect(text).toBe(
+      ["select std.array.length in src/a.ts", "rename length to size", "end"].join("\n"),
+    );
+    expect(parseSelection(text)).toEqual([selection]);
+  });
+
+  test("rejects serializing a rename with a match", () => {
     const selection: Selection = {
       locator: { path: "src/a.ts", name: "std.array.length", kind: "" },
       space: null,
@@ -711,16 +731,7 @@ describe("serializeSelection", () => {
       replacement: null,
       rename: { from: "length", to: "size" },
     };
-    const text = serializeSelection(selection);
-    expect(text).toBe(
-      [
-        "select std.array.length in src/a.ts",
-        "match `length`",
-        "rename length to size",
-        "end",
-      ].join("\n"),
-    );
-    expect(parseSelection(text)).toEqual([selection]);
+    expect(() => serializeSelection(selection)).toThrow(/cannot serialize a rename with a match/);
   });
 
   test("round-trips a rename clause without a match", () => {

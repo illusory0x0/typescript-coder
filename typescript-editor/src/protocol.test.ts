@@ -195,6 +195,22 @@ describe("renderEditRequest", () => {
     );
   });
 
+  test("rejects match and rename together", () => {
+    expectProtocolError(
+      () =>
+        renderEditRequest(
+          request({
+            op: "select",
+            symbol: "a",
+            path: "src/a.ts",
+            match: "return 1;",
+            rename: "b",
+          }),
+        ),
+      "match and rename are mutually exclusive",
+    );
+  });
+
   test("rejects a replacement or rewrite body carrying the fence close", () => {
     expectProtocolError(
       () =>
@@ -333,6 +349,15 @@ describe("parseJsonEditRequest", () => {
           ]),
         ),
       "mutually exclusive",
+    );
+    expectProtocolError(
+      () =>
+        parseJsonEditRequest(
+          JSON.stringify([
+            { op: "select", symbol: "a", path: "src/a.ts", match: "b", rename: "c" },
+          ]),
+        ),
+      "match and rename are mutually exclusive",
     );
   });
 });

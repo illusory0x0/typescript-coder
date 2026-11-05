@@ -397,6 +397,17 @@ export function resolveMultiEditor(
   // viewer; either its whole edit list becomes regions or it fails at address.
   for (const { selection, index } of renames) {
     const path = selection.locator.path;
+    if (selection.matcher !== null) {
+      failures.push(
+        renameFailure(
+          index,
+          path,
+          selection.locator,
+          "rename cannot be combined with `match`; a rename resolves the declaration semantically and never uses a matcher",
+        ),
+      );
+      continue;
+    }
     if (!deps.isSafePath(path)) {
       failures.push(
         renameFailure(
