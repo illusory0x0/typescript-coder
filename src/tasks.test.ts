@@ -71,12 +71,13 @@ function ids(nodes: readonly WorkNode[]): NodeId[] {
   return nodes.map((candidate) => candidate.id);
 }
 
-function gate(state: PlanRunState, id: NodeId, ok = true): void {
+function gate(state: PlanRunState, id: NodeId, ok = true, fullSuite = true): void {
   const candidate = nodeById(state, id);
   state.lastGate = {
     nodeId: id,
     verify: candidate?.verify ?? "test",
     ok,
+    fullSuite,
   };
 }
 
@@ -214,6 +215,54 @@ end`);
     expect(validatePlan("g", [node("02-a", { phase: "" })])).toContain(
       "phase must be a non-empty string",
     );
+  });
+
+  test("validates an optional test filter", () => {
+    expect(validatePlan("g", [node("02-a", { testFilter: "answer" })])).toBeNull();
+    expect(validatePlan("g", [node("02-a", { testFilter: "^answer .+ 2$" })])).toBeNull();
+    expect(validatePlan("g", [node("02-a", { testFilter: "" })])).toContain(
+      "test-filter must be a non-empty string",
+    );
+    expect(validatePlan("g", [node("02-a", { testFilter: "   " })])).toContain(
+      "test-filter must be a non-empty string",
+    );
+    expect(validatePlan("g", [node("02-a", { testFilter: "(" })])).toContain(
+      "not a valid regular expression",
+    );
+    expect(validatePlan("g", [node("02-a", { verify: "tsc", testFilter: "answer" })])).toContain(
+      'test-filter is allowed only with verify "test"',
+    );
+  });
+
+  test("an amend sets and replaces a test filter", () => {
+    const state = stateOf([node("02-a")]);
+    fail(state, "02-a");
+    const set = applyPlanReply(state, {
+      nodes: [],
+      amends: [{ id: "02-a", testFilter: "answer" }],
+    });
+    if (!set.ok) {
+      throw new Error(set.diagnostics);
+    }
+    expect(nodeById(set.state, "02-a")?.testFilter).toBe("answer");
+
+    const replaced = applyPlanReply(set.state, {
+      nodes: [],
+      amends: [{ id: "02-a", testFilter: "other" }],
+    });
+    if (!replaced.ok) {
+      throw new Error(replaced.diagnostics);
+    }
+    expect(nodeById(replaced.state, "02-a")?.testFilter).toBe("other");
+
+    const preserved = applyPlanReply(replaced.state, {
+      nodes: [],
+      amends: [{ id: "02-a", instruction: "Keep filtering." }],
+    });
+    if (!preserved.ok) {
+      throw new Error(preserved.diagnostics);
+    }
+    expect(nodeById(preserved.state, "02-a")?.testFilter).toBe("other");
   });
 });
 
@@ -434,6 +483,25 @@ describe("scheduling", () => {
 
     failedTsc.nodeStatus.set("02-a", "pending");
     expect(runComplete(failedTsc)).toBe(false);
+  });
+
+  test("a filtered green test gate is a checkpoint, not completion", () => {
+    const sliceOnly = stateOf([node("02-a", { testFilter: "answer" })]);
+    pass(sliceOnly, "02-a");
+    gate(sliceOnly, "02-a", true, false);
+    expect(runComplete(sliceOnly)).toBe(false);
+
+    const sliced = stateOf([
+      node("02-a", { testFilter: "answer" }),
+      node("03-final", { after: ["02-a"] }),
+    ]);
+    pass(sliced, "02-a");
+    gate(sliced, "02-a", true, false);
+    expect(runComplete(sliced)).toBe(false);
+
+    pass(sliced, "03-final");
+    gate(sliced, "03-final");
+    expect(runComplete(sliced)).toBe(true);
   });
 
   test("a blocked pending node does not keep a green run open", () => {

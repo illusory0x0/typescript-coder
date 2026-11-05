@@ -150,6 +150,17 @@ end`);
     expect(parsed.nodes[1]?.after).toEqual(["02-a"]);
   });
 
+  test("parses a one-line test filter", () => {
+    const parsed = accepted(`plan
+goal: g
+
+node "02-a" verify test
+instruction: First.
+test-filter: ^answer
+end`);
+    expect(parsed.nodes[0]?.testFilter).toBe("^answer");
+  });
+
   test("accepts blank lines, indentation, and CRLF", () => {
     const indented = SPEC_EXAMPLE.split("\n")
       .map((line) => `  ${line}`)
@@ -278,6 +289,52 @@ hint value a in src/a.ts
 hint value a in src/a.ts
 end`),
     ).toContain("more than once");
+  });
+
+  test("rejects invalid, duplicate, empty, and tsc test filters", () => {
+    const duplicate = rejected(`plan
+goal: g
+node "02-a" verify test
+instruction: x
+test-filter: answer
+test-filter: other
+end`);
+    expect(duplicate).toContain("PLAN_UNKNOWN_FIELD");
+    expect(duplicate).toContain("carries test-filter more than once");
+
+    const empty = parsePlanDslDetailed(`plan
+goal: g
+node "02-a" verify test
+instruction: x
+test-filter:
+end`);
+    expect(empty.ok).toBe(false);
+    expect(
+      empty.issues.some(
+        (issue) => issue.code === "PLAN_MISSING_FIELD" && issue.message.includes("test-filter"),
+      ),
+    ).toBe(true);
+    // The empty value never consumes the following line.
+    const filterIssue = empty.issues.find((issue) => issue.message.includes("test-filter"));
+    expect(filterIssue?.line).toBe(5);
+
+    const invalid = rejected(`plan
+goal: g
+node "02-a" verify test
+instruction: x
+test-filter: (
+end`);
+    expect(invalid).toContain("PLAN_STRUCTURE");
+    expect(invalid).toContain("not a valid regular expression");
+
+    const tsc = rejected(`plan
+goal: g
+node "02-a" verify tsc
+instruction: x
+test-filter: answer
+end`);
+    expect(tsc).toContain("PLAN_STRUCTURE");
+    expect(tsc).toContain('test-filter is allowed only with verify "test"');
   });
 
   test("rejects clear fields in an initial node record", () => {
@@ -563,6 +620,22 @@ describe("Plan DSL serialize", () => {
       }),
     ]);
     expect(accepted(serializePlanDsl(reply))).toEqual(reply);
+  });
+
+  test("round-trips a test filter on nodes and amends", () => {
+    const reply = plan([node("02-a", { testFilter: "answer" })]);
+    const wire = serializePlanDsl(reply);
+    expect(wire).toContain("test-filter: answer");
+    expect(accepted(wire)).toEqual(reply);
+
+    const amend: PlanReply = {
+      goal: "g",
+      nodes: [],
+      amends: [{ id: "03-impl", instruction: "x", testFilter: "^answer .+ 2$" }],
+    };
+    const amendWire = serializePlanDsl(amend);
+    expect(amendWire).toContain("test-filter: ^answer .+ 2$");
+    expect(acceptedFragment(amendWire)).toEqual(amend);
   });
 
   test("serializes amends and clears", () => {

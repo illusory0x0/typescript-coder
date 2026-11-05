@@ -14,7 +14,8 @@
  * The graph is append plus one narrow mutation: an `amend` may revise a pending,
  * failed, or just-reviewed node. There is no delete, no `finish` marker, and no
  * general patch algebra. Run success is derived from the scheduler and the last
- * gate: no node is ready and the most recent gate was a passing `test`.
+ * gate: no node is ready and the most recent gate was a passing, unfiltered
+ * `test`.
  *
  * `HintLoc.kind` is the TypeScript symbol space (`value` | `type` | `namespace`),
  * matching the edit-dsl `resolve` vocabulary, or `file` for a whole-file target.
@@ -88,6 +89,14 @@ export interface WorkNode {
   approach?: string;
   /** Optional workflow label (for example "scaffold"); not a scheduling input. */
   phase?: string;
+  /**
+   * Optional test-name filter for a `verify: "test"` node. The gate runs the
+   * configured test command with `-t <filter>` appended, so the node verifies a
+   * named slice instead of the whole suite. A filtered green gate is a
+   * checkpoint, never run completion: the run still needs a final unfiltered
+   * passing test gate. Rejected on a `verify: "tsc"` node.
+   */
+  testFilter?: string;
 }
 
 /**
@@ -112,13 +121,20 @@ export interface NodeAmend {
   hints?: HintLoc[];
   approach?: string | null;
   phase?: string | null;
+  /** Replaces the node's test filter; omitted preserves it (no clear form). */
+  testFilter?: string;
 }
 
-/** The most recent gate result; run completion is derived from it. */
+/**
+ * The most recent gate result; run completion is derived from it. `fullSuite`
+ * is true only for an unfiltered `verify: "test"` gate, so a filtered green
+ * checkpoint cannot complete the run by itself.
+ */
 export interface GateSnapshot {
   nodeId: NodeId;
   verify: WorkVerify;
   ok: boolean;
+  fullSuite: boolean;
 }
 
 /** The run state: the work graph plus harness-owned status and gate history. */
@@ -279,15 +295,17 @@ export function allNodesTerminal(state: PlanRunState): boolean {
 
 /**
  * The run is green only when no node is runnable and the most recent gate was a
- * passing `test`. Blocked pending nodes are abandoned once the suite is green;
- * earlier failed nodes are superseded in exactly the same way.
+ * passing, unfiltered `test` gate. Blocked pending nodes are abandoned once the
+ * suite is green; earlier failed nodes are superseded in exactly the same way.
+ * A filtered test gate is a checkpoint and cannot complete the run.
  */
 export function runComplete(state: PlanRunState): boolean {
   return (
     nextReadyNode(state) === undefined &&
     state.lastGate !== null &&
     state.lastGate.verify === "test" &&
-    state.lastGate.ok
+    state.lastGate.ok &&
+    state.lastGate.fullSuite
   );
 }
 
@@ -372,6 +390,16 @@ function textProblems(value: unknown, where: string, maxLength: number, problems
   }
   if (value.length > maxLength) {
     problems.push(`${where} is ${value.length} characters; keep it at most ${maxLength}`);
+  }
+}
+
+/** True when `source` compiles as a JavaScript regular expression. */
+function isValidRegex(source: string): boolean {
+  try {
+    new RegExp(source);
+    return true;
+  } catch {
+    return false;
   }
 }
 
@@ -491,6 +519,20 @@ function graphProblems(goal: string | null, nodes: readonly WorkNode[]): string[
     if (node.phase !== undefined) {
       textProblems(node.phase, `node #${node.id}.phase`, MAX_PHASE_LENGTH, problems);
     }
+    if (node.testFilter !== undefined) {
+      if (typeof node.testFilter !== "string" || node.testFilter.trim() === "") {
+        problems.push(`node #${node.id}.test-filter must be a non-empty string`);
+      } else if (!isValidRegex(node.testFilter)) {
+        problems.push(
+          `node #${node.id}.test-filter ${quote(node.testFilter)} is not a valid regular expression`,
+        );
+      }
+      if (node.verify !== "test") {
+        problems.push(
+          `node #${node.id}.test-filter is allowed only with verify "test" (got ${quote(String(node.verify))})`,
+        );
+      }
+    }
     if (!Array.isArray(node.after)) {
       problems.push(`node #${node.id}.after must be an array of node ids`);
     } else {
@@ -569,6 +611,7 @@ function cloneNode(node: WorkNode): WorkNode {
     hints: cloneHints(node.hints),
     ...(node.approach === undefined ? {} : { approach: node.approach }),
     ...(node.phase === undefined ? {} : { phase: node.phase }),
+    ...(node.testFilter === undefined ? {} : { testFilter: node.testFilter }),
   };
 }
 
@@ -582,6 +625,7 @@ function sameWorkNode(a: WorkNode, b: WorkNode): boolean {
     a.instruction === b.instruction &&
     a.approach === b.approach &&
     a.phase === b.phase &&
+    a.testFilter === b.testFilter &&
     a.after.length === b.after.length &&
     a.after.every((id, index) => id === b.after[index]) &&
     a.hints.length === b.hints.length &&
@@ -611,6 +655,7 @@ function amendedNode(node: WorkNode, amend: NodeAmend): WorkNode | null {
         : amend.approach;
   const phase =
     amend.phase === undefined ? node.phase : amend.phase === null ? undefined : amend.phase;
+  const testFilter = amend.testFilter === undefined ? node.testFilter : amend.testFilter;
   const next: WorkNode = {
     id: node.id,
     after: amend.after === undefined ? [...node.after] : [...amend.after],
@@ -619,6 +664,7 @@ function amendedNode(node: WorkNode, amend: NodeAmend): WorkNode | null {
     hints: amend.hints === undefined ? cloneHints(node.hints) : cloneHints(amend.hints),
     ...(approach === undefined ? {} : { approach }),
     ...(phase === undefined ? {} : { phase }),
+    ...(testFilter === undefined ? {} : { testFilter }),
   };
   return sameWorkNode(node, next) ? null : next;
 }

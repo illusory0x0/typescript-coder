@@ -1,7 +1,7 @@
 ---
 id: 60
 title: "Parse, execute, and gate test filters"
-status: todo
+status: done
 priority: medium
 milestone: null
 parent: 59
@@ -44,3 +44,4 @@ just typecheck && just test
 - Filtered nodes are checkpoints; the final node must be unfiltered.
 - No result-schema bump unless the node summary must expose the filter; prefer keeping `NodeSummary` unchanged.
 - File-level selectors are out of scope: the benchmark fixtures are single-file tests, so `-t <regex>` is the useful selector.
+- 2026-11-05 implementation: WorkNode.testFilter and NodeAmend.testFilter validate non-empty, valid-regex, verify-test-only filters. The Plan DSL parses one one-line test-filter: <regex> body field (duplicates, empty values, invalid regex, and tsc+filter all produce PLAN_* diagnostics), and serializes/round-trips nodes and amends. verifyNode appends -t <filter> to testCommand (code comment documents the custom-command contract); zero matches fail the Bun gate. GateSnapshot.fullSuite is true only for an unfiltered test gate, runComplete requires it, and blockedReason asks for an unfiltered final test node after a filtered green gate. NodeSummary is unchanged. Verified: bun test src/plan-dsl.test.ts src/tasks.test.ts src/task-loop.test.ts = 125 pass / 0 fail; just typecheck && just test = 1504 pass / 0 fail; just accept = 8/8. Evidence covers filtered pass/fail, zero match, filtered-green-not-complete, and final full-suite completion. No live criterion applies.

@@ -2,14 +2,6 @@
 # rewrites it; `add` appends; other writes keep it. `check` enforces it.
 # A dep, and every child of an umbrella, must be listed before its dependent.
 
-- id: 60
-  title: "Parse, execute, and gate test filters"
-  status: todo
-  priority: medium
-  milestone: null
-  parent: 59
-  deps: [58]
-  file: 0060-parse-execute-and-gate-test-filters.md
 - id: 61
   title: "Teach the planner to plan test slices"
   status: todo

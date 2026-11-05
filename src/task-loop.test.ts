@@ -400,6 +400,87 @@ describe("WorkNode DAG scheduling", () => {
   }, 30000);
 });
 
+describe("filtered test gates", () => {
+  const finalNode = () => [
+    `node "${nodeId(3, "final")}" verify test`,
+    "instruction: Change extra to 2 and keep the suite green.",
+    "hint value extra in src/extra.ts",
+    "end",
+  ];
+
+  test("a filtered green gate is a checkpoint and a final full suite completes the run", async () => {
+    const dir = project();
+    const slice = workNode(2, "slice", { testFilter: "answer" });
+    const provider = new ScriptedProvider([
+      planText([slice]),
+      BAD_EDIT,
+      GOOD_EDIT,
+      "approve",
+      replanText(...finalNode()),
+      EXTRA_EDIT,
+      "approve",
+    ]);
+    const result = await runTaskLoop(baseOptions(dir, provider));
+    expect(result.ok).toBe(true);
+    expect(result.nodes?.map((node) => [node.id, node.status])).toEqual([
+      [nodeId(2, "slice"), "passed"],
+      [nodeId(3, "final"), "passed"],
+    ]);
+
+    // The filtered slice ran twice (a failing edit, then a passing one) and the
+    // final node was the only full-suite gate.
+    const verification = result.records.filter((record) => record.kind === "verification");
+    expect(verification.map((record) => record.outcome)).toEqual(["tests", "ok", "ok"]);
+    expect(verification[0]?.locator).toMatchObject({ path: "src/helper.ts" });
+    expect(verification[2]?.locator).toMatchObject({ path: "src/extra.ts" });
+    expect(promptsStartingWith(provider, "# Work node")).toHaveLength(3);
+
+    // The filtered green gate did not complete the run: the driver asked for an
+    // unfiltered final test node first.
+    const planning = promptsStartingWith(provider, "# Work graph");
+    expect(
+      planning.some((content) => content.includes(`filtered test for #${nodeId(2, "slice")}`)),
+    ).toBe(true);
+    expect(planning.some((content) => content.includes("unfiltered verify test node"))).toBe(true);
+  }, 30000);
+
+  test("a filter that matches zero tests fails the gate and the full suite still finishes", async () => {
+    const dir = project();
+    const slice = workNode(2, "slice", { testFilter: "no-such-test-name" });
+    // The filtered gate can never pass, so a repeated rejected reply hits the
+    // existing no-progress bound and appends the full-suite node.
+    const provider = new ScriptedProvider([
+      planText([slice]),
+      GOOD_EDIT,
+      "junk",
+      "junk",
+      replanText(...finalNode()),
+      EXTRA_EDIT,
+      "approve",
+    ]);
+    const result = await runTaskLoop(baseOptions(dir, provider));
+    expect(result.ok).toBe(true);
+    expect(result.nodes?.map((node) => [node.id, node.status])).toEqual([
+      [nodeId(2, "slice"), "failed"],
+      [nodeId(3, "final"), "passed"],
+    ]);
+
+    const zeroMatch = result.records.filter(
+      (record) =>
+        record.kind === "verification" &&
+        record.locator.path === "src/helper.ts" &&
+        (record.diagnostics ?? "").includes("matched 0 tests"),
+    );
+    expect(zeroMatch.length).toBeGreaterThan(0);
+    expect(zeroMatch.every((record) => record.outcome === "tests")).toBe(true);
+
+    const verification = result.records.filter((record) => record.kind === "verification");
+    expect(verification.at(-1)?.outcome).toBe("ok");
+    expect(verification.at(-1)?.locator).toMatchObject({ path: "src/extra.ts" });
+    expect(promptsStartingWith(provider, "# Work node")).toHaveLength(4);
+  }, 30000);
+});
+
 describe("executor autonomy", () => {
   test("applies multiple clauses and actions in one atomic reply", async () => {
     const dir = project();

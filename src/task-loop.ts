@@ -1124,13 +1124,28 @@ function sourceViews(cwd: string, node: WorkNode): TaskSourceView[] {
 
 interface GateResult {
   ok: boolean;
+  /** True only when this gate actually ran the full, unfiltered test suite. */
+  fullSuite: boolean;
   diagnostics: string | null;
 }
 
 /**
+ * The test command for one node gate. A node `testFilter` is appended as
+ * `-t <regex>` (Bun's test-name pattern), so a custom `testCommand` must be a
+ * runner that accepts that flag; an unfiltered node uses the command unchanged.
+ */
+function testCommandFor(node: WorkNode, command: readonly string[] | undefined): string[] {
+  const base = command === undefined ? ["bun", "test"] : [...command];
+  return node.testFilter === undefined ? base : [...base, "-t", node.testFilter];
+}
+
+/**
  * Run the node gate after one applied reply. `verify: "tsc"` runs the check;
- * `verify: "test"` runs the check and the test suite. A gate is the only place
- * a type/test failure becomes executor diagnostics.
+ * `verify: "test"` runs the check and the test suite, narrowed to the node's
+ * `testFilter` when present. A gate is the only place a type/test failure
+ * becomes executor diagnostics. A filtered gate is a checkpoint: it never
+ * certifies the full suite, so `fullSuite` stays false and `runComplete` still
+ * requires an unfiltered test gate.
  */
 async function verifyNode(
   context: ExecutionContext,
@@ -1150,8 +1165,14 @@ async function verifyNode(
   );
   const test =
     check.ok && context.node.verify === "test"
-      ? await testTool(context.cwd, context.options.testCommand, context.options.commandTimeoutMs)
+      ? await testTool(
+          context.cwd,
+          testCommandFor(context.node, context.options.testCommand),
+          context.options.commandTimeoutMs,
+        )
       : { ok: true, exitCode: 0, output: "" };
+  const fullSuite =
+    check.ok && context.node.verify === "test" && context.node.testFilter === undefined;
   const diagnostics =
     check.ok && test.ok
       ? null
@@ -1173,7 +1194,7 @@ async function verifyNode(
     diagnostics,
     finishReason: null,
   });
-  return { ok: check.ok && test.ok, diagnostics };
+  return { ok: check.ok && test.ok, fullSuite, diagnostics };
 }
 
 function snapshotSources(cwd: string): Map<string, string> {
@@ -1487,6 +1508,9 @@ function blockedReason(state: PlanRunState): string {
   }
   if (!gate.ok) {
     return `The last ${gate.verify} gate for #${gate.nodeId} failed. Amend that node or append a repair node, then end with a test node.`;
+  }
+  if (gate.verify === "test" && !gate.fullSuite) {
+    return `The last gate was a filtered test for #${gate.nodeId}; the filter verified only a slice and a filtered green gate is only a checkpoint. Append an unfiltered verify test node (no test-filter) to complete the run.`;
   }
   return "No node is ready and the last gate was not a passing test; append the remaining work and end with a test node.";
 }
@@ -2030,7 +2054,12 @@ export async function runTaskLoop(options: LoopOptions): Promise<LoopResult> {
             wholeFileWritesSinceEdit.clear();
           }
           const gate = await verifyNode(context, bases, outcome.paths);
-          lastGate = { nodeId: node.id, verify: node.verify, ok: gate.ok };
+          lastGate = {
+            nodeId: node.id,
+            verify: node.verify,
+            ok: gate.ok,
+            fullSuite: gate.fullSuite,
+          };
           if (gate.ok) {
             return { kind: "passed", gate: lastGate };
           }

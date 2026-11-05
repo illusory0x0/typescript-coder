@@ -6,8 +6,8 @@
  * in wire order: `node` appends one work node, and `amend` revises a pending,
  * failed, or just-reviewed node. There is no patch algebra, no delete, and no
  * `finish` marker: the run completes when no node is ready and the last gate was
- * a passing `test`. The graph model and validator live in `src/tasks.ts`; this
- * module only turns the wire form into that model.
+ * a passing, unfiltered `test`. The graph model and validator live in
+ * `src/tasks.ts`; this module only turns the wire form into that model.
  *
  * Parsing is tolerant in the same ways as the edit DSL: a whole-reply fence, a
  * bare id, an unambiguous missing `end`, and one trailing `end`/`</plan>` after
@@ -286,7 +286,7 @@ function isRecordBoundary(trimmed: string): boolean {
 function looksLikeField(trimmed: string): boolean {
   return (
     /^[A-Za-z][\w-]*:/.test(trimmed) ||
-    /^(verify|related|hint|after|approach|phase)\b/.test(trimmed)
+    /^(verify|related|hint|after|approach|phase|test-filter)\b/.test(trimmed)
   );
 }
 
@@ -713,6 +713,7 @@ interface NodeBody {
   hints?: HintLoc[];
   approach?: string | null;
   phase?: string | null;
+  testFilter?: string;
 }
 
 /**
@@ -729,6 +730,7 @@ function parseNodeBody(cursor: Cursor, id: NodeId, options: NodeBodyOptions): No
   let hintsSeen = false;
   let approachSeen = false;
   let phaseSeen = false;
+  let testFilterSeen = false;
 
   for (;;) {
     const next = peekNonBlank(cursor);
@@ -775,6 +777,37 @@ function parseNodeBody(cursor: Cursor, id: NodeId, options: NodeBodyOptions): No
       }
       instructionSeen = true;
       body.instruction = readText(cursor, "instruction:", `node ${id}`, id);
+      continue;
+    }
+
+    if (trimmed.startsWith("test-filter:")) {
+      if (testFilterSeen) {
+        fail(cursor, "PLAN_UNKNOWN_FIELD", `node ${id} carries test-filter more than once`, {
+          line: next.number,
+          recordId: id,
+          hint: "keep exactly one test-filter field",
+        });
+      }
+      testFilterSeen = true;
+      cursor.position += 1;
+      // One line only: the rest of this line is the regex. An empty value is
+      // an error and never consumes the following line.
+      const filter = trimmed.slice("test-filter:".length).trim();
+      if (filter === "") {
+        fail(
+          cursor,
+          "PLAN_MISSING_FIELD",
+          `test-filter for node ${id} must be a non-empty regex on the same line`,
+          {
+            line: next.number,
+            expected: ["test-filter: <regex>"],
+            found: trimmed,
+            recordId: id,
+            hint: "write test-filter: <test-name regex> on one line",
+          },
+        );
+      }
+      body.testFilter = filter;
       continue;
     }
 
@@ -1030,6 +1063,7 @@ function parseNode(cursor: Cursor, header: Line, ids: Map<NodeId, Line>): WorkNo
     hints: body.hints ?? [],
     ...optionalText(body.approach),
     ...(body.phase === undefined || body.phase === null ? {} : { phase: body.phase }),
+    ...(body.testFilter === undefined ? {} : { testFilter: body.testFilter }),
   };
 }
 
@@ -1070,15 +1104,16 @@ function parseAmend(cursor: Cursor, header: Line): NodeAmend {
     ...(body.hints === undefined ? {} : { hints: body.hints }),
     ...(body.approach === undefined ? {} : { approach: body.approach }),
     ...(body.phase === undefined ? {} : { phase: body.phase }),
+    ...(body.testFilter === undefined ? {} : { testFilter: body.testFilter }),
   };
   if (Object.keys(amend).length === 1) {
     const next = peekNonBlank(cursor);
     fail(cursor, "PLAN_MISSING_FIELD", `amend #${id} needs at least one replacement field`, {
       line: next?.number ?? header.number,
-      expected: ["instruction:", "verify", "after", "hint", "approach:", "phase:"],
+      expected: ["instruction:", "verify", "after", "hint", "approach:", "phase:", "test-filter:"],
       found: next?.text.trim() ?? "<eof>",
       recordId: id,
-      hint: "change instruction, verify, dependencies, hints, approach, or phase",
+      hint: "change instruction, verify, dependencies, hints, approach, phase, or test-filter",
     });
   }
   return amend;
@@ -1636,6 +1671,9 @@ function pushAmend(lines: string[], amend: NodeAmend): void {
       pushHints(lines, amend.hints);
     }
   }
+  if (amend.testFilter !== undefined) {
+    lines.push(`test-filter: ${amend.testFilter}`);
+  }
   if (amend.approach !== undefined) {
     if (amend.approach === null) {
       lines.push("approach clear");
@@ -1667,6 +1705,9 @@ export function serializePlanDsl(plan: PlanWire): string {
     lines.push("", nodeHeaderWire(node.id, node.after, node.verify));
     pushText(lines, "instruction:", node.instruction);
     pushHints(lines, node.hints);
+    if (node.testFilter !== undefined) {
+      lines.push(`test-filter: ${node.testFilter}`);
+    }
     if (node.approach !== undefined) {
       pushText(lines, "approach:", node.approach);
     }
