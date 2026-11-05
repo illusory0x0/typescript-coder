@@ -6,13 +6,14 @@ owner; this page is the map, the vocabulary, and the reading order.
 
 ## Documentation map
 
-| Document                               | Owns                                                                                                                                                                                       |
-| -------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
-| [`feedback-loop.md`](feedback-loop.md) | Cross-mode lifecycle: AgentMode, rounds/exchanges, pinned-repair Edit → Verify, failure/termination policy, caps, records/result, `runLoop`.                                               |
-| [`plan-exec.md`](plan-exec.md)         | Plan → Execute: WorkNode DAG model, Plan DSL and amend records, planning/review, validation, scheduling, executor autonomy, gates, progress bounds, CLI/result, limitations, verification. |
-| [`edit-protocol.md`](edit-protocol.md) | Edit-action reply language: edit-dsl, sentinel fence, select clause/file command grammar (BNF), cascade, viewers/editors, failure stages, application/gating, repair feedback, skeleton.   |
-| [`glossary.yaml`](glossary.yaml)       | Benchmark/test/evaluation terminology: harnesses, judge, metrics, USD cost, replay, artifacts.                                                                                             |
-| [`roadmap.md`](roadmap.md)             | Repository direction and package layout: current monorepo state, near-term work, evaluation policy, long-term direction. Not protocol semantics.                                           |
+| Document                                                           | Owns                                                                                                                                                                                       |
+| ------------------------------------------------------------------ | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
+| [`feedback-loop.md`](feedback-loop.md)                             | Cross-mode lifecycle: AgentMode, rounds/exchanges, pinned-repair Edit → Verify, failure/termination policy, caps, records/result, `runLoop`.                                               |
+| [`plan-exec.md`](plan-exec.md)                                     | Plan → Execute: WorkNode DAG model, Plan DSL and amend records, planning/review, validation, scheduling, executor autonomy, gates, progress bounds, CLI/result, limitations, verification. |
+| [`edit-protocol.md`](edit-protocol.md)                             | Edit-action reply language: edit-dsl, sentinel fence, select clause/file command grammar (BNF), cascade, viewers/editors, failure stages, application/gating, repair feedback, skeleton.   |
+| [`glossary.yaml`](glossary.yaml)                                   | Benchmark/test/evaluation terminology: harnesses, judge, metrics, USD cost, replay, artifacts.                                                                                             |
+| [`roadmap.md`](roadmap.md)                                         | Repository direction and package layout: current monorepo state, near-term work, evaluation policy, long-term direction. Not protocol semantics.                                           |
+| [`../typescript-editor/README.md`](../typescript-editor/README.md) | `tsed` CLI input formats/exit codes/path safety, the typed read/apply API, the editor tool, and scs regeneration.                                                                          |
 
 Recommended reading order:
 
@@ -28,9 +29,12 @@ Recommended reading order:
 ## Package ownership
 
 - `typescript-editor/` owns the editing engine: lexer/parser, symbol index,
-  matcher, selection, edit-dsl, cascade, and the splice/format/commit gate.
+  matcher, selection, edit-dsl, cascade, and the splice/format/commit gate. It
+  also owns the scs-generated `tsed` CLI surface, the typed read/apply API, and
+  the OpenAI-compatible editor tool; its README owns those interfaces.
 - `harness/` owns the agent loops, prompts, provider, tools, CLI, result
-  contract, pricing, and replay.
+  contract, pricing, and replay. It consumes the editor's public API/tool
+  surface and does not define the edit-dsl grammar.
 - `acceptance/` and `benchmark/` are top-level evaluation harnesses;
   `acceptance/offline/` is network-free and `acceptance/live/` is the opt-in
   real-model lane.

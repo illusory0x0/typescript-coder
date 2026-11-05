@@ -2,14 +2,6 @@
 # rewrites it; `add` appends; other writes keep it. `check` enforces it.
 # A dep, and every child of an umbrella, must be listed before its dependent.
 
-- id: 72
-  title: "Document and verify the tsed CLI and library surface"
-  status: todo
-  priority: medium
-  milestone: null
-  parent: 68
-  deps: [69, 70, 71]
-  file: 0072-document-and-verify-the-tsed-cli-and-library-surface.md
 - id: 68
   title: "Ship tsed as a scs-generated CLI and tool-use library"
   status: todo

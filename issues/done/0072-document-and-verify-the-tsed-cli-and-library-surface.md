@@ -1,7 +1,7 @@
 ---
 id: 72
 title: "Document and verify the tsed CLI and library surface"
-status: todo
+status: done
 priority: medium
 milestone: null
 parent: 68
@@ -38,9 +38,9 @@ surface.
 just typecheck && just test
 just accept
 just tsed-check
-bun run typescript-editor/src/cli.ts --protocol-format flag --read src/helper.ts
-printf 'read src/helper.ts end\n' | bun run typescript-editor/src/cli.ts --protocol-format dsl
-printf '{"operations":[{"op":"read","path":"src/helper.ts"}]}\n' | bun run typescript-editor/src/cli.ts --protocol-format json
+bun run typescript-editor/src/cli.ts --protocol-format flag --read typescript-editor/src/index.ts
+printf 'read typescript-editor/src/index.ts end\n' | bun run typescript-editor/src/cli.ts --protocol-format dsl
+printf '{"operations":[{"op":"read","path":"typescript-editor/src/index.ts"}]}\n' | bun run typescript-editor/src/cli.ts --protocol-format json
 ```
 
 ## Notes
@@ -50,3 +50,4 @@ printf '{"operations":[{"op":"read","path":"src/helper.ts"}]}\n' | bun run types
 - `flag` is the default native shape; `dsl` and `json` read stdin.
 - Keep the generated artifacts committed so a clone does not need `scs` to
   typecheck or test; the offline check skips when `scs` is absent.
+- Documented the tsed surface in typescript-editor/README.md (three input formats, --write default, -C path safety, exit codes, JSON operation schema, library read/apply API, tool schema, regeneration policy). Updated root README, docs/README, docs/roadmap, and AGENTS entrypoints; added just tsed-generate/tsed-check targets. Added scripts/tsed-check.test.ts, which runs scs generate --check and skips when scs is absent. Existing cli tests cover flag read, dsl read-only, dsl --write, json --write, and failed writes that leave files unchanged. Verified just typecheck && just test (editor 871, harness 703, scripts 16, acceptance 9/9), just accept, and just tsed-check. No prompt or benchmark behavior changed; generated completions are scs output.

@@ -17,6 +17,14 @@ test-parallel jobs=`nproc`:
 accept *args:
     bun run acceptance/run.ts {{args}}
 
+# Regenerate the committed tsed parser/help/completions from its .scs source.
+tsed-generate:
+    scs generate typescript-editor/scs/tsed.scs --out typescript-editor/scs/generated --targets ts,runtime,bash,zsh,fish,elvish,pwsh,nu
+
+# Verify the committed tsed generated artifacts match the .scs source.
+tsed-check:
+    scs generate typescript-editor/scs/tsed.scs --out typescript-editor/scs/generated --targets ts,runtime,bash,zsh,fish,elvish,pwsh,nu --check
+
 # Format the tree with oxfmt.
 format:
     bunx oxfmt

@@ -11,6 +11,10 @@ root [`README.md`](../README.md).
   and `harness/`.
 - `typescript-editor/` has no dependency on `harness/`; `harness/` depends on
   `@tc/typescript-editor`.
+- `typescript-editor/` ships the scs-generated `tsed` CLI, the typed
+  `readEditDsl`/`applyEditDsl` API, and the `tsed` editor tool; the `.scs`
+  declaration is the source of truth for the CLI surface. The harness registers
+  the tool but the default text loop does not use it.
 - `acceptance/` and `benchmark/` are top-level evaluation harnesses.
 - The deterministic offline path — the `just test` offline lane (package unit
   suites, repository scripts, offline acceptance), typecheck, and the package
@@ -21,6 +25,12 @@ root [`README.md`](../README.md).
 
 - Keep the package boundary clean: `typescript-editor/` never imports
   `harness/`.
+- Keep `typescript-editor/scs/tsed.scs` as the source of truth for the CLI
+  surface; regenerate with `just tsed-generate` and verify with
+  `just tsed-check`. Keep the generated artifacts committed and never
+  hand-edit them.
+- Keep the public editor surface (`readEditDsl`/`applyEditDsl`,
+  `editorTool`/`dispatchEditorTool`) and its README current with the code.
 - Strengthen deterministic editor tests and the matcher corpus, and extend
   offline acceptance scenarios.
 - Keep prompt text and protocol behavior frozen during layout and refactor
@@ -50,5 +60,6 @@ root [`README.md`](../README.md).
 ## Long-term direction
 
 Treat `typescript-editor/` as a reusable standalone library with a small,
-stable public surface. Publishing or consuming it outside this repository is a
-possibility only if a real consumer appears; it is not a commitment.
+stable public surface. The read/apply API and editor tool are that surface;
+publishing or consuming it outside this repository is a possibility only if a
+real consumer appears; it is not a commitment.
