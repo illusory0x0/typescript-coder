@@ -72,6 +72,11 @@ digraph issues {
   "65" [label="#65 Move the agent harness into the harness workspace package"];
   "66" [label="#66 Rewire root tooling and top-level harnesses onto the workspace packages"];
   "67" [label="#67 Document the monorepo, package boundaries, and roadmap"];
+  "68" [label="#68 Ship tsed as a scs-generated CLI and tool-use library"];
+  "69" [label="#69 Add a typed read/apply API to typescript-editor"];
+  "70" [label="#70 Generate the tsed CLI from an scs declaration"];
+  "71" [label="#71 Expose edit-dsl as a harness tool/function"];
+  "72" [label="#72 Document and verify the tsed CLI and library surface"];
 
   // parent edges (parent -> child), solid
   "1" -> "2";
@@ -121,6 +126,10 @@ digraph issues {
   "63" -> "65";
   "63" -> "66";
   "63" -> "67";
+  "68" -> "69";
+  "68" -> "70";
+  "68" -> "71";
+  "68" -> "72";
 
   // dependency edges (blocker -> blocked), dashed
   "2" -> "3" [style=dashed, label="blocks"];
@@ -176,4 +185,9 @@ digraph issues {
   "64" -> "65" [style=dashed, label="blocks"];
   "65" -> "66" [style=dashed, label="blocks"];
   "66" -> "67" [style=dashed, label="blocks"];
+  "69" -> "70" [style=dashed, label="blocks"];
+  "69" -> "71" [style=dashed, label="blocks"];
+  "69" -> "72" [style=dashed, label="blocks"];
+  "70" -> "72" [style=dashed, label="blocks"];
+  "71" -> "72" [style=dashed, label="blocks"];
 }

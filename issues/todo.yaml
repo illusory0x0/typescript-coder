@@ -1,3 +1,44 @@
 # Open issues in picking order. This order is authoritative: `reorder`
 # rewrites it; `add` appends; other writes keep it. `check` enforces it.
 # A dep, and every child of an umbrella, must be listed before its dependent.
+
+- id: 69
+  title: "Add a typed read/apply API to typescript-editor"
+  status: todo
+  priority: medium
+  milestone: null
+  parent: 68
+  deps: []
+  file: 0069-add-a-typed-read-apply-api-to-typescript-editor.md
+- id: 70
+  title: "Generate the tsed CLI from an scs declaration"
+  status: todo
+  priority: medium
+  milestone: null
+  parent: 68
+  deps: [69]
+  file: 0070-generate-the-tsed-cli-from-an-scs-declaration.md
+- id: 71
+  title: "Expose edit-dsl as a harness tool/function"
+  status: todo
+  priority: medium
+  milestone: null
+  parent: 68
+  deps: [69]
+  file: 0071-expose-edit-dsl-as-a-harness-tool-function.md
+- id: 72
+  title: "Document and verify the tsed CLI and library surface"
+  status: todo
+  priority: medium
+  milestone: null
+  parent: 68
+  deps: [69, 70, 71]
+  file: 0072-document-and-verify-the-tsed-cli-and-library-surface.md
+- id: 68
+  title: "Ship tsed as a scs-generated CLI and tool-use library"
+  status: todo
+  priority: medium
+  milestone: null
+  parent: null
+  deps: []
+  file: 0068-ship-tsed-as-a-scs-generated-cli-and-tool-use-library.md
