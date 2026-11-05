@@ -11,6 +11,16 @@ gateway and packaged as a sub-agent for opencode. Bun runtime, no build step.
   formatter rewrites. Format only files outside `human/`; do not run a
   repo-wide formatter that rewrites it.
 
+## Editing code
+
+Prefer `tsed` for TypeScript code edits (install it with `just tsed-install` if
+needed); use ordinary file tools for docs, config, generated files, and
+non-TypeScript files. If `tsed` cannot express or reliably apply an edit after a
+reasonable attempt, file an issue in the local tracker (use the `file-issue`
+skill) describing the limitation, then fall back to another editing method so
+the task still lands. Do not silently work around a `tsed` limitation without
+recording it.
+
 ## Commands (there is no CI; `just` is the source of truth)
 
 ```sh
