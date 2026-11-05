@@ -165,6 +165,21 @@ that were written; dry runs print `would change:`, `would create:`, and
 `would delete:` instead and write nothing. A failed reply writes nothing; a
 failed read is reported but does not discard a clean mutation.
 
+### Renames
+
+`--rename` rewrites the selected declaration and every same-file reference. A
+top-level declaration that the target file exports as a named export also
+updates workspace files that import or re-export it through a relative
+specifier: unaliased named imports (and their local uses), aliased imports (only
+the imported name), and named re-exports (the source-side name; an alias keeps
+its public name). The rename is rejected if the target or an affected importer
+would export the new name twice, and a dry run lists every affected file.
+
+Cross-file renames do not follow default or namespace imports, `import =`, or
+dynamic imports, and do not resolve path aliases or traverse barrel/re-export
+chains. The target file's public export name must change for importers to be
+updated, so a binding exported only under an alias stays a same-file rename.
+
 ### Workspace and path safety
 
 `-C, --directory DIR` selects the workspace root; the default is the current
@@ -244,7 +259,9 @@ scs generate typescript-editor/scs/tsed.scs \
 
 A clone does not need `scs` to typecheck, test, or run `tsed`: the generated
 surface is committed. The offline generated-surface test skips when `scs` is not
-on `PATH`; `just tsed-check` always runs it.
+on `PATH`; `just tsed-check` always runs it. The generated TypeScript is
+committed as raw `scs` output; do not run a formatter over `scs/generated/`, or
+`just tsed-check` will report the formatted files as stale.
 
 ## Tests
 

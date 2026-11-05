@@ -2,6 +2,8 @@ import { describe, expect, test } from "bun:test";
 import { resolveLocalRename } from "./rename";
 import type { RenameEdit } from "./rename";
 import type { Locator } from "./utility";
+import { resolveWorkspaceRename } from "./workspace-rename";
+import type { WorkspaceRenameDeps, WorkspaceRenameResult } from "./workspace-rename";
 
 function apply(source: string, edits: readonly RenameEdit[]): string {
   let result = source;
@@ -492,5 +494,280 @@ describe("resolveLocalRename", () => {
       expect(result.diagnostics).toContain("cannot resolve");
       expect(result.diagnostics).toContain("missing");
     }
+  });
+});
+
+function workspaceDeps(files: Record<string, string>): WorkspaceRenameDeps {
+  return {
+    sourceFor: (path) => files[path] ?? "",
+    fileExists: (path) => Object.prototype.hasOwnProperty.call(files, path),
+    isSafePath: (path) => Object.prototype.hasOwnProperty.call(files, path),
+    listFiles: () => Object.keys(files),
+  };
+}
+
+function workspaceRename(
+  files: Record<string, string>,
+  path: string,
+  name: string,
+  kind: string,
+  from: string,
+  to: string,
+  position?: number,
+): WorkspaceRenameResult {
+  return resolveWorkspaceRename(
+    files[path] ?? "",
+    path,
+    { path, name, kind },
+    { from, to },
+    workspaceDeps(files),
+    { position },
+  );
+}
+
+function applyWorkspaceRename(
+  files: Record<string, string>,
+  result: WorkspaceRenameResult,
+): Record<string, string> {
+  if (!result.ok) {
+    throw new Error(result.diagnostics);
+  }
+  const output = { ...files };
+  for (const file of result.files) {
+    output[file.path] = apply(output[file.path] ?? "", file.edits);
+  }
+  return output;
+}
+
+describe("resolveWorkspaceRename", () => {
+  const TARGET = ["export function helper(): number {", "  return 1;", "}", ""].join("\n");
+
+  test("updates an unaliased named import and every local use", () => {
+    const files = {
+      "src/a.ts": ['import { helper } from "./b";', "export const n = helper();", ""].join("\n"),
+      "src/b.ts": TARGET,
+    };
+    const result = workspaceRename(files, "src/b.ts", "helper", "function", "helper", "helper2");
+    expect(result.ok).toBe(true);
+    if (!result.ok) {
+      return;
+    }
+    expect(result.files.map((file) => file.path).sort()).toEqual(["src/a.ts", "src/b.ts"]);
+    const output = applyWorkspaceRename(files, result);
+    expect(output["src/a.ts"]).toBe(
+      ['import { helper2 } from "./b";', "export const n = helper2();", ""].join("\n"),
+    );
+    expect(output["src/b.ts"]).toContain("export function helper2");
+  });
+
+  test("updates only the imported name of an aliased import", () => {
+    const files = {
+      "src/a.ts": ['import { helper as h } from "./b";', "export const n = h();", ""].join("\n"),
+      "src/b.ts": TARGET,
+    };
+    const result = workspaceRename(files, "src/b.ts", "helper", "function", "helper", "helper2");
+    const output = applyWorkspaceRename(files, result);
+    expect(output["src/a.ts"]).toBe(
+      ['import { helper2 as h } from "./b";', "export const n = h();", ""].join("\n"),
+    );
+  });
+
+  test("updates named re-export specifiers and preserves aliases", () => {
+    const files = {
+      "src/c.ts": [
+        'export { helper } from "./b";',
+        'export { helper as publicHelper } from "./b";',
+        "",
+      ].join("\n"),
+      "src/b.ts": TARGET,
+    };
+    const result = workspaceRename(files, "src/b.ts", "helper", "function", "helper", "helper2");
+    const output = applyWorkspaceRename(files, result);
+    expect(output["src/c.ts"]).toBe(
+      ['export { helper2 } from "./b";', 'export { helper2 as publicHelper } from "./b";', ""].join(
+        "\n",
+      ),
+    );
+  });
+
+  test("keeps an aliased public export name and its importers unchanged", () => {
+    const files = {
+      "src/a.ts": [
+        'import { publicHelper } from "./b";',
+        "export const n = publicHelper();",
+        "",
+      ].join("\n"),
+      "src/b.ts": [
+        "function helper(): number {",
+        "  return 1;",
+        "}",
+        "export { helper as publicHelper };",
+        "",
+      ].join("\n"),
+    };
+    const result = workspaceRename(files, "src/b.ts", "helper", "function", "helper", "helper2");
+    expect(result.ok).toBe(true);
+    if (!result.ok) {
+      return;
+    }
+    expect(result.files.map((file) => file.path)).toEqual(["src/b.ts"]);
+    const output = applyWorkspaceRename(files, result);
+    expect(output["src/b.ts"]).toContain("export { helper2 as publicHelper };");
+    expect(output["src/a.ts"]).toBe(files["src/a.ts"]);
+  });
+
+  test("rejects a target file that already exports the new name", () => {
+    const files = {
+      "src/other.ts": ["export function other(): number {", "  return 2;", "}", ""].join("\n"),
+      "src/b.ts": [
+        "export function helper(): number {",
+        "  return 1;",
+        "}",
+        'export { other as helper2 } from "./other";',
+        "",
+      ].join("\n"),
+    };
+    const result = workspaceRename(files, "src/b.ts", "helper", "function", "helper", "helper2");
+    expect(result.ok).toBe(false);
+    if (result.ok) {
+      return;
+    }
+    expect(result.path).toBe("src/b.ts");
+    expect(result.diagnostics).toContain("collision");
+    expect(result.diagnostics).toContain("helper2");
+  });
+
+  test("rejects a re-export collision in an importer", () => {
+    const files = {
+      "src/c.ts": ['export { helper } from "./b";', 'export { helper2 } from "./other";', ""].join(
+        "\n",
+      ),
+      "src/other.ts": ["export function helper2(): number {", "  return 2;", "}", ""].join("\n"),
+      "src/b.ts": TARGET,
+    };
+    const result = workspaceRename(files, "src/b.ts", "helper", "function", "helper", "helper2");
+    expect(result.ok).toBe(false);
+    if (result.ok) {
+      return;
+    }
+    expect(result.path).toBe("src/c.ts");
+    expect(result.diagnostics).toContain("collision");
+  });
+
+  test("ignores imports whose specifier resolves to another file", () => {
+    const files = {
+      "src/a.ts": ['import { helper } from "./c";', "export const n = helper();", ""].join("\n"),
+      "src/c.ts": TARGET,
+      "src/b.ts": TARGET,
+    };
+    const result = workspaceRename(files, "src/b.ts", "helper", "function", "helper", "helper2");
+    expect(result.ok).toBe(true);
+    if (!result.ok) {
+      return;
+    }
+    expect(result.files.map((file) => file.path)).toEqual(["src/b.ts"]);
+  });
+
+  test("does not cross-file a nested same-named binding", () => {
+    const source = [
+      "function run(): number {",
+      "  const helper = 1;",
+      "  return helper;",
+      "}",
+      "export function helper(): number {",
+      "  return 2;",
+      "}",
+      "",
+    ].join("\n");
+    const files = {
+      "src/a.ts": ['import { helper } from "./b";', "export const n = helper();", ""].join("\n"),
+      "src/b.ts": source,
+    };
+    const nested = source.indexOf("const helper = 1") + "const ".length;
+    const result = workspaceRename(
+      files,
+      "src/b.ts",
+      "helper",
+      "const",
+      "helper",
+      "amount",
+      nested,
+    );
+    expect(result.ok).toBe(true);
+    if (!result.ok) {
+      return;
+    }
+    expect(result.files.map((file) => file.path)).toEqual(["src/b.ts"]);
+    const output = applyWorkspaceRename(files, result);
+    expect(output["src/b.ts"]).toContain("const amount = 1;");
+    expect(output["src/b.ts"]).toContain("export function helper()");
+    expect(output["src/a.ts"]).toBe(files["src/a.ts"]);
+  });
+
+  test("resolves extensionless and index module specifiers", () => {
+    const files = {
+      "src/a.ts": ['import { helper } from "./lib";', "export const n = helper();", ""].join("\n"),
+      "src/lib/index.ts": TARGET,
+    };
+    const result = workspaceRename(
+      files,
+      "src/lib/index.ts",
+      "helper",
+      "function",
+      "helper",
+      "helper2",
+    );
+    const output = applyWorkspaceRename(files, result);
+    expect(output["src/a.ts"]).toContain('import { helper2 } from "./lib";');
+  });
+
+  test("updates only the imported name of a same-name alias", () => {
+    const files = {
+      "src/a.ts": [
+        'import { helper as helper } from "./b";',
+        "export const n = helper();",
+        "",
+      ].join("\n"),
+      "src/b.ts": TARGET,
+    };
+    const result = workspaceRename(files, "src/b.ts", "helper", "function", "helper", "helper2");
+    const output = applyWorkspaceRename(files, result);
+    expect(output["src/a.ts"]).toBe(
+      ['import { helper2 as helper } from "./b";', "export const n = helper();", ""].join("\n"),
+    );
+  });
+
+  test("resolves NodeNext .js specifiers to TypeScript sources", () => {
+    const files = {
+      "src/a.ts": ['import { helper } from "./b.js";', "export const n = helper();", ""].join("\n"),
+      "src/b.ts": TARGET,
+    };
+    const result = workspaceRename(files, "src/b.ts", "helper", "function", "helper", "helper2");
+    const output = applyWorkspaceRename(files, result);
+    expect(output["src/a.ts"]).toBe(
+      ['import { helper2 } from "./b.js";', "export const n = helper2();", ""].join("\n"),
+    );
+  });
+
+  test("updates string-literal import and re-export names", () => {
+    const files = {
+      "src/a.ts": [
+        'import { "helper" as h } from "./b";',
+        "export const n = h();",
+        'export { "helper" as publicHelper } from "./b";',
+        "",
+      ].join("\n"),
+      "src/b.ts": TARGET,
+    };
+    const result = workspaceRename(files, "src/b.ts", "helper", "function", "helper", "helper2");
+    const output = applyWorkspaceRename(files, result);
+    expect(output["src/a.ts"]).toBe(
+      [
+        'import { helper2 as h } from "./b";',
+        "export const n = h();",
+        'export { helper2 as publicHelper } from "./b";',
+        "",
+      ].join("\n"),
+    );
   });
 });

@@ -923,8 +923,10 @@ summaries; the historical `@1` schema used numeric task/edit ids.
 - **Imports/exports use a file-level owner.** `select file … replace` edits one
   existing import/export statement or specifier, and `create import|export`
   inserts one statement after the shebang, directives, and existing imports.
-- **Rename is same-file.** Cross-file renames need caller edits first, or
-  escalation.
+- **Rename follows named import/re-export edges.** A top-level declaration rename
+  also updates direct relative named imports/re-exports in the workspace; default
+  and namespace imports, `import =`, dynamic imports, path aliases, and
+  barrel/re-export chains remain out of scope and need caller edits or escalation.
 - **Planner inspection is budget-bounded.** The planner sees the signature index
   and spec files, and may make read-only `select`/`read` viewer requests.
 - **Passed nodes are immutable.** Later work goes in a new node.

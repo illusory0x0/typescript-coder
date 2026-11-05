@@ -727,3 +727,72 @@ describe("tsed stdin protocols", () => {
     expect(result.stderr).toContain("--protocol-format json");
   });
 });
+
+describe("tsed cross-file rename", () => {
+  const IMPORTER = ['import { helper } from "./b";', "export const n = helper();", ""].join("\n");
+  const TARGET = "export function helper(): number { return 1; }\n";
+
+  test("--dry-run reports the target and every importer, then --write updates them", () => {
+    const workspace = makeWorkspace({ "src/a.ts": IMPORTER, "src/b.ts": TARGET });
+    const args = ["--select", "helper", "--in", "src/b.ts", "--rename", "helper2"];
+
+    const preview = run(workspace, [...args, "--dry-run"]);
+    expect(preview.status).toBe(0);
+    expect(preview.stdout).toContain("would change: src/a.ts");
+    expect(preview.stdout).toContain("would change: src/b.ts");
+    expect(preview.stderr).toBe("");
+    expect(read(join(workspace, "src/a.ts"))).toBe(IMPORTER);
+    expect(read(join(workspace, "src/b.ts"))).toBe(TARGET);
+
+    const applied = run(workspace, [...args, "--write"]);
+    expect(applied.status).toBe(0);
+    expect(applied.stdout).toContain("changed: src/a.ts");
+    expect(applied.stdout).toContain("changed: src/b.ts");
+    expect(applied.stderr).toBe("");
+    expect(read(join(workspace, "src/a.ts"))).toBe(
+      ['import { helper2 } from "./b";', "export const n = helper2();", ""].join("\n"),
+    );
+    expect(read(join(workspace, "src/b.ts"))).toContain("export function helper2");
+  });
+
+  test("a collision fails with an address diagnostic and writes nothing", () => {
+    const target = [
+      "export function helper(): number { return 1; }",
+      "export function helper2(): number { return 2; }",
+      "",
+    ].join("\n");
+    const workspace = makeWorkspace({ "src/a.ts": IMPORTER, "src/b.ts": target });
+    const result = run(workspace, [
+      "--select",
+      "helper",
+      "--in",
+      "src/b.ts",
+      "--rename",
+      "helper2",
+      "--dry-run",
+    ]);
+    expect(result.status).toBe(1);
+    expect(result.stderr).toContain("stage: address");
+    expect(result.stderr).toContain("collision");
+    expect(result.stderr).toContain("helper2");
+    expect(result.stdout).not.toContain("would change:");
+    expect(read(join(workspace, "src/a.ts"))).toBe(IMPORTER);
+    expect(read(join(workspace, "src/b.ts"))).toBe(target);
+  });
+
+  test("a protected target path is rejected", () => {
+    const workspace = makeWorkspace({ "human/b.ts": TARGET });
+    const result = run(workspace, [
+      "--select",
+      "helper",
+      "--in",
+      "human/b.ts",
+      "--rename",
+      "helper2",
+      "--dry-run",
+    ]);
+    expect(result.status).toBe(1);
+    expect(result.stderr).toContain("outside the editable workspace");
+    expect(read(join(workspace, "human/b.ts"))).toBe(TARGET);
+  });
+});

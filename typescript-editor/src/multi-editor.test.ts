@@ -28,6 +28,7 @@ function resolveEntryIn(
 function deps(
   files: Record<string, string>,
   unsafe: ReadonlySet<string> = new Set(),
+  listFiles?: readonly string[],
 ): MultiEditorDeps {
   return {
     sourceFor: (path) => files[path] ?? "",
@@ -35,11 +36,17 @@ function deps(
     pathExists: (path) => Object.prototype.hasOwnProperty.call(files, path),
     isSafePath: (path) => !unsafe.has(path),
     resolveEntry: resolveEntryIn,
+    ...(listFiles === undefined ? {} : { listFiles: () => listFiles }),
   };
 }
 
-function resolve(text: string, files: Record<string, string>, unsafe?: ReadonlySet<string>) {
-  return resolveMultiEditor(parseMultiEditor(text), deps(files, unsafe));
+function resolve(
+  text: string,
+  files: Record<string, string>,
+  unsafe?: ReadonlySet<string>,
+  listFiles?: readonly string[],
+) {
+  return resolveMultiEditor(parseMultiEditor(text), deps(files, unsafe, listFiles));
 }
 
 describe("resolveMultiEditor file commands", () => {
@@ -1204,5 +1211,31 @@ describe("nested declaration addresses (#52)", () => {
     expect(result.regions).toEqual([]);
     expect(result.failures[0]?.stage).toBe("address");
     expect(result.failures[0]?.diagnostics).toContain("destructuring pattern");
+  });
+});
+
+describe("cross-file rename (#80)", () => {
+  test("updates named import bindings across workspace files when listFiles is supplied", () => {
+    const files = {
+      "src/a.ts": ['import { helper } from "./b";', "export const n = helper();", ""].join("\n"),
+      "src/b.ts": ["export function helper(): number {", "  return 1;", "}", ""].join("\n"),
+    };
+    const result = resolve(
+      "select function helper in src/b.ts\nrename helper to helper2\nend",
+      files,
+      undefined,
+      Object.keys(files),
+    );
+    expect(result.failures).toEqual([]);
+    expect(result.regions.map((region) => region.path).sort()).toEqual([
+      "src/a.ts",
+      "src/a.ts",
+      "src/b.ts",
+    ]);
+    for (const region of result.regions) {
+      const source = files[region.path as keyof typeof files] ?? "";
+      expect(source.slice(region.start, region.end)).toBe("helper");
+      expect(region.text).toBe("helper2");
+    }
   });
 });

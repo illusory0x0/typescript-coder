@@ -160,6 +160,7 @@ function resolveReply(
     fileExists: (path) => workspace.fileExists(path),
     pathExists: (path) => workspace.pathExists(path),
     isSafePath: (path) => workspace.isSafePath(path),
+    listFiles: () => workspace.listFiles(),
     resolveEntry: (source, path, locator, space) =>
       resolveCurrentEntry(source, path, locator, space),
   });
@@ -515,7 +516,19 @@ export async function applyEditDsl(
       const original = originals.get(change.path);
       try {
         if (original?.exists === true) {
-          workspace.writeFile(change.path, original.source);
+          // The in-flight operation may have failed before touching the file
+          // (for example, a permission error); only rewrite it when its
+          // contents actually differ from the snapshot. This avoids treating
+          // an unwritable, unchanged file as a rollback failure.
+          let current: string | null = null;
+          try {
+            current = workspace.fileExists(change.path) ? workspace.sourceFor(change.path) : null;
+          } catch {
+            current = null;
+          }
+          if (current !== original.source) {
+            workspace.writeFile(change.path, original.source);
+          }
         } else if (workspace.fileExists(change.path)) {
           workspace.deleteFile(change.path);
         }

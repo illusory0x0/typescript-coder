@@ -115,11 +115,16 @@ A select clause is never a file command. A select clause with `replace` or
   escape form. An empty fence deletes the target.
 - **`rename <old> to <new>`**: the other editor form. It rewrites the selected
   declaration name and every same-file reference that lexically resolves to it.
-  Shadowed bindings and out-of-scope names are untouched; dotted targets rename
-  the final segment for namespaces, enum members, and class fields (`this.field`
-  plus same-class static accesses). A collision with an existing binding at the
-  same scope or qualified path is an `address` failure, and a rename cannot be
-  combined with `pick` or `replace`.
+  When the selected declaration is top-level and the file exports it under the
+  new public name, the edit also updates named imports and named re-exports in
+  workspace files whose relative specifier resolves back to the file: unaliased
+  imports rename the local binding and its uses, aliased imports update only the
+  imported name, and re-export aliases keep their public name. Shadowed bindings
+  and out-of-scope names are untouched; dotted targets rename the final segment
+  for namespaces, enum members, and class fields (`this.field` plus same-class
+  static accesses). A collision with an existing binding at the same scope or
+  qualified path, or a duplicate public export name, is an `address` failure,
+  and a rename cannot be combined with `pick` or `replace`.
 - **`end`** terminates a viewer or rename select clause. `create <path> end`,
   `delete <path> end`, and `read <path> end` use it too. A `replace with`,
   `create … with`, or `write … with` body ends at its `TC_EDIT_END` close, not
@@ -379,11 +384,24 @@ same-named member on another enum/class is untouched. Class field references are
 limited to `this.field` and same-class static accesses; arbitrary receiver-typed
 `obj.field` accesses are not rewritten.
 
+For a top-level declaration the file exports under the renamed name, the rename
+also reaches workspace files: every named import whose relative specifier
+resolves to the declaration file, and every named re-export from it, is updated
+atomically with the declaration. An unaliased import renames its local binding
+and same-file uses; an aliased import changes only the imported name; a
+re-export changes the source-side name and preserves its alias, so an aliased
+public name stays stable. `export *` contributes no edge.
+
 Object-literal member targets are **not renameable** (an `address` failure);
 computed member names and static blocks have no name-addressable declaration to
 rename. A same-file rename of an ordinary binding, namespace, class, enum,
 interface, type alias, enum member, class field/method, or interface/type-literal
-member is supported. A rename is still not a cross-file/type-checker rename.
+member is supported. A cross-file rename only follows direct, relative named
+import/re-export edges: it does not resolve path aliases, traverse barrels or
+re-export chains, or touch default/namespace imports, `import = require`, or
+dynamic imports. The target must be an unqualified top-level declaration whose
+export name changes; nested and alias-only exports stay same-file. A rename is
+not a full type-checker rename.
 
 A rename failure (unresolved or ambiguous address, invalid new name, or a
 collision at the same scope/qualified path) is reported at the `address` stage

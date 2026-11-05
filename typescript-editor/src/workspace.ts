@@ -1,6 +1,7 @@
 import {
   lstatSync,
   mkdirSync,
+  readdirSync,
   readFileSync,
   realpathSync,
   statSync,
@@ -25,12 +26,15 @@ export interface Workspace {
   writeFile(path: string, source: string): void;
   createEmptyFile(path: string): void;
   deleteFile(path: string): void;
+  /** Every safe, non-hidden TypeScript file under the root, as `/` paths. */
+  listFiles(): string[];
 }
 
 /** The workspace-relative prefixes that are read-only unless overridden. */
 export const DEFAULT_PROTECTED_PATHS: readonly string[] = ["human"];
 
 const NODE_MODULES = "node_modules";
+const TYPESCRIPT_EXTENSION = /\.(?:ts|tsx|mts|cts)$/;
 
 function normalizeProtected(value: string): string | null {
   const normalized = value.replace(/\\/g, "/").replace(/^\/+/, "").replace(/\/+$/, "");
@@ -241,6 +245,30 @@ export function createWorkspace(options: {
     unlinkSync(target);
   };
 
+  const listFiles = (): string[] => {
+    const paths: string[] = [];
+    const walk = (directory: string, prefix: string): void => {
+      for (const entry of readdirSync(directory, { withFileTypes: true })) {
+        if (entry.isDirectory()) {
+          if (entry.name.startsWith(".") || entry.name === NODE_MODULES) {
+            continue;
+          }
+          walk(join(directory, entry.name), prefix === "" ? entry.name : `${prefix}/${entry.name}`);
+          continue;
+        }
+        if (!entry.isFile() || !TYPESCRIPT_EXTENSION.test(entry.name)) {
+          continue;
+        }
+        const path = prefix === "" ? entry.name : `${prefix}/${entry.name}`;
+        if (isSafePath(path)) {
+          paths.push(path);
+        }
+      }
+    };
+    walk(root, "");
+    return paths.sort();
+  };
+
   return {
     root,
     isSafePath,
@@ -250,5 +278,6 @@ export function createWorkspace(options: {
     writeFile,
     createEmptyFile,
     deleteFile,
+    listFiles,
   };
 }

@@ -2765,6 +2765,10 @@ async function runEditDslLoop(options: LoopOptions): Promise<LoopResult> {
     },
     pathExists: (path) => existsSync(join(cwd, path)),
     isSafePath: (path) => safeMutablePath(cwd, path) !== null,
+    listFiles: () =>
+      discoverSourceFiles(cwd)
+        .map((file) => file.path)
+        .filter((path) => safeMutablePath(cwd, path) !== null),
     resolveEntry: (source, path, locator, space) =>
       resolveCurrentEntry(source, path, locator, space),
   });

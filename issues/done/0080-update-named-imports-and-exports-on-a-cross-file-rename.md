@@ -1,7 +1,7 @@
 ---
 id: 80
 title: "Update named imports and exports on a cross-file rename"
-status: todo
+status: done
 priority: medium
 milestone: null
 parent: null
@@ -77,3 +77,6 @@ just typecheck && just test
 - Do not use a text search for the old name; only resolved import/export edges
   count.
 - Prompt text and benchmark behavior must not change.
+- - Added a workspace rename resolver (typescript-editor/src/workspace-rename.ts) that follows direct relative named import/re-export edges without searching for the old name; unaliased imports rename the local binding and its uses, aliased imports update only the imported name, and re-export aliases keep their public name. Supports type-only and string-literal specifiers and NodeNext .js specifiers. Collisions in the target or an affected importer fail at the address stage.
+- - Workspace now enumerates safe TypeScript files (listFiles); MultiEditorDeps.listFiles is optional so callers without enumeration stay same-file, while the CLI/API and harness loops supply it. Cross-file edits are ordinary regions, so dry-run reports every file and apply keeps the existing atomic write/rollback path; rollback skips rewriting an unchanged file after a failed write. Scope remains direct relative edges only: default/namespace imports, import =, dynamic imports, path aliases, and barrel/re-export chains are documented follow-ups. Files outside the workspace or under protected paths are rejected at the target address.
+- - Tests cover unaliased and aliased imports (including same-name aliases), named re-exports, string-literal specifiers, target and re-export collisions, extension/index resolution, nested same-name bindings, dry-run reporting, and rollback/no-write. Verification: targeted rename/cli/api/multi-editor 150 pass; manual issue scenario lists and writes both src/a.ts and src/b.ts; just tsed-check up to date; just typecheck && just test green (editor 908, harness 703, scripts 16, acceptance 9/9). The generated tsed runtime was regenerated with the current scs so just tsed-check stays byte-exact; that regeneration is committed separately.

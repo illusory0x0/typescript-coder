@@ -10,6 +10,8 @@ import type {
 } from "./edit-dsl";
 import type { EditRange } from "./range";
 import { resolveLocalRename } from "./rename";
+import type { RenameEdit, RenameTarget } from "./rename";
+import { resolveWorkspaceRename } from "./workspace-rename";
 import { END_OF_LINE_COLUMN, isFileSelection } from "./selection";
 import type {
   CreateDeclarationStatement,
@@ -111,6 +113,11 @@ export interface MultiEditorDeps extends EditDslDeps {
   pathExists: (path: string) => boolean;
   /** Whether the path is inside the workspace and safe to touch. */
   isSafePath: (path: string) => boolean;
+  /**
+   * Every workspace TypeScript file, as workspace-relative `/` paths. Optional:
+   * without it a rename stays same-file for callers that do not enumerate.
+   */
+  listFiles?: () => readonly string[];
 }
 
 function syntheticLocator(path: string): Locator {
@@ -426,33 +433,69 @@ export function resolveMultiEditor(
       );
       continue;
     }
-    const renamed = resolveLocalRename(source, path, selection.locator, selection.rename, {
-      space: selection.space,
-    });
-    if (!renamed.ok) {
-      failures.push(renameFailure(index, path, selection.locator, renamed.diagnostics));
-      continue;
+    const listFiles = deps.listFiles;
+    let target: RenameTarget;
+    let files: readonly { path: string; edits: readonly RenameEdit[] }[];
+    if (listFiles === undefined) {
+      const local = resolveLocalRename(source, path, selection.locator, selection.rename, {
+        space: selection.space,
+      });
+      if (!local.ok) {
+        failures.push(renameFailure(index, path, selection.locator, local.diagnostics));
+        continue;
+      }
+      target = local.target;
+      files = [{ path, edits: local.edits }];
+    } else {
+      const workspace = resolveWorkspaceRename(
+        source,
+        path,
+        selection.locator,
+        selection.rename,
+        {
+          sourceFor: deps.sourceFor,
+          fileExists: deps.fileExists,
+          isSafePath: deps.isSafePath,
+          listFiles,
+        },
+        { space: selection.space },
+      );
+      if (!workspace.ok) {
+        failures.push(
+          renameFailure(
+            index,
+            workspace.path,
+            { ...selection.locator, path: workspace.path },
+            workspace.diagnostics,
+          ),
+        );
+        continue;
+      }
+      target = workspace.target;
+      files = workspace.files;
     }
     // #40: a rename addresses the same declaration an editor/viewer would, so
     // it claims the same `(path, name, kind)` key. A repeat rejects this
     // clause; the loop discards the whole reply, so no rename edit is applied.
-    const duplicate = claimEditDslTarget(targetClaims, renamed.target, index, false);
+    const duplicate = claimEditDslTarget(targetClaims, target, index, false);
     if (duplicate !== null) {
       failures.push(duplicateFailure(index, path, selection.locator, duplicate));
       continue;
     }
-    for (const edit of renamed.edits) {
-      regions.push({
-        index,
-        path,
-        locator: selection.locator,
-        start: edit.start,
-        end: edit.end,
-        text: edit.text,
-        stage: "whole-symbol",
-        matcherKind: null,
-        create: false,
-      });
+    for (const file of files) {
+      for (const edit of file.edits) {
+        regions.push({
+          index,
+          path: file.path,
+          locator: { ...selection.locator, path: file.path },
+          start: edit.start,
+          end: edit.end,
+          text: edit.text,
+          stage: "whole-symbol",
+          matcherKind: null,
+          create: false,
+        });
+      }
     }
   }
 

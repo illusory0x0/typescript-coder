@@ -47,6 +47,11 @@ export interface RenameTarget {
   path: string;
   name: string;
   kind: string;
+  /**
+   * True when the target is a top-level, unqualified declaration in this file.
+   * Only such a target can own named import/export edges in other files.
+   */
+  topLevel: boolean;
 }
 
 export type RenameResult =
@@ -1742,12 +1747,21 @@ function describeBinding(binding: Binding): string {
  * namespace/member binding carries its qualified path, so this key matches the
  * entry an editor clause resolves to.
  */
-function renameTargetOf(binding: Binding, fileName: string): RenameTarget {
+function isTopLevelBinding(binding: Binding, root: LexicalScope): boolean {
+  if (binding.qualifiedOnly || !binding.scopes.has(root) || binding.kinds.has("import")) {
+    return false;
+  }
+  const name = binding.path ?? binding.name;
+  return !name.includes(".");
+}
+
+function renameTargetOf(binding: Binding, fileName: string, root: LexicalScope): RenameTarget {
   const kind = binding.kinds.values().next().value;
   return {
     path: fileName,
     name: binding.path ?? binding.name,
     kind: kind ?? "symbol",
+    topLevel: isTopLevelBinding(binding, root),
   };
 }
 
@@ -1847,6 +1861,6 @@ export function resolveLocalRename(
   return {
     ok: true,
     edits: model.editsFor(targetSet, rename.to),
-    target: renameTargetOf(target, fileName),
+    target: renameTargetOf(target, fileName, model.root),
   };
 }

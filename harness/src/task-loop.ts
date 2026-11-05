@@ -436,6 +436,10 @@ function editDslDeps(context: ExecutionContext): MultiEditorDeps {
     fileExists: (path) => readFileIfExists(join(context.cwd, path)) !== null,
     pathExists: (path) => existsSync(join(context.cwd, path)),
     isSafePath: (path) => safeMutablePath(context.cwd, path) !== null,
+    listFiles: () =>
+      discoverSourceFiles(context.cwd)
+        .map((file) => file.path)
+        .filter((path) => safeMutablePath(context.cwd, path) !== null),
     resolveEntry: (source, path, locator, space) =>
       resolveCurrentEntry(source, path, locator, space),
   };

@@ -1,5 +1,6 @@
 import { afterEach, describe, expect, test } from "bun:test";
 import {
+  chmodSync,
   existsSync,
   mkdirSync,
   mkdtempSync,
@@ -499,5 +500,41 @@ describe("workspace path safety", () => {
     const file = join(directory, "file.txt");
     writeFileSync(file, "x");
     await expect(readEditDsl("", { cwd: file })).rejects.toThrow(/not a directory/);
+  });
+});
+
+describe("workspace rename apply", () => {
+  const IMPORTER = ['import { helper } from "./b";', "export const n = helper();", ""].join("\n");
+  const TARGET = "export function helper(): number { return 1; }\n";
+  const REPLY = ["select function helper in src/b.ts", "rename helper to helper2", "end"].join(
+    "\n",
+  );
+
+  test("dry-run lists every file and apply rolls back a partially written rename", async () => {
+    const directory = makeWorkspace({ "src/a.ts": IMPORTER, "src/b.ts": TARGET });
+    const importer = join(directory, "src/a.ts");
+    const target = join(directory, "src/b.ts");
+
+    const preview = await applyEditDsl(REPLY, { cwd: directory, dryRun: true });
+    expect(preview.ok).toBe(true);
+    expect(preview.failures).toEqual([]);
+    expect(preview.changed).toEqual(["src/a.ts", "src/b.ts"]);
+    expect(read(importer)).toBe(IMPORTER);
+    expect(read(target)).toBe(TARGET);
+
+    chmodSync(target, 0o444);
+    try {
+      const applied = await applyEditDsl(REPLY, { cwd: directory });
+      expect(applied.ok).toBe(false);
+      expect(applied.changed).toEqual([]);
+      expect(applied.created).toEqual([]);
+      expect(applied.deleted).toEqual([]);
+      expect(applied.failures).toHaveLength(1);
+      expect(applied.failures[0]?.diagnostics).toContain("rolled back");
+      expect(read(importer)).toBe(IMPORTER);
+      expect(read(target)).toBe(TARGET);
+    } finally {
+      chmodSync(target, 0o644);
+    }
   });
 });
