@@ -3,6 +3,7 @@ node_modules/
 dist/
 tmp/
 acceptance/report.json
+benchmark/results/
 .opencode/
 feedback/
 feedback/archive/
