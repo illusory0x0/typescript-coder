@@ -1105,18 +1105,83 @@ describe("file-level module-boundary select (#54)", () => {
     expect(result.failures[0]?.diagnostics).toContain("a.ts:1:1");
     expect(result.failures[0]?.diagnostics).toContain("a.ts:2:1");
     expect(result.failures[0]?.diagnostics).toContain('import "side-effect";');
-    expect(result.failures[0]?.diagnostics).toContain("exactly one span");
+    expect(result.failures[0]?.diagnostics).toContain("exactly one unique span");
   });
 
-  test("rejects a match outside a module-boundary statement", () => {
+  test("edits a unique span outside a module-boundary statement", () => {
     const source = ["function work(): number {", "  return 1;", "}", ""].join("\n");
     const result = resolveEditDslReply(
       parseSelection(["select file a.ts", "match `return 1;`", replace("return 2;")].join("\n")),
       fileDeps({ "a.ts": source }),
     );
+    expect(result.failures).toEqual([]);
+    const region = result.regions[0];
+    expect(region?.start).toBe(source.indexOf("return 1;"));
+    expect(region?.end).toBe(source.indexOf("return 1;") + "return 1;".length);
+    expect(region?.stage).toBe("match");
+  });
+
+  test("edits a nested statement inside a test callback", () => {
+    const source = [
+      'import { test } from "bun:test";',
+      "",
+      'test("answer", () => {',
+      "  const value = 1;",
+      "  if (value === 1) {",
+      '    console.log("ok");',
+      "  }",
+      "});",
+      "",
+    ].join("\n");
+    const result = resolveEditDslReply(
+      parseSelection(
+        ["select file a.ts", "match `if (value === 1) {`", replace("if (value === 2) {")].join(
+          "\n",
+        ),
+      ),
+      fileDeps({ "a.ts": source }),
+    );
+    expect(result.failures).toEqual([]);
+    const region = result.regions[0];
+    expect(region?.start).toBe(source.indexOf("if (value === 1) {"));
+    expect(region?.end).toBe(source.indexOf("if (value === 1) {") + "if (value === 1) {".length);
+  });
+
+  test("edits a template-literal body through a regex", () => {
+    const source = ['const name = "world";', "const message = `hello ${name}`;", ""].join("\n");
+    const result = resolveEditDslReply(
+      parseSelection(["select file a.ts", "match /hello/", replace("goodbye")].join("\n")),
+      fileDeps({ "a.ts": source }),
+    );
+    expect(result.failures).toEqual([]);
+    const region = result.regions[0];
+    expect(region?.start).toBe(source.indexOf("hello"));
+    expect(region?.end).toBe(source.indexOf("hello") + "hello".length);
+  });
+
+  test("an empty fence deletes exactly the matched span outside a module statement", () => {
+    const source = ["function work(): number {", "  return 1;", "}", ""].join("\n");
+    const result = resolveEditDslReply(
+      parseSelection(["select file a.ts", "match `return 1;`", replace("")].join("\n")),
+      fileDeps({ "a.ts": source }),
+    );
+    expect(result.failures).toEqual([]);
+    const region = result.regions[0];
+    expect(source.slice(region?.start ?? 0, region?.end ?? 0)).toBe("return 1;");
+    expect(source.slice(0, region?.start ?? 0) + source.slice(region?.end ?? 0)).toBe(
+      ["function work(): number {", "  ", "}", ""].join("\n"),
+    );
+  });
+
+  test("a missing replacement is an address failure with the replacement hint", () => {
+    const result = resolveEditDslReply(
+      parseSelection(["select file a.ts", "match `return 1;`", "end"].join("\n")),
+      fileDeps({ "a.ts": SOURCE }),
+    );
     expect(result.regions).toEqual([]);
     expect(result.failures[0]?.stage).toBe("address");
-    expect(result.failures[0]?.diagnostics).toContain("outside an import/export statement");
+    expect(result.failures[0]?.diagnostics).toContain("requires `replace with <fence>`");
+    expect(result.failures[0]?.diagnostics).toContain("--replace-file");
   });
 
   test("requires match or pick and rejects an unsafe path", () => {

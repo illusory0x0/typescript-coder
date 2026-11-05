@@ -2,14 +2,6 @@
 # rewrites it; `add` appends; other writes keep it. `check` enforces it.
 # A dep, and every child of an umbrella, must be listed before its dependent.
 
-- id: 83
-  title: "Edit arbitrary unique spans through file-level select and native flags"
-  status: todo
-  priority: medium
-  milestone: null
-  parent: null
-  deps: []
-  file: 0083-edit-arbitrary-unique-spans-through-file-level-select-and-native-flags.md
 - id: 84
   title: "Add tsed --unify block markers and block-select editing"
   status: todo

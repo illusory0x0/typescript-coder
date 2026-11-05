@@ -836,7 +836,7 @@ class SelectionReader {
         {
           expected: ["match", "pick", "replace", "end"],
           found: "resolve",
-          hint: "drop `resolve`; a file-level select edits import/export statements by matcher, regex, or pick",
+          hint: "drop `resolve`; a file-level select edits a unique span by matcher, regex, or pick",
         },
       );
     }
@@ -862,9 +862,7 @@ class SelectionReader {
     }
 
     let pick: EditRange[] | null = null;
-    let pickOffset: number | undefined;
     if (this.matchKeyword("pick")) {
-      pickOffset = this.pos - 4;
       pick = this.parseMultiRange();
     }
     this.skipWhitespace();
@@ -887,29 +885,10 @@ class SelectionReader {
       this.consumeBodyEnd("`select file` command");
     }
 
-    if (pick !== null && replacement === null) {
-      this.syntax(
-        "EDIT_PICK_WITHOUT_REPLACE",
-        "`pick` requires a `replace`: a `pick` without `replace` is not a viewer; add `replace with <fence>`",
-        {
-          ...(pickOffset === undefined ? {} : { offset: pickOffset }),
-          expected: ["replace with <fence>", "omit pick"],
-          found: "pick without replace",
-          hint: "add `replace with <fence>` or remove `pick`",
-        },
-      );
-    }
-    if (replacement === null) {
-      this.syntax(
-        "EDIT_FILE_VIEWER_UNSUPPORTED",
-        "a file-level select is an editor and requires `replace with <fence>`; it is not a viewer",
-        {
-          expected: ["match", "pick", "replace with <fence>"],
-          found: "end",
-          hint: "add `replace with <fence>`, or use `read <path> end` to view the file",
-        },
-      );
-    }
+    // A file-level select is an editor, but the missing replacement is a
+    // resolution failure, not a syntax one: the protocol renderer emits this
+    // shape for `--select-file` without `--replace-file`, and the resolver adds
+    // the `--replace-file` hint. `pick` without `replace` takes the same path.
     return {
       locator: { path, name: "", kind: "file" },
       space: null,
@@ -922,11 +901,11 @@ class SelectionReader {
   private rejectFileRename(): never {
     this.syntax(
       "EDIT_FILE_RENAME_UNSUPPORTED",
-      "a file-level select cannot rename: imported bindings and export aliases have no declaration address, and the harness will not guess one; edit the import/export statement with `replace with <fence>` instead",
+      "a file-level select cannot rename: it has no declaration address and the harness will not guess one; edit the span with `replace with <fence>` instead",
       {
         expected: ["match", "pick", "replace with <fence>"],
         found: "rename",
-        hint: "replace the import/export statement or specifier text; a semantic rename requires a declaration address",
+        hint: "replace the span text; a semantic rename requires a declaration address",
       },
     );
   }

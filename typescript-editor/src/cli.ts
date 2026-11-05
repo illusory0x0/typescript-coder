@@ -45,6 +45,7 @@ function readFileArg(path: string, label: string, workspaceRoot: string): string
 const NATIVE_FLAGS: readonly { flag: string; used: (values: TsedArgs) => boolean }[] = [
   { flag: "--read", used: (values) => (values.read ?? []).length > 0 },
   { flag: "--select", used: (values) => values.select !== undefined },
+  { flag: "--select-file", used: (values) => values.select_file !== undefined },
   { flag: "--in", used: (values) => values.input !== undefined },
   { flag: "--kind", used: (values) => values.kind !== undefined },
   { flag: "--resolve", used: (values) => values.resolve !== undefined },
@@ -89,6 +90,9 @@ function renderFlagRequest(values: TsedArgs, workspaceRoot: string): string {
     if (values.rename !== undefined) {
       mutatingFlags.push("--rename");
     }
+    if (values.select_file !== undefined) {
+      mutatingFlags.push("--select-file");
+    }
     if ((values.create ?? []).length > 0) {
       mutatingFlags.push("--create");
     }
@@ -107,18 +111,32 @@ function renderFlagRequest(values: TsedArgs, workspaceRoot: string): string {
       throw new UsageError("--within requires --read or --select");
     }
   }
-  const selectOnly: readonly { flag: string; present: boolean }[] = [
-    { flag: "--kind", present: values.kind !== undefined },
-    { flag: "--resolve", present: values.resolve !== undefined },
-    { flag: "--match", present: values.match !== undefined },
-    { flag: "--pick", present: values.pick !== undefined },
-    { flag: "--replace-file", present: values.replace_file !== undefined },
-    { flag: "--rename", present: values.rename !== undefined },
+  if (values.select_file !== undefined && values.select !== undefined) {
+    throw new UsageError("--select and --select-file are mutually exclusive");
+  }
+  const selectOnly: readonly { flag: string; present: boolean; file: boolean }[] = [
+    { flag: "--kind", present: values.kind !== undefined, file: false },
+    { flag: "--resolve", present: values.resolve !== undefined, file: false },
+    { flag: "--match", present: values.match !== undefined, file: true },
+    { flag: "--pick", present: values.pick !== undefined, file: true },
+    { flag: "--replace-file", present: values.replace_file !== undefined, file: true },
+    { flag: "--rename", present: values.rename !== undefined, file: false },
   ];
   for (const entry of selectOnly) {
-    if (entry.present && values.select === undefined) {
-      throw new UsageError(`${entry.flag} requires --select`);
+    if (!entry.present || values.select !== undefined) {
+      continue;
     }
+    if (entry.file && values.select_file !== undefined) {
+      continue;
+    }
+    if (values.select_file !== undefined) {
+      throw new UsageError(`${entry.flag} cannot be used with --select-file`);
+    }
+    throw new UsageError(
+      entry.file
+        ? `${entry.flag} requires --select or --select-file`
+        : `${entry.flag} requires --select`,
+    );
   }
   if (values.input !== undefined && values.select === undefined) {
     throw new UsageError("--in requires --select");
@@ -140,6 +158,7 @@ function renderFlagRequest(values: TsedArgs, workspaceRoot: string): string {
     throw new UsageError("--content-file requires --rewrite <PATH>");
   }
 
+  const selectFile = values.select_file !== undefined;
   const mutating =
     values.replace_file !== undefined ||
     values.rename !== undefined ||
@@ -151,7 +170,7 @@ function renderFlagRequest(values: TsedArgs, workspaceRoot: string): string {
       "the requested operation mutates a workspace file; pass --write to apply it or --dry-run to preview it",
     );
   }
-  if ((values.write || values.dry_run) && !mutating) {
+  if ((values.write || values.dry_run) && !mutating && !selectFile) {
     const mode = values.write ? "--write" : "--dry-run";
     throw new UsageError(
       `${mode} requires a mutation (--replace-file, --rename, --create, --delete, or --rewrite)`,
@@ -174,6 +193,22 @@ function renderFlagRequest(values: TsedArgs, workspaceRoot: string): string {
   }
   if (values.rewrite !== undefined && rewriteContent !== undefined) {
     operations.push({ op: "rewrite", path: values.rewrite, content: rewriteContent });
+  }
+  if (values.select_file !== undefined) {
+    const selection: Extract<EditOperation, { op: "select-file" }> = {
+      op: "select-file",
+      path: values.select_file,
+    };
+    if (values.match !== undefined) {
+      selection.match = values.match;
+    }
+    if (values.pick !== undefined) {
+      selection.pick = values.pick;
+    }
+    if (values.replace_file !== undefined) {
+      selection.replace = readFileArg(values.replace_file, "replacement file", workspaceRoot);
+    }
+    operations.push(selection);
   }
   if (values.select !== undefined && values.input !== undefined) {
     const selection: Extract<EditOperation, { op: "select" }> = {

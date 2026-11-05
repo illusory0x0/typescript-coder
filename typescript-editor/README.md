@@ -84,6 +84,9 @@ tsed --select answer --in src/helper.ts \
   --within 5-7                                  # unfold a viewer slice
 tsed --select answer --in src/helper.ts \
   --replace-file patch.txt --write              # editor
+tsed --select-file src/helper.ts \
+  --match 'if (value === 1) {' \
+  --replace-file patch.txt --write              # unique file-level span
 tsed --select answer --in src/helper.ts \
   --rename result --write                       # rename
 tsed --create src/new.ts --write                # empty file
@@ -131,8 +134,23 @@ exclusive. Relative `--replace-file` and `--content-file` paths resolve against
 the `--directory` workspace root (the process cwd when `--directory` is
 omitted); absolute paths are used as-is.
 
+`--select-file <PATH>` is the file-level editor: the owner is the file, not a
+declaration. It accepts the same `--match` and `--pick` selectors and
+`--replace-file`, and resolves a **unique span anywhere in the file** — an
+import/export statement, a statement inside a function body or test callback, an
+object literal, or a template-literal body. A snippet that is not valid
+TypeScript on its own (for example an incomplete block header such as
+`if (value === 1) {`) is treated as an exact source span. The match or pick must
+still resolve to exactly one candidate. `--select-file` is mutually exclusive
+with `--select`, `--kind`, `--resolve`, `--rename`, and `--within`; a missing
+`--replace-file` is not a usage error but reaches resolution and reports the
+replacement hint. Use `--pick` for a precise line range, and `--within` only for
+`--read`/`--select` viewers.
+
 `--read` accepts `--within <RANGES>` to print only those file lines, unfolded;
-the same range applies to every repeated `--read` path. `--select` accepts
+the same range applies to every repeated `--read` path. Read and viewer output
+is numbered by default with 1-based, file-absolute line numbers; there is no
+opt-in flag. `--select` accepts
 `--within <RANGES>` for a bare viewer slice, using the same range syntax as
 `--pick` and the fold markers. `within` is viewer-only: it requires `--read` or
 `--select`, and it is rejected with `--replace-file`, `--rename`, `--create`,
@@ -176,22 +194,41 @@ An apply request uses the same shape; `--write` is required:
 }
 ```
 
+A file-level span edit has no symbol; `match`/`pick` select the unique span:
+
+```json
+{
+  "operations": [
+    {
+      "op": "select-file",
+      "path": "src/helper.test.ts",
+      "match": "if (value === 1) {",
+      "replace": "if (value === 2) {"
+    }
+  ]
+}
+```
+
 Operation fields:
 
-| Operation | Fields                                                                                                    |
-| --------- | --------------------------------------------------------------------------------------------------------- |
-| `read`    | `path` (required), `within` (optional)                                                                    |
-| `select`  | `symbol`, `path` (required); `kind`, `resolve`, `within`, `match`, `pick`, `replace`, `rename` (optional) |
-| `create`  | `path` (required)                                                                                         |
-| `delete`  | `path` (required)                                                                                         |
-| `rewrite` | `path`, `content` (required)                                                                              |
+| Operation     | Fields                                                                                                    |
+| ------------- | --------------------------------------------------------------------------------------------------------- |
+| `read`        | `path` (required), `within` (optional)                                                                    |
+| `select`      | `symbol`, `path` (required); `kind`, `resolve`, `within`, `match`, `pick`, `replace`, `rename` (optional) |
+| `select-file` | `path` (required); `match`, `pick`, `replace` (optional)                                                  |
+| `create`      | `path` (required)                                                                                         |
+| `delete`      | `path` (required)                                                                                         |
+| `rewrite`     | `path`, `content` (required)                                                                              |
 
 A `select` is a viewer without `replace`/`rename`; `within` slices a bare viewer
 and is rejected with `match`, `pick`, `replace`, or `rename`. `replace` and
 `rename` are mutually exclusive, and `match` is rejected with `rename` (a
 rename resolves the symbol semantically). `match` narrows a viewer or
 replacement to the matched snippet; `pick` requires a replacement and narrows
-it to a line/column range.
+it to a line/column range. A `select-file` is the file-level editor equivalent:
+it takes `path` plus an optional `match`/`pick`/`replace` and renders to
+`select file <path> …`. It never carries `symbol`, `kind`, `resolve`, `within`,
+or `rename`.
 Unknown fields and malformed JSON are usage errors. The operation list only
 expresses operations; `--write` still controls whether mutations are applied.
 

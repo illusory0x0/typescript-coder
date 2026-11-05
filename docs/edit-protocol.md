@@ -54,11 +54,16 @@ select [kind] <symbol> in <path> [ resolve (value|type|namespace) ] [ within <se
 select [kind] <symbol> in <path> [ resolve (value|type|namespace) ] rename <old> to <new> end
 ```
 
-The module-boundary form is the separate file-level editor:
+The file-level editor edits a unique span anywhere in the file:
 
 ```text
 select file <path> [ match <snippet> | match /<regex>/ ] [ pick <selecters> ] replace with <fence>
+select file <path> [ match <snippet> | match /<regex>/ ] [ pick <selecters> ] end
 ```
+
+The second form is the protocol renderer's missing-replacement shape; it
+resolves to an `address` failure with the replacement hint rather than a
+whole-file write.
 
 A select clause is never a file command. A select clause with `replace` or
 `rename` is an **editor**; with neither it is a **viewer**. `match` narrows a
@@ -340,35 +345,41 @@ computed members, static blocks, constructor parameter properties, or TypeScript
 auto-accessors. A dotted create never creates its owner. See §2.1 for the
 descriptor and modifier validation.
 
-### File-level module-boundary select
+### File-level span select
 
-`select file <path> … replace with <fence>` gives imports and exports an
-owner without a synthetic declaration name. The owner is the file source; no
+`select file <path> … replace with <fence>` edits any unique span in a file
+without a synthetic declaration name. The owner is the file source; no
 symbol-index entry is resolved. The path must be safe, inside the workspace, and
-an existing regular file.
+an existing regular file. The span may be inside an import/export statement, a
+function body, a test callback, an object literal, or a template-literal body;
+`create import|export` remains module-boundary-only.
 
-- `match` (a structural snippet or `/regex/`) or `pick` locates the target. The
-  candidate must lie inside exactly one top-level import/export statement:
-  `import`/`import =` (including `import fs = require("fs")`), `export { … }`,
-  `export … from`, `export *`, a default export, an export declaration
-  (`export function …`), or `export =`. A match that lands outside one is an
-  `address` rejection that names its location.
+- `match` (a structural snippet or `/regex/`) or `pick` locates the target.
+  A snippet that is not valid TypeScript on its own (for example an incomplete
+  block header such as `if (value === 1) {`) is treated as an exact literal
+  source span. A candidate is labelled with its module statement kind when it
+  lies inside an import/export statement, and as declaration/other source
+  otherwise.
 - Exactly one candidate is required. Multiple candidates are rejected with each
-  `path:line:column` and its statement kind; the harness never picks the first.
-  A `pick` with a `match` filters candidates with the normal point/contained
-  rules; without a `match`, the one resolved pick range is the target. File-level
-  `pick` coordinates are the same 1-based, inclusive, file-absolute coordinates
-  as the numbered source block.
+  `path:line:column` and its statement/declaration label; the harness never
+  picks the first. A `pick` with a `match` filters candidates with the normal
+  point/contained rules; without a `match`, the one resolved pick range is the
+  target. File-level `pick` coordinates are the same 1-based, inclusive,
+  file-absolute coordinates as the numbered source block.
 - `replace with <fence>` rewrites the matched/picked span. An empty fence
-  deletes it: a whole statement deletion removes its line, and deleting a
-  named specifier also removes its `,` separator. The parse gate, formatter,
-  duplicate guard, atomic apply, and task/node gate are unchanged.
-- A file-level select is an **editor only**: it requires `replace`, and
-  `resolve`, `within`, and rename are rejected. Use `read <path> end` to view
-  file lines, or `write <path> with <fence>` for a deliberate whole-file
-  rewrite. A file-level `rename` is not supported because imported bindings and
-  export aliases have no declaration address; edit the statement or specifier
-  text instead rather than silently renaming an import.
+  deletes it: when the span is an import/export statement, deletion removes its
+  line; when it is a named specifier, deletion also removes its `,` separator.
+  Outside a module statement an empty fence deletes exactly the matched or
+  picked span, with no line expansion. The parse gate, formatter, duplicate
+  guard, atomic apply, and task/node gate are unchanged.
+- A file-level select is an **editor only** and requires `replace` at
+  resolution. The DSL reader accepts the no-replacement shape so the native
+  `--select-file` form can report an `address` failure with the
+  `--replace-file` hint instead of a usage error. `resolve`, `within`, and
+  rename are rejected. Use `read <path> end` to view file lines, or
+  `write <path> with <fence>` for a deliberate whole-file rewrite. A file-level
+  `rename` is not supported because a unique text span has no declaration
+  address; edit the span text instead rather than silently renaming a symbol.
 
 ### Rename semantics
 
@@ -450,8 +461,9 @@ select-tail  = replacer | renamer | 'end' ;
 file-select-clause = 'select', 'file', path,
                      [ 'match', ( snippet | regex ) ],
                      [ 'pick', selecters ],
-                     'replace', 'with', fence ;
-                     (* editor only: no viewer, resolve, within, or rename *)
+                     ( 'replace', 'with', fence | 'end' ) ;
+                     (* the end form is accepted so resolution can report the
+                        missing replacement; validate it as an address failure *)
 
 replacer     = [ 'pick', selecters ], 'replace', 'with', fence ;
 renamer      = 'rename', identifier, 'to', identifier, 'end' ;
@@ -485,11 +497,12 @@ fence        = ? a line exactly TC_EDIT_BEGIN, or an opener at the end
 
 A select clause is never a file command. A coordinate is digits only: `0`
 parses as a `line`/`column` but is rejected as not positive, and `selecters`
-braces cannot be empty. `end` is required by the grammar for a viewer or rename select clause and for
-`create <path> end`, `delete`, and `read`. For those forms, the tolerant reader
-may warn `EDIT_MISSING_END` and recover at EOF or before an unambiguous next
-statement (`select`, `create`, `delete`, `read`, or `write`); arbitrary
-following text is a hard error. A `select … replace with`, `create … with`, or
+braces cannot be empty. `end` is required by the grammar for a viewer or rename select clause,
+for a file-level select without a replacement (an `address` failure at
+resolution), and for `create <path> end`, `delete`, and `read`. For those forms,
+the tolerant reader may warn `EDIT_MISSING_END` and recover at EOF or before an
+unambiguous next statement (`select`, `create`, `delete`, `read`, or `write`);
+arbitrary following text is a hard error. A `select … replace with`, `create … with`, or
 `write … with` has no `end` in the canonical grammar: its `TC_EDIT_END` close
 terminates it. One trailing `end` after any body close is accepted as a
 compatibility normalization; a second one is an error. Prompts and examples
@@ -725,7 +738,7 @@ with an edit of a different declaration, but not with a whole-file `write`, a
 **One target per reply.** Every select clause in one reply — viewer, editor, or
 rename — plus every create (implicit or explicit) must resolve to a distinct
 `(path, symbol, kind)`. `resolve`, `match`, and `pick` do not make a new target.
-A file-level select claims the file's module-boundary owner once per reply; a
+A file-level select claims the file's owner once per reply; a
 module create is unique by `(path, statement text)`. A repeat fails at
 `stage: duplicate` before any matcher or write runs, naming both statement
 numbers and the resolved address; the whole reply writes nothing. Split edits to
@@ -800,8 +813,9 @@ static parse(text: string): Parser {
 TC_EDIT_END
 ```
 
-A file-level select edits one import/export statement or specifier; a module
-create adds one statement at the module boundary:
+A file-level select edits one unique span, such as an import/export statement
+or specifier, or a statement inside a callback; a module create adds one
+statement at the module boundary:
 
 ```text
 select file src/parser.ts
@@ -809,6 +823,13 @@ match `import { trim } from "./strings";`
 replace with
 TC_EDIT_BEGIN
 import { trimEnd } from "./strings";
+TC_EDIT_END
+
+select file src/parser.test.ts
+match `if (value === 1) {`
+replace with
+TC_EDIT_BEGIN
+if (value === 2) {
 TC_EDIT_END
 
 create import in src/parser.ts with

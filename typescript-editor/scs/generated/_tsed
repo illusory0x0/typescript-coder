@@ -16,6 +16,7 @@ _tsed() {
     '(-C --directory)--directory=[Workspace root (default\: the current directory)]:dir:' \
     '*--read=[Read a workspace file]:path:' \
     '--select=[Select a declaration for a viewer or edit]:symbol:' \
+    '--select-file=[Select a unique file span for an edit]:path:' \
     '--in=[File that contains the selected declaration]:path:' \
     '--kind=[Declaration kind filter]:kind:' \
     '--resolve=[TypeScript symbol space filter]:space:(value type namespace)' \

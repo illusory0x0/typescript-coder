@@ -920,9 +920,11 @@ summaries; the historical `@1` schema used numeric task/edit ids.
   class/interface/namespace/enum members are created with the kind-aware
   `create` statement; call/construct/index signatures and object-literal members
   are not.
-- **Imports/exports use a file-level owner.** `select file … replace` edits one
-  existing import/export statement or specifier, and `create import|export`
-  inserts one statement after the shebang, directives, and existing imports.
+- **File-level selects edit any unique span.** `select file … replace` edits a
+  unique span such as an import/export statement or specifier, a function-body
+  or callback statement, an object literal, or a template-literal body;
+  `create import|export` inserts one statement after the shebang, directives,
+  and existing imports.
 - **Rename follows named import/re-export edges.** A top-level declaration rename
   also updates direct relative named imports/re-exports in the workspace; default
   and namespace imports, `import =`, dynamic imports, path aliases, and

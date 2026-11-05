@@ -110,6 +110,7 @@ describe("tsed flag protocol", () => {
     expect(result.stdout).toContain("--within");
     expect(result.stdout).toContain("--read <PATH>");
     expect(result.stdout).toContain("--select <SYMBOL>");
+    expect(result.stdout).toContain("--select-file <PATH>");
     expect(result.stdout).toContain("--in <PATH>");
     expect(result.stdout).toContain("-C, --directory <DIR>");
     expect(result.stdout).toContain("--replace-file <FILE>");
@@ -792,6 +793,207 @@ describe("tsed stdin protocols", () => {
     expect(result.status).toBe(2);
     expect(result.stderr).toContain("--within");
     expect(result.stderr).toContain("--protocol-format json");
+  });
+});
+
+describe("tsed file-level span select (#83)", () => {
+  const SPAN_SOURCE = [
+    'import { test } from "bun:test";',
+    "",
+    'test("answer", () => {',
+    "  const value = 1;",
+    "  if (value === 1) {",
+    '    console.log("ok");',
+    "  }",
+    "});",
+    "",
+  ].join("\n");
+
+  const HEADER_PATCH = "if (value === 2) {\n";
+  const HEADER_THREE = "if (value === 3) {\n";
+
+  test("numbered read output is the default with 1-based file-absolute lines", () => {
+    const workspace = makeWorkspace({ "src/span.test.ts": SPAN_SOURCE });
+    const result = run(workspace, ["--read", "src/span.test.ts"]);
+    expect(result.status).toBe(0);
+    expect(result.stdout).toContain('1 | import { test } from "bun:test";');
+    expect(result.stdout).toContain("8 | });");
+    expect(result.stdout).toContain("content folded");
+    expect(result.stderr).toBe("");
+  });
+
+  test("--select-file --match --replace-file dry-run previews and --write applies", () => {
+    const workspace = makeWorkspace({
+      "src/span.test.ts": SPAN_SOURCE,
+      "patch.txt": HEADER_PATCH,
+    });
+    const args = [
+      "--select-file",
+      "src/span.test.ts",
+      "--match",
+      "if (value === 1) {",
+      "--replace-file",
+      "patch.txt",
+    ];
+
+    const preview = run(workspace, [...args, "--dry-run"]);
+    expect(preview.status).toBe(0);
+    expect(preview.stdout).toContain("would change: src/span.test.ts");
+    expect(preview.stderr).toBe("");
+    expect(read(join(workspace, "src/span.test.ts"))).toBe(SPAN_SOURCE);
+
+    const applied = run(workspace, [...args, "--write"]);
+    expect(applied.status).toBe(0);
+    expect(applied.stdout).toContain("changed: src/span.test.ts");
+    expect(read(join(workspace, "src/span.test.ts"))).toBe(
+      SPAN_SOURCE.replace("if (value === 1) {", "if (value === 2) {"),
+    );
+  });
+
+  test("--select-file --pick --replace-file edits a file-absolute range", () => {
+    const workspace = makeWorkspace({
+      "src/span.test.ts": SPAN_SOURCE,
+      "patch.txt": HEADER_THREE,
+    });
+    const result = run(workspace, [
+      "--select-file",
+      "src/span.test.ts",
+      "--pick",
+      "5:3-5:20",
+      "--replace-file",
+      "patch.txt",
+      "--write",
+    ]);
+    expect(result.status).toBe(0);
+    expect(result.stdout).toContain("changed: src/span.test.ts");
+    expect(read(join(workspace, "src/span.test.ts"))).toBe(
+      SPAN_SOURCE.replace("if (value === 1) {", "if (value === 3) {"),
+    );
+  });
+
+  test("JSON select-file dry-run previews a span edit and writes nothing", () => {
+    const workspace = makeWorkspace({ "src/span.test.ts": SPAN_SOURCE });
+    const result = run(
+      workspace,
+      ["--protocol-format", "json", "--dry-run"],
+      JSON.stringify({
+        operations: [
+          {
+            op: "select-file",
+            path: "src/span.test.ts",
+            match: "if (value === 1) {",
+            replace: "if (value === 2) {",
+          },
+        ],
+      }),
+    );
+    expect(result.status).toBe(0);
+    expect(result.stdout).toContain("would change: src/span.test.ts");
+    expect(result.stderr).toBe("");
+    expect(read(join(workspace, "src/span.test.ts"))).toBe(SPAN_SOURCE);
+  });
+
+  test("--select-file --rename is a usage error", () => {
+    const workspace = makeWorkspace({ "src/span.test.ts": SPAN_SOURCE });
+    const result = run(workspace, [
+      "--select-file",
+      "src/span.test.ts",
+      "--rename",
+      "value",
+      "--dry-run",
+    ]);
+    expect(result.status).toBe(2);
+    expect(result.stderr).toContain("--rename cannot be used with --select-file");
+    expect(result.stderr).toContain("usage:");
+    expect(read(join(workspace, "src/span.test.ts"))).toBe(SPAN_SOURCE);
+  });
+
+  test("--select-file --within is a usage error", () => {
+    const workspace = makeWorkspace({ "src/span.test.ts": SPAN_SOURCE });
+    const result = run(workspace, [
+      "--select-file",
+      "src/span.test.ts",
+      "--within",
+      "5",
+      "--dry-run",
+    ]);
+    expect(result.status).toBe(2);
+    expect(result.stderr).toContain("--within is viewer-only");
+    expect(result.stderr).toContain("--select-file");
+    expect(result.stderr).toContain("usage:");
+  });
+
+  test("--select-file without a replacement reaches resolution and hints at --replace-file", () => {
+    const workspace = makeWorkspace({ "src/span.test.ts": SPAN_SOURCE });
+    for (const mode of ["--dry-run", "--write"]) {
+      const result = run(workspace, [
+        "--select-file",
+        "src/span.test.ts",
+        "--match",
+        "if (value === 1) {",
+        mode,
+      ]);
+      expect(result.status).toBe(1);
+      expect(result.stderr).toContain("stage: address");
+      expect(result.stderr).toContain("requires `replace with <fence>`");
+      expect(result.stderr).toContain("--replace-file");
+      expect(result.stdout).not.toContain("would change:");
+      expect(result.stdout).not.toContain("changed:");
+      expect(read(join(workspace, "src/span.test.ts"))).toBe(SPAN_SOURCE);
+    }
+  });
+
+  test("an invalid replacement fails the parse gate in dry-run and apply", () => {
+    const workspace = makeWorkspace({
+      "src/span.test.ts": SPAN_SOURCE,
+      "broken.txt": "if (\n",
+    });
+    const args = [
+      "--select-file",
+      "src/span.test.ts",
+      "--match",
+      "if (value === 1) {",
+      "--replace-file",
+      "broken.txt",
+    ];
+    for (const mode of ["--dry-run", "--write"]) {
+      const result = run(workspace, [...args, mode]);
+      expect(result.status).toBe(1);
+      expect(result.stderr).toContain("stage:");
+      expect(read(join(workspace, "src/span.test.ts"))).toBe(SPAN_SOURCE);
+    }
+  });
+
+  test("an ambiguous snippet still fails with both candidate locations", () => {
+    const source = [
+      "function first(): void {",
+      '  console.log("ok");',
+      "}",
+      "function second(): void {",
+      '  console.log("ok");',
+      "}",
+      "",
+    ].join("\n");
+    const workspace = makeWorkspace({
+      "src/span.test.ts": source,
+      "patch.txt": '  console.log("done");\n',
+    });
+    const result = run(workspace, [
+      "--select-file",
+      "src/span.test.ts",
+      "--match",
+      'console.log("ok");',
+      "--replace-file",
+      "patch.txt",
+      "--dry-run",
+    ]);
+    expect(result.status).toBe(1);
+    expect(result.stderr).toContain("stage: matcher");
+    expect(result.stderr).toContain("resolves to 2 spans");
+    expect(result.stderr).toContain("src/span.test.ts:2:3");
+    expect(result.stderr).toContain("src/span.test.ts:5:3");
+    expect(result.stderr).toContain("exactly one unique span");
+    expect(read(join(workspace, "src/span.test.ts"))).toBe(source);
   });
 });
 

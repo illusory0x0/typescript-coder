@@ -19,6 +19,7 @@ export type EditOperation =
       replace?: string;
       rename?: string;
     }
+  | { op: "select-file"; path: string; match?: string; pick?: string; replace?: string }
   | { op: "create"; path: string }
   | { op: "delete"; path: string }
   | { op: "rewrite"; path: string; content: string };
@@ -56,6 +57,7 @@ const OPERATION_FIELDS: Record<OperationKind, readonly string[]> = {
   create: ["op", "path"],
   delete: ["op", "path"],
   rewrite: ["op", "path", "content"],
+  "select-file": ["op", "path", "match", "pick", "replace"],
 };
 
 const REQUIRED_FIELDS: Record<OperationKind, readonly string[]> = {
@@ -64,6 +66,7 @@ const REQUIRED_FIELDS: Record<OperationKind, readonly string[]> = {
   create: ["path"],
   delete: ["path"],
   rewrite: ["path", "content"],
+  "select-file": ["path"],
 };
 
 function isOperationKind(value: string): value is OperationKind {
@@ -152,6 +155,16 @@ function validateOperation(operation: EditOperation): void {
       }
       return;
     }
+    case "select-file": {
+      pathToken(operation.op, "path", operation.path);
+      if (operation.pick !== undefined) {
+        rangeToken(operation.op, "pick", operation.pick);
+      }
+      if (operation.replace !== undefined) {
+        fence(operation.op, operation.replace);
+      }
+      return;
+    }
     case "create":
     case "delete": {
       pathToken(operation.op, "path", operation.path);
@@ -199,6 +212,19 @@ function renderOperation(operation: EditOperation): string {
       }
       return `${head}\nend`;
     }
+    case "select-file": {
+      let head = `select file ${operation.path}`;
+      if (operation.match !== undefined) {
+        head += `\nmatch \`${escapeSnippet(operation.match)}\``;
+      }
+      if (operation.pick !== undefined) {
+        head += `\npick ${operation.pick}`;
+      }
+      if (operation.replace !== undefined) {
+        return `${head}\nreplace with\n${fence(operation.op, operation.replace)}`;
+      }
+      return `${head}\nend`;
+    }
     case "create":
       return `create ${operation.path} end`;
     case "delete":
@@ -226,6 +252,8 @@ export function isMutatingOperation(operation: EditOperation): boolean {
       return false;
     case "select":
       return operation.replace !== undefined || operation.rename !== undefined;
+    case "select-file":
+      return operation.replace !== undefined;
     case "create":
     case "delete":
     case "rewrite":
@@ -248,7 +276,7 @@ function parseJsonOperation(raw: unknown, index: number): EditOperation {
   }
   if (!isOperationKind(kind)) {
     reject(
-      `${where} has unknown op ${JSON.stringify(kind)}; expected read, select, create, delete, or rewrite`,
+      `${where} has unknown op ${JSON.stringify(kind)}; expected read, select, select-file, create, delete, or rewrite`,
     );
   }
   const fields = OPERATION_FIELDS[kind];
@@ -318,6 +346,26 @@ function parseJsonOperation(raw: unknown, index: number): EditOperation {
       }
       if (rename !== undefined) {
         selection.rename = rename;
+      }
+      operation = selection;
+      break;
+    }
+    case "select-file": {
+      const selection: Extract<EditOperation, { op: "select-file" }> = {
+        op: "select-file",
+        path: stringField("path"),
+      };
+      const match = optionalField("match");
+      const pick = optionalField("pick");
+      const replace = optionalField("replace");
+      if (match !== undefined) {
+        selection.match = match;
+      }
+      if (pick !== undefined) {
+        selection.pick = pick;
+      }
+      if (replace !== undefined) {
+        selection.replace = replace;
       }
       operation = selection;
       break;

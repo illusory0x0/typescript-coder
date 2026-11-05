@@ -20,6 +20,7 @@ module completions {
     --directory(-C): string   # Workspace root (default: the current directory)
     --read: string            # Read a workspace file
     --select: string          # Select a declaration for a viewer or edit
+    --select-file: string     # Select a unique file span for an edit
     --in: string              # File that contains the selected declaration
     --kind: string            # Declaration kind filter
     --resolve: string@"nu-complete tsed resolve" # TypeScript symbol space filter

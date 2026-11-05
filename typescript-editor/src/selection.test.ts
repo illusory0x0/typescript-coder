@@ -1499,9 +1499,10 @@ describe("file-level select statements (#54)", () => {
     expect(error.issues[0]?.code).toBe("EDIT_FILE_RENAME_UNSUPPORTED");
   });
 
-  test("rejects a file-level viewer clearly", () => {
-    const error = expectSyntax("select file src/a.ts end", "requires `replace with <fence>`");
-    expect(error.issues[0]?.code).toBe("EDIT_FILE_VIEWER_UNSUPPORTED");
+  test("a file-level select without replace parses and defers to resolution", () => {
+    const selection = first("select file src/a.ts end");
+    expect(selection.locator).toEqual({ path: "src/a.ts", name: "", kind: "file" });
+    expect(selection.replacement).toBeNull();
   });
 
   test("rejects resolve and within on a file-level select", () => {
@@ -1509,9 +1510,10 @@ describe("file-level select statements (#54)", () => {
     expectSyntax("select file src/a.ts within 1-2 end", "file-level select is an editor");
   });
 
-  test("rejects pick without replace", () => {
-    const error = expectSyntax("select file src/a.ts pick 1 end", "pick` requires a `replace");
-    expect(error.issues[0]?.code).toBe("EDIT_PICK_WITHOUT_REPLACE");
+  test("a pick without replace parses and defers the replacement failure to resolution", () => {
+    const selection = first("select file src/a.ts pick 1 end");
+    expect(selection.pick).toEqual([{ line: 1, column: 1, endLine: 1, endColumn: 0 }]);
+    expect(selection.replacement).toBeNull();
   });
 });
 

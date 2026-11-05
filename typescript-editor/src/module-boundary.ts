@@ -1,11 +1,11 @@
 /**
- * File-level module-boundary edits (#54).
+ * File-level edits (#54/#83).
  *
  * Imports and exports have no declaration address: the symbol index deliberately
  * excludes them. This module owns their file-level owner instead:
  *
  * - `select file <path> [match …] [pick …] replace with <fence>` resolves
- *   one span inside an import/export statement;
+ *   one unique span anywhere in the file, including an import/export statement;
  * - `create import|export in <path> with <fence>` inserts exactly one
  *   module-boundary statement after the shebang, directives, and existing
  *   imports.
@@ -138,7 +138,7 @@ function resolvePickSpans(
         diagnostics: [
           "stage: range",
           `the file-level \`pick\` range (line ${range.line}, column ${range.column} to line ${range.endLine}, column ${range.endColumn}) is invalid (${located.reason}): ${located.detail}`,
-          "copy the 1-based file-absolute line and column positions from the numbered source block, keep the end inclusive, and keep the range inside one import/export statement",
+          "copy the 1-based file-absolute line and column positions from the numbered source block, keep the end inclusive, and keep the range inside one unique span",
         ].join("\n"),
       };
     }
@@ -190,7 +190,7 @@ function candidateLine(path: string, source: string, program: Program, span: Spa
   const location = spanLocation(path, source, span);
   const line = sourceLineAt(source, span.start).text.trim();
   const label =
-    statement === null ? "(outside an import/export statement)" : `(${statementLabel(statement)})`;
+    statement === null ? "(declaration/other source)" : `(${statementLabel(statement)})`;
   return `- ${location} ${label}: ${line}`;
 }
 
@@ -205,7 +205,7 @@ function ambiguousDiagnostics(
   const more = spans.length - listed.length;
   return [
     "stage: matcher",
-    `the file-level ${picked ? "match + pick" : "match"} in ${JSON.stringify(path)} resolves to ${spans.length} spans; a file-level select must resolve exactly one span inside an import/export statement`,
+    `the file-level ${picked ? "match + pick" : "match"} in ${JSON.stringify(path)} resolves to ${spans.length} spans; a file-level select must resolve exactly one unique span`,
     "candidates:",
     ...listed.map((span) => candidateLine(path, source, program, span)),
     ...(more > 0 ? [`- ... and ${more} more`] : []),
@@ -213,20 +213,11 @@ function ambiguousDiagnostics(
   ].join("\n");
 }
 
-function outsideModuleDiagnostics(path: string, source: string, span: Span): string {
-  return [
-    "stage: address",
-    `the file-level selection resolved to ${spanLocation(path, source, span)}, which is outside an import/export statement`,
-    "a file-level select only edits module-boundary statements; include the full import/export statement in the snippet, or use a regex/pick inside one",
-    "to edit a declaration, select its declaration address instead",
-  ].join("\n");
-}
-
 function notFoundDiagnostics(path: string, matcherKind: "snippet" | "regex"): string {
   return [
     "stage: matcher",
-    `the file-level ${matcherKind === "regex" ? "`/regex/`" : "snippet"} matcher matched nothing inside an import/export statement in ${JSON.stringify(path)}`,
-    "copy a complete import/export statement or specifier, use a regex anchored inside one, or use `pick` with file-absolute coordinates",
+    `the file-level ${matcherKind === "regex" ? "`/regex/`" : "snippet"} matcher matched no span in ${JSON.stringify(path)}; a file-level select requires one unique span`,
+    "copy the exact source text (or a complete statement/expression), use a regex anchored on that text, or use `pick` with file-absolute coordinates",
   ].join("\n");
 }
 
@@ -236,6 +227,25 @@ function pickMatchesSpan(span: Span, range: EditRange, pickSpan: Span): boolean 
     return span.start <= pickSpan.start && pickSpan.start <= span.end;
   }
   return span.start >= pickSpan.start && span.end <= pickSpan.end;
+}
+
+/**
+ * All literal occurrences of a file-level snippet that is not parseable on its
+ * own (for example an incomplete block header such as `if (value === 1) {`).
+ * The file owner treats such a snippet as the exact source span, still
+ * requiring exactly one candidate.
+ */
+function findLiteralMatches(source: string, value: string): Span[] {
+  if (value === "") {
+    return [];
+  }
+  const spans: Span[] = [];
+  let index = source.indexOf(value);
+  while (index !== -1) {
+    spans.push({ start: index, end: index + value.length });
+    index = source.indexOf(value, index + 1);
+  }
+  return spans;
 }
 
 function wholeLineRange(source: string, span: Span): Span {
@@ -324,7 +334,9 @@ function moduleEditFailure(
 /**
  * Resolve one `select file …` clause. The file source is the owner; candidates
  * may be structural statement/specifier matches, regex matches, or pick ranges.
- * A candidate must sit inside exactly one import/export statement.
+ * A target inside an import/export statement keeps the module-boundary deletion
+ * expansion (whole statement or specifier); any other unique span is edited
+ * exactly as matched/picked.
  */
 export function resolveFileSelection(
   source: string,
@@ -339,7 +351,7 @@ export function resolveFileSelection(
   if (selection.replacement === null) {
     return moduleEditFailure(
       "address",
-      "stage: address\na file-level select is an editor and requires `replace with <fence>`; use `read <path> end` to view the file",
+      "stage: address\na file-level select is an editor and requires `replace with <fence>` (the native form is --replace-file); use `read <path> end` to view the file",
     );
   }
   if (selection.matcher === null && selection.pick === null) {
@@ -385,12 +397,20 @@ export function resolveFileSelection(
         selection.matcher.value,
       );
       if (found.kind === "unparseable") {
-        return moduleEditFailure(
-          "matcher",
-          `stage: matcher\nthe file-level snippet could not be parsed as TypeScript: ${found.message}; copy a complete import/export statement, specifier, or expression, or use \`/regex/\` or \`pick\` with file-absolute coordinates`,
-        );
+        candidates = findLiteralMatches(source, selection.matcher.value);
+        if (candidates.length === 0) {
+          return moduleEditFailure(
+            "matcher",
+            [
+              "stage: matcher",
+              `the file-level snippet could not be parsed as TypeScript and was not found literally in ${JSON.stringify(selection.locator.path)}; a file-level select requires one unique span: ${found.message}`,
+              "copy the exact source text (for example a complete statement, expression, or template-literal body), or use `/regex/` or `pick` with file-absolute coordinates",
+            ].join("\n"),
+          );
+        }
+      } else {
+        candidates = found.spans;
       }
-      candidates = found.spans;
     }
   } else {
     candidates = [{ start: 0, end: source.length }];
@@ -458,16 +478,10 @@ export function resolveFileSelection(
     );
   }
   const statement = moduleStatementAt(program, target);
-  if (statement === null) {
-    return moduleEditFailure(
-      "address",
-      outsideModuleDiagnostics(selection.locator.path, source, target),
-    );
-  }
 
   let start = target.start;
   let end = target.end;
-  if (selection.replacement.trim() === "") {
+  if (selection.replacement.trim() === "" && statement !== null) {
     if (spansEqual(target, { start: statement.start, end: statement.end })) {
       const line = wholeLineRange(source, { start, end });
       start = line.start;

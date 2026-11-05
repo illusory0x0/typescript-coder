@@ -34,6 +34,9 @@ interface TsedArgs {
   @arg({ help: "Select a declaration for a viewer or edit", valueName: "SYMBOL" })
   select: string?
 
+  @arg({ help: "Select a unique file span for an edit", valueName: "PATH" })
+  select-file: string?
+
   @arg({ long: "in", valueName: "PATH", help: "File that contains the selected declaration" })
   input: string?
 

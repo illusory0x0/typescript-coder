@@ -1,7 +1,7 @@
 ---
 id: 83
 title: "Edit arbitrary unique spans through file-level select and native flags"
-status: todo
+status: done
 priority: medium
 milestone: null
 parent: null

@@ -19,6 +19,8 @@ export interface TsedArgs {
   read?: string[];
   /** Select a declaration for a viewer or edit */
   select?: string;
+  /** Select a unique file span for an edit */
+  select_file?: string;
   /** File that contains the selected declaration */
   input?: string;
   /** Declaration kind filter */
@@ -54,6 +56,7 @@ export type ValueName =
   | "directory"
   | "read"
   | "select"
+  | "select_file"
   | "input"
   | "kind"
   | "resolve"
@@ -74,8 +77,8 @@ export interface Tsed {
 /**
  * Runtime-boundary note:
  * Only enum- and union-typed options have narrow types. `directory`,
- * `read`, `select`, `input`, `kind`, `match`, `pick`, `within`,
- * `replace_file`, `rename`, `create`, `delete`, `rewrite` and
+ * `read`, `select`, `select_file`, `input`, `kind`, `match`, `pick`,
+ * `within`, `replace_file`, `rename`, `create`, `delete`, `rewrite` and
  * `content_file` are `number`/`string` because the .scs source carries no
  * value range or format information. Narrowing those would make the .d.ts
  * assert more than the completion script can guarantee.

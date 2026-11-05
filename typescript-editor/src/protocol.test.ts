@@ -70,6 +70,35 @@ describe("renderEditRequest", () => {
     );
   });
 
+  test("renders a select-file span edit", () => {
+    const rendered = renderEditRequest(
+      request({
+        op: "select-file",
+        path: "src/a.test.ts",
+        match: "if (value === 1) {",
+        pick: "3:3-3:22",
+        replace: "if (value === 2) {",
+      }),
+    );
+    expect(rendered).toBe(
+      [
+        "select file src/a.test.ts",
+        "match `if (value === 1) {`",
+        "pick 3:3-3:22",
+        "replace with",
+        BEGIN,
+        "if (value === 2) {",
+        END,
+      ].join("\n"),
+    );
+  });
+
+  test("renders a select-file without a replacement as a bare file select", () => {
+    expect(
+      renderEditRequest(request({ op: "select-file", path: "src/a.test.ts", match: "return 1;" })),
+    ).toBe("select file src/a.test.ts\nmatch `return 1;`\nend");
+  });
+
   test("renders a replacement fence", () => {
     const rendered = renderEditRequest(
       request({
@@ -279,6 +308,52 @@ describe("parseJsonEditRequest", () => {
     ]);
   });
 
+  test("accepts a select-file operation and renders the DSL form", () => {
+    const parsed = parseJsonEditRequest(
+      JSON.stringify([
+        {
+          op: "select-file",
+          path: "src/a.test.ts",
+          match: "return 1;",
+          pick: "4:3-4:11",
+          replace: "return 2;",
+        },
+      ]),
+    );
+    expect(parsed.operations).toEqual([
+      {
+        op: "select-file",
+        path: "src/a.test.ts",
+        match: "return 1;",
+        pick: "4:3-4:11",
+        replace: "return 2;",
+      },
+    ]);
+    expect(renderEditRequest(parsed)).toBe(
+      [
+        "select file src/a.test.ts",
+        "match `return 1;`",
+        "pick 4:3-4:11",
+        "replace with",
+        BEGIN,
+        "return 2;",
+        END,
+      ].join("\n"),
+    );
+  });
+
+  test("rejects select-file fields that belong to a declaration select", () => {
+    for (const field of ["symbol", "kind", "resolve", "within", "rename"]) {
+      expectProtocolError(
+        () =>
+          parseJsonEditRequest(
+            JSON.stringify([{ op: "select-file", path: "src/a.ts", [field]: "x" }]),
+          ),
+        `unknown field ${JSON.stringify(field)}`,
+      );
+    }
+  });
+
   test("rejects malformed JSON", () => {
     expectProtocolError(() => parseJsonEditRequest("{"), "invalid JSON");
   });
@@ -372,6 +447,8 @@ describe("isMutatingOperation", () => {
     expect(isMutatingOperation({ op: "select", symbol: "a", path: "a.ts", rename: "b" })).toBe(
       true,
     );
+    expect(isMutatingOperation({ op: "select-file", path: "a.ts" })).toBe(false);
+    expect(isMutatingOperation({ op: "select-file", path: "a.ts", replace: "b" })).toBe(true);
     expect(isMutatingOperation({ op: "create", path: "a.ts" })).toBe(true);
     expect(isMutatingOperation({ op: "delete", path: "a.ts" })).toBe(true);
     expect(isMutatingOperation({ op: "rewrite", path: "a.ts", content: "" })).toBe(true);
