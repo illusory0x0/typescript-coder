@@ -154,6 +154,7 @@ end`;
 
 const TASK_FIELDS = `Records:
 - The initial reply starts with the singleton \`plan\` header, then \`goal:\`, then one or more \`node\` records. Later replies contain only \`node\` and \`amend\` records.
+- The \`plan\` header and its \`goal:\` line have no terminator: never write \`end\` or \`</plan>\` after them. Only \`node\` and \`amend\` records end with \`end\`.
 - A work node is \`node "<id>" [after "<id>"…] verify tsc|test\`, then \`instruction:\`, optional \`hint\` lines, optional \`approach:\`, optional \`phase:\`, then \`end\`.
 - \`after\` lists dependency node ids; the executor runs only nodes whose dependencies passed. A node may depend on an existing node or one declared later in the same reply, as long as the graph stays acyclic. Record order is the deterministic readiness tie-break.
 - \`verify\` is the node gate: \`tsc\` runs the type check, \`test\` runs the type check and the test suite after each applied executor reply.
@@ -295,6 +296,7 @@ Correct the graph:
 - Keep one \`plan\` header with a \`goal:\`.
 - Emit flat \`node\` records with \`after\`, \`verify\`, \`instruction\`, and optional hints/approach/phase.
 - End each node with \`end\`.
+- Do not write \`end\` or \`</plan>\` after the \`plan\` header or its \`goal:\` line; only \`node\` and \`amend\` records end with \`end\`.
 - Do not emit \`finish\`, \`patch\`, \`node+\`, \`node~\`, or \`node-\`.${example}
 
 Reply with the complete, corrected initial plan only.`;

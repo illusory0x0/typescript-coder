@@ -560,6 +560,9 @@ Plan-specific recovery:
 - Accept a bare `NN-slug` id where the grammar expects a quoted id, with a
   warning; quote it internally.
 - Accept the outer Markdown wrapper around a complete reply.
+- Accept one trailing `end` or `</plan>` at EOF after a complete reply, with a
+  `PLAN_STRAY_TERMINATOR` warning; a stray closer inside the reply is still an
+  error.
 - A missing `goal:` on the initial reply or a missing `instruction:` on a node
   is an error.
 - A legacy Stage/Task/Edit record, `patch`, `node+~-`, or `finish` gets
@@ -583,8 +586,9 @@ Every plan or edit-action diagnostic rendered to the model has:
 
 Shipped `PLAN_*` error codes: `MISSING_END`, `MISSING_FIELD`, `UNKNOWN_FIELD`,
 `UNKNOWN_PARENT`, `DUPLICATE_ID`, `CYCLE`, `STRUCTURE`, `LEGACY_RECORD`,
-`BARE_ID`, `WHOLE_REPLY_FENCE`, `UNCLOSED_FENCE`, `MALFORMED_FENCE`,
-`LEGACY_FENCE`, `FENCE_TRAILING_TEXT`, `EMBEDDED_FENCE_END`, `TRUNCATED`. The
+`BARE_ID`, `WHOLE_REPLY_FENCE`, `STRAY_TERMINATOR`, `UNCLOSED_FENCE`,
+`MALFORMED_FENCE`, `LEGACY_FENCE`, `FENCE_TRAILING_TEXT`, `EMBEDDED_FENCE_END`,
+`TRUNCATED`. The
 edit-action `EDIT_*` family is owned by [`edit-protocol.md`](edit-protocol.md)
 §2 and §5.
 

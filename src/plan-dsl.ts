@@ -10,8 +10,9 @@
  * module only turns the wire form into that model.
  *
  * Parsing is tolerant in the same ways as the edit DSL: a whole-reply fence, a
- * bare id, and an unambiguous missing `end` recover with warnings; structure is
- * still rejected all-or-nothing, with shared bounded diagnostics (see
+ * bare id, an unambiguous missing `end`, and one trailing `end`/`</plan>` after
+ * a complete reply recover with warnings; structure is still rejected
+ * all-or-nothing, with shared bounded diagnostics (see
  * `src/dsl-diagnostics.ts`). There is no JSON fallback and no legacy
  * Stage/Task/Edit mode.
  */
@@ -1140,12 +1141,25 @@ function recoverRecord(cursor: Cursor): void {
   }
 }
 
+/** True when only blank lines remain after the cursor. */
+function atEndOfReply(cursor: Cursor): boolean {
+  for (let index = cursor.position; index < cursor.lines.length; index += 1) {
+    const line = cursor.lines[index];
+    if (line !== undefined && line.text.trim() !== "") {
+      return false;
+    }
+  }
+  return true;
+}
+
 function parseRecords(
   cursor: Cursor,
   ids: Map<NodeId, Line>,
 ): { nodes: WorkNode[]; amends: NodeAmend[] } {
   const nodes: WorkNode[] = [];
   const amends: NodeAmend[] = [];
+  /** A closer already seen outside a record; only one trailing closer is tolerated. */
+  let strayCloserSeen = false;
 
   for (;;) {
     const line = peekNonBlank(cursor);
@@ -1159,19 +1173,38 @@ function parseRecords(
       finishRecord(cursor, line);
       continue;
     }
-    if (trimmed === "end") {
-      report(
-        cursor,
-        "PLAN_UNKNOWN_FIELD",
-        `unexpected "end" on line ${line.number}; no node record is open`,
-        {
-          line: line.number,
-          expected: ["node", "amend"],
-          found: "end",
-          hint: "remove the stray end",
-        },
-      );
-      continue;
+    if (trimmed === "end" || trimmed === "</plan>") {
+      if (!strayCloserSeen && atEndOfReply(cursor)) {
+        warn(
+          cursor,
+          "PLAN_STRAY_TERMINATOR",
+          `stray ${quote(trimmed)} on line ${line.number} after the final record; accepted at the end of the reply`,
+          {
+            line: line.number,
+            expected: ["node", "amend"],
+            found: trimmed,
+            hint: `remove the trailing ${quote(trimmed)}; the plan header and goal have no terminator, and only node and amend records end with "end"`,
+          },
+        );
+        cursor.position = cursor.lines.length;
+        break;
+      }
+      strayCloserSeen = true;
+      if (trimmed === "end") {
+        report(
+          cursor,
+          "PLAN_UNKNOWN_FIELD",
+          `unexpected "end" on line ${line.number}; no node record is open`,
+          {
+            line: line.number,
+            expected: ["node", "amend"],
+            found: "end",
+            hint: "remove the stray end",
+          },
+        );
+        continue;
+      }
+      // A stray `</plan>` falls through to the unknown-record-header report.
     }
     if (trimmed.startsWith("{")) {
       report(

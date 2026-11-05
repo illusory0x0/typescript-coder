@@ -379,6 +379,53 @@ instruction: x`);
     expect(eof.issues.some((issue) => issue.code === "PLAN_MISSING_END")).toBe(true);
   });
 
+  test("accepts one trailing end after a complete plan with a warning", () => {
+    const parsed = parsePlanDslDetailed(`${SPEC_EXAMPLE}\nend`);
+    expect(parsed.ok).toBe(true);
+    expect(parsed.value).toEqual(SPEC_PLAN);
+    const stray = parsed.issues.filter((issue) => issue.code === "PLAN_STRAY_TERMINATOR");
+    expect(stray).toHaveLength(1);
+    expect(stray[0]?.severity).toBe("warning");
+    expect(stray[0]?.recovered).toBe(true);
+    expect(stray[0]?.line).toBe(SPEC_EXAMPLE.split("\n").length + 1);
+  });
+
+  test("accepts one trailing </plan> after a complete plan with a warning", () => {
+    const parsed = parsePlanDslDetailed(`${SPEC_EXAMPLE}\n</plan>`);
+    expect(parsed.ok).toBe(true);
+    expect(parsed.value).toEqual(SPEC_PLAN);
+    expect(parsed.issues.some((issue) => issue.code === "PLAN_STRAY_TERMINATOR")).toBe(true);
+  });
+
+  test("rejects a stray end in the middle of a reply", () => {
+    const diagnostics = rejected(`plan
+goal: g
+node "02-a" verify test
+instruction: x
+end
+
+end
+
+node "03-b" verify test
+instruction: y
+end`);
+    expect(diagnostics).toContain("PLAN_UNKNOWN_FIELD");
+    expect(diagnostics).toContain('unexpected "end"');
+  });
+
+  test("rejects two trailing closers instead of guessing", () => {
+    const diagnostics = rejected(`${SPEC_EXAMPLE}\nend\n</plan>`);
+    expect(diagnostics).toContain("PLAN_UNKNOWN_FIELD");
+  });
+
+  test("rejects a repeated invalid reply deterministically", () => {
+    const invalid = `${SPEC_EXAMPLE}\nend\nend`;
+    const first = rejected(invalid);
+    const second = rejected(invalid);
+    expect(second).toBe(first);
+    expect(first).toContain("PLAN_UNKNOWN_FIELD");
+  });
+
   test("rejects an unclosed field fence as truncated", () => {
     const parsed = parsePlanDslDetailed(`plan
 goal: g

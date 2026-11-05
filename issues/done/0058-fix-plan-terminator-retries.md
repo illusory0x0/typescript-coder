@@ -1,7 +1,7 @@
 ---
 id: 58
 title: "Fix plan terminator retries"
-status: todo
+status: done
 priority: medium
 milestone: null
 parent: null
@@ -44,3 +44,5 @@ The last command calls the real model and costs money; ask the human before runn
 - The tolerance is only for a single trailing closer at EOF; it must not guess a missing node boundary.
 - A repeated invalid reply still terminates `task-exhausted`.
 - Discovered during the 2026-10-27 minilisp diagnostic; the full 4×5 matrix was 20/20, so this is a small-sample regression rather than a universal failure.
+- 2026-11-05 implementation: the plan parser accepts exactly one trailing `end` or `</plan>` at EOF after a complete reply with a `PLAN_STRAY_TERMINATOR` warning; a mid-reply or repeated closer still rejects. The planner prompt and plan retry prompt now forbid a terminator after the `plan` header/goal. `src/plan-dsl.test.ts` covers trailing `end`, trailing `</plan>`, mid-reply `end`, two closers, and repeated invalid input; `src/prompts/task.test.ts` pins the prompt text. Offline: `just typecheck && just test` = 1496 pass / 0 fail; `just accept` = 8/8. The three 2026-10-27 replays (rep1/rep2/rep4) now parse with the warning. Pending human-gated minilisp 5-rep live run.
+- 2026-11-05 human sign-off: skipped the human-gated minilisp 5-rep live run to avoid model cost. The live 5/5 and one-planning-call-per-run criterion remains unverified by explicit human decision; all offline criteria pass.

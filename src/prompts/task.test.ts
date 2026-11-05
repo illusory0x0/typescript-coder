@@ -46,6 +46,9 @@ describe("planning prompts", () => {
     expect(prompt).toContain("phase:");
     expect(prompt).toContain('amend "02-parser"');
     expect(prompt).toContain("no `finish`");
+    expect(prompt).toContain("The `plan` header and its `goal:` line have no terminator");
+    expect(prompt).toContain("never write `end` or `</plan>` after them");
+    expect(prompt).toContain("Only `node` and `amend` records end with `end`");
     expect(prompt).not.toMatch(/\bstage\b/i);
     expect(prompt).not.toContain('edit "');
     expect(prompt).not.toContain("Stage -> Task");
@@ -132,6 +135,9 @@ describe("planning prompts", () => {
     expect(planRetry).toContain("stage: plan-graph");
     expect(planRetry).toContain("node");
     expect(planRetry).toContain("Do not emit `finish`");
+    expect(planRetry).toContain(
+      "Do not write `end` or `</plan>` after the `plan` header or its `goal:` line",
+    );
 
     const replanRetry = buildTaskReplanRetryPrompt("stage: plan-graph\n- dangling after");
     expect(replanRetry).toContain("stage: plan-graph");
