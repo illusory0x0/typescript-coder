@@ -1,0 +1,433 @@
+import { afterEach, describe, expect, test } from "bun:test";
+import {
+  existsSync,
+  mkdirSync,
+  mkdtempSync,
+  readFileSync,
+  rmSync,
+  symlinkSync,
+  writeFileSync,
+} from "node:fs";
+import { dirname, join, basename } from "node:path";
+import { tmpdir } from "node:os";
+import { applyEditDsl, readEditDsl } from "./api";
+
+const HELPER = [
+  "export function answer(): number {",
+  "  return 1;",
+  "}",
+  "",
+  "export function other(): number {",
+  "  return 2;",
+  "}",
+  "",
+].join("\n");
+
+let directories: string[] = [];
+
+function makeWorkspace(files: Record<string, string> = {}): string {
+  const directory = mkdtempSync(join(tmpdir(), "tc-api-"));
+  directories.push(directory);
+  for (const [path, source] of Object.entries(files)) {
+    const target = join(directory, path);
+    mkdirSync(dirname(target), { recursive: true });
+    writeFileSync(target, source);
+  }
+  return directory;
+}
+
+function read(path: string): string {
+  return readFileSync(path, "utf8");
+}
+
+function replacement(body: string, path = "src/helper.ts"): string {
+  return [
+    `select function answer in ${path}`,
+    "replace with",
+    "TC_EDIT_BEGIN",
+    body,
+    "TC_EDIT_END",
+    "end",
+  ].join("\n");
+}
+
+function writeFileReply(path: string, body: string): string {
+  return ["write " + path + " with", "TC_EDIT_BEGIN", body, "TC_EDIT_END"].join("\n");
+}
+
+afterEach(() => {
+  for (const directory of directories) {
+    rmSync(directory, { recursive: true, force: true });
+  }
+  directories = [];
+});
+
+describe("readEditDsl", () => {
+  test("read returns numbered lines and writes nothing", async () => {
+    const directory = makeWorkspace({ "src/helper.ts": HELPER });
+    const target = join(directory, "src/helper.ts");
+    const before = read(target);
+
+    const result = await readEditDsl("read src/helper.ts end", { cwd: directory });
+
+    expect(result.ok).toBe(true);
+    expect(result.reads).toHaveLength(1);
+    expect(result.reads[0]?.path).toBe("src/helper.ts");
+    expect(result.reads[0]?.lines[0]).toEqual({
+      line: 1,
+      text: "export function answer(): number {",
+    });
+    expect(result.text).toContain("Read results");
+    expect(result.text).toContain("1 | export function answer(): number {");
+    expect(read(target)).toBe(before);
+  });
+
+  test("viewer returns occurrences and writes nothing", async () => {
+    const directory = makeWorkspace({ "src/helper.ts": HELPER });
+    const target = join(directory, "src/helper.ts");
+    const before = read(target);
+
+    const result = await readEditDsl("select function answer in src/helper.ts end", {
+      cwd: directory,
+    });
+
+    expect(result.ok).toBe(true);
+    expect(result.reads).toEqual([]);
+    expect(result.viewers).toHaveLength(1);
+    expect(result.viewers[0]?.locator.name).toBe("answer");
+    expect(result.text).toContain("Located occurrences");
+    expect(result.text).toContain("export function answer(): number {");
+    expect(read(target)).toBe(before);
+  });
+
+  test("rejects every mutation clause with stage: protocol", async () => {
+    const directory = makeWorkspace({
+      "src/helper.ts": HELPER,
+      "src/old.ts": "export const old = 1;\n",
+    });
+    const target = join(directory, "src/helper.ts");
+    const before = read(target);
+
+    const mutations = [
+      replacement("function answer(): number {\n  return 3;\n}"),
+      writeFileReply("src/new.ts", "export const created = 1;"),
+      "create src/empty.ts end",
+      "delete src/old.ts end",
+      "select function answer in src/helper.ts\nrename answer to result\nend",
+    ];
+    for (const mutation of mutations) {
+      const result = await readEditDsl(mutation, { cwd: directory });
+      expect(result.ok).toBe(false);
+      expect(result.failures.some((failure) => failure.stage === "protocol")).toBe(true);
+      expect(result.text).toContain("stage: protocol");
+      expect(result.text).toContain("read-only");
+    }
+    expect(read(target)).toBe(before);
+    expect(existsSync(join(directory, "src/new.ts"))).toBe(false);
+    expect(existsSync(join(directory, "src/empty.ts"))).toBe(false);
+    expect(existsSync(join(directory, "src/old.ts"))).toBe(true);
+  });
+
+  test("a failed read is returned in readFailures", async () => {
+    const directory = makeWorkspace({ "src/helper.ts": HELPER });
+
+    const result = await readEditDsl("read src/helper.ts within 99 end", { cwd: directory });
+
+    expect(result.ok).toBe(true);
+    expect(result.reads).toEqual([]);
+    expect(result.readFailures).toHaveLength(1);
+    expect(result.text).toContain("Read failed");
+  });
+});
+
+describe("applyEditDsl", () => {
+  test("applies a whole-symbol replacement through the format/gate pipeline", async () => {
+    const directory = makeWorkspace({ "src/helper.ts": HELPER });
+    const target = join(directory, "src/helper.ts");
+
+    const result = await applyEditDsl(
+      replacement("export function answer(): number {\n  return 2;\n}"),
+      { cwd: directory },
+    );
+
+    expect(result.ok).toBe(true);
+    expect(result.failures).toEqual([]);
+    expect(result.changed).toEqual(["src/helper.ts"]);
+    expect(result.created).toEqual([]);
+    expect(result.deleted).toEqual([]);
+    expect(read(target)).toContain("return 2;");
+    expect(read(target)).not.toContain("return 1;");
+  });
+
+  test("applies write/create/delete commands and reports created/deleted", async () => {
+    const directory = makeWorkspace({
+      "src/helper.ts": HELPER,
+      "src/old.ts": "export const old = 1;\n",
+    });
+    const text = [
+      writeFileReply("src/new.ts", "export const created = 1;"),
+      "create src/empty.ts end",
+      "delete src/old.ts end",
+    ].join("\n");
+
+    const result = await applyEditDsl(text, { cwd: directory });
+
+    expect(result.ok).toBe(true);
+    expect(result.failures).toEqual([]);
+    expect(result.changed).toEqual(["src/empty.ts", "src/new.ts"]);
+    expect(result.created).toEqual(["src/empty.ts", "src/new.ts"]);
+    expect(result.deleted).toEqual(["src/old.ts"]);
+    expect(read(join(directory, "src/new.ts"))).toContain("export const created = 1;");
+    expect(read(join(directory, "src/empty.ts"))).toBe("");
+    expect(existsSync(join(directory, "src/old.ts"))).toBe(false);
+  });
+
+  test("a mixed reply applies the edit and returns read feedback", async () => {
+    const directory = makeWorkspace({ "src/helper.ts": HELPER });
+    const target = join(directory, "src/helper.ts");
+    const text = [
+      replacement("export function answer(): number {\n  return 4;\n}"),
+      "read src/helper.ts end",
+    ].join("\n\n");
+
+    const result = await applyEditDsl(text, { cwd: directory });
+
+    expect(result.ok).toBe(true);
+    expect(result.changed).toEqual(["src/helper.ts"]);
+    expect(result.reads).toHaveLength(1);
+    expect(result.text).toContain("Read results");
+    expect(read(target)).toContain("return 4;");
+  });
+
+  test("invalid DSL writes nothing", async () => {
+    const directory = makeWorkspace({ "src/helper.ts": HELPER });
+    const target = join(directory, "src/helper.ts");
+    const before = read(target);
+
+    const result = await applyEditDsl("this is not an edit reply", { cwd: directory });
+
+    expect(result.ok).toBe(false);
+    expect(result.failures).toEqual([]);
+    expect(result.text).toContain("stage: syntax");
+    expect(result.changed).toEqual([]);
+    expect(read(target)).toBe(before);
+  });
+
+  test("a clean edit plus one failing edit writes nothing", async () => {
+    const directory = makeWorkspace({ "src/helper.ts": HELPER });
+    const target = join(directory, "src/helper.ts");
+    const before = read(target);
+    const text = [
+      replacement("export function answer(): number {\n  return 5;\n}"),
+      writeFileReply("src/broken.ts", "export const = ;"),
+    ].join("\n\n");
+
+    const result = await applyEditDsl(text, { cwd: directory });
+
+    expect(result.ok).toBe(false);
+    expect(result.failures.length).toBeGreaterThan(0);
+    expect(result.changed).toEqual([]);
+    expect(result.created).toEqual([]);
+    expect(result.deleted).toEqual([]);
+    expect(read(target)).toBe(before);
+    expect(existsSync(join(directory, "src/broken.ts"))).toBe(false);
+  });
+
+  test("a failed read does not discard a clean mutation", async () => {
+    const directory = makeWorkspace({ "src/helper.ts": HELPER });
+    const target = join(directory, "src/helper.ts");
+    const text = [
+      replacement("export function answer(): number {\n  return 6;\n}"),
+      "read src/helper.ts within 99 end",
+    ].join("\n\n");
+
+    const result = await applyEditDsl(text, { cwd: directory });
+
+    expect(result.ok).toBe(true);
+    expect(result.readFailures).toHaveLength(1);
+    expect(result.failures).toEqual([]);
+    expect(result.changed).toEqual(["src/helper.ts"]);
+    expect(result.text).toContain("Read failed");
+    expect(read(target)).toContain("return 6;");
+  });
+
+  test("a no-op replacement writes nothing and fails", async () => {
+    const directory = makeWorkspace({ "src/helper.ts": HELPER });
+    const target = join(directory, "src/helper.ts");
+    const before = read(target);
+    const text = [
+      "select function answer in src/helper.ts",
+      "match `return 1;`",
+      "replace with",
+      "TC_EDIT_BEGIN",
+      "return 1;",
+      "TC_EDIT_END",
+      "end",
+    ].join("\n");
+
+    const result = await applyEditDsl(text, { cwd: directory });
+
+    expect(result.ok).toBe(false);
+    expect(result.failures.some((failure) => failure.stage === "no-op")).toBe(true);
+    expect(result.changed).toEqual([]);
+    expect(read(target)).toBe(before);
+  });
+
+  test("creates parent directories for a new nested path", async () => {
+    const directory = makeWorkspace();
+    const text = writeFileReply("deep/nested/new.ts", "export const nested = 1;");
+
+    const result = await applyEditDsl(text, { cwd: directory });
+
+    expect(result.ok).toBe(true);
+    expect(result.changed).toEqual(["deep/nested/new.ts"]);
+    expect(result.created).toEqual(["deep/nested/new.ts"]);
+    expect(existsSync(join(directory, "deep/nested/new.ts"))).toBe(true);
+    expect(read(join(directory, "deep/nested/new.ts"))).toContain("export const nested = 1;");
+  });
+});
+
+describe("workspace path safety", () => {
+  test("rejects traversal, absolute, protected, hidden-directory and node_modules paths", async () => {
+    const directory = makeWorkspace({
+      ".hidden/file.ts": "export const hidden = 1;\n",
+      "node_modules/pkg/file.ts": "export const module = 1;\n",
+    });
+    const outside = join(directory, "..", "tc-api-outside.ts");
+    writeFileSync(outside, "export const outside = 1;\n");
+    const hidden = join(directory, ".hidden/file.ts");
+    const moduleFile = join(directory, "node_modules/pkg/file.ts");
+    try {
+      const paths = [
+        "../outside.ts",
+        join(directory, "src/absolute.ts"),
+        "human/spec.ts",
+        ".hidden/file.ts",
+        "node_modules/pkg/file.ts",
+      ];
+      for (const path of paths) {
+        const result = await applyEditDsl(writeFileReply(path, "export const touched = 1;"), {
+          cwd: directory,
+        });
+        expect(result.ok).toBe(false);
+        expect(result.changed).toEqual([]);
+        expect(result.created).toEqual([]);
+      }
+      expect(read(outside)).toBe("export const outside = 1;\n");
+      expect(read(hidden)).toBe("export const hidden = 1;\n");
+      expect(read(moduleFile)).toBe("export const module = 1;\n");
+      expect(existsSync(join(directory, "src/absolute.ts"))).toBe(false);
+      expect(existsSync(join(directory, "human/spec.ts"))).toBe(false);
+    } finally {
+      rmSync(outside, { force: true });
+    }
+  });
+
+  test("rejects symlink escapes for reads and writes", async () => {
+    const directory = makeWorkspace();
+    const outsideDirectory = mkdtempSync(join(tmpdir(), "tc-api-outside-"));
+    const outsideFile = join(outsideDirectory, "secret.ts");
+    writeFileSync(outsideFile, "export const secret = 1;\n");
+    symlinkSync(outsideDirectory, join(directory, "link"), "dir");
+    try {
+      const readResult = await readEditDsl("read link/secret.ts end", { cwd: directory });
+      expect(readResult.readFailures).toHaveLength(1);
+      expect(readResult.readFailures[0]?.diagnostics).toContain("outside the workspace");
+
+      const writeResult = await applyEditDsl(
+        writeFileReply("link/secret.ts", "export const changed = 1;"),
+        { cwd: directory },
+      );
+      expect(writeResult.ok).toBe(false);
+      expect(writeResult.changed).toEqual([]);
+      expect(read(outsideFile)).toBe("export const secret = 1;\n");
+
+      const newFileResult = await applyEditDsl(
+        writeFileReply("link/new.ts", "export const created = 1;"),
+        { cwd: directory },
+      );
+      expect(newFileResult.ok).toBe(false);
+      expect(existsSync(join(outsideDirectory, "new.ts"))).toBe(false);
+    } finally {
+      rmSync(outsideDirectory, { recursive: true, force: true });
+    }
+  });
+
+  test("an unsafe select returns a typed failure instead of throwing", async () => {
+    const directory = makeWorkspace();
+    const outsideName = `${basename(directory)}-outside-select.ts`;
+    const outside = join(dirname(directory), outsideName);
+    const outsideRelative = `../${outsideName}`;
+    const outsideSource = "export function secret(): number {\n  return 1;\n}\n";
+    writeFileSync(outside, outsideSource);
+    try {
+      // A bare file-level select is already rejected by the parser, so it must
+      // not reach `sourceFor` at all.
+      const bareFile = await readEditDsl(`select file ${outsideRelative} end`, {
+        cwd: directory,
+      });
+      expect(bareFile.ok).toBe(false);
+      expect(bareFile.text.length).toBeGreaterThan(0);
+
+      // A file-level select with a replacement reaches resolution; it must fail
+      // with a typed address diagnostic before any source read.
+      const fileLevel = await applyEditDsl(
+        [
+          `select file ${outsideRelative}`,
+          "replace with",
+          "TC_EDIT_BEGIN",
+          "export function replaced(): number {",
+          "  return 2;",
+          "}",
+          "TC_EDIT_END",
+          "end",
+        ].join("\n"),
+        { cwd: directory },
+      );
+      expect(fileLevel.ok).toBe(false);
+      expect(fileLevel.failures).toHaveLength(1);
+      expect(fileLevel.failures[0]?.stage).toBe("address");
+      expect(fileLevel.failures[0]?.diagnostics).toContain("outside the editable workspace");
+      expect(fileLevel.changed).toEqual([]);
+      expect(fileLevel.created).toEqual([]);
+
+      // A declaration-level editor address outside the workspace takes the same
+      // typed path, not an exception from `sourceFor`.
+      const editor = await applyEditDsl(
+        [
+          `select function secret in ${outsideRelative}`,
+          "replace with",
+          "TC_EDIT_BEGIN",
+          "export function secret(): number {",
+          "  return 3;",
+          "}",
+          "TC_EDIT_END",
+          "end",
+        ].join("\n"),
+        { cwd: directory },
+      );
+      expect(editor.ok).toBe(false);
+      expect(editor.failures).toHaveLength(1);
+      expect(editor.failures[0]?.stage).toBe("address");
+      expect(editor.failures[0]?.diagnostics).toContain("outside the editable workspace");
+      expect(editor.changed).toEqual([]);
+      expect(editor.created).toEqual([]);
+      expect(editor.text).toContain("outside the editable workspace");
+
+      // The outside file was neither read into an edit nor written.
+      expect(read(outside)).toBe(outsideSource);
+    } finally {
+      rmSync(outside, { force: true });
+    }
+  });
+
+  test("cwd must exist and be a directory", async () => {
+    const directory = makeWorkspace();
+    await expect(readEditDsl("", { cwd: join(directory, "missing") })).rejects.toThrow(
+      /does not exist/,
+    );
+    const file = join(directory, "file.txt");
+    writeFileSync(file, "x");
+    await expect(readEditDsl("", { cwd: file })).rejects.toThrow(/not a directory/);
+  });
+});

@@ -23,8 +23,21 @@ import type { EditRange } from "./range";
 /** #110 `MatcherKind`, mirrored to avoid a value-level import cycle with loop. */
 export type EditDslMatcherKind = "snippet" | "regex";
 
-/** The stage an edit-dsl clause failed at, mapped to the loop's failure stages. */
-export type EditDslFailureStage = "address" | "matcher" | "range" | "no-op" | "duplicate";
+/**
+ * The stage an edit-dsl clause failed at, mapped to the loop's failure stages.
+ * `protocol`, `gate`, and `format` are produced by the workspace-backed API
+ * (`api.ts`) around the shared commit pipeline; the loop's own classifier
+ * already knows those stage names.
+ */
+export type EditDslFailureStage =
+  | "address"
+  | "matcher"
+  | "range"
+  | "no-op"
+  | "duplicate"
+  | "protocol"
+  | "gate"
+  | "format";
 
 /** Callbacks the loop supplies: address resolution (echo/kind rules) and file reads. */
 export interface EditDslDeps {
@@ -585,20 +598,23 @@ export function resolveEditDslReply(
     }
     const index = indices?.[position] ?? position;
     const path = selection.locator.path;
+    // Path safety is checked before any source read: a workspace-backed
+    // `sourceFor` throws on an unsafe path, so every clause (file-level and
+    // declaration-level) must fail typed here instead.
+    if (deps.isSafePath !== undefined && !deps.isSafePath(path)) {
+      failures.push({
+        index,
+        path,
+        locator: selection.locator,
+        stage: "address",
+        cause: null,
+        diagnostics: `stage: address\nthe path ${JSON.stringify(path)} is outside the editable workspace`,
+        undeclaredName: null,
+      });
+      continue;
+    }
     const source = deps.sourceFor(path);
     if (isFileSelection(selection)) {
-      if (deps.isSafePath !== undefined && !deps.isSafePath(path)) {
-        failures.push({
-          index,
-          path,
-          locator: selection.locator,
-          stage: "address",
-          cause: null,
-          diagnostics: `stage: address\nthe path ${JSON.stringify(path)} is outside the editable workspace`,
-          undeclaredName: null,
-        });
-        continue;
-      }
       if (deps.fileExists !== undefined && !deps.fileExists(path)) {
         failures.push({
           index,
