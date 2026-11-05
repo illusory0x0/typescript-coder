@@ -108,6 +108,12 @@ describe("tsed flag protocol", () => {
     expect(result.stdout).toContain("--dry-run");
     expect(result.stdout).toContain("--read");
     expect(result.stdout).toContain("--within");
+    expect(result.stdout).toContain("--read <PATH>");
+    expect(result.stdout).toContain("--select <SYMBOL>");
+    expect(result.stdout).toContain("--in <PATH>");
+    expect(result.stdout).toContain("-C, --directory <DIR>");
+    expect(result.stdout).toContain("--replace-file <FILE>");
+    expect(result.stdout).toContain("--content-file <FILE>");
     expect(result.stderr).toBe("");
   });
 

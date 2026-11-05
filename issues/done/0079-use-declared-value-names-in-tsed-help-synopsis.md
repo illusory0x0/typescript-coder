@@ -1,7 +1,7 @@
 ---
 id: 79
 title: "Use declared value names in tsed help synopsis"
-status: todo
+status: done
 priority: medium
 milestone: null
 parent: null
@@ -65,3 +65,4 @@ just typecheck && just test
 - If the scs fix belongs upstream, file/link the scs issue and pin or vendor the
   fixed generator before regenerating. Do not patch `scs/generated/` by hand.
 - This is a display-only issue; the parser already accepts the options.
+- Fixed at the scs emitter: RuntimeField now carries valueName, describeField emits it, and the runtime template FieldSpec/help hint uses valueName ?? ident. scs spec 8.3 updated; runtime goldens and the bootstrapped scs runtime regenerated. Upstream fix committed locally in /home/illu/repo/scs as e2d7634. Regenerated tsed artifacts with just tsed-generate; help now shows --read <PATH>, --select <SYMBOL>, --in <PATH>, -C/--directory <DIR>, --replace-file <FILE>, --content-file <FILE>, --within <RANGES>, etc. Added a tsed help metavar assertion. Verification: scs typecheck, bun test 320 pass/1 skip, fmt:check, check, full bun run verify green; just tsed-check up to date; targeted cli test 35 pass; just typecheck && just test green (editor 891, harness 703, scripts 16, acceptance 9).

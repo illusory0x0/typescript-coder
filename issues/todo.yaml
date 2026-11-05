@@ -2,14 +2,6 @@
 # rewrites it; `add` appends; other writes keep it. `check` enforces it.
 # A dep, and every child of an umbrella, must be listed before its dependent.
 
-- id: 79
-  title: "Use declared value names in tsed help synopsis"
-  status: todo
-  priority: medium
-  milestone: null
-  parent: null
-  deps: []
-  file: 0079-use-declared-value-names-in-tsed-help-synopsis.md
 - id: 80
   title: "Update named imports and exports on a cross-file rename"
   status: todo
