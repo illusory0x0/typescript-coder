@@ -244,6 +244,38 @@ describe("tsed flag protocol", () => {
     expect(read(join(workspace, "src/old.ts"))).toBe(oldSource);
   });
 
+  test("non-regular paths fail identically in dry-run and apply", () => {
+    const workspace = makeWorkspace({ "content.txt": "export const rewritten = true;\n" });
+    for (const path of ["dircreate", "dirdelete", "dirwrite"]) {
+      mkdirSync(join(workspace, path));
+    }
+    const cases: { args: string[]; diagnostic: string }[] = [
+      { args: ["--create", "dircreate"], diagnostic: 'cannot create "dircreate"' },
+      { args: ["--delete", "dirdelete"], diagnostic: 'cannot delete "dirdelete"' },
+      {
+        args: ["--rewrite", "dirwrite", "--content-file", "content.txt"],
+        diagnostic: 'cannot write "dirwrite"',
+      },
+    ];
+
+    for (const { args, diagnostic } of cases) {
+      const preview = run(workspace, [...args, "--dry-run"]);
+      const applied = run(workspace, [...args, "--write"]);
+      expect(preview.status).toBe(1);
+      expect(applied.status).toBe(1);
+      expect(preview.stderr).toBe(applied.stderr);
+      expect(preview.stderr).toContain("stage: address");
+      expect(preview.stderr).toContain("not a regular file");
+      expect(preview.stderr).toContain(diagnostic);
+      expect(preview.stderr).not.toContain("does not exist");
+      expect(preview.stdout).toBe("");
+      expect(applied.stdout).toBe("");
+    }
+    for (const path of ["dircreate", "dirdelete", "dirwrite"]) {
+      expect(existsSync(join(workspace, path))).toBe(true);
+    }
+  });
+
   test("--write and --dry-run are mutually exclusive", () => {
     const workspace = makeWorkspace({ "patch.txt": ANSWER_TWO });
     const result = run(workspace, [
@@ -405,6 +437,50 @@ describe("tsed stdin protocols", () => {
     expect(result.stdout).not.toContain("changed: src/helper.ts");
     expect(result.stderr).toBe("");
     expect(read(join(workspace, "src/helper.ts"))).toBe(HELPER);
+  });
+
+  test("dsl and json payloads fail identically on non-regular paths", () => {
+    const workspace = makeWorkspace();
+    for (const path of ["dircreate", "dirdelete", "dirwrite"]) {
+      mkdirSync(join(workspace, path));
+    }
+    const dslReply = [
+      "create dircreate end",
+      "delete dirdelete end",
+      "write dirwrite with",
+      BEGIN,
+      "export const nope = true;",
+      END,
+    ].join("\n");
+    const jsonPayload = JSON.stringify({
+      operations: [
+        { op: "create", path: "dircreate" },
+        { op: "delete", path: "dirdelete" },
+        { op: "rewrite", path: "dirwrite", content: "export const nope = true;\n" },
+      ],
+    });
+    const payloads = [
+      { format: "dsl", input: dslReply },
+      { format: "json", input: jsonPayload },
+    ];
+
+    for (const { format, input } of payloads) {
+      const preview = run(workspace, ["--protocol-format", format, "--dry-run"], input);
+      const applied = run(workspace, ["--protocol-format", format, "--write"], input);
+      expect(preview.status).toBe(1);
+      expect(applied.status).toBe(1);
+      expect(preview.stderr).toBe(applied.stderr);
+      expect(preview.stderr).toContain('cannot create "dircreate"');
+      expect(preview.stderr).toContain('cannot delete "dirdelete"');
+      expect(preview.stderr).toContain('cannot write "dirwrite"');
+      expect(preview.stderr).toContain("not a regular file");
+      expect(preview.stderr).not.toContain("does not exist");
+      expect(preview.stdout).toBe("");
+      expect(applied.stdout).toBe("");
+    }
+    for (const path of ["dircreate", "dirdelete", "dirwrite"]) {
+      expect(existsSync(join(workspace, path))).toBe(true);
+    }
   });
 
   test("a failed dsl dry-run exits 1 and prints no preview", () => {

@@ -2,14 +2,6 @@
 # rewrites it; `add` appends; other writes keep it. `check` enforces it.
 # A dep, and every child of an umbrella, must be listed before its dependent.
 
-- id: 77
-  title: "Handle non-regular paths in tsed create/delete and dry-run"
-  status: todo
-  priority: medium
-  milestone: null
-  parent: null
-  deps: []
-  file: 0077-handle-non-regular-paths-in-tsed-create-delete-and-dry-run.md
 - id: 78
   title: "Expose read/select within ranges in native flag mode"
   status: todo

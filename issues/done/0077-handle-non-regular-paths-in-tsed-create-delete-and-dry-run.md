@@ -1,7 +1,7 @@
 ---
 id: 77
 title: "Handle non-regular paths in tsed create/delete and dry-run"
-status: todo
+status: done
 priority: medium
 milestone: null
 parent: null
@@ -72,3 +72,4 @@ just typecheck && just test
 - Add a non-following or directory-aware existence check to the workspace
   interface rather than special-casing the CLI.
 - This is a correctness issue in the preview pipeline, not a missing feature.
+- Resolved: added lstat-based Workspace.pathExists and threaded it through MultiEditorDeps; create/delete now distinguish absent, regular file, and non-regular paths, and write/--rewrite rejects non-regular targets before sourceFor. Added flag, dsl, json, and API dry-run parity tests. Verification: targeted editor tests 103 pass; just typecheck clean; just test green (editor 883, harness 703, scripts 16, acceptance 9); manual CLI create/delete/rewrite on directories all exit 1 at stage address in both --dry-run and --write.

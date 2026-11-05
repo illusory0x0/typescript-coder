@@ -325,6 +325,36 @@ describe("applyEditDsl", () => {
     expect(existsSync(join(directory, "deep/nested/new.ts"))).toBe(true);
     expect(read(join(directory, "deep/nested/new.ts"))).toContain("export const nested = 1;");
   });
+
+  test("dry run and apply agree on non-regular paths", async () => {
+    const directory = makeWorkspace();
+    for (const path of ["dircreate", "dirdelete", "dirwrite"]) {
+      mkdirSync(join(directory, path));
+    }
+    const replies = [
+      "create dircreate end",
+      "delete dirdelete end",
+      writeFileReply("dirwrite", "export const nope = true;"),
+    ];
+
+    for (const reply of replies) {
+      const preview = await applyEditDsl(reply, { cwd: directory, dryRun: true });
+      const applied = await applyEditDsl(reply, { cwd: directory });
+
+      expect(preview.ok).toBe(false);
+      expect(preview.failures.map((failure) => failure.diagnostics)).toEqual(
+        applied.failures.map((failure) => failure.diagnostics),
+      );
+      expect(preview.failures[0]?.stage).toBe("address");
+      expect(preview.text).toContain("not a regular file");
+      expect(preview.changed).toEqual([]);
+      expect(preview.created).toEqual([]);
+      expect(preview.deleted).toEqual([]);
+    }
+    for (const path of ["dircreate", "dirdelete", "dirwrite"]) {
+      expect(existsSync(join(directory, path))).toBe(true);
+    }
+  });
 });
 
 describe("workspace path safety", () => {

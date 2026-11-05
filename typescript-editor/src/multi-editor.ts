@@ -105,8 +105,10 @@ export function renderReadFailureFeedback(failures: readonly EditDslFailure[]): 
 }
 
 export interface MultiEditorDeps extends EditDslDeps {
-  /** Whether the path is a regular file (or, for a create, absent). */
+  /** Whether the path is a regular file. */
   fileExists: (path: string) => boolean;
+  /** Whether any filesystem entry (file, directory, symlink, ...) exists at the path. */
+  pathExists: (path: string) => boolean;
   /** Whether the path is inside the workspace and safe to touch. */
   isSafePath: (path: string) => boolean;
 }
@@ -501,13 +503,21 @@ export function resolveMultiEditor(
     if (!deps.isSafePath(path)) {
       return `the path ${JSON.stringify(path)} is outside the editable workspace`;
     }
-    if (op === "create" && deps.fileExists(path)) {
-      return `cannot create ${JSON.stringify(path)}: the file already exists`;
+    const exists = deps.pathExists(path);
+    if (op === "create") {
+      if (!exists) {
+        return null;
+      }
+      return deps.fileExists(path)
+        ? `cannot create ${JSON.stringify(path)}: the file already exists`
+        : `cannot create ${JSON.stringify(path)}: the path already exists and is not a regular file`;
     }
-    if (op === "delete" && !deps.fileExists(path)) {
+    if (!exists) {
       return `cannot delete ${JSON.stringify(path)}: the file does not exist`;
     }
-    return null;
+    return deps.fileExists(path)
+      ? null
+      : `cannot delete ${JSON.stringify(path)}: it is not a regular file`;
   };
 
   for (let index = 0; index < statements.length; index += 1) {
@@ -840,7 +850,31 @@ export function resolveMultiEditor(
           );
           continue;
         }
-        const source = deps.sourceFor(fs.path);
+        if (deps.pathExists(fs.path) && !deps.fileExists(fs.path)) {
+          failures.push(
+            fsFailure(
+              index,
+              fs.path,
+              "address",
+              `cannot write ${JSON.stringify(fs.path)}: it is not a regular file`,
+            ),
+          );
+          continue;
+        }
+        let source: string;
+        try {
+          source = deps.sourceFor(fs.path);
+        } catch (error) {
+          failures.push(
+            fsFailure(
+              index,
+              fs.path,
+              "address",
+              `cannot write ${JSON.stringify(fs.path)}: ${error instanceof Error ? error.message : String(error)}`,
+            ),
+          );
+          continue;
+        }
         const targetRanges =
           fs.ranges === null
             ? [{ line: 1, column: 1, endLine: 1, endColumn: END_OF_LINE_COLUMN }]

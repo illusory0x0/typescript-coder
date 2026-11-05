@@ -2763,6 +2763,7 @@ async function runEditDslLoop(options: LoopOptions): Promise<LoopResult> {
       const stats = statSync(join(cwd, path), { throwIfNoEntry: false });
       return stats !== undefined && stats.isFile();
     },
+    pathExists: (path) => existsSync(join(cwd, path)),
     isSafePath: (path) => safeMutablePath(cwd, path) !== null,
     resolveEntry: (source, path, locator, space) =>
       resolveCurrentEntry(source, path, locator, space),

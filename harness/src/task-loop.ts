@@ -15,7 +15,7 @@
  * and the DSL safety validation.
  */
 import { createHash } from "node:crypto";
-import { rmSync } from "node:fs";
+import { existsSync, rmSync } from "node:fs";
 import { join } from "node:path";
 import { resolveCurrentEntry } from "@tc/typescript-editor/resolve-entry";
 import { buildIndexTolerant } from "@tc/typescript-editor/utility";
@@ -434,6 +434,7 @@ function editDslDeps(context: ExecutionContext): MultiEditorDeps {
   return {
     sourceFor,
     fileExists: (path) => readFileIfExists(join(context.cwd, path)) !== null,
+    pathExists: (path) => existsSync(join(context.cwd, path)),
     isSafePath: (path) => safeMutablePath(context.cwd, path) !== null,
     resolveEntry: (source, path, locator, space) =>
       resolveCurrentEntry(source, path, locator, space),
@@ -1694,6 +1695,7 @@ export async function runTaskLoop(options: LoopOptions): Promise<LoopResult> {
   const plannerViewerDeps: MultiEditorDeps = {
     sourceFor: (path) => readTarget(cwd, path),
     fileExists: (path) => readFileIfExists(join(cwd, path)) !== null,
+    pathExists: (path) => existsSync(join(cwd, path)),
     isSafePath: (path) => safeMutablePath(cwd, path) !== null,
     resolveEntry: (source, path, locator, space) =>
       resolveCurrentEntry(source, path, locator, space),

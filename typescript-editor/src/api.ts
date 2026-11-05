@@ -158,6 +158,7 @@ function resolveReply(
   return resolveMultiEditor(statements, {
     sourceFor: (path) => workspace.sourceFor(path),
     fileExists: (path) => workspace.fileExists(path),
+    pathExists: (path) => workspace.pathExists(path),
     isSafePath: (path) => workspace.isSafePath(path),
     resolveEntry: (source, path, locator, space) =>
       resolveCurrentEntry(source, path, locator, space),

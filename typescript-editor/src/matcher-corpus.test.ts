@@ -96,6 +96,7 @@ function deps(files: Record<string, string>): MultiEditorDeps {
   return {
     sourceFor: (path) => files[path] ?? "",
     fileExists: (path) => Object.prototype.hasOwnProperty.call(files, path),
+    pathExists: (path) => Object.prototype.hasOwnProperty.call(files, path),
     isSafePath: () => true,
     resolveEntry: resolveEntryIn,
   };

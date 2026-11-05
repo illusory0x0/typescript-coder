@@ -19,6 +19,8 @@ export interface Workspace {
   readonly root: string;
   isSafePath(path: string): boolean;
   fileExists(path: string): boolean;
+  /** Whether any filesystem entry (file, directory, symlink, ...) exists at the path. */
+  pathExists(path: string): boolean;
   sourceFor(path: string): string;
   writeFile(path: string, source: string): void;
   createEmptyFile(path: string): void;
@@ -164,6 +166,17 @@ export function createWorkspace(options: {
     }
   };
 
+  const pathExists = (path: string): boolean => {
+    if (!isSafePath(path)) {
+      return false;
+    }
+    try {
+      return lstatSync(targetFor(path), { throwIfNoEntry: false }) !== undefined;
+    } catch {
+      return false;
+    }
+  };
+
   const sourceFor = (path: string): string => {
     const target = assertSafePath(path);
     let stats;
@@ -228,5 +241,14 @@ export function createWorkspace(options: {
     unlinkSync(target);
   };
 
-  return { root, isSafePath, fileExists, sourceFor, writeFile, createEmptyFile, deleteFile };
+  return {
+    root,
+    isSafePath,
+    fileExists,
+    pathExists,
+    sourceFor,
+    writeFile,
+    createEmptyFile,
+    deleteFile,
+  };
 }
