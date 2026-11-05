@@ -1,0 +1,720 @@
+import { afterEach, describe, expect, test } from "bun:test";
+import {
+  cpSync,
+  existsSync,
+  mkdirSync,
+  mkdtempSync,
+  readFileSync,
+  rmSync,
+  symlinkSync,
+  writeFileSync,
+} from "node:fs";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
+import { helpText, parseArgs } from "./cli";
+import { AGENT_MODES, canonicalAgentMode } from "./loop";
+import { runMain as runMainBase } from "./main";
+import type { MainIo } from "./main";
+import { serializeSelections } from "@tc/typescript-editor/selection";
+import type { Selection } from "@tc/typescript-editor/selection";
+import type { ProviderLike } from "./loop";
+import type { ChatMessage, ChatResponse, ToolDefinition } from "./openai";
+
+const repoRoot = new URL("../..", import.meta.url).pathname;
+const nestedSmoke = existsSync(join(repoRoot, ".nested-smoke"));
+// Parallel-safety audit (#36): file-level `bun test --parallel` is safe, but do
+// not add `test.concurrent` here — `tempDirs` is shared by `afterEach` cleanup,
+// and the self-host case below copies the tree and spawns a nested Bun process.
+const tempDirs: string[] = [];
+
+function runMain(options: Parameters<typeof runMainBase>[0]) {
+  return runMainBase(options);
+}
+
+function tempDir(): string {
+  const dir = mkdtempSync(join(tmpdir(), "tsmain-"));
+  tempDirs.push(dir);
+  return dir;
+}
+
+afterEach(() => {
+  while (tempDirs.length > 0) {
+    const dir = tempDirs.pop();
+    if (dir !== undefined) {
+      rmSync(dir, { recursive: true, force: true });
+    }
+  }
+});
+
+describe("parseArgs", () => {
+  // The full default option set (#80): text format and no sub-agent overrides.
+  const DEFAULTS = {
+    help: false,
+    model: "deepseek-v4.1-flash",
+    agentMode: "pinned-repair" as const,
+    format: "text" as const,
+    costBudgetUsd: null,
+    checkCommand: null,
+    testCommand: null,
+    review: "auto" as const,
+    cwd: null,
+    commandTimeoutMs: null,
+  };
+
+  test("defaults to no help and the deepseek-v4.1-flash model", () => {
+    expect(parseArgs([])).toEqual(DEFAULTS);
+  });
+
+  test("recognizes --help and -h", () => {
+    expect(parseArgs(["--help"])).toEqual({ ...DEFAULTS, help: true });
+    expect(parseArgs(["-h"])).toEqual({ ...DEFAULTS, help: true });
+  });
+
+  test("reads --model with a separate value", () => {
+    expect(parseArgs(["--model", "qwen"])).toEqual({ ...DEFAULTS, model: "qwen" });
+  });
+
+  test("reads --model=<id>", () => {
+    expect(parseArgs(["--model=qwen"])).toEqual({ ...DEFAULTS, model: "qwen" });
+  });
+
+  test("throws when --model has no value", () => {
+    expect(() => parseArgs(["--model"])).toThrow("--model requires a value");
+    expect(() => parseArgs(["--model="])).toThrow("--model requires a value");
+  });
+
+  test("throws on unknown arguments", () => {
+    expect(() => parseArgs(["--verbose"])).toThrow("unknown argument: --verbose");
+    expect(() => parseArgs(["issue.txt"])).toThrow("unknown argument: issue.txt");
+  });
+
+  test("keeps the last --model", () => {
+    expect(parseArgs(["--model", "qwen", "--model", "deepseek-v4.1-flash"]).model).toBe(
+      "deepseek-v4.1-flash",
+    );
+    expect(parseArgs(["--model=qwen", "--model=deepseek-v4.1-flash"]).model).toBe(
+      "deepseek-v4.1-flash",
+    );
+    expect(parseArgs(["--help", "--model", "qwen"])).toEqual({
+      ...DEFAULTS,
+      help: true,
+      model: "qwen",
+    });
+  });
+
+  test("reads --format text and json, in both value forms, defaulting to text", () => {
+    expect(parseArgs([]).format).toBe("text");
+    expect(parseArgs(["--format", "text"]).format).toBe("text");
+    expect(parseArgs(["--format=json"]).format).toBe("json");
+    expect(parseArgs(["--format", "json"]).format).toBe("json");
+  });
+
+  test("throws on an invalid --format value", () => {
+    expect(() => parseArgs(["--format", "yaml"])).toThrow("--format must be");
+    expect(() => parseArgs(["--format=yaml"])).toThrow("--format must be");
+    expect(() => parseArgs(["--format="])).toThrow("--format requires a value");
+  });
+
+  test("reads --budget-usd as a positive USD amount in both value forms", () => {
+    expect(parseArgs(["--budget-usd", "12.5"]).costBudgetUsd).toBe(12.5);
+    expect(parseArgs(["--budget-usd=0.25"]).costBudgetUsd).toBe(0.25);
+  });
+
+  test("throws on a non-positive or non-numeric --budget-usd", () => {
+    expect(() => parseArgs(["--budget-usd", "0"])).toThrow("positive USD amount");
+    expect(() => parseArgs(["--budget-usd", "-5"])).toThrow("positive USD amount");
+    expect(() => parseArgs(["--budget-usd", "abc"])).toThrow("positive USD amount");
+    expect(() => parseArgs(["--budget-usd="])).toThrow("--budget-usd requires a value");
+  });
+
+  test("splits --check and --test into argv in both value forms", () => {
+    expect(parseArgs(["--check", "bun run typecheck"]).checkCommand).toEqual([
+      "bun",
+      "run",
+      "typecheck",
+    ]);
+    expect(parseArgs(["--check=bun tsc --noEmit"]).checkCommand).toEqual([
+      "bun",
+      "tsc",
+      "--noEmit",
+    ]);
+    expect(parseArgs(["--test", "bun test"]).testCommand).toEqual(["bun", "test"]);
+    expect(parseArgs(["--test=bun test"]).testCommand).toEqual(["bun", "test"]);
+  });
+
+  test("throws on an empty --check or --test value", () => {
+    expect(() => parseArgs(["--check", ""])).toThrow("--check requires a value");
+    expect(() => parseArgs(["--check="])).toThrow("--check requires a value");
+    expect(() => parseArgs(["--test", "   "])).toThrow("--test requires a value");
+    expect(() => parseArgs(["--test="])).toThrow("--test requires a value");
+  });
+
+  test("reads --review policy", () => {
+    expect(parseArgs([]).review).toBe("auto");
+    expect(parseArgs(["--review", "always"]).review).toBe("always");
+    expect(parseArgs(["--review=auto"]).review).toBe("auto");
+    expect(() => parseArgs(["--review", "sometimes"])).toThrow(
+      '--review must be "auto" or "always"',
+    );
+    expect(() => parseArgs(["--review="])).toThrow("--review requires a value");
+  });
+
+  test("reads --cwd in both value forms", () => {
+    expect(parseArgs(["--cwd", "./project"]).cwd).toBe("./project");
+    expect(parseArgs(["--cwd=/abs/path"]).cwd).toBe("/abs/path");
+  });
+
+  test("reads --timeout as a positive integer in both value forms", () => {
+    expect(parseArgs(["--timeout", "300000"]).commandTimeoutMs).toBe(300000);
+    expect(parseArgs(["--timeout=180000"]).commandTimeoutMs).toBe(180000);
+  });
+
+  test("defaults --timeout to null and rejects invalid values", () => {
+    expect(parseArgs([]).commandTimeoutMs).toBeNull();
+    expect(() => parseArgs(["--timeout", "0"])).toThrow("positive integer");
+    expect(() => parseArgs(["--timeout", "-5"])).toThrow("positive integer");
+    expect(() => parseArgs(["--timeout", "1.5"])).toThrow("positive integer");
+    expect(() => parseArgs(["--timeout", "abc"])).toThrow("positive integer");
+    expect(() => parseArgs(["--timeout"])).toThrow("--timeout requires a value");
+    expect(() => parseArgs(["--timeout="])).toThrow("--timeout requires a value");
+  });
+
+  test("parses the full sub-agent flag set together", () => {
+    expect(
+      parseArgs([
+        "--format",
+        "json",
+        "--budget-usd=0.05",
+        "--check",
+        "bun run typecheck",
+        "--test=bun test",
+        "--cwd",
+        "./work",
+        "--timeout",
+        "240000",
+      ]),
+    ).toEqual({
+      ...DEFAULTS,
+      format: "json",
+      costBudgetUsd: 0.05,
+      checkCommand: ["bun", "run", "typecheck"],
+      testCommand: ["bun", "test"],
+      cwd: "./work",
+      commandTimeoutMs: 240000,
+    });
+  });
+});
+
+describe("helpText", () => {
+  test("mentions the tool, stdin, the model flag, and the environment variables", () => {
+    const text = helpText();
+    expect(text).toContain("typescript-coder");
+    expect(text).toContain("stdin");
+    expect(text).toContain("--model");
+    expect(text).toContain("OPENAI_API_KEY");
+    expect(text).toContain("OPENAI_BASE_URL");
+  });
+
+  test("documents the tc bin and the sub-agent flags (#80)", () => {
+    const text = helpText();
+    expect(text).toContain("tc [");
+    expect(text).toContain("--format <text|json>");
+    expect(text).toContain("--budget-usd <usd>");
+    expect(text).toContain("--check <cmd>");
+    expect(text).toContain("--test <cmd>");
+    expect(text).toContain("--cwd <dir>");
+    expect(text).toContain("--timeout <ms>");
+    expect(text).toContain("typescript-coder-result@3");
+  });
+});
+
+type ScriptedResponse = string | { toolCall: { name: string; arguments: string } };
+
+class ScriptedProvider implements ProviderLike {
+  constructor(private readonly responses: ScriptedResponse[]) {}
+
+  async chat(
+    _messages: ChatMessage[],
+    _tools?: ToolDefinition[],
+    _options?: { temperature?: number },
+  ): Promise<ChatResponse> {
+    const response = this.responses.shift();
+    if (response === undefined) {
+      throw new Error("no scripted response");
+    }
+    if (typeof response === "string") {
+      return { content: response, toolCalls: [], finishReason: "stop", raw: {} };
+    }
+    return {
+      content: null,
+      toolCalls: [{ id: "t1", type: "function", function: response.toolCall }],
+      finishReason: "tool_calls",
+      raw: {},
+    };
+  }
+}
+
+function fixtureDir(include: string[] = ["src"]): string {
+  const dir = tempDir();
+  mkdirSync(join(dir, "src"));
+  writeFileSync(
+    join(dir, "tsconfig.json"),
+    `${JSON.stringify(
+      {
+        compilerOptions: {
+          strict: true,
+          noEmit: true,
+          module: "ESNext",
+          moduleResolution: "bundler",
+          types: [],
+        },
+        include,
+        exclude: ["src/**/*.test.ts"],
+      },
+      null,
+      2,
+    )}\n`,
+  );
+  writeFileSync(
+    join(dir, "src", "helper.ts"),
+    "export function answer(): number {\n  return 1;\n}\n",
+  );
+  writeFileSync(
+    join(dir, "src", "helper.test.ts"),
+    'import { expect, test } from "bun:test";\nimport { answer } from "./helper";\n\ntest("answer", () => {\n  expect(answer()).toBe(2);\n});\n',
+  );
+  return dir;
+}
+
+function captureIo(): { io: MainIo; out: string[]; err: string[] } {
+  const out: string[] = [];
+  const err: string[] = [];
+  return { io: { out: (line) => out.push(line), err: (line) => err.push(line) }, out, err };
+}
+
+const ADDRESS = { path: "src/helper.ts", symbol: "answer", kind: "function" };
+
+function selectionReply(
+  replacement: string | null,
+  matcher: string | null = null,
+  address: { path: string; symbol: string; kind: string } = ADDRESS,
+): string {
+  const selection: Selection = {
+    locator: { path: address.path, name: address.symbol, kind: address.kind },
+    space: null,
+    matcher: matcher === null ? null : { kind: "snippet", value: matcher },
+    pick: null,
+    replacement,
+  };
+  return serializeSelections([selection]);
+}
+
+const LOCATOR = selectionReply(null);
+
+describe("runMain", () => {
+  test("applies a verified edit and reports success on stdout", async () => {
+    const dir = fixtureDir();
+    const provider = new ScriptedProvider([LOCATOR, selectionReply("return 2;", "return 1;")]);
+    const captured = captureIo();
+    const code = await runMain({
+      issue: "make the answer test pass",
+      cwd: dir,
+      provider,
+      io: captured.io,
+    });
+    expect(code).toBe(0);
+    expect(captured.err).toEqual([]);
+    expect(captured.out.join("\n")).toContain("applied");
+    expect(captured.out.join("\n")).toContain("src/helper.ts");
+    expect(readFileSync(join(dir, "src", "helper.ts"), "utf8")).toContain("return 2;");
+    // Success writes no failure artifact.
+    expect(existsSync(join(dir, "failures"))).toBe(false);
+  }, 60000);
+
+  test("surfaces diagnostics on stderr, writes a failure artifact, and prints the explanation last", async () => {
+    const dir = fixtureDir();
+    const bad = selectionReply('return "no";', "return 1;");
+    const explanation = "the symbol cannot satisfy the test without a larger refactor";
+    // Iteration 1: a verified-failing edit. The repeated "junk" reply then
+    // trips the no-progress fingerprint, and the summary is the final call.
+    const provider = new ScriptedProvider([LOCATOR, bad, "junk", "junk", explanation]);
+    const captured = captureIo();
+    const code = await runMain({
+      issue: "make the answer test pass",
+      cwd: dir,
+      provider,
+      io: captured.io,
+    });
+    expect(code).toBe(1);
+    expect(captured.err.join("\n")).toContain("not assignable");
+    expect(captured.err.join("\n")).toContain("edit-exhausted");
+    expect(captured.err.join("\n")).not.toContain(explanation);
+    expect(captured.out[captured.out.length - 1]).toBe(explanation);
+    expect(captured.out.filter((line) => line === explanation)).toHaveLength(1);
+    const artifactLine = captured.out.find((line) => line.startsWith("failure artifact: "));
+    expect(artifactLine).toBeDefined();
+    const artifactPath = artifactLine?.slice("failure artifact: ".length) ?? "";
+    expect(artifactPath.startsWith(join(dir, "failures"))).toBe(true);
+    expect(existsSync(artifactPath)).toBe(true);
+    const artifact = readFileSync(artifactPath, "utf8");
+    expect(artifact).toContain("# Run failure — edit-exhausted");
+    expect(artifact).toContain("not assignable");
+    expect(artifact).toContain(explanation);
+    // The artifact line is printed before the explanation.
+    expect(captured.out.indexOf(artifactLine ?? "")).toBeLessThan(
+      captured.out.indexOf(explanation),
+    );
+    const finalSource = readFileSync(join(dir, "src", "helper.ts"), "utf8");
+    expect(finalSource).toContain('return "no";');
+    expect(finalSource).not.toContain("return 1;");
+  }, 60000);
+
+  test("rejects an empty issue without calling the provider", async () => {
+    const captured = captureIo();
+    const provider = new ScriptedProvider([]);
+    const code = await runMain({
+      issue: "   \n\t ",
+      cwd: fixtureDir(),
+      provider,
+      io: captured.io,
+    });
+    expect(code).toBe(1);
+    expect(captured.err.join("\n")).toContain("no issue");
+  });
+
+  test("tolerates an unparseable file elsewhere in the project", async () => {
+    const dir = fixtureDir(["src/helper.ts"]);
+    writeFileSync(join(dir, "src", "broken.ts"), "function broken( {\n");
+    const provider = new ScriptedProvider([LOCATOR, selectionReply("return 2;", "return 1;")]);
+    const captured = captureIo();
+    const code = await runMain({
+      issue: "make the answer test pass",
+      cwd: dir,
+      provider,
+      io: captured.io,
+    });
+    expect(code).toBe(0);
+    expect(captured.out.join("\n")).toContain("applied");
+    expect(captured.out.join("\n")).toContain("src/helper.ts");
+    expect(readFileSync(join(dir, "src", "helper.ts"), "utf8")).toContain("return 2;");
+    expect(readFileSync(join(dir, "src", "broken.ts"), "utf8")).toBe("function broken( {\n");
+  }, 60000);
+
+  test("fails cleanly when the intended target is unparseable", async () => {
+    const dir = fixtureDir(["src/helper.ts"]);
+    writeFileSync(join(dir, "src", "broken.ts"), "function broken( {\n");
+    const broken = serializeSelections([
+      {
+        locator: { path: "src/broken.ts", name: "broken", kind: "function" },
+        space: null,
+        matcher: null,
+        pick: null,
+        replacement: null,
+      },
+    ]);
+    const provider = new ScriptedProvider([
+      broken,
+      // The identical rejected selection trips the no-progress fingerprint.
+      broken,
+      "the broken file cannot be selected",
+    ]);
+    const captured = captureIo();
+    const code = await runMain({
+      issue: "fix the broken file",
+      cwd: dir,
+      provider,
+      io: captured.io,
+    });
+    expect(code).toBe(1);
+    expect(captured.err.join("\n")).toContain("does not parse");
+    expect(captured.err.join("\n")).toContain("prev-broken");
+    expect(captured.out[captured.out.length - 1]).toBe("the broken file cannot be selected");
+    expect(readFileSync(join(dir, "src", "broken.ts"), "utf8")).toBe("function broken( {\n");
+  }, 60000);
+
+  test("returns 1 with a readable message when the provider throws", async () => {
+    const dir = fixtureDir();
+    const provider: ProviderLike = {
+      async chat() {
+        throw new Error("gateway unreachable");
+      },
+    };
+    const captured = captureIo();
+    const code = await runMain({
+      issue: "make the answer test pass",
+      cwd: dir,
+      provider,
+      io: captured.io,
+    });
+    expect(code).toBe(1);
+    const errText = captured.err.join("\n");
+    expect(errText).toContain("provider error");
+    expect(errText).toContain("gateway unreachable");
+    expect(errText).not.toContain("\n    at ");
+    // Provider errors keep their own path: no termination artifact.
+    expect(existsSync(join(dir, "failures"))).toBe(false);
+  }, 60000);
+
+  test("returns 1 with an error message when the loop itself throws", async () => {
+    const captured = captureIo();
+    const code = await runMain({
+      issue: "make the answer test pass",
+      cwd: join(tempDir(), "missing"),
+      provider: new ScriptedProvider([]),
+      io: captured.io,
+    });
+    expect(code).toBe(1);
+    const errText = captured.err.join("\n");
+    expect(errText).toContain("error:");
+    expect(errText).not.toContain("\n    at ");
+  });
+
+  test("--format json emits one result object on stdout for a verified edit (#80)", async () => {
+    const dir = fixtureDir();
+    const provider = new ScriptedProvider([LOCATOR, selectionReply("return 2;", "return 1;")]);
+    const captured = captureIo();
+    const code = await runMain({
+      issue: "make the answer test pass",
+      cwd: dir,
+      provider,
+      io: captured.io,
+      format: "json",
+    });
+    expect(code).toBe(0);
+    // Exactly one line on stdout, and no prose beside it.
+    expect(captured.out).toHaveLength(1);
+    expect(captured.err).toEqual([]);
+    const parsed = JSON.parse(captured.out[0] ?? "");
+    expect(parsed.format).toBe("typescript-coder-result@3");
+    expect(parsed.status).toBe("ok");
+    expect(parsed.verified).toBe(true);
+    expect(parsed.files).toEqual([
+      { path: "src/helper.ts", symbol: "answer", kind: "function", outcome: "applied" },
+    ]);
+    expect(parsed.targets).toEqual([]);
+    expect(parsed.records).toBeGreaterThan(0);
+    expect(parsed.tokens).toEqual({ input: 0, output: 0, total: 0, cacheRead: 0 });
+    expect(parsed.terminationReason).toBeNull();
+    expect(parsed.diagnostics).toBeNull();
+    expect(readFileSync(join(dir, "src", "helper.ts"), "utf8")).toContain("return 2;");
+  }, 60000);
+
+  test("--format json reports a failing run on stdout and its prose on stderr (#80)", async () => {
+    const dir = fixtureDir();
+    const bad = selectionReply('return "no";', "return 1;");
+    const explanation = "the symbol cannot satisfy the test without a larger refactor";
+    const provider = new ScriptedProvider([LOCATOR, bad, "junk", "junk", explanation]);
+    const captured = captureIo();
+    const code = await runMain({
+      issue: "make the answer test pass",
+      cwd: dir,
+      provider,
+      io: captured.io,
+      format: "json",
+    });
+    expect(code).toBe(1);
+    // stdout carries only the single result object.
+    expect(captured.out).toHaveLength(1);
+    const parsed = JSON.parse(captured.out[0] ?? "");
+    expect(parsed.format).toBe("typescript-coder-result@3");
+    expect(parsed.status).toBe("failed");
+    expect(parsed.verified).toBe(false);
+    expect(parsed.terminationReason).toBe("edit-exhausted");
+    expect(parsed.diagnostics).toContain("edit-exhausted");
+    // The explanation and the human-readable diagnostics are prose on stderr;
+    // stdout is only the one JSON line.
+    expect(captured.out[0]).not.toContain(explanation);
+    const errText = captured.err.join("\n");
+    expect(errText).toContain("not assignable");
+    expect(errText).toContain("edit-exhausted");
+    expect(errText).toContain(explanation);
+    // The failure-artifact line is prose, so it goes to stderr too.
+    expect(errText).toContain("failure artifact: ");
+    // No JSON leaks onto stderr.
+    expect(errText).not.toContain("typescript-coder-result@3");
+  }, 60000);
+
+  test("--format json emits a failed result for an empty issue (#80)", async () => {
+    const captured = captureIo();
+    const code = await runMain({
+      issue: "   \n\t ",
+      cwd: fixtureDir(),
+      provider: new ScriptedProvider([]),
+      io: captured.io,
+      format: "json",
+    });
+    expect(code).toBe(1);
+    expect(captured.out).toHaveLength(1);
+    const parsed = JSON.parse(captured.out[0] ?? "");
+    expect(parsed.format).toBe("typescript-coder-result@3");
+    expect(parsed.status).toBe("failed");
+    expect(parsed.verified).toBe(false);
+    expect(parsed.diagnostics).toContain("no issue");
+    expect(captured.err.join("\n")).toContain("no issue");
+  });
+
+  test("--format json emits a failed result when the provider throws (#80)", async () => {
+    const provider: ProviderLike = {
+      async chat() {
+        throw new Error("gateway unreachable");
+      },
+    };
+    const captured = captureIo();
+    const code = await runMain({
+      issue: "make the answer test pass",
+      cwd: fixtureDir(),
+      provider,
+      io: captured.io,
+      format: "json",
+    });
+    expect(code).toBe(1);
+    const parsed = JSON.parse(captured.out[0] ?? "");
+    expect(parsed.status).toBe("failed");
+    expect(parsed.verified).toBe(false);
+    expect(parsed.diagnostics).toContain("gateway unreachable");
+    expect(captured.err.join("\n")).toContain("gateway unreachable");
+  }, 60000);
+});
+
+function spawnHelp(script: string): { code: number | null; stdout: string; stderr: string } {
+  const result = Bun.spawnSync(["bun", "run", script, "--help"], {
+    cwd: repoRoot,
+    stdin: "ignore",
+    timeout: 30000,
+  });
+  return {
+    code: result.exitCode,
+    stdout: result.stdout.toString(),
+    stderr: result.stderr.toString(),
+  };
+}
+
+describe("cli entry points", () => {
+  test("bun run harness/src/cli.ts --help prints help and exits 0", () => {
+    const result = spawnHelp("harness/src/cli.ts");
+    expect(result.code).toBe(0);
+    expect(result.stdout).toContain("typescript-coder");
+    expect(result.stdout).toContain("--model");
+  });
+
+  test("bun run harness/src/main.ts --help prints help and exits 0 before reading stdin", () => {
+    const result = spawnHelp("harness/src/main.ts");
+    expect(result.code).toBe(0);
+    expect(result.stdout).toContain("typescript-coder");
+    expect(result.stdout).toContain("--model");
+  });
+
+  test("declares the tc bin and points it at a shebang-runnable file (#80)", () => {
+    const pkg = JSON.parse(readFileSync(join(repoRoot, "package.json"), "utf8"));
+    expect(pkg.bin.tc).toBe("./harness/src/main.ts");
+    const target = join(repoRoot, pkg.bin.tc);
+    expect(existsSync(target)).toBe(true);
+    expect(readFileSync(target, "utf8").split("\n")[0]?.startsWith("#!")).toBe(true);
+  });
+});
+
+describe("--mode", () => {
+  test("canonical module values and aliases", () => {
+    expect(AGENT_MODES).toEqual(["pinned-repair", "plan-exec"]);
+    expect(canonicalAgentMode("pinned-repair")).toBe("pinned-repair");
+    expect(canonicalAgentMode("plan-exec")).toBe("plan-exec");
+    expect(canonicalAgentMode("edit")).toBe("pinned-repair");
+    expect(canonicalAgentMode("both")).toBeNull();
+    expect(canonicalAgentMode(undefined)).toBeNull();
+  });
+
+  test("defaults to the pinned-repair loop", () => {
+    expect(parseArgs([]).agentMode).toBe("pinned-repair");
+  });
+
+  test("accepts the canonical modes through --mode and --agent-mode", () => {
+    expect(parseArgs(["--mode", "pinned-repair"]).agentMode).toBe("pinned-repair");
+    expect(parseArgs(["--mode", "plan-exec"]).agentMode).toBe("plan-exec");
+    expect(parseArgs(["--agent-mode=pinned-repair"]).agentMode).toBe("pinned-repair");
+    expect(parseArgs(["--agent-mode", "plan-exec"]).agentMode).toBe("plan-exec");
+  });
+
+  test("maps the deprecated edit alias to the pinned-repair mode", () => {
+    expect(parseArgs(["--mode=edit"]).agentMode).toBe("pinned-repair");
+  });
+
+  test("rejects an unknown mode with the canonical choices and alias", () => {
+    expect(() => parseArgs(["--mode", "planner"])).toThrow(
+      '--mode must be "pinned-repair" or "plan-exec" (alias: edit; got "planner")',
+    );
+    expect(() => parseArgs(["--mode"])).toThrow("--mode requires a value");
+  });
+
+  test("rejects both because one CLI process runs one loop", () => {
+    expect(() => parseArgs(["--mode", "both"])).toThrow(
+      "only valid for the benchmark's --agent-mode",
+    );
+    expect(() => parseArgs(["--agent-mode=both"])).toThrow("pinned-repair");
+  });
+
+  test("help names the canonical mode flag, default, and alias", () => {
+    const text = helpText();
+    expect(text).toContain("--mode <pinned-repair|plan-exec>");
+    expect(text).toContain("(default: pinned-repair)");
+    expect(text).toContain("deprecated alias: edit");
+    expect(text).toContain("--review <auto|always>");
+  });
+});
+
+// Parallel-safety audit (#36): this self-host smoke test spawns a nested Bun
+// process, so it must run exactly one copied target test (`src/index.test.ts`),
+// never the whole copied suite. Fanning out the suite from a `--parallel`
+// worker would multiply workers and subprocesses per worker. `.nested-smoke`
+// still marks the copy so any future copied test that consults it skips.
+test.skipIf(nestedSmoke)(
+  "self-host smoke: the agent edits its own src and the copied target test still passes",
+  async () => {
+    const dir = tempDir();
+    cpSync(join(repoRoot, "harness", "src"), join(dir, "src"), { recursive: true });
+    // The nested verification runs `tsc` over the copied harness sources; the
+    // shared root compiler options plus the symlinked node_modules resolve both
+    // the Bun types and the editor workspace package. Root `include` targets the
+    // top-level harnesses, so the copy narrows it to the sources it carries.
+    const rootTsconfig = JSON.parse(readFileSync(join(repoRoot, "tsconfig.json"), "utf8")) as {
+      include?: string[];
+    };
+    writeFileSync(
+      join(dir, "tsconfig.json"),
+      JSON.stringify({ ...rootTsconfig, include: ["src"] }, null, 2),
+    );
+    cpSync(join(repoRoot, "package.json"), join(dir, "package.json"));
+    symlinkSync(join(repoRoot, "node_modules"), join(dir, "node_modules"), "dir");
+    writeFileSync(join(dir, ".nested-smoke"), "this copy runs under the self-host smoke test\n");
+    const provider = new ScriptedProvider([
+      selectionReply(null, null, { path: "src/index.ts", symbol: "greet", kind: "function" }),
+      selectionReply(
+        "function greet(subject: string): string {\n  const greeting = `hello, ${subject}`;\n  return greeting;\n}",
+        "function greet(subject: string): string {\n  return `hello, ${subject}`;\n}",
+        { path: "src/index.ts", symbol: "greet", kind: "function" },
+      ),
+    ]);
+    const captured = captureIo();
+    const code = await runMain({
+      issue:
+        "Rewrite greet to store the greeting in a local variable, keeping its behavior identical.",
+      cwd: dir,
+      provider,
+      io: captured.io,
+      // Keep the nested verification scoped to the copied target test. The
+      // explicit spawn below checks the same file, and `just test` already runs
+      // the full suite; fanning out the copied suite here exceeds its command
+      // timeout and recursively multiplies the work.
+      testCommand: ["bun", "test", "src/index.test.ts"],
+    });
+    expect(code).toBe(0);
+    expect(captured.out.join("\n")).toContain("applied");
+    expect(readFileSync(join(dir, "src", "index.ts"), "utf8")).toContain("const greeting");
+    // One target test proves the applied self-host edit; see the audit note above.
+    const tests = Bun.spawnSync(["bun", "test", "src/index.test.ts"], {
+      cwd: dir,
+      timeout: 240000,
+    });
+    expect(tests.exitCode).toBe(0);
+  },
+  300000,
+);

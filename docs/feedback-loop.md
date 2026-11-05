@@ -17,13 +17,13 @@ does not run arbitrary commands: under edit-dsl it can inspect with `read` and,
 after pinning, request the configured `check`/`test` commands; the harness still
 owns discovery, splicing, formatting, and verification.
 
-Implementation: `runLoop` in `src/loop.ts` is a dispatcher. The default
+Implementation: `runLoop` in `harness/src/loop.ts` is a dispatcher. The default
 `pinned-repair` mode routes to `runEditDslLoop`; `--mode plan-exec` lazily
-routes to `runTaskLoop` in `src/task-loop.ts`. Each driver owns its run
+routes to `runTaskLoop` in `harness/src/task-loop.ts`. Each driver owns its run
 lifecycle (budget, rounds, records) and shares the lower-level primitives (index
 and context, selection resolution, gates). Edit-dsl prompt text lives in
-`src/prompts/edit-dsl.ts`, task prompts in `src/prompts/task.ts`, and the
-commit/gate pipeline in `src/commit.ts`.
+`harness/src/prompts/edit-dsl.ts`, task prompts in `harness/src/prompts/task.ts`, and the
+commit/gate pipeline in `typescript-editor/src/commit.ts`.
 
 ## Loop modes
 
@@ -41,7 +41,7 @@ default mode is `pinned-repair` (`tc < issue.txt`); naming it explicitly is
 alias for `pinned-repair`; historical benchmark and replay rows keep their old
 `edit` strings and are read through this mapping. `both` is the benchmark's
 multi-mode selector, not a single-run CLI mode:
-`bun run benchmark/run.ts --agent-mode both` measures `pinned-repair` and
+`bun benchmark/run.ts --agent-mode both` measures `pinned-repair` and
 `plan-exec`, while `tc --mode both` is rejected with a clear benchmark-only
 message because one CLI process runs one loop.
 
@@ -59,9 +59,9 @@ superseded by later work, and a green last test completes the run.
 amend records, planning and review, validation/apply, scheduling, execution context,
 application and gates, progress termination, and plan-exec-specific limits.
 
-Both modes share tolerant parser diagnostics (`src/dsl-diagnostics.ts`), the
-commit/gate pipeline (`src/commit.ts`), and the result contract
-(`src/result.ts`). Plan-exec additionally splits spend into `planning`, `review`,
+Both modes share tolerant parser diagnostics (`typescript-editor/src/dsl-diagnostics.ts`), the
+commit/gate pipeline (`typescript-editor/src/commit.ts`), and the result contract
+(`harness/src/result.ts`). Plan-exec additionally splits spend into `planning`, `review`,
 and `execution` `LoopTokens` buckets; their sum is `LoopResult.tokens` and all
 count toward the budget. Recovered parser warnings are on
 `LoopResult.warnings`; [`plan-exec.md`](plan-exec.md) §9 owns those fields.
@@ -284,6 +284,6 @@ without them, which is why they sit outside it:
   shrinking, a bounded prior-attempts digest, and a failure-history note only
   feed the no-progress asks.
 
-Provider failures are retried in `src/openai.ts`, not here; context overflow and
+Provider failures are retried in `harness/src/openai.ts`, not here; context overflow and
 payload-too-large are translated into diagnostics so one bad call does not
 discard the run.

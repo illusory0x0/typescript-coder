@@ -1,6 +1,6 @@
 # Benchmark, test, and evaluation terminology used across this repository.
 #
-# Scope: unit tests (src/*.test.ts), the acceptance harness, the benchmark
+# Scope: unit tests in the workspace packages, the acceptance harness, the benchmark
 # harness, its judge, metrics, provenance, replay, and the generated
 # artifacts they share.
 #
@@ -21,8 +21,12 @@ categories:
     terms:
       - term: unit test
         definition: >-
-          Colocated `src/*.test.ts` suites run by `bun test`. Root `bun test`
-          only discovers `src/` because `bunfig.toml` sets `root = "./src"`.
+          Colocated test suites run by `bun test`. Root `bun test` discovers
+          both workspace packages because the root `bunfig.toml` sets
+          `root = "."` and ignores fixture and tmp paths. The `just test`
+          offline lane runs the `editor`, `harness`, `scripts`, and fast
+          `acceptance` suites; the bun-test suites use bounded file-level
+          workers. `acceptance-self-host` is slow and opt-in.
       - term: typecheck
         definition: >-
           `bunx tsc --noEmit` over the source tree, run by `just typecheck`.
@@ -30,8 +34,11 @@ categories:
       - term: acceptance
         definition: >-
           Scripted end-to-end scenarios that drive the real `runLoop` with a
-          `ScriptedProvider` (offline) or `OpenAIProvider` (live). Command:
+          `ScriptedProvider` (offline) or `OpenAIProvider` (live). Offline
+          scenarios live in `acceptance/offline/`; live ones in
+          `acceptance/live/`; shared helpers in `acceptance/support/`. Command:
           `just accept`, which forwards flags to `bun run acceptance/run.ts`.
+          The unified runner exposes the live lane as `just test --api llm`.
       - term: benchmark
         definition: >-
           Token and USD comparison of the `tc` loop against the `oc` CLI on
@@ -43,25 +50,50 @@ categories:
           current loop with no network calls.
       - term: judge golden
         definition: >-
-          `src/judge-golden.test.ts` pins the four judge verdicts at zero API
+          `harness/src/judge-golden.test.ts` pins the four judge verdicts at zero API
           cost: reference passes all nets, tsc-only failure, tests-only
           failure, and fixture byte-equality failure.
       - term: live evaluation
         definition: >-
-          Any run that calls the real model (`just accept --live`,
+          Any run that calls the real model (`just test --api llm`,
+          `just test --api all`, `just accept --live`,
           `bun run benchmark/run.ts`). Not a development loop: reserve it for
           the end of a change, when asked, or when the harness cannot answer.
       - term: offline
         definition: >-
-          No network access. Unit tests and default acceptance scenarios must
-          stay offline; live scenarios and the benchmark are opt-in.
+          No network access. Unit suites, repository scripts, and
+          `acceptance/offline/` scenarios must stay offline; `api: "llm"`
+          suites, `acceptance/live/`, and the benchmark are opt-in.
+      - term: test suite
+        definition: >-
+          One entry in `scripts/test-suites.ts` with `id`, `owner`, `api`,
+          `cwd`, and `command`. `api: "none"` must stay network-free;
+          `api: "llm"` calls the real model. The runner groups suites by
+          `owner` so API concurrency is bounded.
+      - term: test lane
+        definition: >-
+          The API dimension selected with `just test --api none|llm|all`.
+          `none` is the default and never calls the model; `llm` runs only
+          real-model suites; `all` runs offline first, then API only if the
+          offline phase passed.
+      - term: suite owner
+        definition: >-
+          Registry metadata that groups suites sharing an API lane. The runner
+          runs one owner at a time and allows `--api-jobs` concurrent suites
+          inside that owner (default 1).
 
   - id: commands
     title: Commands and configuration
     terms:
       - term: "just test"
         definition: >-
-          Runs `bun test`. Single test: `bun test src/loop.test.ts -t "pattern"`.
+          Runs the test-suite registry (`scripts/test.ts`). Default
+          `--api none` runs the network-free suites (editor, harness, scripts,
+          offline acceptance) with bounded file-level workers; `--api llm`
+          runs only real-model suites; `--api all` runs offline first, then API
+          if offline passed. `--jobs`, `--include-slow`, `--owner`, `--only`,
+          and `--list` refine selection. Single test:
+          `bun test harness/src/loop.test.ts -t "pattern"`.
       - term: "just typecheck"
         definition: Runs `bunx tsc --noEmit`.
       - term: "just accept"
@@ -72,8 +104,10 @@ categories:
           repo-wide; format only changed files outside `human/`.
       - term: bunfig root
         definition: >-
-          `[test] root = "./src"` in `bunfig.toml`. Root `bun test` never sees
-          acceptance or benchmark fixtures.
+          `[test] root = "./src"` in each package's `bunfig.toml`. The root
+          config sets `root = "."` and ignores fixture and tmp paths, so root
+          `bun test` sees both packages but never acceptance or benchmark
+          fixtures.
       - term: ACCEPT_TSC
         definition: Environment override for the tsc binary used by acceptance fixtures.
       - term: ACCEPT_MODEL
@@ -96,19 +130,19 @@ categories:
       - term: skipIf
         definition: >-
           Bun test guard used by benchmark-aware suites so the self-host copy
-          (which only copies `src/`) skips instead of failing to resolve
+          (which only copies `harness/src/`) skips instead of failing to resolve
           `benchmark/`.
       - term: self-host smoke
         definition: >-
           Acceptance `self-host` scenario: the agent edits this repository's own
-          `src/`, then the copied suite must stay green.
+          `harness/src/`, then the copied suite must stay green.
       - term: self-host fixture target
         definition: >-
-          `src/index.ts` (`greet`) is kept as the self-host fixture target;
+          `harness/src/index.ts` (`greet`) is kept as the self-host fixture target;
           do not clean it up.
       - term: reference round-trip
         definition: >-
-          `src/reference-roundtrip.test.ts`: canonical printed output of each
+          `harness/src/reference-roundtrip.test.ts`: canonical printed output of each
           fixture parser must re-parse to an equal AST.
       - term: computed specifier
         definition: >-
@@ -437,7 +471,7 @@ categories:
         definition: Human-readable failure summary naming modified/missing files and failing command output.
       - term: golden corpus
         definition: >-
-          The four-row table in `src/judge-golden.test.ts` that pins the judge's
+          The four-row table in `harness/src/judge-golden.test.ts` that pins the judge's
           verdicts at zero API cost.
       - term: reference solution row
         definition: Golden row where the reference implementation must pass every net.
@@ -475,7 +509,7 @@ categories:
           (the budget basis; null on the oc side).
       - term: normalizeBuckets
         definition: >-
-          Shared normalization in `src/pricing.ts` that converts each
+          Shared normalization in `harness/src/pricing.ts` that converts each
           side's raw buckets to the same cache-excluded basis.
       - term: cache-excluded
         definition: Cache-hit input is excluded from comparison totals but kept in each run's raw buckets.
@@ -614,7 +648,7 @@ categories:
           All runs use the official peak rates regardless of wall-clock time.
           Off-peak rates are deliberately not applied.
       - term: RateCard
-        definition: Peak per-million-token price table in `src/pricing.ts`.
+        definition: Peak per-million-token price table in `harness/src/pricing.ts`.
       - term: cache-miss input
         definition: >-
           tc miss equals input minus cacheRead; oc miss equals input. Only this
@@ -767,5 +801,5 @@ categories:
           model; do not run them unprompted or as an iteration loop.
       - term: prompt sensitivity
         definition: >-
-          The model-facing prompt is a literal in `src/loop.ts`; prompt text is
+          The model-facing prompt is a literal in `harness/src/loop.ts`; prompt text is
           benchmark-sensitive and is part of the measured-input hash.

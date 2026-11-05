@@ -1,2 +1,3 @@
 [test]
-root = "./src"
+root = "."
+pathIgnorePatterns = ["**/node_modules/**", "**/tmp/**", "**/failures/**", "**/benchmark/fixtures/**", "**/acceptance/fixtures/**"]

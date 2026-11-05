@@ -11,7 +11,7 @@ import {
 } from "node:fs";
 import { dirname, isAbsolute, join, relative, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
-import { archiveFailureArtifacts, writeFailureArtifact } from "../src/failure-artifact";
+import { archiveFailureArtifacts, writeFailureArtifact } from "@tc/harness/failure-artifact";
 import {
   buildSystemPrompt,
   canonicalAgentMode,
@@ -19,28 +19,36 @@ import {
   DEFAULT_COST_BUDGET_USD,
   exchangeStats,
   runLoop,
-} from "../src/loop";
-import { buildTaskExecutionSystemPrompt, buildTaskPlanningSystemPrompt } from "../src/prompts/task";
-import { OpenAIProvider, readConfigFromEnv } from "../src/openai";
+} from "@tc/harness/loop";
+import {
+  buildTaskExecutionSystemPrompt,
+  buildTaskPlanningSystemPrompt,
+} from "@tc/harness/prompts/task";
+import { OpenAIProvider, readConfigFromEnv } from "@tc/harness/openai";
 import type {
   AgentMode,
   LoopTokens,
   ProviderLike,
   ProtocolFormat,
   RejectionCause,
-} from "../src/loop";
-import { ReplayRecorder, usageFromRaw } from "../src/replay-format";
+} from "@tc/harness/loop";
+import { ReplayRecorder, usageFromRaw } from "@tc/harness/replay-format";
 import {
   PRICING_FETCHED_ON,
   PRICING_SOURCE_URL,
   billableCost,
   billableCostForLoopTokens,
   peakCost,
-} from "../src/pricing";
-import { currentInputHashes, normalizeText, stableStringify } from "../src/provenance";
-import type { BillableCost } from "../src/pricing";
-import type { RecordedProvenance } from "../src/provenance";
-import type { ChatMessage, ChatResponse, ReasoningEffort, ToolDefinition } from "../src/openai";
+} from "@tc/harness/pricing";
+import { currentInputHashes, normalizeText, stableStringify } from "@tc/harness/provenance";
+import type { BillableCost } from "@tc/harness/pricing";
+import type { RecordedProvenance } from "@tc/harness/provenance";
+import type {
+  ChatMessage,
+  ChatResponse,
+  ReasoningEffort,
+  ToolDefinition,
+} from "@tc/harness/openai";
 
 export type TaskName =
   | "json-parser"

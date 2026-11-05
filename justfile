@@ -1,25 +1,17 @@
-# Type-check the source tree.
+# Type-check the root harnesses and both workspace packages.
 typecheck:
     bunx tsc --noEmit
+    cd typescript-editor && bunx tsc --noEmit
+    cd harness && bunx tsc --noEmit
 
-# Run the unit test suite (serial and deterministic; the default).
-test:
-    bun test
+# Run the offline test suites with bounded file-level workers. No network or API key.
+# Opt into real-model suites with `just test --api llm` (costs money).
+test *args:
+    bun run scripts/test.ts {{args}}
 
-# Run the unit tests in bounded worker processes; serial `just test` stays the default.
+# Alias for an explicit offline worker count: `just test --jobs <n>`.
 test-parallel jobs=`nproc`:
-    #!/usr/bin/env bash
-    set -euo pipefail
-    jobs=${TC_TEST_JOBS:-{{quote(jobs)}}}
-    if ! [[ "$jobs" =~ ^[1-9][0-9]*$ ]]; then
-        echo "test-parallel: jobs must be a positive integer, got '$jobs'" >&2
-        exit 2
-    fi
-    if (( jobs > 4 )); then
-        echo "test-parallel: capping $jobs workers at 4 to bound tsc/test subprocess memory" >&2
-        jobs=4
-    fi
-    exec bun test --parallel="$jobs"
+    bun run scripts/test.ts --jobs {{quote(jobs)}}
 
 # Run acceptance scenarios; flags pass through, e.g. `just accept --live`.
 accept *args:

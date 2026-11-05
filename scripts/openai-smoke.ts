@@ -1,5 +1,5 @@
-import { OpenAIProvider, readConfigFromEnv } from "../src/openai";
-import type { ChatMessage } from "../src/openai";
+import { OpenAIProvider, readConfigFromEnv } from "@tc/harness/openai";
+import type { ChatMessage } from "@tc/harness/openai";
 
 function modelFromArgv(argv: string[]): string {
   const index = argv.indexOf("--model");

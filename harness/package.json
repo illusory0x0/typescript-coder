@@ -1,0 +1,19 @@
+{
+  "name": "@tc/harness",
+  "version": "0.0.0",
+  "private": true,
+  "type": "module",
+  "exports": {
+    "./*": "./src/*.ts"
+  },
+  "bin": {
+    "tc": "./src/main.ts"
+  },
+  "scripts": {
+    "typecheck": "bunx tsc --noEmit",
+    "test": "bun test"
+  },
+  "dependencies": {
+    "@tc/typescript-editor": "workspace:*"
+  }
+}

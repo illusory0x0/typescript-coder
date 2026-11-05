@@ -1,0 +1,2221 @@
+/**
+ * The plan/execute driver (`docs/plan-exec.md`): a planner owns a task-level
+ * WorkNode DAG, then executes ready nodes in record order. An executor carries
+ * out one node at a time with edit-dsl clauses or file commands; the harness
+ * owns scheduling, gates, review, and the final result.
+ *
+ * This module orchestrates. It reuses the edit-dsl machinery rather than
+ * re-implementing it: `parseMultiEditorDetailed`/`resolveMultiEditor` for the
+ * reply, `applyResolvedRegions` for the application gates, and
+ * `formatDiagnostics` for the type-check feedback. `src/tasks.ts` owns the
+ * contract, and `src/prompts/task.ts` owns the prompt text.
+ *
+ * There are no fixed exchange, viewer, review, or planning-round caps here.
+ * The run is bounded by the USD cost budget, repeated/no-progress fingerprints,
+ * and the DSL safety validation.
+ */
+import { createHash } from "node:crypto";
+import { rmSync } from "node:fs";
+import { join } from "node:path";
+import { resolveCurrentEntry } from "@tc/typescript-editor/resolve-entry";
+import { buildIndexTolerant } from "@tc/typescript-editor/utility";
+import type {
+  IndexEntry,
+  Locator,
+  SourceFile,
+  SymbolIndex,
+  SymbolSpace,
+} from "@tc/typescript-editor/utility";
+import { Parser } from "@tc/typescript-editor/parser";
+import type { Node, Program } from "@tc/typescript-editor/parser";
+import { stripCodeFences } from "@tc/typescript-editor/matcher";
+import { parseMultiEditorDetailed } from "@tc/typescript-editor/selection";
+import type { EditStatement, Selection as EditDslSelection } from "@tc/typescript-editor/selection";
+import {
+  renderReadFailureFeedback,
+  renderReadFeedback,
+  resolveMultiEditor,
+} from "@tc/typescript-editor/multi-editor";
+import type { MultiEditorDeps, MultiEditorResolution } from "@tc/typescript-editor/multi-editor";
+import {
+  declarationKindOf,
+  ignoredInertClausesWarning,
+  partitionEditDslFailures,
+  renderViewerFeedback,
+} from "@tc/typescript-editor/edit-dsl";
+import type { EditDslRegion } from "@tc/typescript-editor/edit-dsl";
+import {
+  applyResolvedRegions,
+  gateDiagnostics,
+  NOOP_DIAGNOSTICS,
+  parseCheck,
+  prevBrokenDiagnostics,
+} from "@tc/typescript-editor/commit";
+import { checkTool, testTool } from "./tools";
+import { formatFailureDiagnostics, formatSource } from "@tc/typescript-editor/editor";
+import {
+  addLeadingExportModifier,
+  hasLeadingExportModifier,
+  stripLeadingExportModifier,
+} from "@tc/typescript-editor/export-modifier";
+import { buildContextYaml } from "./loop";
+import {
+  DEFAULT_COST_BUDGET_USD,
+  addLoopTokens,
+  costBudgetFromResponse,
+  cloneLoopUsage,
+  discoverSourceFiles,
+  editDslRegionToResolved,
+  formatDiagnostics,
+  loopTokensFromResponse,
+  providerErrorDiagnostics,
+  readFileIfExists,
+  recordRow,
+  safeMutablePath,
+  selectSpecFiles,
+  selectorFromStage,
+  costBudgetDiagnostics,
+  totalLoopTokens,
+  withEffort,
+  writeTarget,
+  zeroLoopUsage,
+} from "./loop";
+import type {
+  EditSelector,
+  ExchangeOutcome,
+  LoopOptions,
+  LoopRecord,
+  LoopResult,
+  LoopTokens,
+  LoopUsage,
+  MatcherKind,
+  ProviderLike,
+  RejectionCause,
+  TerminationReason,
+} from "./loop";
+import type { SelectionStage } from "@tc/typescript-editor/cascade";
+import type { ChatMessage, ChatResponse } from "./openai";
+import {
+  buildTaskExecutionSystemPrompt,
+  buildTaskPlanRetryPrompt,
+  buildTaskPlanningSystemPrompt,
+  buildTaskPlanningUserPrompt,
+  buildTaskReplanPrompt,
+  buildTaskReplanRetryPrompt,
+  buildTaskReviewPrompt,
+  buildTaskReviewRetryPrompt,
+  buildTaskTurnPrompt,
+  renderTaskContentView,
+} from "./prompts/task";
+import type { TaskSourceView } from "./prompts/task";
+import { applyPlanReply, blockedNodes, nextReadyNode, runComplete, summaryOf } from "./tasks";
+import type { GateSnapshot, NodeId, PlanRunState, WorkNode } from "./tasks";
+import { parsePlanDslDetailed } from "./plan-dsl";
+import { renderDslIssues } from "@tc/typescript-editor/dsl-diagnostics";
+import type { DslParseResult } from "@tc/typescript-editor/dsl-diagnostics";
+
+/**
+ * A planning turn's result, tagged so the caller never has to guess whether a
+ * value is a run state or a terminated result.
+ */
+type PlanningOutcome =
+  | { kind: "planned"; state: PlanRunState }
+  | { kind: "failed"; result: LoopResult };
+/** One review round: approve, an amended state, or a terminated run. */
+type ReviewOutcome =
+  | { kind: "approve" }
+  | { kind: "amend"; state: PlanRunState }
+  | { kind: "failed"; result: LoopResult };
+/** One work-node execution: its gate passed, it stopped making progress, or the run ended. */
+type ExecutionOutcome =
+  | { kind: "passed"; gate: GateSnapshot }
+  | { kind: "failed"; diagnostics: string; gate: GateSnapshot | null }
+  | { kind: "terminated"; result: LoopResult };
+
+interface Workspace {
+  files: SourceFile[];
+  index: SymbolIndex;
+  skipped: LoopResult["skipped"];
+}
+
+function workspaceOf(cwd: string): Workspace {
+  const files = discoverSourceFiles(cwd);
+  const build = buildIndexTolerant(files);
+  return { files, index: build.index, skipped: build.skipped };
+}
+
+/** One model conversation; token usage is accounted at the run level. */
+interface ChatState {
+  messages: ChatMessage[];
+}
+
+/**
+ * The run-level token tally (#32). Each provider call lands in exactly one
+ * conversation bucket; `consumed` is the sum that drives the hard budget.
+ */
+interface UsageState {
+  usage: LoopUsage;
+  consumed: number;
+}
+
+async function callModel(
+  messages: ChatMessage[],
+  bucket: LoopTokens,
+  usage: UsageState,
+  provider: ProviderLike,
+  options: LoopOptions,
+): Promise<ChatResponse> {
+  const chatOptions =
+    options.temperature === undefined ? undefined : { temperature: options.temperature };
+  const response = await provider.chat(
+    messages,
+    undefined,
+    withEffort(chatOptions, options.effortOverride ?? "none"),
+  );
+  usage.consumed += costBudgetFromResponse(response);
+  addLoopTokens(bucket, loopTokensFromResponse(response));
+  return response;
+}
+
+function overBudget(state: UsageState, budget: number): boolean {
+  return state.consumed > budget;
+}
+
+function outcomeOf(stage: string): ExchangeOutcome {
+  switch (stage) {
+    case "address":
+      return "address";
+    case "matcher":
+      return "matcher";
+    case "range":
+      return "range";
+    case "gate":
+      return "gate";
+    case "format":
+      return "format";
+    case "no-op":
+      return "no-op";
+    case "duplicate":
+      return "duplicate";
+    default:
+      return "protocol";
+  }
+}
+
+function stageOf(diagnostics: string): string {
+  const match = /^stage:\s*(\S+)/m.exec(diagnostics);
+  return match?.[1] ?? "protocol";
+}
+
+/** Typed record cause for a plan-exec exchange rejection; verification rows stay null. */
+function rejectionCauseOf(
+  outcome: ExchangeOutcome,
+  diagnostics: string,
+): RejectionCause | undefined {
+  switch (outcome) {
+    case "protocol":
+    case "echo":
+    case "address":
+    case "no-op":
+    case "repeat":
+    case "duplicate":
+    case "gate":
+    case "format":
+    case "truncated":
+      return outcome;
+    case "range":
+      return "range-invalid";
+    case "matcher":
+      if (diagnostics.includes("unparseable")) {
+        return "matcher-unparseable";
+      }
+      if (diagnostics.includes("ambiguous")) {
+        return "matcher-ambiguous";
+      }
+      return "matcher-not-found";
+    default:
+      return undefined;
+  }
+}
+
+function hashText(text: string): string {
+  return createHash("sha256").update(text, "utf8").digest("hex");
+}
+
+/** The record locator for a node: its first hint, or an empty locator. */
+function locatorOfNode(node: WorkNode): Locator {
+  const hint = node.hints[0];
+  if (hint === undefined) {
+    return { path: "", name: "", kind: "" };
+  }
+  return { path: hint.path, name: hint.kind === "file" ? "" : hint.symbol, kind: "" };
+}
+
+function writeRecord(
+  records: LoopRecord[],
+  input: {
+    iteration: number;
+    kind: "exchange" | "verification";
+    exchange: number | null;
+    node: WorkNode;
+    outcome: ExchangeOutcome | "ok" | "tsc" | "tests";
+    replacement: string | null;
+    diagnostics: string | null;
+    finishReason: string | null;
+    payloads?: number;
+    appliedLocators?: Locator[];
+    selectors?: EditSelector[];
+    stages?: SelectionStage[];
+    matcherKinds?: (MatcherKind | null)[];
+    creates?: number;
+    cause?: RejectionCause;
+  },
+): void {
+  records.push(
+    recordRow({
+      row: records.length + 1,
+      iteration: input.iteration,
+      kind: input.kind,
+      exchange: input.exchange,
+      locator: locatorOfNode(input.node),
+      replacement: input.replacement,
+      diagnostics: input.diagnostics,
+      outcome: input.outcome,
+      finishReason: input.finishReason,
+      payloads: input.payloads ?? 0,
+      appliedLocators: input.appliedLocators,
+      selectors: input.selectors,
+      stages: input.stages,
+      matcherKinds: input.matcherKinds,
+      creates: input.creates,
+      cause: input.cause,
+    }),
+  );
+}
+
+function readTarget(cwd: string, path: string): string {
+  return readFileIfExists(join(cwd, path)) ?? "";
+}
+
+/** True when a planner turn is asking for a read-only edit-protocol viewer. */
+function isPlannerViewerReply(content: string): boolean {
+  const trimmed = stripCodeFences(content).trim();
+  return /^(select|read|create|delete|write)\b/.test(trimmed);
+}
+
+/**
+ * A planner viewer is one or more existing read-only viewer statements.
+ * Editors, writes, creates, and deletes are rejected: the planner may inspect
+ * code, never change it.
+ */
+function plannerViewerProblem(statements: readonly EditStatement[]): string | null {
+  if (statements.length === 0) {
+    return "the reply carried no viewer statement";
+  }
+  for (const statement of statements) {
+    if (statement.type === "fs") {
+      if (statement.statement.op !== "read") {
+        return `a planner view is read-only; \`${statement.statement.op}\` is not allowed`;
+      }
+      continue;
+    }
+    const selection = statement.selection;
+    if (selection.replacement !== null || selection.rename !== undefined) {
+      return "a planner view is read-only; use a viewer (`select … end`) without `replace` or `rename`";
+    }
+  }
+  return null;
+}
+
+/** The workspace files (paths and sources) for address resolution. */
+function locatorOfHint(hint: WorkNode["hints"][number]): Locator {
+  return { path: hint.path, name: hint.symbol, kind: "" };
+}
+
+// ---------------------------------------------------------------------------
+// Applying one execution reply
+
+/** A whole-file `write` that the reply actually applied. */
+interface WholeFileWrite {
+  path: string;
+  /** Whether the file existed before this write (a new skeleton did not). */
+  existed: boolean;
+  /** Lines in the file before the write. */
+  priorLines: number;
+  /** Lines in the formatted file after the write. */
+  newLines: number;
+}
+
+/**
+ * Soft size heuristic for the whole-file edit advisory: rewriting an existing
+ * file at least this many lines long is worth a targeted-edit nudge. It is
+ * advisory only and never rejects or caps a write.
+ */
+export const LARGE_WHOLE_FILE_WRITE_LINES = 120;
+
+interface ReplyOutcome {
+  ok: boolean;
+  /** A read-only reply wrote nothing; its feedback becomes the next prompt. */
+  viewerOnly: boolean;
+  diagnostics: string | null;
+  feedback: string | null;
+  appliedLocators: Locator[];
+  /** Files the reply wrote, created, or deleted (repository-relative). */
+  paths: string[];
+  /** Edit-dsl clauses the reply carried (viewers and file commands included). */
+  payloads: number;
+  /** Selectors for `resolution.regions`, parallel to `stages`. */
+  selectors?: EditSelector[];
+  /** Cascade stages of `resolution.regions`. */
+  stages?: SelectionStage[];
+  /** Matcher kinds for `resolution.regions`, parallel to `stages`. */
+  matcherKinds?: (MatcherKind | null)[];
+  /** Implicit/declaration/module creates plus empty-file creates. */
+  creates?: number;
+  /** Whole-file writes applied by this reply; absent on a rejection. */
+  wholeFileWrites?: WholeFileWrite[];
+  /** True when the reply also applied a targeted edit or file command. */
+  targetedEdit?: boolean;
+}
+
+/** The record metadata derived from one resolved reply. */
+function replyTelemetry(
+  payloads: number,
+  resolution: MultiEditorResolution,
+  ignoredRegionIndices?: ReadonlySet<number>,
+): Pick<ReplyOutcome, "payloads" | "selectors" | "stages" | "matcherKinds" | "creates"> {
+  const regions =
+    ignoredRegionIndices === undefined || ignoredRegionIndices.size === 0
+      ? resolution.regions
+      : resolution.regions.filter((region) => !ignoredRegionIndices.has(region.index));
+  return {
+    payloads,
+    selectors: regions.map((region) => selectorFromStage(region.stage)),
+    stages: regions.map((region) => region.stage),
+    matcherKinds: regions.map((region) => region.matcherKind),
+    creates: regions.filter((region) => region.create).length + resolution.creates.length,
+  };
+}
+
+function sourceLineCount(source: string): number {
+  if (source === "") {
+    return 0;
+  }
+  const lines = source.replace(/\r\n?/g, "\n").split("\n");
+  if (lines[lines.length - 1] === "") {
+    lines.pop();
+  }
+  return lines.length;
+}
+
+interface ExecutionContext {
+  cwd: string;
+  options: LoopOptions;
+  records: LoopRecord[];
+  /** Warnings recovered by a tolerant parser; recorded on the run result. */
+  warnings: string[];
+  /** Whole-declaration shape failures already seen in this work node. */
+  shapeFailures: Set<string>;
+  node: WorkNode;
+  iteration: number;
+}
+
+function editDslDeps(context: ExecutionContext): MultiEditorDeps {
+  const cache = new Map<string, string>();
+  const sourceFor = (path: string): string => {
+    const cached = cache.get(path);
+    if (cached !== undefined) {
+      return cached;
+    }
+    const source = readTarget(context.cwd, path);
+    cache.set(path, source);
+    return source;
+  };
+  return {
+    sourceFor,
+    fileExists: (path) => readFileIfExists(join(context.cwd, path)) !== null,
+    isSafePath: (path) => safeMutablePath(context.cwd, path) !== null,
+    resolveEntry: (source, path, locator, space) =>
+      resolveCurrentEntry(source, path, locator, space),
+  };
+}
+
+function feedbackOf(resolution: MultiEditorResolution): string | null {
+  const blocks = [
+    resolution.viewers.length === 0 ? null : renderViewerFeedback(resolution.viewers),
+    resolution.reads.length === 0 ? null : renderReadFeedback(resolution.reads),
+    renderReadFailureFeedback(resolution.readFailures),
+  ].filter((block): block is string => block !== null && block !== "");
+  return blocks.length === 0 ? null : blocks.join("\n\n");
+}
+
+function rejectionText(resolution: MultiEditorResolution, totalClauses: number): string {
+  return resolution.failures
+    .map(
+      (failure) =>
+        `clause ${failure.index + 1} of ${totalClauses} (${failure.path}):\n${failure.diagnostics}`,
+    )
+    .join("\n\n");
+}
+
+interface DeclarationShape {
+  name: string;
+  kind: string;
+}
+
+/**
+ * Index names for declarations nested in a class, interface, namespace, enum,
+ * or object literal are dotted (`Workbook.evaluateInput`, `config.timeout`).
+ * Their node spans a member, not a top-level declaration, so the whole-symbol
+ * declaration guard and variable-statement expansion do not apply. The normal
+ * splice/parse/format/gate path validates a member replacement.
+ */
+function isNestedMemberName(name: string): boolean {
+  return name.includes(".");
+}
+
+/** Unwrap the export wrapper around a top-level declaration. */
+function unwrapTopLevelDeclaration(statement: Node): Node | null {
+  const kind = (statement as Node & { kind?: string }).kind;
+  if (kind === "ExportNamedDeclaration" || kind === "ExportDefaultDeclaration") {
+    return (statement as Node & { declaration?: Node | null }).declaration ?? null;
+  }
+  return statement;
+}
+
+function declarationNodeName(node: Node): string | null {
+  switch ((node as Node & { kind?: string }).kind) {
+    case "VariableStatement": {
+      const declarations = (node as Node & { declarations?: readonly Node[] }).declarations ?? [];
+      if (declarations.length !== 1) {
+        return null;
+      }
+      const binding = (declarations[0] as Node & { name?: Node }).name;
+      return binding !== undefined && (binding as Node & { kind?: string }).kind === "Identifier"
+        ? ((binding as Node & { name?: string }).name ?? null)
+        : null;
+    }
+    case "FunctionDeclaration":
+    case "ClassDeclaration":
+    case "TypeAliasDeclaration":
+    case "InterfaceDeclaration":
+    case "EnumDeclaration": {
+      const name = (node as Node & { name?: Node }).name;
+      return name !== undefined && (name as Node & { kind?: string }).kind === "Identifier"
+        ? ((name as Node & { name?: string }).name ?? null)
+        : null;
+    }
+    case "NamespaceDeclaration":
+      return (node as Node & { name?: string }).name ?? null;
+    default:
+      return null;
+  }
+}
+
+/** The exact target kind, including const/let/var for variable entries. */
+function targetDeclarationShape(source: string, entry: IndexEntry): DeclarationShape | null {
+  // A dotted name is a nested member or a dotted namespace declaration, never a
+  // single top-level declaration; there is no top-level name/kind shape to keep.
+  if (isNestedMemberName(entry.locator.name)) {
+    return null;
+  }
+  if (entry.locator.kind !== "variable") {
+    return { name: entry.locator.name, kind: entry.locator.kind };
+  }
+  let program: Program;
+  try {
+    program = new Parser(source).parseProgram();
+  } catch {
+    return null;
+  }
+  for (const statement of program.body) {
+    const declaration = unwrapTopLevelDeclaration(statement);
+    if (
+      declaration !== null &&
+      (declaration as Node & { kind?: string }).kind === "VariableStatement" &&
+      entry.node.start >= declaration.start &&
+      entry.node.end <= declaration.end
+    ) {
+      return {
+        name: entry.locator.name,
+        kind: (declaration as Node & { declarationKind?: string }).declarationKind ?? "variable",
+      };
+    }
+  }
+  return null;
+}
+
+/**
+ * The recovery line shown at the top of every whole-declaration shape failure:
+ * a repeated select cannot add a sibling declaration or change the selected
+ * declaration's kind, so the model must switch forms or split the change.
+ */
+function declarationShapeRecovery(path: string): string {
+  return `recovery: do not resend this select; use 'write ${path} with TC_EDIT_BEGIN ... TC_EDIT_END' or split this into one declaration per reply / one create per added declaration.`;
+}
+
+/**
+ * The remediation appended to a whole-declaration shape failure: a
+ * multi-declaration or kind-changing replacement needs the whole-file `write`
+ * form or one declaration per reply, and a different kind needs an explicit
+ * create/write rather than silently changing the selected declaration.
+ */
+function declarationShapeRemediation(
+  path: string,
+  target: DeclarationShape,
+  kindChanged: boolean,
+): string {
+  const write = `\`write ${path} with TC_EDIT_BEGIN … TC_EDIT_END\``;
+  return kindChanged
+    ? `hint: to change the declaration's kind, use ${write} for the new form; otherwise keep the selected ${target.kind} ${JSON.stringify(target.name)}. For several declarations, send one declaration per reply or one \`create <kind> <name> in ${path} with <fence>\` clause per added declaration.`
+    : `hint: use ${write} for a multi-declaration or name-changing replacement, or split the change into one declaration per reply with a \`create <kind> <name> in ${path} with <fence>\` clause per new declaration; a whole-declaration replacement must keep the selected ${target.kind} ${JSON.stringify(target.name)}.`;
+}
+
+interface DeclarationShapeFailure {
+  /** Stable problem identity, used to flag a repeat within one work node. */
+  key: string;
+  diagnostics: string;
+}
+
+/**
+ * A whole-declaration modify replaces the declaration span, not just a body.
+ * It must still produce exactly the same top-level declaration kind and name;
+ * otherwise `NAME_ERROR = ...` can pass the parse gate and fail only at tsc.
+ * Nested members are exempt: their target is not a top-level declaration.
+ */
+function declarationShapeProblem(
+  source: string,
+  entry: IndexEntry,
+  replacement: string,
+): DeclarationShapeFailure | null {
+  const target = targetDeclarationShape(source, entry);
+  if (target === null) {
+    return null;
+  }
+  const failure = (category: string, detail: string): DeclarationShapeFailure => ({
+    key: `${entry.locator.path}\u0000${target.name}\u0000${target.kind}\u0000${category}`,
+    diagnostics: `stage: address\ncode: EDIT_DECLARATION_MISMATCH\n${declarationShapeRecovery(entry.locator.path)}\n${detail}`,
+  });
+  let program: Program;
+  try {
+    program = new Parser(replacement).parseProgram();
+  } catch (error) {
+    return failure(
+      "parse",
+      `the replacement for ${JSON.stringify(target.kind)} ${JSON.stringify(target.name)} does not parse as a declaration: ${error instanceof Error ? error.message : String(error)}`,
+    );
+  }
+  const declarations = program.body
+    .map((statement) => unwrapTopLevelDeclaration(statement))
+    .filter((declaration): declaration is Node => declaration !== null);
+  if (declarations.length !== 1) {
+    return failure(
+      "multi-declaration",
+      `a whole-declaration modify must produce exactly one top-level declaration named ${JSON.stringify(target.name)}; got ${declarations.length}\n${declarationShapeRemediation(entry.locator.path, target, false)}`,
+    );
+  }
+  const declaration = declarations[0];
+  if (declaration === undefined) {
+    return failure(
+      "no-declaration",
+      `the replacement declares no top-level ${JSON.stringify(target.name)}\n${declarationShapeRemediation(entry.locator.path, target, false)}`,
+    );
+  }
+  const name = declarationNodeName(declaration);
+  if (name !== target.name) {
+    return failure(
+      "name",
+      `the replacement must declare ${JSON.stringify(target.name)}, not ${JSON.stringify(name ?? "<not a declaration>")}\n${declarationShapeRemediation(entry.locator.path, target, false)}`,
+    );
+  }
+  const kind =
+    (declaration as Node & { kind?: string }).kind === "VariableStatement"
+      ? ((declaration as Node & { declarationKind?: string }).declarationKind ?? "variable")
+      : declarationKindOf(declaration);
+  if (kind !== target.kind) {
+    return failure(
+      "kind",
+      `the replacement for ${JSON.stringify(target.kind)} ${JSON.stringify(target.name)} must remain a ${target.kind} declaration; got ${kind}\n${declarationShapeRemediation(entry.locator.path, target, true)}`,
+    );
+  }
+  return null;
+}
+
+/**
+ * A variable index entry points at its `VariableDeclarator`, not the enclosing
+ * statement, so a whole-symbol rewrite would leave `const`/`export` behind.
+ * Expand a whole-symbol variable edit to its top-level statement (including the
+ * `export` wrapper); a multi-declarator statement is rejected because replacing
+ * it would remove sibling bindings. Matcher/pick edits stay untouched.
+ */
+function expandVariableRegion(
+  source: string,
+  entry: IndexEntry,
+  region: EditDslRegion,
+): EditDslRegion | { error: string } {
+  if (region.create || region.matcherKind !== null || region.stage !== "whole-symbol") {
+    return region;
+  }
+  let program: Program;
+  try {
+    program = new Parser(source).parseProgram();
+  } catch {
+    return region;
+  }
+  for (const statement of program.body) {
+    if (entry.node.start < statement.start || entry.node.end > statement.end) {
+      continue;
+    }
+    const exported = statement.kind === "ExportNamedDeclaration";
+    const declaration =
+      statement.kind === "ExportNamedDeclaration" ? statement.declaration : statement;
+    if (declaration === null || declaration.kind !== "VariableStatement") {
+      return region;
+    }
+    if (declaration.declarations.length !== 1) {
+      return {
+        error: `stage: address\nthe reply targets ${JSON.stringify(entry.locator.name)} in a statement that declares several variables; replacing the whole statement would remove its siblings. Split the declaration first, or use a \`match\` on the one binding`,
+      };
+    }
+    const text = region.text;
+    if (text.trim() === "") {
+      return { ...region, start: statement.start, end: statement.end, text: "" };
+    }
+    const shaped = exported ? addLeadingExportModifier(text) : stripLeadingExportModifier(text);
+    return { ...region, start: statement.start, end: statement.end, text: shaped };
+  }
+  return region;
+}
+
+/**
+ * Whole-declaration regions never include the wrapping `export`: the index
+ * excludes it and the cascade strips a repeated leading modifier. This guard
+ * only removes a second leading `export` from the region text when the source
+ * declaration is already exported; it never adds an export or removes one from
+ * an unexported declaration.
+ */
+function withExportText(
+  source: string,
+  entry: IndexEntry,
+  selection: EditDslSelection,
+): EditDslSelection {
+  const replacement = selection.replacement;
+  if (
+    replacement === null ||
+    replacement.trim() === "" ||
+    (selection.rename !== undefined && selection.rename !== null) ||
+    selection.matcher !== null ||
+    selection.pick !== null
+  ) {
+    return selection;
+  }
+  const before = source.slice(0, entry.node.start);
+  const modifier = /(export\s+(?:default\s+)?)$/.exec(before)?.[0];
+  if (modifier === undefined || !hasLeadingExportModifier(replacement)) {
+    return selection;
+  }
+  return {
+    ...selection,
+    replacement: stripLeadingExportModifier(replacement, modifier.includes("default")),
+  };
+}
+
+/**
+ * Apply one execution reply. Every clause is resolved against the pre-reply
+ * snapshot; a failure rejects the whole reply and writes nothing. The
+ * one-declaration-per-reply claim set stays hard in `resolveMultiEditor`.
+ */
+async function applyEditReply(
+  context: ExecutionContext,
+  content: string,
+  bases: Map<string, string>,
+): Promise<ReplyOutcome> {
+  const parsed = parseMultiEditorDetailed(content);
+  if (!parsed.ok) {
+    return {
+      ok: false,
+      viewerOnly: false,
+      diagnostics: renderDslIssues(parsed.issues),
+      feedback: null,
+      appliedLocators: [],
+      paths: [],
+      payloads: 0,
+    };
+  }
+  for (const warning of parsed.issues.filter((issue) => issue.severity === "warning")) {
+    context.warnings.push(`${warning.code}: ${warning.message}`);
+  }
+  const statements = parsed.value ?? [];
+  if (statements.length === 0) {
+    return {
+      ok: false,
+      viewerOnly: false,
+      diagnostics:
+        "stage: protocol\nthe reply carried no edit statement; reply with the edit clauses or file commands for this work node",
+      feedback: null,
+      appliedLocators: [],
+      paths: [],
+      payloads: 0,
+    };
+  }
+
+  const resolution = resolveMultiEditor(statements, editDslDeps(context));
+  const telemetry = replyTelemetry(statements.length, resolution);
+  const feedback = feedbackOf(resolution);
+  // A no-op failure is per clause (#44): it is ignored when another clause in
+  // the reply can still apply. Every other stage stays whole-reply atomic.
+  const failurePartition = partitionEditDslFailures(resolution.failures);
+  const rejected = (
+    diagnostics: string,
+    feedbackValue: string | null,
+    extra: Partial<ReplyOutcome> = {},
+  ): ReplyOutcome => ({
+    ok: false,
+    viewerOnly: false,
+    diagnostics,
+    feedback: feedbackValue,
+    appliedLocators: [],
+    paths: [],
+    ...telemetry,
+    ...extra,
+  });
+  if (failurePartition.fatal.length > 0) {
+    return rejected(rejectionText(resolution, statements.length), feedback);
+  }
+
+  const commandWrites: { index: number; path: string; replacement: string }[] = [];
+  const commandWriteIndices = new Set<number>();
+  const commandWritePaths = new Set<string>();
+  const wholeFileWriteMeta = new Map<string, WholeFileWrite>();
+  for (let index = 0; index < statements.length; index += 1) {
+    const statement = statements[index];
+    if (statement?.type !== "fs" || statement.statement.op !== "write") {
+      continue;
+    }
+    if (commandWritePaths.has(statement.statement.path)) {
+      return rejected(
+        `stage: protocol\nthe reply writes ${JSON.stringify(statement.statement.path)} more than once; write a file once per reply`,
+        feedback,
+      );
+    }
+    commandWritePaths.add(statement.statement.path);
+    commandWrites.push({
+      index,
+      path: statement.statement.path,
+      replacement: statement.statement.replacement,
+    });
+    if (statement.statement.ranges === null) {
+      const prior = readFileIfExists(join(context.cwd, statement.statement.path));
+      wholeFileWriteMeta.set(statement.statement.path, {
+        path: statement.statement.path,
+        existed: prior !== null,
+        priorLines: prior === null ? 0 : sourceLineCount(prior),
+        newLines: sourceLineCount(statement.statement.replacement),
+      });
+    }
+    commandWriteIndices.add(index);
+  }
+  // Inert no-op clauses (#44) are ignorable only when another clause in the
+  // reply carries a change: a resolved region, a create/delete, or a write.
+  const hasOtherChangeClauses =
+    resolution.regions.length > 0 ||
+    resolution.creates.length > 0 ||
+    resolution.deletes.length > 0 ||
+    commandWrites.length > 0;
+  if (failurePartition.inert.length > 0 && !hasOtherChangeClauses) {
+    return rejected(rejectionText(resolution, statements.length), feedback);
+  }
+  let ignoredInertCount = failurePartition.inert.length;
+  const renameIndices = new Set<number>();
+  for (let index = 0; index < statements.length; index += 1) {
+    const statement = statements[index];
+    if (
+      statement?.type === "editor" &&
+      statement.selection.rename !== undefined &&
+      statement.selection.rename !== null
+    ) {
+      renameIndices.add(index);
+    }
+  }
+
+  const editorRegions = resolution.regions.filter(
+    (region) => !commandWriteIndices.has(region.index),
+  );
+  const sources = new Map<string, string>();
+  const sourceOf = (path: string): string => {
+    const cached = sources.get(path);
+    if (cached !== undefined) {
+      return cached;
+    }
+    const source = readTarget(context.cwd, path);
+    sources.set(path, source);
+    return source;
+  };
+
+  const expandedRegions: EditDslRegion[] = [];
+  for (const region of editorRegions) {
+    const source = sourceOf(region.path);
+    const isRename = renameIndices.has(region.index);
+    if (region.create || isRename || region.matcherKind !== null) {
+      expandedRegions.push(region);
+      continue;
+    }
+    const existing = resolveCurrentEntry(
+      source,
+      region.path,
+      locatorOfHint({ path: region.path, symbol: region.locator.name, kind: "value" }),
+      null,
+    );
+    if (!existing.ok) {
+      expandedRegions.push(region);
+      continue;
+    }
+    const nestedMember = isNestedMemberName(existing.entry.locator.name);
+    if (!nestedMember && region.stage === "whole-symbol" && region.text.trim() !== "") {
+      const shape = declarationShapeProblem(source, existing.entry, region.text);
+      if (shape !== null) {
+        const repeated = context.shapeFailures.has(shape.key);
+        context.shapeFailures.add(shape.key);
+        return rejected(
+          repeated
+            ? `${shape.diagnostics}\nthis shape failure already occurred; switch to write or split`
+            : shape.diagnostics,
+          feedback,
+        );
+      }
+    }
+    // A nested member spans its own node; there is no top-level declaration
+    // shape guard or variable-statement expansion to apply.
+    const expanded = nestedMember ? region : expandVariableRegion(source, existing.entry, region);
+    if ("error" in expanded) {
+      return rejected(expanded.error, feedback);
+    }
+    if (expanded === region && region.stage === "whole-symbol" && region.text.trim() !== "") {
+      const selection = withExportText(source, existing.entry, {
+        locator: region.locator,
+        space: null,
+        matcher: null,
+        pick: null,
+        replacement: region.text,
+        within: null,
+        rename: null,
+      });
+      expandedRegions.push({ ...region, text: selection.replacement ?? region.text });
+    } else {
+      expandedRegions.push(expanded);
+    }
+  }
+
+  if (editorRegions.length === 0 && commandWrites.length === 0) {
+    const creates = resolution.creates.length;
+    const deletes = resolution.deletes.length;
+    if (creates === 0 && deletes === 0) {
+      return rejected(
+        feedback === null
+          ? "stage: protocol\nthe reply carried a viewer but resolved no occurrence; reply with an edit clause"
+          : `stage: protocol\nthe reply only located source and wrote nothing; add the edit clauses or file commands for this work node.\n\n${feedback}`,
+        feedback,
+        { viewerOnly: true },
+      );
+    }
+  }
+
+  const commandPaths = new Set(commandWrites.map((write) => write.path));
+  for (const region of expandedRegions) {
+    if (commandPaths.has(region.path)) {
+      return rejected(
+        `stage: protocol\nthe reply both edits and whole-file-writes ${JSON.stringify(region.path)}; split those actions across replies`,
+        feedback,
+      );
+    }
+  }
+
+  const applyFailures: { index: number; stage: string; diagnostics: string }[] = [];
+  const target = expandedRegions[0]?.path ?? "";
+  const prevCheck = target === "" ? parseCheck("") : parseCheck(sourceOf(target));
+  const writes =
+    expandedRegions.length === 0
+      ? []
+      : await applyResolvedRegions({
+          regions: expandedRegions.map(editDslRegionToResolved),
+          fileSourceOf: (path) => sourceOf(path),
+          target,
+          prevCheck,
+          policy: { sameOffsetInserts: "append" },
+          noteFailure: (note) => {
+            applyFailures.push({
+              index: note.region.index,
+              stage: note.stage,
+              diagnostics: note.diagnostics,
+            });
+          },
+          noteOverlap: (path, earlier, later) => {
+            applyFailures.push({
+              index: earlier.index,
+              stage: "protocol",
+              diagnostics: `stage: protocol\nthe reply's regions overlap in ${path} (clauses ${earlier.index + 1} and ${later.index + 1}); send non-overlapping clauses`,
+            });
+          },
+        });
+  const applyPartition = partitionEditDslFailures(applyFailures);
+  const fatalApplyFailure = applyPartition.fatal[0];
+  if (fatalApplyFailure !== undefined) {
+    return rejected(
+      feedback === null
+        ? fatalApplyFailure.diagnostics
+        : `${fatalApplyFailure.diagnostics}\n\n${feedback}`,
+      feedback,
+    );
+  }
+  const ignoredApplyIndices = new Set(applyPartition.inert.map((failure) => failure.index));
+  if (applyPartition.inert.length > 0) {
+    // Apply-level no-ops (a file whose formatted result equals its original
+    // source) are inert too, but only when another change still applies.
+    const hasOtherApply =
+      writes.length > 0 ||
+      commandWrites.length > 0 ||
+      resolution.creates.length > 0 ||
+      resolution.deletes.length > 0;
+    if (!hasOtherApply) {
+      return rejected(
+        feedback === null ? NOOP_DIAGNOSTICS : `${NOOP_DIAGNOSTICS}\n\n${feedback}`,
+        feedback,
+      );
+    }
+    ignoredInertCount += ignoredApplyIndices.size;
+  }
+
+  const preparedWrites: { path: string; source: string }[] = [...writes];
+  for (const write of commandWrites) {
+    const parsedWrite = parseCheck(write.replacement);
+    if (!parsedWrite.ok) {
+      return rejected(gateDiagnostics(0, write.replacement, parsedWrite.failure), feedback);
+    }
+    let formatted: string;
+    try {
+      formatted = await formatSource(write.path, write.replacement);
+    } catch (error) {
+      return rejected(formatFailureDiagnostics(write.path, error), feedback);
+    }
+    const formattedCheck = parseCheck(formatted);
+    if (!formattedCheck.ok) {
+      return rejected(gateDiagnostics(0, formatted, formattedCheck.failure), feedback);
+    }
+    const meta = wholeFileWriteMeta.get(write.path);
+    if (meta !== undefined) {
+      meta.newLines = sourceLineCount(formatted);
+    }
+    preparedWrites.push({ path: write.path, source: formatted });
+  }
+
+  const creates = resolution.creates.map((create) => ({ path: create.path, source: "" }));
+  const uniqueWrites = new Map<string, string>();
+  for (const write of [...preparedWrites, ...creates]) {
+    uniqueWrites.set(write.path, write.source);
+  }
+  const changes = [...uniqueWrites].filter(
+    ([path, source]) => source !== readTarget(context.cwd, path),
+  );
+  const changedPaths = new Set(changes.map(([path]) => path));
+  const wholeFileWrites = [...wholeFileWriteMeta.values()].filter((write) =>
+    changedPaths.has(write.path),
+  );
+  const targetedEdit =
+    expandedRegions.length > 0 || resolution.creates.length > 0 || resolution.deletes.length > 0;
+  if (changes.length === 0 && resolution.deletes.length === 0 && resolution.creates.length === 0) {
+    return rejected(NOOP_DIAGNOSTICS, feedback);
+  }
+
+  for (const [path, source] of uniqueWrites) {
+    if (!bases.has(path)) {
+      bases.set(path, readTarget(context.cwd, path));
+    }
+    writeTarget(context.cwd, path, source);
+  }
+  for (const deletion of resolution.deletes) {
+    if (!bases.has(deletion.path)) {
+      bases.set(deletion.path, readTarget(context.cwd, deletion.path));
+    }
+    rmSync(join(context.cwd, deletion.path), { force: true });
+  }
+
+  const appliedLocators: Locator[] = [];
+  for (const region of expandedRegions) {
+    appliedLocators.push(region.create ? locatorOfNode(context.node) : region.locator);
+  }
+  for (const write of commandWrites) {
+    appliedLocators.push({ path: write.path, name: "", kind: "" });
+  }
+  for (const create of resolution.creates) {
+    appliedLocators.push({ path: create.path, name: "", kind: "" });
+  }
+  for (const deletion of resolution.deletes) {
+    appliedLocators.push({ path: deletion.path, name: "", kind: "" });
+  }
+  const inertWarning =
+    ignoredInertCount === 0 ? null : ignoredInertClausesWarning(ignoredInertCount);
+  if (inertWarning !== null) {
+    // The run-level warning channel and the applied reply's feedback both carry
+    // it, so a later executor turn does not resend the inert clauses (#44).
+    context.warnings.push(inertWarning);
+  }
+  const appliedFeedback =
+    inertWarning === null
+      ? feedback
+      : feedback === null
+        ? inertWarning
+        : `${feedback}\n\n${inertWarning}`;
+  const appliedTelemetry = replyTelemetry(statements.length, resolution, ignoredApplyIndices);
+  return {
+    ok: true,
+    viewerOnly: false,
+    diagnostics: appliedFeedback,
+    feedback: appliedFeedback,
+    appliedLocators,
+    paths: [
+      ...new Set([...uniqueWrites.keys(), ...resolution.deletes.map((deletion) => deletion.path)]),
+    ],
+    ...appliedTelemetry,
+    wholeFileWrites,
+    targetedEdit,
+  };
+}
+
+// ---------------------------------------------------------------------------
+// Node views, gates, and the applied diff
+
+function declarationView(cwd: string, hint: WorkNode["hints"][number]): TaskSourceView {
+  const source = readTarget(cwd, hint.path);
+  if (hint.kind === "file") {
+    return {
+      label: `file ${JSON.stringify(hint.path)}`,
+      source: renderTaskContentView(source, 1),
+      startLine: 1,
+    };
+  }
+  const entry = resolveCurrentEntry(
+    source,
+    hint.path,
+    locatorOfHint(hint),
+    hint.kind as SymbolSpace,
+  );
+  if (!entry.ok) {
+    return {
+      label: `${hint.kind} ${JSON.stringify(hint.symbol)} in ${JSON.stringify(hint.path)}`,
+      source: renderTaskContentView(source, 1),
+      startLine: 1,
+      note: `The hint did not resolve (${entry.diagnostics.split("\n")[0] ?? "not found"}); showing the whole file.`,
+    };
+  }
+  const startOffset = entry.entry.node.start;
+  const endOffset = entry.entry.node.end;
+  const body = source.slice(startOffset, endOffset);
+  const startLine = source.slice(0, startOffset).split("\n").length;
+  return {
+    label: `${hint.kind} ${JSON.stringify(hint.symbol)} in ${JSON.stringify(hint.path)} (lines ${startLine}-${startLine + body.split("\n").length - 1})`,
+    source: renderTaskContentView(body, startLine),
+    startLine,
+  };
+}
+
+function sourceViews(cwd: string, node: WorkNode): TaskSourceView[] {
+  const views: TaskSourceView[] = [];
+  const seen = new Set<string>();
+  for (const hint of node.hints) {
+    const key = `${hint.path}\u0000${hint.symbol}\u0000${hint.kind}`;
+    if (seen.has(key)) {
+      continue;
+    }
+    seen.add(key);
+    views.push(declarationView(cwd, hint));
+  }
+  return views;
+}
+
+interface GateResult {
+  ok: boolean;
+  /** True only when this gate actually ran the full, unfiltered test suite. */
+  fullSuite: boolean;
+  diagnostics: string | null;
+}
+
+/**
+ * The test command for one node gate. A node `testFilter` is appended as
+ * `-t <regex>` (Bun's test-name pattern), so a custom `testCommand` must be a
+ * runner that accepts that flag; an unfiltered node uses the command unchanged.
+ */
+function testCommandFor(node: WorkNode, command: readonly string[] | undefined): string[] {
+  const base = command === undefined ? ["bun", "test"] : [...command];
+  return node.testFilter === undefined ? base : [...base, "-t", node.testFilter];
+}
+
+/**
+ * Run the node gate after one applied reply. `verify: "tsc"` runs the check;
+ * `verify: "test"` runs the check and the test suite, narrowed to the node's
+ * `testFilter` when present. A gate is the only place a type/test failure
+ * becomes executor diagnostics. A filtered gate is a checkpoint: it never
+ * certifies the full suite, so `fullSuite` stays false and `runComplete` still
+ * requires an unfiltered test gate.
+ */
+async function verifyNode(
+  context: ExecutionContext,
+  bases: ReadonlyMap<string, string>,
+  paths: readonly string[],
+): Promise<GateResult> {
+  const anchor =
+    paths[0] ??
+    context.node.hints[0]?.path ??
+    discoverSourceFiles(context.cwd)[0]?.path ??
+    "src/unknown.ts";
+  const baseSource = bases.get(anchor) ?? "";
+  const check = await checkTool(
+    context.cwd,
+    context.options.checkCommand,
+    context.options.commandTimeoutMs,
+  );
+  const test =
+    check.ok && context.node.verify === "test"
+      ? await testTool(
+          context.cwd,
+          testCommandFor(context.node, context.options.testCommand),
+          context.options.commandTimeoutMs,
+        )
+      : { ok: true, exitCode: 0, output: "" };
+  const fullSuite =
+    check.ok && context.node.verify === "test" && context.node.testFilter === undefined;
+  const diagnostics =
+    check.ok && test.ok
+      ? null
+      : formatDiagnostics({
+          check,
+          test,
+          targetPath: anchor,
+          baseSource,
+          newSource: readTarget(context.cwd, anchor),
+          sourceFor: (path) => readTarget(context.cwd, path),
+        });
+  writeRecord(context.records, {
+    iteration: context.iteration,
+    kind: "verification",
+    exchange: null,
+    node: context.node,
+    outcome: check.ok ? (test.ok ? "ok" : "tests") : "tsc",
+    replacement: null,
+    diagnostics,
+    finishReason: null,
+  });
+  return { ok: check.ok && test.ok, fullSuite, diagnostics };
+}
+
+function snapshotSources(cwd: string): Map<string, string> {
+  const bases = new Map<string, string>();
+  for (const file of discoverSourceFiles(cwd)) {
+    bases.set(file.path, file.source);
+  }
+  return bases;
+}
+
+/**
+ * Fingerprint the files a node can have touched: the source snapshot plus every
+ * path an applied reply wrote, created, or deleted. Non-TypeScript command
+ * writes are included because `applyEditReply` adds their paths to `bases`.
+ */
+function workspaceFingerprint(cwd: string, bases: ReadonlyMap<string, string>): string {
+  const entries = [...bases.keys()].sort().map((path) => `${path}\u0000${readTarget(cwd, path)}`);
+  return hashText(entries.join("\u0001"));
+}
+
+// ---------------------------------------------------------------------------
+// Concise applied diff (#32)
+
+/** One LCS diff entry: unchanged context, removed, or added. */
+interface DiffEntry {
+  kind: " " | "-" | "+";
+  text: string;
+}
+
+const DIFF_CONTEXT_LINES = 3;
+const MAX_DIFF_LINES = 120;
+const MAX_DIFF_LINES_PER_FILE = 60;
+const DIFF_CELL_LIMIT = 4_000_000;
+const DIFF_TRUNCATED = "... diff truncated ...";
+
+function splitDiffLines(source: string): string[] {
+  const lines = source.replace(/\r\n?/g, "\n").split("\n");
+  if (lines[lines.length - 1] === "") {
+    lines.pop();
+  }
+  return lines;
+}
+
+/** Line diff via LCS; huge pairs fall back to a whole-file replacement. */
+function diffLines(before: readonly string[], after: readonly string[]): DiffEntry[] {
+  if (before.length * after.length > DIFF_CELL_LIMIT) {
+    return [
+      ...before.map((text) => ({ kind: "-" as const, text })),
+      ...after.map((text) => ({ kind: "+" as const, text })),
+    ];
+  }
+  const width = after.length + 1;
+  const table = new Uint32Array((before.length + 1) * width);
+  for (let i = before.length - 1; i >= 0; i -= 1) {
+    for (let j = after.length - 1; j >= 0; j -= 1) {
+      const a = before[i];
+      const b = after[j];
+      const index = i * width + j;
+      if (a !== undefined && a === b) {
+        table[index] = (table[(i + 1) * width + (j + 1)] ?? 0) + 1;
+      } else {
+        table[index] = Math.max(table[(i + 1) * width + j] ?? 0, table[i * width + (j + 1)] ?? 0);
+      }
+    }
+  }
+  const entries: DiffEntry[] = [];
+  let i = 0;
+  let j = 0;
+  for (;;) {
+    const a = before[i];
+    const b = after[j];
+    if (a === undefined && b === undefined) {
+      break;
+    }
+    if (a !== undefined && b !== undefined && a === b) {
+      entries.push({ kind: " ", text: a });
+      i += 1;
+      j += 1;
+      continue;
+    }
+    const skipBefore = a === undefined ? -1 : (table[(i + 1) * width + j] ?? 0);
+    const skipAfter = b === undefined ? -1 : (table[i * width + (j + 1)] ?? 0);
+    if (a !== undefined && (b === undefined || skipBefore >= skipAfter)) {
+      entries.push({ kind: "-", text: a });
+      i += 1;
+    } else if (b !== undefined) {
+      entries.push({ kind: "+", text: b });
+      j += 1;
+    }
+  }
+  return entries;
+}
+
+/** Group changed lines into hunks with a few lines of shared context. */
+function hunkRanges(entries: readonly DiffEntry[]): { start: number; end: number }[] {
+  const changes: number[] = [];
+  entries.forEach((entry, index) => {
+    if (entry.kind !== " ") {
+      changes.push(index);
+    }
+  });
+  if (changes.length === 0) {
+    return [];
+  }
+  const ranges: { start: number; end: number }[] = [];
+  let start = -1;
+  let end = -1;
+  for (const index of changes) {
+    const from = Math.max(0, index - DIFF_CONTEXT_LINES);
+    const to = Math.min(entries.length, index + DIFF_CONTEXT_LINES + 1);
+    if (start === -1) {
+      start = from;
+      end = to;
+      continue;
+    }
+    if (from <= end) {
+      end = Math.max(end, to);
+    } else {
+      ranges.push({ start, end });
+      start = from;
+      end = to;
+    }
+  }
+  ranges.push({ start, end });
+  return ranges;
+}
+
+/** Render one changed file, capped so a large rewrite cannot flood the review. */
+function diffFile(
+  path: string,
+  before: string,
+  after: string,
+): { lines: string[]; truncated: boolean } {
+  const entries = diffLines(splitDiffLines(before), splitDiffLines(after));
+  if (!entries.some((entry) => entry.kind !== " ")) {
+    return { lines: [], truncated: false };
+  }
+  const beforeCounts = new Array<number>(entries.length + 1).fill(0);
+  const afterCounts = new Array<number>(entries.length + 1).fill(0);
+  for (let index = 0; index < entries.length; index += 1) {
+    const entry = entries[index];
+    beforeCounts[index + 1] =
+      (beforeCounts[index] ?? 0) + (entry === undefined || entry.kind === "+" ? 0 : 1);
+    afterCounts[index + 1] =
+      (afterCounts[index] ?? 0) + (entry === undefined || entry.kind === "-" ? 0 : 1);
+  }
+  const lines = [`--- a/${path}`, `+++ b/${path}`];
+  for (const range of hunkRanges(entries)) {
+    const beforeStartCount = beforeCounts[range.start] ?? 0;
+    const afterStartCount = afterCounts[range.start] ?? 0;
+    const beforeCount = (beforeCounts[range.end] ?? 0) - beforeStartCount;
+    const afterCount = (afterCounts[range.end] ?? 0) - afterStartCount;
+    const beforeStart = beforeCount === 0 ? beforeStartCount : beforeStartCount + 1;
+    const afterStart = afterCount === 0 ? afterStartCount : afterStartCount + 1;
+    lines.push(`@@ -${beforeStart},${beforeCount} +${afterStart},${afterCount} @@`);
+    for (let index = range.start; index < range.end; index += 1) {
+      const entry = entries[index];
+      if (entry !== undefined) {
+        lines.push(`${entry.kind}${entry.text}`);
+      }
+    }
+  }
+  return lines.length > MAX_DIFF_LINES_PER_FILE
+    ? { lines: lines.slice(0, MAX_DIFF_LINES_PER_FILE), truncated: true }
+    : { lines, truncated: false };
+}
+
+/** The applied diff for a node: only changed files, only changed hunks. */
+function appliedDiff(
+  cwd: string,
+  bases: ReadonlyMap<string, string>,
+): { text: string; truncated: boolean } {
+  const output: string[] = [];
+  let truncated = false;
+  for (const [path, before] of bases) {
+    const after = readTarget(cwd, path);
+    if (after === before) {
+      continue;
+    }
+    const diff = diffFile(path, before, after);
+    if (diff.lines.length === 0) {
+      continue;
+    }
+    const room = MAX_DIFF_LINES - output.length;
+    if (room <= 0) {
+      output.push(DIFF_TRUNCATED);
+      truncated = true;
+      break;
+    }
+    if (diff.lines.length > room) {
+      output.push(...diff.lines.slice(0, room), DIFF_TRUNCATED);
+      truncated = true;
+      break;
+    }
+    output.push(...diff.lines);
+    if (diff.truncated) {
+      output.push(DIFF_TRUNCATED);
+      truncated = true;
+      break;
+    }
+  }
+  return { text: output.join("\n"), truncated };
+}
+
+function changedPaths(cwd: string, bases: ReadonlyMap<string, string>): string[] {
+  const changed: string[] = [];
+  for (const [path, before] of bases) {
+    if (readTarget(cwd, path) !== before) {
+      changed.push(path);
+    }
+  }
+  return changed.sort();
+}
+
+function outOfHintPaths(node: WorkNode, changed: readonly string[]): string[] {
+  const hinted = new Set(node.hints.map((hint) => hint.path));
+  return changed.filter((path) => !hinted.has(path));
+}
+
+/**
+ * A non-blocking nudge on the next executor turn: a whole-file write replaced a
+ * large existing file, or the node rewrote the same file without a targeted
+ * edit in between. It never changes records, statuses, gates, or termination.
+ */
+function editStrategyAdvisory(
+  writes: readonly WholeFileWrite[],
+  repeated: ReadonlySet<string>,
+): string | null {
+  const findings: string[] = [];
+  for (const write of writes) {
+    if (!write.existed) {
+      continue;
+    }
+    const isRepeated = repeated.has(write.path);
+    const isLarge = write.priorLines >= LARGE_WHOLE_FILE_WRITE_LINES;
+    if (!isRepeated && !isLarge) {
+      continue;
+    }
+    const reasons = [
+      `\`${write.path}\` existed with ${write.priorLines} lines before the write and has ${write.newLines} lines after it`,
+    ];
+    reasons.push(
+      isRepeated
+        ? "this node already rewrote it as a whole file with no intervening targeted edit"
+        : `the file is at or above the soft ${LARGE_WHOLE_FILE_WRITE_LINES}-line heuristic`,
+    );
+    findings.push(`- ${reasons.join("; ")}.`);
+  }
+  if (findings.length === 0) {
+    return null;
+  }
+  return [
+    "This is advice, not a gate: the write was applied and the node status and gate result are unchanged.",
+    "",
+    ...findings,
+    "",
+    "Prefer a targeted `match`/`pick` or a single-declaration rewrite. Repeat a whole-file write only when the diagnostics show broad structural breakage across the file.",
+  ].join("\n");
+}
+
+// ---------------------------------------------------------------------------
+// The driver
+
+/** Hash of the graph, harness status, and gate history. */
+function fingerprintState(state: PlanRunState): string {
+  return hashText(
+    JSON.stringify({
+      goal: state.goal,
+      nodes: state.nodes,
+      statuses: state.nodes.map((node) => [node.id, state.nodeStatus.get(node.id) ?? "pending"]),
+      lastGate: state.lastGate,
+    }),
+  );
+}
+
+/** Hash of every discovered source file plus paths a node wrote, for the cycle guard. */
+function workspaceFingerprintAll(cwd: string, extraPaths: Iterable<string> = []): string {
+  const files = new Map(discoverSourceFiles(cwd).map((file) => [file.path, file.source]));
+  for (const path of extraPaths) {
+    files.set(path, readTarget(cwd, path));
+  }
+  return hashText(
+    [...files]
+      .map(([path, source]) => `${path}\u0000${source}`)
+      .sort()
+      .join("\u0001"),
+  );
+}
+
+/** Why no node is runnable, with the next graph action the planner can take. */
+function blockedReason(state: PlanRunState): string {
+  const blocked = blockedNodes(state);
+  if (blocked.length > 0) {
+    const failed = state.nodes
+      .filter((node) => state.nodeStatus.get(node.id) === "failed")
+      .map((node) => `#${node.id}`);
+    return `Blocked node(s): ${blocked.map((node) => `#${node.id}`).join(", ")}.${
+      failed.length === 0 ? "" : ` Failed dependency node(s): ${failed.join(", ")}.`
+    } Amend the failed dependency, or append independent work.`;
+  }
+  const pending = state.nodes.filter((node) => state.nodeStatus.get(node.id) === "pending");
+  if (pending.length > 0) {
+    return `Pending node(s) ${pending.map((node) => `#${node.id}`).join(", ")} are waiting for dependencies that have not passed. Amend the dependency, or append ready work.`;
+  }
+  const gate = state.lastGate;
+  if (gate === null) {
+    return "No node has run yet and no node is ready. Append the work the run needs.";
+  }
+  if (gate.ok && gate.verify === "tsc") {
+    return `The last gate was a passing tsc gate for #${gate.nodeId}, but the run needs a passing test gate. Append a test node after the current work.`;
+  }
+  if (!gate.ok) {
+    return `The last ${gate.verify} gate for #${gate.nodeId} failed. Amend that node or append a repair node, then end with a test node.`;
+  }
+  if (gate.verify === "test" && !gate.fullSuite) {
+    return `The last gate was a filtered test for #${gate.nodeId}; the filter verified only a slice and a filtered green gate is only a checkpoint. Append an unfiltered verify test node (no test-filter) to complete the run.`;
+  }
+  return "No node is ready and the last gate was not a passing test; append the remaining work and end with a test node.";
+}
+
+/** The first record locator of the current graph, for failure/result anchors. */
+function anchorLocator(state: PlanRunState | null): Locator | null {
+  if (state === null) {
+    return null;
+  }
+  const node = state.nodes.find((candidate) => candidate.hints.length > 0) ?? state.nodes[0];
+  return node === undefined ? null : locatorOfNode(node);
+}
+
+/**
+ * Run the plan/execute/review loop. `runLoop` dispatches here only when
+ * `agentMode === "plan-exec"`.
+ */
+export async function runTaskLoop(options: LoopOptions): Promise<LoopResult> {
+  const cwd = options.cwd;
+  const costBudgetUsd = options.costBudgetUsd ?? DEFAULT_COST_BUDGET_USD;
+  const autoApproveEnabled = options.autoApprove ?? true;
+  const workspace = workspaceOf(cwd);
+  const specFiles = selectSpecFiles(options.issue, workspace.files);
+  const indexText = buildContextYaml(workspace.files, {
+    index: workspace.index,
+    skipped: workspace.skipped ?? [],
+  });
+
+  const planningMessages: ChatMessage[] = [
+    { role: "system", content: buildTaskPlanningSystemPrompt() },
+    { role: "user", content: buildTaskPlanningUserPrompt(options.issue, indexText, specFiles) },
+  ];
+  const usageState: UsageState = { usage: zeroLoopUsage(), consumed: 0 };
+  const records: LoopRecord[] = [];
+  const turnCounts = { planning: 0, execution: 0, review: 0, total: 0 };
+  const executionMessages: ChatMessage[][] = [];
+  /** Recovered parser warnings, surfaced on the final result (#33). */
+  const runWarnings: string[] = [];
+  const noteWarnings = (result: DslParseResult<unknown>): void => {
+    for (const issue of result.issues) {
+      if (issue.severity === "warning") {
+        runWarnings.push(`${issue.code}: ${issue.message}`);
+      }
+    }
+  };
+  const nodeFailures = new Map<NodeId, string>();
+  /** Review fingerprints per node, so a repeated amend/diff is detectable. */
+  const reviewSeen = new Map<NodeId, Set<string>>();
+  /** Per-node diff baseline; kept across an amend so review sees the whole node. */
+  const nodeBases = new Map<NodeId, Map<string, string>>();
+  /** Run-level graph/workspace fingerprints; a repeated key is a cycle. */
+  const cycleSeen = new Set<string>();
+  let iteration = 0;
+  let current: PlanRunState | null = null;
+
+  const pruneFailures = (state: PlanRunState): void => {
+    for (const id of [...nodeFailures.keys()]) {
+      if (state.nodeStatus.get(id) !== "failed") {
+        nodeFailures.delete(id);
+      }
+    }
+  };
+
+  const terminated = (
+    reason: TerminationReason | "provider-error",
+    diagnostics: string | null,
+  ): LoopResult => {
+    const anchor = anchorLocator(current);
+    return {
+      ok: false,
+      mode: anchor === null ? undefined : "modify",
+      locator: anchor,
+      filePath: anchor?.path ?? null,
+      editedSource: null,
+      records,
+      diagnostics,
+      explanation: null,
+      messages: planningMessages,
+      skipped: workspace.skipped,
+      ...(reason === "provider-error" ? {} : { terminationReason: reason }),
+      ...(runWarnings.length === 0 ? {} : { warnings: [...runWarnings] }),
+      tokens: totalLoopTokens(usageState.usage),
+      usage: cloneLoopUsage(usageState.usage),
+      turns: { ...turnCounts },
+      ...(executionMessages.length === 0
+        ? {}
+        : {
+            executionMessages: executionMessages.map((messages) =>
+              messages.map((message) => ({ ...message })),
+            ),
+          }),
+      nodes: current === null ? [] : summaryOf(current),
+    };
+  };
+
+  const success = (state: PlanRunState): LoopResult => {
+    const anchor = anchorLocator(state);
+    return {
+      ok: true,
+      mode: anchor === null ? undefined : "modify",
+      locator: anchor,
+      filePath: anchor?.path ?? null,
+      editedSource: null,
+      records,
+      diagnostics: null,
+      explanation: null,
+      messages: planningMessages,
+      skipped: workspace.skipped,
+      ...(runWarnings.length === 0 ? {} : { warnings: [...runWarnings] }),
+      tokens: totalLoopTokens(usageState.usage),
+      usage: cloneLoopUsage(usageState.usage),
+      turns: { ...turnCounts },
+      ...(executionMessages.length === 0
+        ? {}
+        : {
+            executionMessages: executionMessages.map((messages) =>
+              messages.map((message) => ({ ...message })),
+            ),
+          }),
+      nodes: summaryOf(state),
+    };
+  };
+
+  /**
+   * The single provider-call wrapper: budget checks around one call, one usage
+   * bucket, one turn counter, and a tagged provider-error stop. No stage calls
+   * the provider directly.
+   */
+  const ask = async (
+    stage: "planning" | "review" | "execution",
+    messages: ChatMessage[],
+  ): Promise<{ kind: "ok"; response: ChatResponse } | { kind: "stop"; result: LoopResult }> => {
+    if (overBudget(usageState, costBudgetUsd)) {
+      return {
+        kind: "stop",
+        result: terminated(
+          "cost-budget",
+          costBudgetDiagnostics(usageState.consumed, costBudgetUsd),
+        ),
+      };
+    }
+    turnCounts[stage] += 1;
+    turnCounts.total += 1;
+    let response: ChatResponse;
+    try {
+      response = await callModel(
+        messages,
+        usageState.usage[stage],
+        usageState,
+        options.provider,
+        options,
+      );
+    } catch (error) {
+      return {
+        kind: "stop",
+        result: terminated("provider-error", providerErrorDiagnostics(error)),
+      };
+    }
+    if (overBudget(usageState, costBudgetUsd)) {
+      return {
+        kind: "stop",
+        result: terminated(
+          "cost-budget",
+          costBudgetDiagnostics(usageState.consumed, costBudgetUsd),
+        ),
+      };
+    }
+    return { kind: "ok", response };
+  };
+
+  const plannerViewerDeps: MultiEditorDeps = {
+    sourceFor: (path) => readTarget(cwd, path),
+    fileExists: (path) => readFileIfExists(join(cwd, path)) !== null,
+    isSafePath: (path) => safeMutablePath(cwd, path) !== null,
+    resolveEntry: (source, path, locator, space) =>
+      resolveCurrentEntry(source, path, locator, space),
+  };
+
+  /**
+   * Resolve one planner viewer reply with the edit-protocol resolver and return
+   * source blocks, not a plan. The planner uses the same `select`/`read`
+   * language as the executor; it just cannot write.
+   */
+  const plannerViewFeedback = (content: string, next: string): string => {
+    const parsed = parseMultiEditorDetailed(content);
+    if (!parsed.ok || parsed.value === undefined) {
+      return [
+        "# Source view",
+        "",
+        "The viewer request was rejected.",
+        "",
+        renderDslIssues(parsed.issues),
+        "",
+        "# Next",
+        "",
+        next,
+      ].join("\n");
+    }
+    const problem = plannerViewerProblem(parsed.value);
+    if (problem !== null) {
+      return ["# Source view", "", problem, "", "# Next", "", next].join("\n");
+    }
+    const resolved = resolveMultiEditor(parsed.value, plannerViewerDeps);
+    const blocks: string[] = [];
+    if (resolved.viewers.length > 0) {
+      blocks.push(renderViewerFeedback(resolved.viewers, { footer: null }));
+    }
+    if (resolved.reads.length > 0) {
+      blocks.push(renderReadFeedback(resolved.reads));
+    }
+    if (resolved.readFailures.length > 0) {
+      blocks.push(renderReadFailureFeedback(resolved.readFailures));
+    }
+    if (resolved.failures.length > 0) {
+      blocks.push(
+        [
+          "View request failed:",
+          ...resolved.failures.map(
+            (failure) =>
+              `- clause ${failure.index + 1}: ${failure.diagnostics.split("\n").join("\n  ")}`,
+          ),
+        ].join("\n"),
+      );
+    }
+    if (blocks.length === 0) {
+      blocks.push("The viewer resolved no source; inspect the symbol index and try again.");
+    }
+    return ["# Source view", "", ...blocks, "", "# Next", "", next].join("\n");
+  };
+
+  /**
+   * One planning turn: ask, parse, and retry a rejection with its diagnostics.
+   * Viewer requests are unlimited except by the USD cost budget and repeated-view
+   * detection; a repeated view forces the plan reply. The initial reply must
+   * carry a goal; later replies append nodes or amend unsettled work.
+   */
+  const planningTurn = async (
+    request: { mode: "initial" } | { mode: "replan"; state: PlanRunState },
+  ): Promise<PlanningOutcome> => {
+    const seen = new Set<string>();
+    let forceReply = false;
+    for (;;) {
+      const asked = await ask("planning", planningMessages);
+      if (asked.kind === "stop") {
+        return { kind: "failed", result: asked.result };
+      }
+      const content = asked.response.content ?? "";
+      planningMessages.push({ role: "assistant", content });
+
+      if (isPlannerViewerReply(content)) {
+        const key = hashText(content.trim());
+        if (forceReply || seen.has(key)) {
+          seen.add(key);
+          forceReply = true;
+          planningMessages.push({
+            role: "user",
+            content:
+              "# Source view\n\nThe same or repeated viewer makes no progress. Reply with node/amend records now; the viewer request writes nothing.",
+          });
+          continue;
+        }
+        seen.add(key);
+        planningMessages.push({
+          role: "user",
+          content: plannerViewFeedback(
+            content,
+            "Reply with the initial plan or the next node/amend records. Each viewer consumes the run's USD cost budget; repeated views force the plan reply.",
+          ),
+        });
+        continue;
+      }
+
+      const initial = request.mode === "initial";
+      const parsed = parsePlanDslDetailed(content, { initial });
+      noteWarnings(parsed);
+      let diagnostics: string;
+      if (!parsed.ok || parsed.value === undefined) {
+        diagnostics = renderDslIssues(parsed.issues);
+      } else {
+        const base: PlanRunState = initial
+          ? { goal: "", nodes: [], nodeStatus: new Map(), lastGate: null }
+          : request.state;
+        const applied = applyPlanReply(base, parsed.value, initial ? { requireGoal: true } : {});
+        if (applied.ok) {
+          pruneFailures(applied.state);
+          return { kind: "planned", state: applied.state };
+        }
+        diagnostics = applied.diagnostics;
+      }
+
+      const key = hashText(`${content}\n${diagnostics}`);
+      if (seen.has(key)) {
+        return {
+          kind: "failed",
+          result: terminated(
+            "task-exhausted",
+            `task-exhausted: the planner repeated the same rejected ${initial ? "plan" : "reply"}; no progress is possible\n\n${diagnostics}`,
+          ),
+        };
+      }
+      seen.add(key);
+      planningMessages.push({
+        role: "user",
+        content: initial
+          ? buildTaskPlanRetryPrompt(diagnostics)
+          : buildTaskReplanRetryPrompt(diagnostics),
+      });
+    }
+  };
+
+  const first = await planningTurn({ mode: "initial" });
+  if (first.kind === "failed") {
+    return first.result;
+  }
+  current = first.state;
+
+  /** Ask for appended work or an amend after the graph settles. */
+  const requestPlan = async (state: PlanRunState): Promise<LoopResult | null> => {
+    const currentFiles = discoverSourceFiles(cwd);
+    planningMessages.push({
+      role: "user",
+      content: buildTaskReplanPrompt({
+        state,
+        nodeFailures,
+        blocked: blockedReason(state),
+        symbolIndex: buildContextYaml(currentFiles),
+      }),
+    });
+    const before = fingerprintState(state);
+    const planned = await planningTurn({ mode: "replan", state });
+    if (planned.kind === "failed") {
+      return planned.result;
+    }
+    if (fingerprintState(planned.state) === before) {
+      return terminated(
+        "task-exhausted",
+        "task-exhausted: the planner reply left the work graph, statuses, and gate history unchanged; no progress is possible",
+      );
+    }
+    current = planned.state;
+    return null;
+  };
+
+  /**
+   * One post-gate review round in the planner conversation. Review is a
+   * verdict: approve the node, or amend this node and let it execute again.
+   * New work belongs to the next planning turn.
+   */
+  const reviewNode = async (
+    state: PlanRunState,
+    node: WorkNode,
+    diff: { text: string; truncated: boolean },
+    outOfHint: readonly string[],
+  ): Promise<ReviewOutcome> => {
+    const seen = reviewSeen.get(node.id) ?? new Set<string>();
+    reviewSeen.set(node.id, seen);
+    for (;;) {
+      planningMessages.push({
+        role: "user",
+        content: buildTaskReviewPrompt({
+          node,
+          gate: { verify: node.verify, ok: true, diagnostics: null },
+          diff: diff.text,
+          outOfHint,
+        }),
+      });
+      const asked = await ask("review", planningMessages);
+      if (asked.kind === "stop") {
+        return { kind: "failed", result: asked.result };
+      }
+      const content = asked.response.content ?? "";
+      planningMessages.push({ role: "assistant", content });
+      if (content.trim().toLowerCase() === "approve") {
+        return { kind: "approve" };
+      }
+      if (isPlannerViewerReply(content)) {
+        const key = hashText(`view:${content.trim()}`);
+        if (seen.has(key)) {
+          return {
+            kind: "failed",
+            result: terminated(
+              "task-exhausted",
+              "task-exhausted: the review repeated the same viewer; no progress is possible",
+            ),
+          };
+        }
+        seen.add(key);
+        planningMessages.push({
+          role: "user",
+          content: plannerViewFeedback(
+            content,
+            "Reply with `approve` or one `amend` record for this node. The viewer request writes nothing.",
+          ),
+        });
+        continue;
+      }
+
+      const parsed = parsePlanDslDetailed(content, { initial: false });
+      noteWarnings(parsed);
+      let diagnostics: string;
+      let next: PlanRunState | null = null;
+      if (!parsed.ok || parsed.value === undefined) {
+        diagnostics = renderDslIssues(parsed.issues);
+      } else if (parsed.value.goal !== undefined) {
+        diagnostics =
+          "stage: plan-protocol\ncode: PLAN_STRUCTURE\nmessage: a review reply may not set goal:";
+      } else if (parsed.value.nodes.length > 0) {
+        diagnostics =
+          "stage: plan-protocol\ncode: PLAN_STRUCTURE\nmessage: a review reply may not add nodes; follow-up work belongs to the next planning turn";
+      } else if (parsed.value.amends.length !== 1 || parsed.value.amends[0]?.id !== node.id) {
+        diagnostics = `stage: plan-protocol\ncode: PLAN_STRUCTURE\nmessage: a review reply must be \`approve\` or one amend for #${node.id}`;
+      } else {
+        const applied = applyPlanReply(state, parsed.value, { reviewTarget: node.id });
+        if (applied.ok) {
+          next = applied.state;
+          diagnostics = "";
+        } else {
+          diagnostics = applied.diagnostics;
+        }
+      }
+
+      const replyKey = hashText(`${content}\n${diagnostics}\n${diff.text}`);
+      if (diagnostics !== "" && seen.has(replyKey)) {
+        return {
+          kind: "failed",
+          result: terminated(
+            "task-exhausted",
+            `task-exhausted: the review repeated the same rejected reply; no progress is possible\n\n${diagnostics}`,
+          ),
+        };
+      }
+      seen.add(replyKey);
+      if (diagnostics !== "" || next === null) {
+        planningMessages.push({
+          role: "user",
+          content: buildTaskReviewRetryPrompt(diagnostics),
+        });
+        continue;
+      }
+      const stateKey = hashText(`${fingerprintState(next)}\n${diff.text}`);
+      if (seen.has(stateKey)) {
+        return {
+          kind: "failed",
+          result: terminated(
+            "task-exhausted",
+            "task-exhausted: the review repeated the same amend and diff; no progress is possible",
+          ),
+        };
+      }
+      seen.add(stateKey);
+      return { kind: "amend", state: next };
+    }
+  };
+
+  /** Execute one work node until its gate passes or progress stops. */
+  const executeNode = async (
+    state: PlanRunState,
+    node: WorkNode,
+    bases: Map<string, string>,
+  ): Promise<ExecutionOutcome> => {
+    const chat: ChatState = {
+      messages: [
+        { role: "system", content: buildTaskExecutionSystemPrompt() },
+        {
+          role: "user",
+          content: buildTaskTurnPrompt({ node, views: sourceViews(cwd, node) }),
+        },
+      ],
+    };
+    const seen = new Set<string>();
+    /** Exact read-only reply fingerprints, keyed by reply content + workspace state. */
+    const viewerSeen = new Set<string>();
+    /** Whole-file-written paths since the last targeted edit, per work node. */
+    const wholeFileWritesSinceEdit = new Set<string>();
+    /** Whole-declaration shape failures already reported for this work node. */
+    const shapeFailures = new Set<string>();
+    let lastGate: GateSnapshot | null = null;
+    let priorGate: string | undefined;
+    let priorDiagnostics: string | undefined;
+    let feedback: string | undefined;
+    let strategyAdvisory: string | undefined;
+
+    try {
+      for (;;) {
+        const asked = await ask("execution", chat.messages);
+        if (asked.kind === "stop") {
+          return { kind: "terminated", result: asked.result };
+        }
+        const content = asked.response.content ?? "";
+        chat.messages.push({ role: "assistant", content });
+
+        const context: ExecutionContext = {
+          cwd,
+          options,
+          records,
+          warnings: runWarnings,
+          shapeFailures,
+          node,
+          iteration,
+        };
+        const outcome = await applyEditReply(context, content, bases);
+        const workspaceKey = workspaceFingerprint(cwd, bases);
+        // Read-only replies are inspection, not progress. A viewer/read may be
+        // repeated only after the workspace changes; an identical reply against
+        // the same source is a protocol rejection that asks for an edit.
+        let duplicateViewer = false;
+        if (outcome.viewerOnly) {
+          const viewerKey = hashText(`${content}\n${workspaceKey}`);
+          duplicateViewer = viewerSeen.has(viewerKey);
+          viewerSeen.add(viewerKey);
+        }
+        let diagnostics: string | null;
+        if (outcome.ok) {
+          writeRecord(records, {
+            iteration,
+            kind: "exchange",
+            exchange: null,
+            node,
+            outcome: "applied",
+            replacement: content,
+            diagnostics: outcome.diagnostics,
+            finishReason: asked.response.finishReason,
+            payloads: outcome.payloads,
+            appliedLocators: outcome.appliedLocators,
+            selectors: outcome.selectors,
+            stages: outcome.stages,
+            matcherKinds: outcome.matcherKinds,
+            creates: outcome.creates,
+          });
+          const writes = outcome.wholeFileWrites ?? [];
+          const repeatedWrites = new Set(
+            writes
+              .filter((write) => write.existed && wholeFileWritesSinceEdit.has(write.path))
+              .map((write) => write.path),
+          );
+          for (const write of writes) {
+            wholeFileWritesSinceEdit.add(write.path);
+          }
+          strategyAdvisory = editStrategyAdvisory(writes, repeatedWrites) ?? undefined;
+          if (outcome.targetedEdit === true) {
+            wholeFileWritesSinceEdit.clear();
+          }
+          const gate = await verifyNode(context, bases, outcome.paths);
+          lastGate = {
+            nodeId: node.id,
+            verify: node.verify,
+            ok: gate.ok,
+            fullSuite: gate.fullSuite,
+          };
+          if (gate.ok) {
+            return { kind: "passed", gate: lastGate };
+          }
+          diagnostics = gate.diagnostics ?? "stage: gate\nthe work node gate failed";
+          priorGate = diagnostics;
+          priorDiagnostics = undefined;
+          feedback = outcome.feedback ?? undefined;
+        } else {
+          const viewerNoProgress = duplicateViewer
+            ? "stage: protocol\nthe same viewer/read was already requested and the workspace has not changed; inspection makes no progress. Reply with the edit clauses or file commands for this work node now."
+            : null;
+          diagnostics =
+            viewerNoProgress ?? outcome.diagnostics ?? "stage: protocol\nthe reply was rejected";
+          const rejectionOutcome = duplicateViewer
+            ? "protocol"
+            : outcome.viewerOnly
+              ? "viewer"
+              : outcomeOf(stageOf(diagnostics));
+          writeRecord(records, {
+            iteration,
+            kind: "exchange",
+            exchange: null,
+            node,
+            outcome: rejectionOutcome,
+            replacement: content,
+            diagnostics,
+            finishReason: asked.response.finishReason,
+            payloads: outcome.payloads,
+            selectors: outcome.selectors,
+            stages: outcome.stages,
+            matcherKinds: outcome.matcherKinds,
+            creates: outcome.creates,
+            ...(rejectionOutcome === "viewer"
+              ? {}
+              : { cause: rejectionCauseOf(rejectionOutcome, diagnostics) }),
+          });
+          strategyAdvisory = undefined;
+          priorGate = undefined;
+          priorDiagnostics = duplicateViewer || !outcome.viewerOnly ? diagnostics : undefined;
+          feedback = duplicateViewer ? undefined : (outcome.feedback ?? undefined);
+        }
+
+        const stateKey = hashText(`${workspaceKey}\n${diagnostics ?? ""}`);
+        const replyKey = hashText(`${content}\n${stateKey}`);
+        // A successful viewer is inspection and is bounded by `viewerSeen`. A
+        // duplicate viewer is a protocol rejection and joins the ordinary
+        // repeated fingerprint so a model that ignores the edit request stops.
+        const inspectionOnly = outcome.viewerOnly && !duplicateViewer;
+        if (!inspectionOnly) {
+          if (seen.has(replyKey) || seen.has(stateKey)) {
+            return {
+              kind: "failed",
+              gate: lastGate,
+              diagnostics: `stage: no-progress\nthe work node #${node.id} stopped making progress: the same reply/source/diagnostics fingerprint repeated; no fixed exchange cap applies\n\n${diagnostics ?? ""}`,
+            };
+          }
+          seen.add(replyKey);
+          seen.add(stateKey);
+        }
+
+        chat.messages.push({
+          role: "user",
+          content: buildTaskTurnPrompt({
+            node,
+            views: sourceViews(cwd, node),
+            ...(priorDiagnostics === undefined ? {} : { diagnostics: priorDiagnostics }),
+            ...(priorGate === undefined ? {} : { gateDiagnostics: priorGate }),
+            ...(feedback === undefined ? {} : { feedback }),
+            ...(strategyAdvisory === undefined ? {} : { editStrategyAdvisory: strategyAdvisory }),
+          }),
+        });
+      }
+    } finally {
+      executionMessages.push(chat.messages.map((message) => ({ ...message })));
+    }
+  };
+
+  for (;;) {
+    const state = current as PlanRunState;
+    if (runComplete(state)) {
+      return success(state);
+    }
+    const extraPaths = [...nodeBases.values()].flatMap((bases) => [...bases.keys()]);
+    const cycleKey = hashText(
+      `${fingerprintState(state)}\n${workspaceFingerprintAll(cwd, extraPaths)}`,
+    );
+    if (cycleSeen.has(cycleKey)) {
+      return terminated(
+        "task-exhausted",
+        "task-exhausted: the run returned to an earlier graph and workspace state; no progress is possible",
+      );
+    }
+    cycleSeen.add(cycleKey);
+
+    const node = nextReadyNode(state);
+    if (node === undefined) {
+      const planned = await requestPlan(state);
+      if (planned !== null) {
+        return planned;
+      }
+      continue;
+    }
+
+    iteration += 1;
+    const bases = nodeBases.get(node.id) ?? snapshotSources(cwd);
+    nodeBases.set(node.id, bases);
+    const executed = await executeNode(state, node, bases);
+    if (executed.kind === "terminated") {
+      return executed.result;
+    }
+    if (executed.gate !== null) {
+      state.lastGate = executed.gate;
+    }
+    if (executed.kind === "failed") {
+      state.nodeStatus.set(node.id, "failed");
+      nodeFailures.set(node.id, executed.diagnostics);
+      continue;
+    }
+
+    // The gate passed. In-hint, untruncated work is approved by the fast path;
+    // anything else gets one verdict-only review turn.
+    const changed = changedPaths(cwd, bases);
+    const outOfHint = outOfHintPaths(node, changed);
+    const diff = appliedDiff(cwd, bases);
+    const autoApprove =
+      autoApproveEnabled &&
+      node.hints.length > 0 &&
+      !diff.truncated &&
+      outOfHint.length === 0 &&
+      diff.text.trim() !== "";
+    if (autoApprove) {
+      state.nodeStatus.set(node.id, "passed");
+      nodeFailures.delete(node.id);
+      continue;
+    }
+
+    const reviewed = await reviewNode(state, node, diff, outOfHint);
+    if (reviewed.kind === "failed") {
+      return reviewed.result;
+    }
+    if (reviewed.kind === "approve") {
+      state.nodeStatus.set(node.id, "passed");
+      nodeFailures.delete(node.id);
+      continue;
+    }
+    current = reviewed.state;
+    pruneFailures(reviewed.state);
+  }
+}

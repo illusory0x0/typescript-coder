@@ -1,8 +1,8 @@
 import { readFileSync } from "node:fs";
 import { join } from "node:path";
 import { fileURLToPath } from "node:url";
-import { parseReplayBundle, runReplay, summarizeReplay } from "../src/replay-runner";
-import type { ReplayBundle } from "../src/replay-format";
+import { parseReplayBundle, runReplay, summarizeReplay } from "@tc/harness/replay-runner";
+import type { ReplayBundle } from "@tc/harness/replay-format";
 
 interface CliArgs {
   bundle: string | null;

@@ -28,10 +28,12 @@ turn `check end` or `test end`: it runs the task's configured check/test
 command, writes nothing, and returns bounded output. A JSON edit payload is a
 protocol rejection.
 
-Implementation: `resolveEditRange` in `src/loop.ts`, the clause grammar in
-`src/selection.ts`, the cascade in `src/cascade.ts`, the reply resolver in
-`src/edit-dsl.ts`, structural/regex matching in `src/matcher.ts`, the splice and
-format gate in `src/editor.ts`.
+Implementation: `resolveEditRange` in `typescript-editor/src/range.ts`, the
+clause grammar in `typescript-editor/src/selection.ts`, the cascade in
+`typescript-editor/src/cascade.ts`, the reply resolver in
+`typescript-editor/src/edit-dsl.ts`, structural/regex matching in
+`typescript-editor/src/matcher.ts`, the splice and format gate in
+`typescript-editor/src/editor.ts`.
 
 ## 2. The edit-dsl statement grammar
 
@@ -40,7 +42,7 @@ a statement is one **select clause** or one **file command**. A useful reply
 carries at least one. There is no prose. A Markdown fence around the whole reply
 is tolerated as a separate **outer wrapper** rule (below), not as part of
 `<fence>`. The grammar is read by a hand-written recursive-descent reader
-(`multiEditor` in `src/selection.ts`) in which whitespace between tokens is
+(`multiEditor` in `typescript-editor/src/selection.ts`) in which whitespace between tokens is
 insignificant, except inside a `<fence>` body and a `/regex/`. The reader
 accepts an empty reply as zero statements. Any malformed input throws a
 `stage: syntax` diagnostic naming the offending field; the loop renders it with
@@ -85,8 +87,8 @@ A select clause is never a file command. A select clause with `replace` or
   matcher and reports `EDIT_MATCHER_MISSING`.
   - a `` `snippet` `` in backticks, where only `` \` `` and `\\` are escapes and
     every other backslash is literal;
-  - a `/regex/` in slashes, where only `\/` decodes to `/` and every other
-    backslash passes through to the engine.
+  - a `/regex/` in slashes, where only a backslash-escaped slash decodes to `/`
+    and every other backslash passes through to the engine.
 - **`pick`**: one range or a `{a, b, …}` set. `pick` requires a following
   `replace`; a clause that stops at `pick` is a syntax error, not a viewer
   (a braced set needs at least one range). With a `match`, a point selecter
@@ -286,7 +288,7 @@ sibling binding; target a narrower span or a different declaration instead.
 
 The table maps every covered declaration, member, and module-boundary category
 to its address and selector paths. The committed proof is
-`src/matcher-corpus.test.ts`; its `FORMS` list is authoritative, and a row marked
+`typescript-editor/src/matcher-corpus.test.ts`; its `FORMS` list is authoritative, and a row marked
 **expected failure** is a deliberate unsupported or ambiguous case rather than a
 missing feature. In the selector column, **whole-symbol** means no `match` and no
 `pick` (the indexed declaration span), **`match`** is the structural snippet,
@@ -903,7 +905,7 @@ The edit-dsl reply reduces to the same narrowing, one stage at a time.
    contiguous run) and points at `/regex/` or `pick`. An unsupported form is
    never silently skipped.
 
-   **Corpus policy.** `src/matcher-corpus.test.ts` is the committed proof of
+   **Corpus policy.** `typescript-editor/src/matcher-corpus.test.ts` is the committed proof of
    declaration-level completeness. Its `FORMS` matrix lists every covered
    declaration/member/module form; each form has a success case through
    structural matching, `/regex/`, or `pick`, or an explicit expected-failure

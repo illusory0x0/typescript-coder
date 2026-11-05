@@ -1,0 +1,16 @@
+{
+  "name": "@tc/typescript-editor",
+  "version": "0.0.0",
+  "private": true,
+  "type": "module",
+  "exports": {
+    "./*": "./src/*.ts"
+  },
+  "scripts": {
+    "typecheck": "bunx tsc --noEmit",
+    "test": "bun test"
+  },
+  "dependencies": {
+    "oxfmt": "^0.73.0"
+  }
+}

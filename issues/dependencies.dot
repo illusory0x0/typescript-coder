@@ -67,6 +67,11 @@ digraph issues {
   "60" [label="#60 Parse, execute, and gate test filters"];
   "61" [label="#61 Teach the planner to plan test slices"];
   "62" [label="#62 Document, accept, and benchmark slice gates"];
+  "63" [label="#63 Restructure the repo as a Bun monorepo with harness and typescript-editor packages"];
+  "64" [label="#64 Extract the typescript-editor workspace package"];
+  "65" [label="#65 Move the agent harness into the harness workspace package"];
+  "66" [label="#66 Rewire root tooling and top-level harnesses onto the workspace packages"];
+  "67" [label="#67 Document the monorepo, package boundaries, and roadmap"];
 
   // parent edges (parent -> child), solid
   "1" -> "2";
@@ -112,6 +117,10 @@ digraph issues {
   "59" -> "60";
   "59" -> "61";
   "59" -> "62";
+  "63" -> "64";
+  "63" -> "65";
+  "63" -> "66";
+  "63" -> "67";
 
   // dependency edges (blocker -> blocked), dashed
   "2" -> "3" [style=dashed, label="blocks"];
@@ -164,4 +173,7 @@ digraph issues {
   "60" -> "61" [style=dashed, label="blocks"];
   "60" -> "62" [style=dashed, label="blocks"];
   "61" -> "62" [style=dashed, label="blocks"];
+  "64" -> "65" [style=dashed, label="blocks"];
+  "65" -> "66" [style=dashed, label="blocks"];
+  "66" -> "67" [style=dashed, label="blocks"];
 }

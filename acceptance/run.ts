@@ -10,11 +10,11 @@ import {
 import { tmpdir } from "node:os";
 import { dirname, join, relative, sep } from "node:path";
 import { fileURLToPath } from "node:url";
-import { runLoop } from "../src/loop";
-import type { LoopResult, ProviderLike } from "../src/loop";
-import { OpenAIProvider, readConfigFromEnv } from "../src/openai";
-import type { ChatMessage } from "../src/openai";
-import { scenarios, ScriptedProvider } from "./scenarios";
+import { runLoop } from "@tc/harness/loop";
+import type { LoopResult, ProviderLike } from "@tc/harness/loop";
+import { OpenAIProvider, readConfigFromEnv } from "@tc/harness/openai";
+import type { ChatMessage } from "@tc/harness/openai";
+import { liveScenarios, offlineScenarios, ScriptedProvider, scenarios } from "./scenarios";
 import type { Scenario, ScenarioArtifacts, ScenarioAssertion } from "./scenarios";
 
 type ScenarioStatus = "passed" | "failed" | "error";
@@ -57,6 +57,7 @@ interface Report {
 interface CliArgs {
   all: boolean;
   live: boolean;
+  liveOnly: boolean;
   model: string | null;
   only: string | null;
   keep: boolean;
@@ -71,6 +72,11 @@ interface RunContext {
   checkCommand: string[];
   testCommand: string[];
   model: string;
+}
+
+interface SelectedScenario {
+  scenario: Scenario;
+  live: boolean;
 }
 
 const LIVE_TIMEOUT_MS = 90_000;
@@ -110,6 +116,7 @@ Options:
   --all                    include slow scenarios
   --live                   also run live scenarios that call the real model
                            (requires OPENAI_API_KEY and OPENAI_BASE_URL)
+  --live-only              run only live scenarios; implies --live
   --model <id>             model id for live scenarios
                            (default: $ACCEPT_MODEL or deepseek-v4.1-flash)
   --only <id>              run a single scenario by id
@@ -125,6 +132,7 @@ function parseArgs(argv: string[]): CliArgs {
   const args: CliArgs = {
     all: false,
     live: false,
+    liveOnly: false,
     model: null,
     only: null,
     keep: false,
@@ -145,6 +153,11 @@ function parseArgs(argv: string[]): CliArgs {
       }
       case "--live": {
         args.live = true;
+        break;
+      }
+      case "--live-only": {
+        args.live = true;
+        args.liveOnly = true;
         break;
       }
       case "--keep": {
@@ -200,23 +213,34 @@ function parseArgs(argv: string[]): CliArgs {
   return args;
 }
 
-function selectScenarios(args: CliArgs): Scenario[] {
+function selectScenarios(args: CliArgs): SelectedScenario[] {
   if (args.only !== null) {
-    const match = scenarios.find((scenario) => scenario.id === args.only);
-    if (match === undefined) {
+    const offline = offlineScenarios.find((scenario) => scenario.id === args.only);
+    if (offline !== undefined) {
+      if (args.liveOnly) {
+        fail(`scenario ${offline.id} is offline-only; omit --live-only`);
+      }
+      return [{ scenario: offline, live: false }];
+    }
+    const live = liveScenarios.find((scenario) => scenario.id === args.only);
+    if (live === undefined) {
       fail(`unknown scenario: ${args.only}`);
     }
-    if (match.live === true && !args.live) {
-      fail(`scenario ${match.id} is a live scenario; rerun with --live`);
+    if (!args.live) {
+      fail(`scenario ${live.id} is a live scenario; rerun with --live`);
     }
-    return [match];
+    return [{ scenario: live, live: true }];
   }
-  return scenarios.filter((scenario) => {
-    if (scenario.live === true) {
-      return args.live;
-    }
-    return args.all || scenario.slow !== true;
-  });
+  if (args.liveOnly) {
+    return liveScenarios.map((scenario) => ({ scenario, live: true }));
+  }
+  const selected: SelectedScenario[] = offlineScenarios
+    .filter((scenario) => args.all || scenario.slow !== true)
+    .map((scenario) => ({ scenario, live: false }));
+  if (args.live) {
+    selected.push(...liveScenarios.map((scenario) => ({ scenario, live: true })));
+  }
+  return selected;
 }
 
 function walkSources(root: string): Map<string, string> {
@@ -268,6 +292,7 @@ function printScenario(report: ScenarioReport): void {
 
 async function runScenario(
   scenario: Scenario,
+  live: boolean,
   args: CliArgs,
   context: RunContext,
 ): Promise<ScenarioReport> {
@@ -281,7 +306,6 @@ async function runScenario(
       scenario.prepare(dir, context.repoRoot);
     }
     const originals = walkSources(dir);
-    const live = scenario.live === true;
     let provider: ProviderLike | null = null;
     let calls: ChatMessage[][] | undefined;
     const started = performance.now();
@@ -395,8 +419,10 @@ async function main(): Promise<void> {
   }
 
   const reports: ScenarioReport[] = [];
-  for (const scenario of selected) {
-    reports.push(await runScenario(scenario, args, context));
+  for (const selectedScenario of selected) {
+    reports.push(
+      await runScenario(selectedScenario.scenario, selectedScenario.live, args, context),
+    );
   }
 
   const passed = reports.filter((report) => report.status === "passed").length;

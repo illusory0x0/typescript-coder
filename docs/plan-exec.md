@@ -1,9 +1,9 @@
 # Plan → execute loop
 
 Status: **implemented.** This document describes the plan-exec loop.
-[`src/tasks.ts`](../src/tasks.ts), [`src/plan-dsl.ts`](../src/plan-dsl.ts), and
-[`src/task-loop.ts`](../src/task-loop.ts) are the source of truth for the model,
-wire grammar, and driver; prompts are [`src/prompts/task.ts`](../src/prompts/task.ts).
+[`harness/src/tasks.ts`](../harness/src/tasks.ts), [`harness/src/plan-dsl.ts`](../harness/src/plan-dsl.ts), and
+[`harness/src/task-loop.ts`](../harness/src/task-loop.ts) are the source of truth for the model,
+wire grammar, and driver; prompts are [`harness/src/prompts/task.ts`](../harness/src/prompts/task.ts).
 
 Canonical ownership: this document owns the WorkNode DAG model, target and
 approach hints, the flat plan DSL and `amend` records, planning, validation and
@@ -900,27 +900,27 @@ summaries; the historical `@1` schema used numeric task/edit ids.
 9. **Execution application:** edit-dsl clauses and file commands apply
    atomically through the shared resolver/commit pipeline; the
    one-declaration-per-reply guardrail is hard.
-10. **Driver modules:** `src/task-loop.ts` owns scheduling, node execution,
-    gates, review, and the final result; `src/prompts/task.ts` owns all
+10. **Driver modules:** `harness/src/task-loop.ts` owns scheduling, node execution,
+    gates, review, and the final result; `harness/src/prompts/task.ts` owns all
     planner/executor/review prompt text.
 
 ## 12. Verification
 
-- `bun test src/tasks.test.ts` — contract, ids, refs, edges, hint paths,
+- `bun test harness/src/tasks.test.ts` — contract, ids, refs, edges, hint paths,
   scheduling, completion, amend application, and immutability.
-- `bun test src/plan-dsl.test.ts` — grammar, fences, node/amend replies,
+- `bun test harness/src/plan-dsl.test.ts` — grammar, fences, node/amend replies,
   tolerant recovery, issue codes, and all-or-nothing parsing.
-- `bun test src/prompts/task.test.ts` — planning, execution, and review prompt
+- `bun test harness/src/prompts/task.test.ts` — planning, execution, and review prompt
   shape; workflow and editing-technique guidance; WorkNode examples; no fixed
   caps.
-- `bun test src/edit-dsl.test.ts` / `src/selection.test.ts` — tolerant statement
+- `bun test typescript-editor/src/edit-dsl.test.ts` / `typescript-editor/src/selection.test.ts` — tolerant statement
   boundaries, unclosed fences, matcher/pick/rename diagnostics, per-statement
   issues, no partial writes.
-- `bun test src/task-loop.test.ts` — initial/replan scheduling, ready order,
+- `bun test harness/src/task-loop.test.ts` — initial/replan scheduling, ready order,
   blocked dependents, executor autonomy, out-of-hint diff, gates and retries,
   review auto-approval and amend reopen, no-progress, USD cost budget, planner
   inspection, multi-node append, and completion.
-- `bun test src/result.test.ts src/main.test.ts src/cli.test.ts` —
+- `bun test harness/src/result.test.ts harness/src/main.test.ts harness/src/cli.test.ts` —
   `typescript-coder-result@3` node summaries and text/JSON output.
 - `just typecheck && just test`.
 - `just accept` (offline), including the `plan-exec-fix-answer` and
