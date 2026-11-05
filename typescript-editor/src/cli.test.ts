@@ -1102,3 +1102,246 @@ describe("tsed match with rename", () => {
     expect(read(join(workspace, "src/helper.ts"))).toBe(HELPER);
   });
 });
+
+describe("tsed --unify and select block (#84)", () => {
+  const UNIFY_SOURCE = [
+    "export function outer(): number {",
+    "  let total = 0;",
+    "  if (true) {",
+    "    total += 1;",
+    "    total += 2;",
+    "    total += 3;",
+    "    total += 4;",
+    "    total += 5;",
+    "    total += 6;",
+    "  }",
+    "  return total;",
+    "}",
+    "",
+  ].join("\n");
+
+  const BLOCK_DSL = [
+    "select block outer:2 in src/unify.ts",
+    "replace with",
+    BEGIN,
+    "{",
+    "    total += 42;",
+    "  }",
+    END,
+    "end",
+    "",
+  ].join("\n");
+
+  const AFTER_BLOCK = [
+    "export function outer(): number {",
+    "  let total = 0;",
+    "  if (true) {",
+    "    total += 42;",
+    "  }",
+    "  return total;",
+    "}",
+    "",
+  ].join("\n");
+
+  function unifyWorkspace(files: Record<string, string> = {}): string {
+    return makeWorkspace({ "src/unify.ts": UNIFY_SOURCE, ...files });
+  }
+
+  test("--unify prints numbered source with block markers and writes nothing", () => {
+    const workspace = unifyWorkspace();
+    const before = read(join(workspace, "src/unify.ts"));
+    const result = run(workspace, ["--unify", "src/unify.ts"]);
+    expect(result.status).toBe(0);
+    expect(result.stdout).toContain(" 1 | export function outer(): number { // outer:1");
+    expect(result.stdout).toContain(" 2 |   let total = 0;");
+    expect(result.stdout).toContain(" 3 |   if (true) { // outer:2");
+    expect(result.stdout).toContain("10 |   }");
+    expect(result.stdout).toContain("12 | }");
+    expect(result.stdout).not.toContain(" 2 | export function outer");
+    expect(result.stderr).toBe("");
+    expect(read(join(workspace, "src/unify.ts"))).toBe(before);
+  });
+
+  test("--unify is repeatable and honors --unify-min-lines", () => {
+    const workspace = unifyWorkspace({ "src/other.ts": "export const other = 1;\n" });
+    const all = run(workspace, [
+      "--unify",
+      "src/unify.ts",
+      "--unify",
+      "src/other.ts",
+      "--unify-min-lines",
+      "9",
+    ]);
+    expect(all.status).toBe(0);
+    expect(all.stdout).toContain("src/unify.ts (unified view");
+    expect(all.stdout).toContain("src/other.ts (unified view");
+    expect(all.stdout).toContain("// outer:1");
+    expect(all.stdout).not.toContain("// outer:2");
+
+    const zero = run(workspace, ["--unify", "src/unify.ts", "--unify-min-lines", "0"]);
+    expect(zero.status).toBe(0);
+    expect(zero.stdout).toContain("// outer:1");
+    expect(zero.stdout).toContain("// outer:2");
+  });
+
+  test("a marker after a line comment stays on the opening line", () => {
+    const source = [
+      "export function f(): number {",
+      "  if (true) { // keep this",
+      "    let x = 0;",
+      "    x += 1;",
+      "    x += 2;",
+      "    x += 3;",
+      "    x += 4;",
+      "    x += 5;",
+      "  }",
+      "  return 0;",
+      "}",
+      "",
+    ].join("\n");
+    const workspace = unifyWorkspace({ "src/comment.ts": source });
+    const result = run(workspace, ["--unify", "src/comment.ts"]);
+    expect(result.status).toBe(0);
+    expect(result.stdout).toContain(" 2 |   if (true) { // keep this // f:2");
+    expect(read(join(workspace, "src/comment.ts"))).toBe(source);
+  });
+
+  test("--unify rejects every mutation, protocol, and operation flag", () => {
+    const workspace = unifyWorkspace({ "patch.txt": UNIFY_SOURCE });
+    const cases: string[][] = [
+      ["--unify", "src/unify.ts", "--write"],
+      ["--unify", "src/unify.ts", "--dry-run"],
+      ["--unify", "src/unify.ts", "--diff"],
+      ["--unify", "src/unify.ts", "--protocol-format", "dsl"],
+      ["--unify", "src/unify.ts", "--read", "src/unify.ts"],
+      ["--unify", "src/unify.ts", "--select", "outer", "--in", "src/unify.ts"],
+      ["--unify", "src/unify.ts", "--match", "outer"],
+      ["--unify", "src/unify.ts", "--pick", "1"],
+      ["--unify", "src/unify.ts", "--within", "1-2"],
+      ["--unify", "src/unify.ts", "--rename", "x"],
+      ["--unify", "src/unify.ts", "--create", "src/new.ts"],
+      ["--unify", "src/unify.ts", "--delete", "src/unify.ts"],
+      ["--unify", "src/unify.ts", "--rewrite", "src/unify.ts"],
+      ["--unify", "src/unify.ts", "--content-file", "patch.txt"],
+    ];
+    for (const args of cases) {
+      const result = run(workspace, args);
+      expect(result.status).toBe(2);
+      expect(result.stderr).toContain("cannot be used with --unify");
+      expect(result.stderr).toContain("usage:");
+      expect(read(join(workspace, "src/unify.ts"))).toBe(UNIFY_SOURCE);
+    }
+    expect(existsSync(join(workspace, "src/new.ts"))).toBe(false);
+  });
+
+  test("--unify-min-lines requires --unify and a non-negative integer", () => {
+    const workspace = unifyWorkspace();
+    const alone = run(workspace, ["--unify-min-lines", "8"]);
+    expect(alone.status).toBe(2);
+    expect(alone.stderr).toContain("--unify-min-lines requires --unify");
+
+    const negative = run(workspace, ["--unify", "src/unify.ts", "--unify-min-lines=-1"]);
+    expect(negative.status).toBe(2);
+    expect(negative.stderr).toContain("non-negative integer");
+
+    const fraction = run(workspace, ["--unify", "src/unify.ts", "--unify-min-lines=1.5"]);
+    expect(fraction.status).toBe(2);
+    expect(fraction.stderr).toContain("non-negative integer");
+  });
+
+  test("--unify reports missing, non-file, unsafe, and unparseable paths", () => {
+    const workspace = unifyWorkspace({
+      "src/broken.ts": "export function broken( {\n",
+    });
+    mkdirSync(join(workspace, "src/dir"));
+    const cases: { args: string[]; fragment: string }[] = [
+      { args: ["--unify", "src/missing.ts"], fragment: "does not exist" },
+      { args: ["--unify", "src/dir"], fragment: "not a regular file" },
+      { args: ["--unify", "../outside.ts"], fragment: "outside the editable workspace" },
+      { args: ["--unify", "src/broken.ts"], fragment: "does not parse" },
+    ];
+    for (const { args, fragment } of cases) {
+      const result = run(workspace, args);
+      expect(result.status).toBe(1);
+      expect(result.stderr).toContain(fragment);
+      expect(result.stdout).toBe("");
+    }
+  });
+
+  test("dsl dry-run previews a block replacement and writes nothing", () => {
+    const workspace = unifyWorkspace();
+    const result = run(workspace, ["--protocol-format", "dsl", "--dry-run"], BLOCK_DSL);
+    expect(result.status).toBe(0);
+    expect(result.stdout).toContain("would change: src/unify.ts");
+    expect(result.stdout).not.toContain("changed: src/unify.ts");
+    expect(result.stderr).toBe("");
+    expect(read(join(workspace, "src/unify.ts"))).toBe(UNIFY_SOURCE);
+  });
+
+  test("dsl apply and dry-run --diff agree on a block replacement", () => {
+    const workspace = unifyWorkspace();
+    const preview = run(workspace, ["--protocol-format", "dsl", "--dry-run", "--diff"], BLOCK_DSL);
+    expect(preview.status).toBe(0);
+    expect(preview.stdout).toContain("-    total += 1;");
+    expect(preview.stdout).toContain("+    total += 42;");
+    expect(read(join(workspace, "src/unify.ts"))).toBe(UNIFY_SOURCE);
+
+    const applied = run(workspace, ["--protocol-format", "dsl", "--write"], BLOCK_DSL);
+    expect(applied.status).toBe(0);
+    expect(applied.stdout).toContain("changed: src/unify.ts");
+    expect(read(join(workspace, "src/unify.ts"))).toBe(AFTER_BLOCK);
+  });
+
+  test("dsl block match and pick narrow the applied span", () => {
+    const workspace = unifyWorkspace();
+    const matchReply = [
+      "select block outer:2 in src/unify.ts",
+      "match `total += 2;`",
+      "replace with",
+      BEGIN,
+      "total += 22;",
+      END,
+    ].join("\n");
+    const matched = run(workspace, ["--protocol-format", "dsl", "--write"], matchReply);
+    expect(matched.status).toBe(0);
+    expect(read(join(workspace, "src/unify.ts"))).toContain("    total += 22;");
+
+    const picked = run(
+      workspace,
+      ["--protocol-format", "dsl", "--dry-run"],
+      [
+        "select block outer:2 in src/unify.ts",
+        "pick 4",
+        "replace with",
+        BEGIN,
+        "    total += 42;",
+        END,
+      ].join("\n"),
+    );
+    expect(picked.status).toBe(0);
+    expect(picked.stdout).toContain("would change: src/unify.ts");
+  });
+
+  test("dsl bad block IDs fail at address and write nothing", () => {
+    const workspace = unifyWorkspace();
+    const reply = ["select block outer:99 in src/unify.ts", "replace with", BEGIN, "x", END].join(
+      "\n",
+    );
+    const result = run(workspace, ["--protocol-format", "dsl", "--write"], reply);
+    expect(result.status).toBe(1);
+    expect(result.stderr).toContain("stage: address");
+    expect(result.stderr).toContain("--unify");
+    expect(read(join(workspace, "src/unify.ts"))).toBe(UNIFY_SOURCE);
+  });
+
+  test("dsl invalid block replacement fails the gate and writes nothing", () => {
+    const workspace = unifyWorkspace();
+    const reply = ["select block outer:2 in src/unify.ts", "replace with", BEGIN, "{", END].join(
+      "\n",
+    );
+    const result = run(workspace, ["--protocol-format", "dsl", "--write"], reply);
+    expect(result.status).toBe(1);
+    expect(result.stderr).toContain("stage: gate");
+    expect(read(join(workspace, "src/unify.ts"))).toBe(UNIFY_SOURCE);
+  });
+});

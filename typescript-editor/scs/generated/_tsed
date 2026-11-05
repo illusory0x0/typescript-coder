@@ -15,6 +15,8 @@ _tsed() {
     '(-C --directory)-C=[Workspace root (default\: the current directory)]:dir:' \
     '(-C --directory)--directory=[Workspace root (default\: the current directory)]:dir:' \
     '*--read=[Read a workspace file]:path:' \
+    '*--unify=[Print a numbered read-only view with block markers]:path:' \
+    '--unify-min-lines=[Minimum block span, in lines, for --unify markers (default\: 8)]:n:' \
     '--select=[Select a declaration for a viewer or edit]:symbol:' \
     '--select-file=[Select a unique file span for an edit]:path:' \
     '--in=[File that contains the selected declaration]:path:' \

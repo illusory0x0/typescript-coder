@@ -58,13 +58,13 @@ set edit:completion:arg-completer[tsed] = {|@words|
     # What the root offers (docs/spec §9.1); a commandless CLI has no
     # subcommand contexts, so the empty key is the only one.
     var pool-map = [
-        &''= ['--protocol-format' '--write' '--dry-run' '--diff' '--directory' '-C' '--read' '--select' '--select-file' '--in' '--kind' '--resolve' '--match' '--pick' '--within' '--replace-file' '--rename' '--create' '--delete' '--rewrite' '--content-file' '--help' '-h' '--version' '-V']
+        &''= ['--protocol-format' '--write' '--dry-run' '--diff' '--directory' '-C' '--read' '--unify' '--unify-min-lines' '--select' '--select-file' '--in' '--kind' '--resolve' '--match' '--pick' '--within' '--replace-file' '--rename' '--create' '--delete' '--rewrite' '--content-file' '--help' '-h' '--version' '-V']
     ]
     var valuetaking-map = [
-        &''= ['--protocol-format' '--directory' '-C' '--read' '--select' '--select-file' '--in' '--kind' '--resolve' '--match' '--pick' '--within' '--replace-file' '--rename' '--create' '--delete' '--rewrite' '--content-file']
+        &''= ['--protocol-format' '--directory' '-C' '--read' '--unify' '--unify-min-lines' '--select' '--select-file' '--in' '--kind' '--resolve' '--match' '--pick' '--within' '--replace-file' '--rename' '--create' '--delete' '--rewrite' '--content-file']
     ]
     var repeatable-map = [
-        &''= ['--read' '--create' '--delete' '--help' '-h' '--version' '-V']
+        &''= ['--read' '--unify' '--create' '--delete' '--help' '-h' '--version' '-V']
     ]
     var pool = []
     var valuetaking = []

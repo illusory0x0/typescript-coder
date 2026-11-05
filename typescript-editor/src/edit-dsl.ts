@@ -10,10 +10,11 @@
  */
 import { resolveCascade, resolveCascadeViewer } from "./cascade";
 import type { CascadeCause, SelectionStage } from "./cascade";
+import { resolveBlockSelection } from "./block-select";
 import { resolveFileSelection } from "./module-boundary";
 import { Parser } from "./parser";
 import type { Node, Program, Statement } from "./parser";
-import { EDIT_FENCE_BEGIN, EDIT_FENCE_END, isFileSelection } from "./selection";
+import { EDIT_FENCE_BEGIN, EDIT_FENCE_END, isBlockSelection, isFileSelection } from "./selection";
 import type { Selection } from "./selection";
 import { Binder } from "./utility";
 import type { IndexEntry, Locator, SymbolSpace } from "./utility";
@@ -666,6 +667,63 @@ export function resolveEditDslReply(
         end: fileResolved.end,
         text: fileResolved.text,
         stage: fileResolved.stage,
+        matcherKind: selection.matcher === null ? null : selection.matcher.kind,
+        create: false,
+      });
+      continue;
+    }
+    if (isBlockSelection(selection)) {
+      if (deps.fileExists !== undefined && !deps.fileExists(path)) {
+        failures.push({
+          index,
+          path,
+          locator: selection.locator,
+          stage: "address",
+          cause: null,
+          diagnostics: `stage: address\ncannot select ${JSON.stringify(selection.locator.name)} in ${JSON.stringify(path)}: the file does not exist`,
+          undeclaredName: null,
+        });
+        continue;
+      }
+      const blockDuplicate = claimEditDslTarget(
+        claims,
+        { path, name: selection.locator.name, kind: "block" },
+        index,
+        false,
+      );
+      if (blockDuplicate !== null) {
+        failures.push({
+          index,
+          path,
+          locator: selection.locator,
+          stage: "duplicate",
+          cause: null,
+          diagnostics: blockDuplicate,
+          undeclaredName: null,
+        });
+        continue;
+      }
+      const blockResolved = resolveBlockSelection(source, selection);
+      if (!blockResolved.ok) {
+        failures.push({
+          index,
+          path,
+          locator: selection.locator,
+          stage: blockResolved.stage,
+          cause: null,
+          diagnostics: blockResolved.diagnostics,
+          undeclaredName: null,
+        });
+        continue;
+      }
+      regions.push({
+        index,
+        path,
+        locator: selection.locator,
+        start: blockResolved.start,
+        end: blockResolved.end,
+        text: blockResolved.text,
+        stage: blockResolved.stage,
         matcherKind: selection.matcher === null ? null : selection.matcher.kind,
         create: false,
       });

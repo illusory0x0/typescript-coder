@@ -17,6 +17,8 @@ $tsedOwners['--diff'] = '--diff'
 $tsedOwners['--directory'] = '--directory'
 $tsedOwners['-C'] = '--directory'
 $tsedOwners['--read'] = '--read'
+$tsedOwners['--unify'] = '--unify'
+$tsedOwners['--unify-min-lines'] = '--unify-min-lines'
 $tsedOwners['--select'] = '--select'
 $tsedOwners['--select-file'] = '--select-file'
 $tsedOwners['--in'] = '--in'
@@ -57,7 +59,7 @@ Register-ArgumentCompleter -Native -CommandName tsed -ScriptBlock {
     # context; only their name is withheld from the subcommand list.
     # Only root options may precede the subcommand, so the root's
     # value-taking set is named before the context is known.
-    $rootTaking = @('--protocol-format', '--directory', '-C', '--read', '--select', '--select-file', '--in', '--kind', '--resolve', '--match', '--pick', '--within', '--replace-file', '--rename', '--create', '--delete', '--rewrite', '--content-file')
+    $rootTaking = @('--protocol-format', '--directory', '-C', '--read', '--unify', '--unify-min-lines', '--select', '--select-file', '--in', '--kind', '--resolve', '--match', '--pick', '--within', '--replace-file', '--rename', '--create', '--delete', '--rewrite', '--content-file')
 
     # The subcommand: the first word that is neither an option nor the value
     # of one. Only root options can come before it.
@@ -70,9 +72,9 @@ Register-ArgumentCompleter -Native -CommandName tsed -ScriptBlock {
     $repeatable = @()
     switch ($sub) {
         default {
-            $pool = @('--protocol-format', '--write', '--dry-run', '--diff', '--directory', '-C', '--read', '--select', '--select-file', '--in', '--kind', '--resolve', '--match', '--pick', '--within', '--replace-file', '--rename', '--create', '--delete', '--rewrite', '--content-file', '--help', '-h', '--version', '-V')
+            $pool = @('--protocol-format', '--write', '--dry-run', '--diff', '--directory', '-C', '--read', '--unify', '--unify-min-lines', '--select', '--select-file', '--in', '--kind', '--resolve', '--match', '--pick', '--within', '--replace-file', '--rename', '--create', '--delete', '--rewrite', '--content-file', '--help', '-h', '--version', '-V')
             $taking = $rootTaking
-            $repeatable = @('--read', '--create', '--delete', '--help', '-h', '--version', '-V')
+            $repeatable = @('--read', '--unify', '--create', '--delete', '--help', '-h', '--version', '-V')
         }
     }
 

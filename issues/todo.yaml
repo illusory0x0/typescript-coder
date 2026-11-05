@@ -2,14 +2,6 @@
 # rewrites it; `add` appends; other writes keep it. `check` enforces it.
 # A dep, and every child of an umbrella, must be listed before its dependent.
 
-- id: 84
-  title: "Add tsed --unify block markers and block-select editing"
-  status: todo
-  priority: medium
-  milestone: null
-  parent: null
-  deps: [83]
-  file: 0084-add-tsed-unify-block-markers-and-block-select-editing.md
 - id: 85
   title: "Update namespace and import-equals references on cross-file rename"
   status: todo

@@ -1,7 +1,7 @@
 ---
 id: 84
 title: "Add tsed --unify block markers and block-select editing"
-status: todo
+status: done
 priority: medium
 milestone: null
 parent: null

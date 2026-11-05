@@ -3,7 +3,7 @@
 
 # --- helpers ---
 function __fish_tsed_root_options
-    string join \n protocol-format= write dry-run diff C/directory= read= select= select-file= in= kind= resolve= match= pick= within= replace-file= rename= create= delete= rewrite= content-file= h/help V/version
+    string join \n protocol-format= write dry-run diff C/directory= read= unify= unify-min-lines= select= select-file= in= kind= resolve= match= pick= within= replace-file= rename= create= delete= rewrite= content-file= h/help V/version
 end
 
 function __fish_tsed_needs_command
@@ -83,6 +83,8 @@ complete -c tsed -n 'not __fish_seen_argument -l dry-run' -l dry-run -d 'Preview
 complete -c tsed -n 'not __fish_seen_argument -l diff' -l diff -d 'Show a unified diff for planned mutations (requires --dry-run)'
 complete -c tsed -n '__fish_tsed_offer \'C\' \'directory\'' -s C -l directory -r -d 'Workspace root (default: the current directory)'
 complete -c tsed -n '' -l read -r -d 'Read a workspace file'
+complete -c tsed -n '' -l unify -r -d 'Print a numbered read-only view with block markers'
+complete -c tsed -n '__fish_tsed_offer \'\' \'unify-min-lines\'' -l unify-min-lines -r -d 'Minimum block span, in lines, for --unify markers (default: 8)'
 complete -c tsed -n '__fish_tsed_offer \'\' \'select\'' -l select -r -d 'Select a declaration for a viewer or edit'
 complete -c tsed -n '__fish_tsed_offer \'\' \'select-file\'' -l select-file -r -d 'Select a unique file span for an edit'
 complete -c tsed -n '__fish_tsed_offer \'\' \'in\'' -l in -r -d 'File that contains the selected declaration'
@@ -99,4 +101,4 @@ complete -c tsed -n '__fish_tsed_offer \'\' \'rewrite\'' -l rewrite -r -d 'Rewri
 complete -c tsed -n '__fish_tsed_offer \'\' \'content-file\'' -l content-file -r -F -d 'File holding the content for --rewrite'
 complete -c tsed -n 'not __fish_seen_argument -s V -l version' -s V -l version -d 'Print version'
 complete -c tsed -n 'not __fish_seen_argument -s h -l help' -s h -l help -d 'Print help'
-complete -c tsed -n 'test (__fish_tsed_slot --protocol-format --directory -C --read --select --select-file --in --kind --resolve --match --pick --within --replace-file --rename --create --delete --rewrite --content-file) -ge 0' -f
+complete -c tsed -n 'test (__fish_tsed_slot --protocol-format --directory -C --read --unify --unify-min-lines --select --select-file --in --kind --resolve --match --pick --within --replace-file --rename --create --delete --rewrite --content-file) -ge 0' -f

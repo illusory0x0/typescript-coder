@@ -87,6 +87,8 @@ tsed --select answer --in src/helper.ts \
 tsed --select-file src/helper.ts \
   --match 'if (value === 1) {' \
   --replace-file patch.txt --write              # unique file-level span
+tsed --unify src/helper.ts                       # read-only block marker view
+tsed --unify src/helper.ts --unify-min-lines 4   # lower the marker threshold
 tsed --select answer --in src/helper.ts \
   --rename result --write                       # rename
 tsed --create src/new.ts --write                # empty file
@@ -247,6 +249,44 @@ that were written; dry runs print `would change:`, `would create:`, and
 line and the per-file unified diff after those path lines; apply output never
 includes a diff. A failed reply writes nothing; a failed read is reported but
 does not discard a clean mutation.
+
+### Block markers and block select
+
+`--unify <PATH>` is a standalone **read-only viewer**: it prints the numbered
+source with `// <symbol-id>:<node-id>` appended to the opening line of each
+qualifying block, and it never writes. A block qualifies when its inclusive
+`{` … `}` span is at least 8 lines; `--unify-min-lines N` overrides the
+threshold, and `0` marks every block. Line numbers stay 1-based and
+file-absolute, the printed line count matches the source, and a block that
+already ends in a line comment gets its marker after that comment, so the
+output stays parseable:
+
+```text
+ 1 | export function outer(): number { // outer:1
+ 2 |   let total = 0;
+ 3 |   if (true) { // outer:2
+```
+
+The symbol ID is the nearest declaration address (`Parser.parse`), or
+`<module>` when no declaration contains the block. The node ID is the block's
+1-based preorder index within that symbol. IDs are recomputed from the current
+AST on every call, so they cannot go stale. `--unify` is a viewer only:
+`--write`, `--dry-run`, `--protocol-format dsl|json`, and all operation flags
+are usage errors, and `--unify-min-lines` requires `--unify`.
+
+The edit-dsl block editor addresses the same marker:
+
+```text
+select block <symbol-id>:<node-id> in <path> [ match <snippet> | match /<regex>/ ] [ pick <selecters> ] replace with <fence>
+```
+
+Without `match`/`pick` the target is the block's brace span. `match` and `pick`
+narrow inside it using the normal rules and intersect when both are present;
+exactly one span must remain. An empty fence deletes exactly that span. An
+unknown or ambiguous block ID fails at `address`, and `resolve`, `within`, and
+`rename` are rejected. `select block in <path>` still selects a declaration
+literally named `block`; a token after `block` that is not `in` starts the
+block-select form. `tsed --unify` is the intended way to discover an ID.
 
 ### Renames
 

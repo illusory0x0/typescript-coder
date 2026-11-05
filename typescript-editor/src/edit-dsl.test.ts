@@ -1369,3 +1369,105 @@ describe("nested declaration addresses (#52)", () => {
     expect(result.failures[0]?.diagnostics).toContain("destructuring pattern");
   });
 });
+
+describe("block select integration (#84)", () => {
+  const BLOCK_SOURCE = [
+    "export function outer(): number {",
+    "  let total = 0;",
+    "  if (true) {",
+    "    total += 1;",
+    "    total += 2;",
+    "    total += 3;",
+    "    total += 4;",
+    "    total += 5;",
+    "    total += 6;",
+    "  }",
+    "  return total;",
+    "}",
+    "",
+  ].join("\n");
+
+  const blockReplace = (body: string): string =>
+    ["replace with", "TC_EDIT_BEGIN", body, "TC_EDIT_END"].join("\n");
+
+  function blockDeps(
+    source: string,
+    options: { safe?: boolean; exists?: boolean } = {},
+  ): EditDslDeps {
+    return {
+      sourceFor: () => source,
+      fileExists: () => options.exists ?? true,
+      isSafePath: () => options.safe ?? true,
+      resolveEntry: resolveEntryIn,
+    };
+  }
+
+  test("resolves a block clause into one region", () => {
+    const reply = ["select block outer:2 in a.ts", blockReplace("total += 42;")].join("\n");
+    const result = resolveEditDslReply(parseSelection(reply), blockDeps(BLOCK_SOURCE));
+    expect(result.failures).toEqual([]);
+    const region = result.regions[0];
+    expect(region?.path).toBe("a.ts");
+    expect(region?.text).toBe("total += 42;");
+    expect(region?.stage).toBe("whole-symbol");
+    expect(BLOCK_SOURCE.slice(region?.start, region?.end)).toContain("total += 1;");
+  });
+
+  test("unknown IDs fail at address", () => {
+    const reply = ["select block outer:99 in a.ts", blockReplace("x")].join("\n");
+    const result = resolveEditDslReply(parseSelection(reply), blockDeps(BLOCK_SOURCE));
+    expect(result.regions).toEqual([]);
+    expect(result.failures[0]?.stage).toBe("address");
+    expect(result.failures[0]?.diagnostics).toContain("--unify");
+  });
+
+  test("repeats of one block ID fail as duplicates", () => {
+    const first = ["select block outer:2 in a.ts", blockReplace("total += 42;")].join("\n");
+    const second = ["select block outer:2 in a.ts", blockReplace("total += 43;")].join("\n");
+    const result = resolveEditDslReply(
+      parseSelection(`${first}\n\n${second}`),
+      blockDeps(BLOCK_SOURCE),
+    );
+    expect(result.regions).toHaveLength(1);
+    expect(result.failures[0]?.stage).toBe("duplicate");
+    expect(result.failures[0]?.diagnostics).toContain('"outer:2"');
+  });
+
+  test("two different blocks resolve in one reply", () => {
+    const first = ["select block outer:1 in a.ts", blockReplace("total += 1;")].join("\n");
+    const second = ["select block outer:2 in a.ts", blockReplace("total += 2;")].join("\n");
+    const result = resolveEditDslReply(
+      parseSelection(`${first}\n\n${second}`),
+      blockDeps(BLOCK_SOURCE),
+    );
+    expect(result.failures).toEqual([]);
+    expect(result.regions).toHaveLength(2);
+  });
+
+  test("a missing file and an unsafe path fail at address", () => {
+    const reply = ["select block outer:2 in a.ts", blockReplace("x")].join("\n");
+    const missing = resolveEditDslReply(
+      parseSelection(reply),
+      blockDeps(BLOCK_SOURCE, { exists: false }),
+    );
+    expect(missing.failures[0]?.stage).toBe("address");
+    expect(missing.failures[0]?.diagnostics).toContain("does not exist");
+
+    const unsafe = resolveEditDslReply(
+      parseSelection(reply),
+      blockDeps(BLOCK_SOURCE, { safe: false }),
+    );
+    expect(unsafe.failures[0]?.stage).toBe("address");
+    expect(unsafe.failures[0]?.diagnostics).toContain("outside the editable workspace");
+  });
+
+  test("a block viewer without replace fails at address", () => {
+    const result = resolveEditDslReply(
+      parseSelection("select block outer:2 in a.ts end"),
+      blockDeps(BLOCK_SOURCE),
+    );
+    expect(result.regions).toEqual([]);
+    expect(result.failures[0]?.stage).toBe("address");
+    expect(result.failures[0]?.diagnostics).toContain("replace with <fence>");
+  });
+});

@@ -65,6 +65,18 @@ The second form is the protocol renderer's missing-replacement shape; it
 resolves to an `address` failure with the replacement hint rather than a
 whole-file write.
 
+The block editor names a brace span by the marker ID printed by `tsed --unify`:
+
+```text
+select block <symbol-id>:<node-id> in <path> [ match <snippet> | match /<regex>/ ] [ pick <selecters> ] replace with <fence>
+select block <symbol-id>:<node-id> in <path> [ match <snippet> | match /<regex>/ ] [ pick <selecters> ] end
+```
+
+The second form is likewise an `address` failure with the replacement hint.
+A declaration literally named `block` keeps the ordinary symbol form
+(`select block in <path>`); a token after `block` that is not `in` starts the
+block-select form.
+
 A select clause is never a file command. A select clause with `replace` or
 `rename` is an **editor**; with neither it is a **viewer**. `match` narrows a
 viewer or replacement; it is not part of a rename, and `rename` also cannot
@@ -381,6 +393,42 @@ function body, a test callback, an object literal, or a template-literal body;
   `rename` is not supported because a unique text span has no declaration
   address; edit the span text instead rather than silently renaming a symbol.
 
+### Block markers and block select
+
+`tsed --unify <path>` is a read-only CLI viewer, not an edit-dsl statement. It
+prints the numbered source with ` // <symbol-id>:<node-id>` appended to the
+opening line of each qualifying `BlockStatement`; it never writes, and it
+rejects `--write`, `--dry-run`, non-default `--protocol-format`, and every
+operation flag as a usage error. Output keeps 1-based, file-absolute line numbers and the source
+line count. A block qualifies when its inclusive span satisfies
+`endLine - startLine + 1 >= 8`; `--unify-min-lines <N>` replaces the threshold,
+where `0` marks every block. A marker is appended after an existing line
+comment, so the annotated view stays syntactically valid.
+
+- The symbol ID is the nearest enclosing indexed declaration address
+  (`Parser.parse`), or `<module>` when no declaration contains the block. The
+  node ID is the block's 1-based preorder index among `BlockStatement` nodes
+  grouped under that symbol. IDs are recomputed from the current AST whenever
+  the viewer or resolver runs, so they are never persisted or stale. When two
+  declarations share a display name, the symbol ID is suffixed with the
+  declaration's start line (and column if needed) to stay unique.
+- `select block <symbol-id>:<node-id> in <path> …` resolves that block's half-open
+  brace span (`{` through `}` inclusive). `match` (structural snippet or
+  `/regex/`) narrows structurally inside the span, and `pick` narrows by
+  1-based file-absolute coordinates; with both, the match candidates are
+  filtered by the pick. The block span is the whole target when neither is
+  present. Exactly one candidate is required; `address` reports an unknown or
+  ambiguous ID with the available markers, and `matcher` reports zero,
+  ambiguous, or non-intersecting candidates.
+- A block select is an **editor only** and needs `replace with <fence>`; the
+  DSL reader accepts the `end` shape so resolution can report the missing
+  replacement. An empty fence deletes exactly the resolved span. `resolve`,
+  `within`, and `rename` are rejected. A repeated block target in one reply is
+  a `duplicate`.
+- The declaration named `block` is not shadowed: `select block in <path>` still
+  resolves the symbol, because only a non-`in` token after `block` enters the
+  block grammar.
+
 ### Rename semantics
 
 A rename is resolved against the whole file before any splice is queued. The
@@ -431,7 +479,7 @@ ISO/IEC 14977 EBNF (originally drafted in `human/edit.md`):
 ```ebnf
 edit-reply   = { statement } ;
 
-statement    = select-clause | file-select-clause | file-command ;
+statement    = select-clause | file-select-clause | block-select-clause | file-command ;
 
 file-command = 'create', path, 'end'
              | 'create', [ 'static' ], create-kind, create-name, 'in', path,
@@ -465,6 +513,13 @@ file-select-clause = 'select', 'file', path,
                      (* the end form is accepted so resolution can report the
                         missing replacement; validate it as an address failure *)
 
+block-select-clause = 'select', 'block', block-id, 'in', path,
+                      [ 'match', ( snippet | regex ) ],
+                      [ 'pick', selecters ],
+                      ( 'replace', 'with', fence | 'end' ) ;
+                      (* the end form is an address failure, like file-select;
+                         `select block in path` stays the symbol form *)
+
 replacer     = [ 'pick', selecters ], 'replace', 'with', fence ;
 renamer      = 'rename', identifier, 'to', identifier, 'end' ;
 
@@ -482,6 +537,7 @@ kind         = 'function' | 'const' | 'let' | 'var' | 'class'
 space        = 'value' | 'type' | 'namespace' ;
 path         = ? file path token ? ;
 symbol       = ? declared identifier ? ;
+block-id     = ? '<symbol-id>:<positive node id>' printed by `tsed --unify` ? ;
 dotted-symbol = symbol, '.', symbol, { '.', symbol } ;
 owner        = symbol, { '.', symbol } ;
 identifier   = ? TypeScript identifier ? ;
@@ -498,8 +554,8 @@ fence        = ? a line exactly TC_EDIT_BEGIN, or an opener at the end
 A select clause is never a file command. A coordinate is digits only: `0`
 parses as a `line`/`column` but is rejected as not positive, and `selecters`
 braces cannot be empty. `end` is required by the grammar for a viewer or rename select clause,
-for a file-level select without a replacement (an `address` failure at
-resolution), and for `create <path> end`, `delete`, and `read`. For those forms,
+for a file-level or block-level select without a replacement (an `address`
+failure at resolution), and for `create <path> end`, `delete`, and `read`. For those forms,
 the tolerant reader may warn `EDIT_MISSING_END` and recover at EOF or before an
 unambiguous next statement (`select`, `create`, `delete`, `read`, or `write`);
 arbitrary following text is a hard error. A `select … replace with`, `create … with`, or

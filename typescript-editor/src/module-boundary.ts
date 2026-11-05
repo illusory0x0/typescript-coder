@@ -61,7 +61,8 @@ export interface ModuleCreateFailure {
 
 type ModuleCreateResult = ModuleCreateResolution | ModuleCreateFailure;
 
-interface Span {
+/** A half-open source span shared by the file-level and block-level resolvers. */
+export interface Span {
   start: number;
   end: number;
 }
@@ -122,9 +123,10 @@ function normalizePickRange(source: string, range: EditRange): EditRange {
   return { ...range, endColumn: length === null ? 1 : Math.max(1, length) };
 }
 
-function resolvePickSpans(
+export function resolvePickSpans(
   source: string,
   pick: readonly EditRange[],
+  label = "file-level",
 ): { ok: true; spans: Span[] } | { ok: false; diagnostics: string } {
   const spans: Span[] = [];
   for (const range of pick) {
@@ -137,7 +139,7 @@ function resolvePickSpans(
         ok: false,
         diagnostics: [
           "stage: range",
-          `the file-level \`pick\` range (line ${range.line}, column ${range.column} to line ${range.endLine}, column ${range.endColumn}) is invalid (${located.reason}): ${located.detail}`,
+          `the ${label} \`pick\` range (line ${range.line}, column ${range.column} to line ${range.endLine}, column ${range.endColumn}) is invalid (${located.reason}): ${located.detail}`,
           "copy the 1-based file-absolute line and column positions from the numbered source block, keep the end inclusive, and keep the range inside one unique span",
         ].join("\n"),
       };
@@ -221,7 +223,7 @@ function notFoundDiagnostics(path: string, matcherKind: "snippet" | "regex"): st
   ].join("\n");
 }
 
-function pickMatchesSpan(span: Span, range: EditRange, pickSpan: Span): boolean {
+export function pickMatchesSpan(span: Span, range: EditRange, pickSpan: Span): boolean {
   const point = range.line === range.endLine && range.column === range.endColumn;
   if (point) {
     return span.start <= pickSpan.start && pickSpan.start <= span.end;
@@ -235,7 +237,7 @@ function pickMatchesSpan(span: Span, range: EditRange, pickSpan: Span): boolean 
  * The file owner treats such a snippet as the exact source span, still
  * requiring exactly one candidate.
  */
-function findLiteralMatches(source: string, value: string): Span[] {
+export function findLiteralMatches(source: string, value: string): Span[] {
   if (value === "") {
     return [];
   }

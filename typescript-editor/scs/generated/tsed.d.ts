@@ -17,6 +17,10 @@ export interface TsedArgs {
   directory?: string;
   /** Read a workspace file */
   read?: string[];
+  /** Print a numbered read-only view with block markers */
+  unify?: string[];
+  /** Minimum block span, in lines, for --unify markers (default: 8) */
+  unify_min_lines?: number;
   /** Select a declaration for a viewer or edit */
   select?: string;
   /** Select a unique file span for an edit */
@@ -55,6 +59,8 @@ export type ValueName =
   | "protocol_format"
   | "directory"
   | "read"
+  | "unify"
+  | "unify_min_lines"
   | "select"
   | "select_file"
   | "input"
@@ -77,9 +83,10 @@ export interface Tsed {
 /**
  * Runtime-boundary note:
  * Only enum- and union-typed options have narrow types. `directory`,
- * `read`, `select`, `select_file`, `input`, `kind`, `match`, `pick`,
- * `within`, `replace_file`, `rename`, `create`, `delete`, `rewrite` and
- * `content_file` are `number`/`string` because the .scs source carries no
- * value range or format information. Narrowing those would make the .d.ts
- * assert more than the completion script can guarantee.
+ * `read`, `unify`, `unify_min_lines`, `select`, `select_file`, `input`,
+ * `kind`, `match`, `pick`, `within`, `replace_file`, `rename`, `create`,
+ * `delete`, `rewrite` and `content_file` are `number`/`string` because the
+ * .scs source carries no value range or format information. Narrowing
+ * those would make the .d.ts assert more than the completion script can
+ * guarantee.
  */

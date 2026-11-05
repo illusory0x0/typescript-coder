@@ -128,6 +128,11 @@ export function isFileSelection(selection: Selection): boolean {
   return selection.locator.kind === "file" && selection.locator.name === "";
 }
 
+/** True for a `select block <symbol-id>:<node-id> …` clause (a brace-span owner). */
+export function isBlockSelection(selection: Selection): boolean {
+  return selection.locator.kind === "block" && selection.locator.name !== "";
+}
+
 /**
  * A `create [static] <kind> <name> in <path> with <fence>` declaration or
  * member create. `name` is a top-level identifier, a dotted `Owner.member`, or,
@@ -826,6 +831,31 @@ class SelectionReader {
     return after < this.length && isWordChar(this.text[after] ?? "");
   }
 
+  /**
+   * True when `select block …` names a block ID rather than the declaration
+   * literally named `block`. The symbol form keeps the `in <path>` header
+   * (`select block in src/a.ts`), so only a token after `block` that is not
+   * `in` starts the block-select grammar.
+   */
+  private blockSelectAhead(): boolean {
+    this.skipWhitespace();
+    if (!this.keywordAt("block")) {
+      return false;
+    }
+    let cursor = this.pos + 5;
+    while (cursor < this.length && isWhitespace(this.text[cursor] ?? "")) {
+      cursor += 1;
+    }
+    if (cursor >= this.length) {
+      return false;
+    }
+    if (!this.text.startsWith("in", cursor)) {
+      return true;
+    }
+    const after = cursor + 2;
+    return after < this.length && isWordChar(this.text[after] ?? "");
+  }
+
   private parseFileEditor(): Selection {
     this.expectKeyword("file", "expected `file` after `select`");
     const path = this.readToken("expected a file path after `select file`");
@@ -910,10 +940,123 @@ class SelectionReader {
     );
   }
 
+  /** A `select block <symbol-id>:<node-id> in <path> … replace with <fence>` editor. */
+  private parseBlockEditor(): Selection {
+    this.expectKeyword("block", "expected `block` after `select`");
+    const rawId = this.readToken(
+      "expected a `<symbol-id>:<node-id>` block ID after `select block`",
+    );
+    const separator = rawId.lastIndexOf(":");
+    const symbolId = separator <= 0 ? "" : rawId.slice(0, separator);
+    const nodeId = separator <= 0 ? "" : rawId.slice(separator + 1);
+    if (symbolId === "" || !/^[1-9][0-9]*$/.test(nodeId)) {
+      this.syntax(
+        "EDIT_BLOCK_ID_MALFORMED",
+        `the block ID ${JSON.stringify(rawId)} is not \`<symbol-id>:<node-id>\`; the node id is a positive 1-based integer`,
+        {
+          expected: ["<symbol-id>:<node-id>"],
+          found: rawId,
+          hint: "copy an exact marker from `tsed --unify <path>`, for example `outer:2`",
+        },
+      );
+    }
+    this.expectKeyword("in", "expected `in <path>` after the block ID");
+    const path = this.readToken("expected a file path after `in`");
+    if (this.matchKeyword("resolve")) {
+      this.syntax(
+        "EDIT_BLOCK_RESOLVE_UNSUPPORTED",
+        "a block select has no TypeScript symbol space; the block ID is its address",
+        {
+          expected: ["match", "pick", "replace", "end"],
+          found: "resolve",
+          hint: "drop `resolve`; `match` and `pick` narrow inside the selected block",
+        },
+      );
+    }
+    if (this.matchKeyword("within")) {
+      this.syntax(
+        "EDIT_BLOCK_WITHIN_UNSUPPORTED",
+        "a block select is an editor; `within` is a declaration-viewer slice",
+        {
+          expected: ["match", "pick", "replace"],
+          found: "within",
+          hint: "use `tsed --unify <path>` to view the marked source, or `read <path> within <range> end` for file lines",
+        },
+      );
+    }
+
+    let matcher: SelectionMatcher | null = null;
+    if (this.matchKeyword("match")) {
+      matcher = this.parseMatcher();
+    }
+    this.skipWhitespace();
+    if (this.keywordAt("rename")) {
+      this.rejectBlockRename();
+    }
+
+    let pick: EditRange[] | null = null;
+    if (this.matchKeyword("pick")) {
+      pick = this.parseMultiRange();
+    }
+    this.skipWhitespace();
+    if (this.keywordAt("rename")) {
+      this.rejectBlockRename();
+    }
+
+    let replacement: string | null = null;
+    if (this.matchKeyword("replace")) {
+      this.expectKeyword("with", "expected `with` after `replace`");
+      this.lastFenceClosed = false;
+      replacement = this.parseFence();
+    }
+    this.skipWhitespace();
+    if (this.keywordAt("rename")) {
+      this.rejectBlockRename();
+    }
+    if (replacement === null) {
+      this.consumeEnd("`select block` command");
+    } else {
+      this.consumeBodyEnd("`select block` command");
+    }
+    if (pick !== null && replacement === null) {
+      this.syntax(
+        "EDIT_PICK_WITHOUT_REPLACE",
+        "`pick` requires a `replace`: a block select cannot be a picked viewer; add `replace with <fence>`, or use `tsed --unify` to view",
+        {
+          expected: ["replace with <fence>", "omit pick"],
+          found: "pick without replace",
+          hint: "add `replace with <fence>` or remove `pick`",
+        },
+      );
+    }
+    return {
+      locator: { path, name: rawId, kind: "block" },
+      space: null,
+      matcher,
+      pick,
+      replacement,
+    };
+  }
+
+  private rejectBlockRename(): never {
+    this.syntax(
+      "EDIT_BLOCK_RENAME_UNSUPPORTED",
+      "a block select cannot rename: a brace span has no declaration address; replace the block text or address the declaration by name",
+      {
+        expected: ["match", "pick", "replace with <fence>"],
+        found: "rename",
+        hint: "use `select <symbol> in <path> rename <old> to <new> end` for a semantic rename",
+      },
+    );
+  }
+
   private parseEditor(): Selection {
     this.expectKeyword("select", "expected `select` to begin a clause");
     if (this.fileSelectAhead()) {
       return this.parseFileEditor();
+    }
+    if (this.blockSelectAhead()) {
+      return this.parseBlockEditor();
     }
 
     // `select [kind] <symbol> in <path> [resolve …]`: read the bare tokens

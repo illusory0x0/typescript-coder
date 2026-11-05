@@ -1595,3 +1595,84 @@ describe("module-boundary create statements (#54)", () => {
     ).toThrow(/in <path>/);
   });
 });
+
+describe("block select statements (#84)", () => {
+  test("parses a block editor with match, pick, and a locator kind", () => {
+    const text = [
+      "select block outer:2 in src/helper.ts",
+      "match `total += 2;`",
+      "pick 5",
+      "replace with",
+      BEGIN,
+      "total += 42;",
+      END,
+      "end",
+    ].join("\n");
+    expect(first(text)).toEqual({
+      locator: { path: "src/helper.ts", name: "outer:2", kind: "block" },
+      space: null,
+      matcher: { kind: "snippet", value: "total += 2;" },
+      pick: [{ line: 5, column: 1, endLine: 5, endColumn: 0 }],
+      replacement: "total += 42;",
+    });
+  });
+
+  test("accepts a <module> symbol id and round-trips through the serializer", () => {
+    const text = [
+      "select block <module>:1 in src/a.ts",
+      "match /append/",
+      "replace with",
+      BEGIN,
+      "prepend",
+      END,
+    ].join("\n");
+    expect(first(text).locator).toEqual({
+      path: "src/a.ts",
+      name: "<module>:1",
+      kind: "block",
+    });
+    expect(serializeSelection(first(text))).toBe(text);
+  });
+
+  test("a declaration literally named block keeps the symbol form", () => {
+    expect(first("select block in src/a.ts end").locator).toEqual({
+      path: "src/a.ts",
+      name: "block",
+      kind: "",
+    });
+  });
+
+  test("rejects a malformed block ID", () => {
+    expectSyntax("select block outer in src/a.ts end", "not `<symbol-id>:<node-id>`");
+    expectSyntax("select block outer:0 in src/a.ts end", "positive 1-based integer");
+    expectSyntax("select block :1 in src/a.ts end", "not `<symbol-id>:<node-id>`");
+  });
+
+  test("rejects resolve, within, and rename on a block select", () => {
+    const resolveError = expectSyntax(
+      "select block outer:2 in src/a.ts resolve value end",
+      "no TypeScript symbol space",
+    );
+    expect(resolveError.issues[0]?.code).toBe("EDIT_BLOCK_RESOLVE_UNSUPPORTED");
+    const withinError = expectSyntax(
+      "select block outer:2 in src/a.ts within 1-2 end",
+      "`within` is a declaration-viewer slice",
+    );
+    expect(withinError.issues[0]?.code).toBe("EDIT_BLOCK_WITHIN_UNSUPPORTED");
+    const renameError = expectSyntax(
+      "select block outer:2 in src/a.ts rename a to b end",
+      "cannot rename",
+    );
+    expect(renameError.issues[0]?.code).toBe("EDIT_BLOCK_RENAME_UNSUPPORTED");
+  });
+
+  test("a block select without replace parses and defers to resolution", () => {
+    const selection = first("select block outer:2 in src/a.ts end");
+    expect(selection.locator).toEqual({ path: "src/a.ts", name: "outer:2", kind: "block" });
+    expect(selection.replacement).toBeNull();
+  });
+
+  test("pick without replace is a syntax error on a block select", () => {
+    expectSyntax("select block outer:2 in src/a.ts pick 3 end", "`pick` requires a `replace`");
+  });
+});

@@ -3,8 +3,10 @@ import { readFileSync } from "node:fs";
 import { isAbsolute, resolve } from "node:path";
 import { applyEditDsl, readEditDsl } from "./api";
 import type { EditDslApplyResult, EditDslReadResult } from "./api";
+import { BLOCK_MARKER_MIN_LINES, renderUnifyView } from "./block-select";
 import { EditProtocolError, parseJsonEditRequest, renderEditRequest } from "./protocol";
 import type { EditOperation, EditRequest } from "./protocol";
+import { createWorkspace } from "./workspace";
 import type { ProtocolFormat, TsedArgs } from "../scs/generated/tsed";
 import {
   HelpRequested,
@@ -68,6 +70,93 @@ function rejectNativeFlags(values: TsedArgs, format: StdinFormat): void {
         "pass the operations in the stdin payload instead",
     );
   }
+}
+
+/** The mutating/mode flags `--unify` rejects; it is a standalone read-only viewer. */
+function rejectUnifyConflicts(values: TsedArgs): void {
+  const used: string[] = [];
+  if (values.protocol_format !== "flag") {
+    used.push("--protocol-format");
+  }
+  if (values.write) {
+    used.push("--write");
+  }
+  if (values.dry_run) {
+    used.push("--dry-run");
+  }
+  if (values.diff) {
+    used.push("--diff");
+  }
+  for (const entry of NATIVE_FLAGS) {
+    if (entry.used(values)) {
+      used.push(entry.flag);
+    }
+  }
+  if (used.length > 0) {
+    throw new UsageError(
+      `${used.join(", ")} cannot be used with --unify; --unify is a read-only viewer and writes nothing`,
+    );
+  }
+}
+
+function unifyMinLines(values: TsedArgs): number {
+  const value = values.unify_min_lines;
+  if (value === undefined) {
+    return BLOCK_MARKER_MIN_LINES;
+  }
+  if (!Number.isInteger(value) || value < 0) {
+    throw new UsageError("--unify-min-lines must be a non-negative integer");
+  }
+  return value;
+}
+
+/** `tsed --unify`: a standalone numbered view with view-only block markers. */
+function runUnify(values: TsedArgs, workspaceRoot: string): number {
+  const paths = values.unify ?? [];
+  if (paths.length === 0) {
+    throw new UsageError("--unify-min-lines requires --unify <PATH>");
+  }
+  rejectUnifyConflicts(values);
+  const minLines = unifyMinLines(values);
+  const workspace = createWorkspace({ cwd: workspaceRoot });
+  const rendered: string[] = [];
+  for (const path of paths) {
+    if (!workspace.isSafePath(path)) {
+      process.stderr.write(
+        `${NAME}: cannot unify ${JSON.stringify(path)}: the path is outside the editable workspace\n`,
+      );
+      return 1;
+    }
+    if (!workspace.pathExists(path)) {
+      process.stderr.write(
+        `${NAME}: cannot unify ${JSON.stringify(path)}: the file does not exist\n`,
+      );
+      return 1;
+    }
+    if (!workspace.fileExists(path)) {
+      process.stderr.write(
+        `${NAME}: cannot unify ${JSON.stringify(path)}: it is not a regular file\n`,
+      );
+      return 1;
+    }
+    let source: string;
+    try {
+      source = workspace.sourceFor(path);
+    } catch (error) {
+      process.stderr.write(`${NAME}: cannot unify ${JSON.stringify(path)}: ${messageOf(error)}\n`);
+      return 1;
+    }
+    try {
+      rendered.push(renderUnifyView(source, path, minLines));
+    } catch (error) {
+      process.stderr.write(
+        `${NAME}: cannot unify ${JSON.stringify(path)}: the file does not parse (${messageOf(error)})\n`,
+      );
+      return 1;
+    }
+  }
+  process.stdout.write(`${rendered.join("\n\n")}\n`);
+  return 0;
 }
 
 function readStdin(format: StdinFormat): string {
@@ -327,6 +416,9 @@ async function main(argv: readonly string[]): Promise<number> {
     const parsed = parse([...argv]);
     const values = parsed.values as unknown as TsedArgs;
     const cwd = resolve(values.directory ?? process.cwd());
+    if ((values.unify ?? []).length > 0 || values.unify_min_lines !== undefined) {
+      return runUnify(values, cwd);
+    }
     const payload = buildPayload(values, cwd);
     const options = {
       cwd,

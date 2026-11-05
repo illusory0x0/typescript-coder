@@ -19,6 +19,8 @@ module completions {
     --diff                    # Show a unified diff for planned mutations (requires --dry-run)
     --directory(-C): string   # Workspace root (default: the current directory)
     --read: string            # Read a workspace file
+    --unify: string           # Print a numbered read-only view with block markers
+    --unify-min-lines: string # Minimum block span, in lines, for --unify markers (default: 8)
     --select: string          # Select a declaration for a viewer or edit
     --select-file: string     # Select a unique file span for an edit
     --in: string              # File that contains the selected declaration

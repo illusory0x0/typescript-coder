@@ -31,6 +31,12 @@ interface TsedArgs {
   @arg({ help: "Read a workspace file", valueName: "PATH", multiple: true })
   read: string[]?
 
+  @arg({ help: "Print a numbered read-only view with block markers", valueName: "PATH", multiple: true })
+  unify: string[]?
+
+  @arg({ help: "Minimum block span, in lines, for --unify markers (default: 8)", valueName: "N" })
+  unify-min-lines: number?
+
   @arg({ help: "Select a declaration for a viewer or edit", valueName: "SYMBOL" })
   select: string?
 
