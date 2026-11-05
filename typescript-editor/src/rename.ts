@@ -20,6 +20,7 @@ import type {
   NamespaceDeclaration,
   Node,
   ObjectMethod,
+  ObjectPattern,
   Parameter,
   Program,
   Property,
@@ -57,6 +58,26 @@ export interface RenameTarget {
 export type RenameResult =
   | { ok: true; edits: RenameEdit[]; target: RenameTarget }
   | { ok: false; diagnostics: string };
+
+/** A computed/dynamic or otherwise unrewritable namespace member edge. */
+export interface NamespaceMemberUnsupported {
+  /** Offset of the base identifier the accessor is attached to. */
+  start: number;
+  /** End of the accessor marker, for diagnostics only. */
+  end: number;
+  message: string;
+}
+
+/**
+ * The static edits and unsupported edges for one imported namespace local
+ * (`import * as ns` or a direct relative `import ns = require(...)`).
+ */
+export interface NamespaceMemberScan {
+  edits: RenameEdit[];
+  unsupported: NamespaceMemberUnsupported[];
+  /** Set when the import binding itself cannot be resolved unambiguously. */
+  diagnostics: string | null;
+}
 
 /**
  * Optional disambiguators for a locator that names more than one binding (for
@@ -99,6 +120,13 @@ interface QualifiedReference {
   isFullChain: boolean;
 }
 
+interface DestructuringAccess {
+  /** Top-level property names read from the namespace object. */
+  names: string[];
+  /** A rest or computed property makes the read names unknowable. */
+  dynamic: boolean;
+}
+
 interface Reference {
   name: string;
   space: SymbolSpace;
@@ -106,6 +134,8 @@ interface Reference {
   start: number;
   end: number;
   qualified: QualifiedReference | null;
+  /** Set when this reference initializes an object destructuring pattern. */
+  destructuring?: DestructuringAccess;
 }
 
 class LexicalScope {
@@ -157,6 +187,167 @@ function firstQualifiedSegment(name: string): string {
 
 function isIdentifierName(name: string): boolean {
   return /^[A-Za-z_$][A-Za-z0-9_$]*$/.test(name);
+}
+
+const IDENTIFIER_START = /[$_\p{ID_Start}]/u;
+const IDENTIFIER_PART = /[$_\u200C\u200D\p{ID_Continue}]/u;
+
+/** Skip whitespace and comments between two tokens. */
+function skipTrivia(source: string, offset: number): number {
+  let index = offset;
+  for (;;) {
+    const char = source[index];
+    if (char === undefined) {
+      return index;
+    }
+    if (
+      char === " " ||
+      char === "\t" ||
+      char === "\n" ||
+      char === "\r" ||
+      char === "\f" ||
+      char === "\v"
+    ) {
+      index += 1;
+      continue;
+    }
+    if (char === "/" && source[index + 1] === "/") {
+      index += 2;
+      while (index < source.length && source[index] !== "\n") {
+        index += 1;
+      }
+      continue;
+    }
+    if (char === "/" && source[index + 1] === "*") {
+      index += 2;
+      while (index < source.length && !(source[index] === "*" && source[index + 1] === "/")) {
+        index += 1;
+      }
+      index = Math.min(source.length, index + 2);
+      continue;
+    }
+    return index;
+  }
+}
+
+function readIdentifierAt(source: string, offset: number): string {
+  const first = source[offset];
+  if (first === undefined || !IDENTIFIER_START.test(first)) {
+    return "";
+  }
+  let index = offset + 1;
+  for (;;) {
+    const char = source[index];
+    if (char === undefined || !IDENTIFIER_PART.test(char)) {
+      break;
+    }
+    index += 1;
+  }
+  return source.slice(offset, index);
+}
+
+type MemberSuffix =
+  | { kind: "member"; name: string; start: number; end: number }
+  | { kind: "computed"; start: number; end: number }
+  | { kind: "unsupported"; start: number; end: number; text: string }
+  | { kind: "none" };
+
+/**
+ * Read the accessor that directly follows an identifier. `.member` and
+ * `?.member` are statically renameable; any computed form (`[`, `?.[`) is
+ * reported as unsupported because the property is not provably the renamed
+ * export. Whitespace, comments, and non-null assertions between the base and
+ * the accessor are allowed.
+ */
+function scanMemberSuffix(source: string, offset: number): MemberSuffix {
+  let index = offset;
+  for (;;) {
+    index = skipTrivia(source, index);
+    if (source[index] === "!") {
+      index += 1;
+      continue;
+    }
+    break;
+  }
+  const char = source[index];
+  if (char === "[") {
+    return { kind: "computed", start: offset, end: index + 1 };
+  }
+  let optional = false;
+  if (char === "?" && source[index + 1] === ".") {
+    optional = true;
+    index += 2;
+  } else if (char === ".") {
+    index += 1;
+  } else {
+    return { kind: "none" };
+  }
+  index = skipTrivia(source, index);
+  if (optional && source[index] === "[") {
+    return { kind: "computed", start: offset, end: index + 1 };
+  }
+  const name = readIdentifierAt(source, index);
+  if (name === "") {
+    // An escaped identifier (or another member spelling) is a real access we
+    // cannot compare textually; refuse it instead of leaving it stale. An
+    // optional call (`ns?.()`) or private name is not a public member edge.
+    if (source[index] === "\\") {
+      return {
+        kind: "unsupported",
+        start: offset,
+        end: Math.min(source.length, index + 1),
+        text: source.slice(offset, Math.min(source.length, index + 1)),
+      };
+    }
+    return { kind: "none" };
+  }
+  return { kind: "member", name, start: index, end: index + name.length };
+}
+
+/** The top-level property names an object destructuring pattern reads. */
+function destructuringAccess(pattern: ObjectPattern): DestructuringAccess {
+  const names: string[] = [];
+  let dynamic = false;
+  for (const property of pattern.properties) {
+    if (property.computed || property.rest) {
+      dynamic = true;
+      continue;
+    }
+    const key = property.key;
+    if (key !== null) {
+      if (key.kind === "Identifier") {
+        names.push(key.name);
+      } else if (key.kind === "StringLiteral") {
+        names.push(key.value);
+      } else {
+        dynamic = true;
+      }
+    } else if (property.binding.kind === "Identifier") {
+      names.push(property.binding.name);
+    } else {
+      dynamic = true;
+    }
+  }
+  return { names, dynamic };
+}
+
+/** Unwrap transparent expressions around a destructuring initializer. */
+function destructuringInitializer(expression: Expression): Identifier | null {
+  let current = expression;
+  for (;;) {
+    switch (current.kind) {
+      case "Identifier":
+        return current;
+      case "ParenthesizedExpression":
+      case "NonNullExpression":
+      case "AsExpression":
+      case "TypeAssertion":
+        current = current.expression;
+        continue;
+      default:
+        return null;
+    }
+  }
 }
 
 function kindMatches(binding: Binding, kind: string): boolean {
@@ -812,7 +1003,35 @@ class RenameModel {
         this.visitType(declarator.type, scope, "type");
       }
       if (declarator.initializer !== null) {
+        const firstReference = this.references.length;
         this.visitExpression(declarator.initializer, scope);
+        if (declarator.name.kind === "ObjectPattern") {
+          this.markDestructuring(declarator.initializer, declarator.name, firstReference);
+        }
+      }
+    }
+  }
+
+  private markDestructuring(
+    initializer: Expression,
+    pattern: ObjectPattern,
+    firstReference: number,
+  ): void {
+    const target = destructuringInitializer(initializer);
+    if (target === null) {
+      return;
+    }
+    const access = destructuringAccess(pattern);
+    for (let index = firstReference; index < this.references.length; index += 1) {
+      const reference = this.references[index];
+      if (
+        reference !== undefined &&
+        reference.qualified === null &&
+        reference.start === target.start &&
+        reference.end === target.end
+      ) {
+        reference.destructuring = access;
+        return;
       }
     }
   }
@@ -1066,7 +1285,11 @@ class RenameModel {
         this.visitType(parameter.type, scope, "type");
       }
       if (parameter.initializer !== null) {
+        const firstReference = this.references.length;
         this.visitExpression(parameter.initializer, scope);
+        if (parameter.name.kind === "ObjectPattern") {
+          this.markDestructuring(parameter.initializer, parameter.name, firstReference);
+        }
       }
       for (const decorator of parameter.decorators ?? []) {
         this.visitExpression(decorator, scope);
@@ -1351,6 +1574,14 @@ class RenameModel {
 
     // An arbitrary receiver (call result, computed access, etc.) is not
     // type-resolved; walk it for local references but do not guess members.
+    // Re-dispatching the same member expression here would recurse forever.
+    if (current.kind === "MemberExpression") {
+      this.visitExpression(current.object, scope);
+      if (current.computed) {
+        this.visitExpression(current.property, scope);
+      }
+      return;
+    }
     this.visitExpression(current, scope);
   }
 
@@ -1601,6 +1832,100 @@ class RenameModel {
     }
   }
 
+  /**
+   * Find direct `local.member` accesses that provably resolve to an imported
+   * namespace/import-equals binding, plus the computed/dynamic shapes a rename
+   * cannot update. `local` must be the lexical import binding; a shadowing
+   * local/parameter resolves to a different binding and is skipped.
+   */
+  scanNamespaceMembers(local: string, rename: { from: string; to: string }): NamespaceMemberScan {
+    const targets = this.findTargets({ path: this.fileName, name: local, kind: "import" }, {});
+    if (targets.length !== 1) {
+      return {
+        edits: [],
+        unsupported: [],
+        diagnostics:
+          targets.length === 0
+            ? `cannot resolve the imported namespace binding \`${local}\``
+            : `imported namespace binding \`${local}\` is ambiguous`,
+      };
+    }
+    const target = targets[0];
+    if (target === undefined) {
+      return {
+        edits: [],
+        unsupported: [],
+        diagnostics: `cannot resolve the imported namespace binding \`${local}\``,
+      };
+    }
+
+    const edits = new Map<string, RenameEdit>();
+    const unsupported = new Map<string, NamespaceMemberUnsupported>();
+    const addUnsupported = (start: number, end: number, message: string): void => {
+      unsupported.set(`${start}:${end}`, { start, end, message });
+    };
+
+    for (const reference of this.references) {
+      if (reference.qualified !== null || reference.name !== local) {
+        continue;
+      }
+      let binding = resolveBinding(reference.scope, reference.name, reference.space);
+      if (binding === null && reference.space === "type") {
+        // A value namespace import/import-equals is usable in a type position;
+        // the model records only its value-space binding.
+        binding = resolveBinding(reference.scope, reference.name, "value");
+      }
+      if (binding !== target) {
+        continue;
+      }
+
+      const suffix = scanMemberSuffix(this.source, reference.end);
+      switch (suffix.kind) {
+        case "member":
+          if (suffix.name === rename.from) {
+            edits.set(`${suffix.start}:${suffix.end}`, {
+              start: suffix.start,
+              end: suffix.end,
+              text: rename.to,
+            });
+          }
+          break;
+        case "computed":
+          addUnsupported(
+            reference.start,
+            suffix.end,
+            `computed member access \`${local}[...]\` cannot be updated safely`,
+          );
+          break;
+        case "unsupported":
+          addUnsupported(
+            reference.start,
+            suffix.end,
+            `member access \`${local}${suffix.text}\` is not a plain \`.${rename.from}\` edge`,
+          );
+          break;
+        case "none":
+          if (reference.destructuring !== undefined) {
+            const access = reference.destructuring;
+            if (access.dynamic || access.names.includes(rename.from)) {
+              addUnsupported(
+                reference.start,
+                reference.end,
+                `destructuring from \`${local}\` cannot be updated safely`,
+              );
+            }
+          }
+          break;
+      }
+    }
+
+    return {
+      edits: [...edits.values()].sort((left, right) => left.start - right.start),
+      unsupported: [...unsupported.values()].sort((left, right) => left.start - right.start),
+      diagnostics: null,
+    };
+  }
+
   findTargets(locator: Locator, options: RenameOptions): Binding[] {
     if (locator.path !== "" && locator.path !== this.fileName) {
       return [];
@@ -1654,6 +1979,25 @@ class RenameModel {
   setFileName(fileName: string): void {
     this.fileName = fileName;
   }
+}
+
+/**
+ * Scan one imported namespace local (`import * as ns` or a direct relative
+ * `import ns = require(...)`) for member accesses of a renamed export.
+ *
+ * Static `.member`/`?.member` accesses produce property-only edits. Computed
+ * accesses, escaped member spellings, and object destructuring that reads the
+ * renamed property produce `unsupported` edges instead of a silent skip.
+ */
+export function scanNamespaceMemberEdits(
+  program: Program,
+  fileName: string,
+  local: string,
+  rename: { from: string; to: string },
+): NamespaceMemberScan {
+  const model = new RenameModel(program);
+  model.setFileName(fileName);
+  return model.scanNamespaceMembers(local, rename);
 }
 
 function hasIdentifier(identifiers: readonly Identifier[], candidate: Identifier): boolean {

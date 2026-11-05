@@ -1,7 +1,7 @@
 ---
 id: 85
 title: "Update namespace and import-equals references on cross-file rename"
-status: todo
+status: done
 priority: medium
 milestone: null
 parent: null

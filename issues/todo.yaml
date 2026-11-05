@@ -2,14 +2,6 @@
 # rewrites it; `add` appends; other writes keep it. `check` enforces it.
 # A dep, and every child of an umbrella, must be listed before its dependent.
 
-- id: 85
-  title: "Update namespace and import-equals references on cross-file rename"
-  status: todo
-  priority: medium
-  milestone: null
-  parent: null
-  deps: []
-  file: 0085-update-namespace-and-import-equals-references-on-cross-file-rename.md
 - id: 86
   title: "Resolve path aliases and barrel re-export chains on cross-file rename"
   status: todo

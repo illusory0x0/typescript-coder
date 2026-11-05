@@ -1,7 +1,8 @@
 import { posix } from "node:path";
 import { Parser } from "./parser";
-import type { BindingName, Program, Statement } from "./parser";
-import { resolveLocalRename } from "./rename";
+import type { BindingName, Expression, Program, Statement } from "./parser";
+import { sourceLineAt } from "./dsl-diagnostics";
+import { resolveLocalRename, scanNamespaceMemberEdits } from "./rename";
 import type { RenameEdit, RenameOptions, RenameTarget } from "./rename";
 import type { Locator } from "./utility";
 
@@ -95,6 +96,44 @@ function resolveModuleFile(
     }
   }
   return null;
+}
+
+/**
+ * The specifier of a direct `require("./relative")` module reference, or null
+ * for every other `import =` shape. Type arguments, optional calls, spreads,
+ * extra arguments, `as`, and property access are deliberately not followed.
+ */
+function directRequireSpecifier(moduleReference: Expression): string | null {
+  if (moduleReference.kind !== "CallExpression" || moduleReference.optional) {
+    return null;
+  }
+  if (moduleReference.typeArguments !== undefined) {
+    return null;
+  }
+  if (moduleReference.callee.kind !== "Identifier" || moduleReference.callee.name !== "require") {
+    return null;
+  }
+  if (moduleReference.arguments.length !== 1) {
+    return null;
+  }
+  const argument = moduleReference.arguments[0];
+  return argument !== undefined && argument.kind === "StringLiteral" ? argument.value : null;
+}
+
+/** One workspace rename failure with the offending importer line/column. */
+function memberDiagnostic(
+  source: string,
+  importerPath: string,
+  rename: { from: string; to: string },
+  offset: number,
+  message: string,
+): string {
+  const location = sourceLineAt(source, offset);
+  return (
+    `cannot rename \`${rename.from}\` to \`${rename.to}\` in ${importerPath} at ` +
+    `${location.line}:${location.column}: ${message}\n` +
+    `source: ${location.text.trim()}`
+  );
 }
 
 interface PublicNameEntry {
@@ -205,12 +244,18 @@ function scanImporter(
     edits.set(`${edit.start}:${edit.end}`, edit);
   };
   const renamedImportLocals = new Set<string>();
+  const namespaceLocals = new Set<string>();
+  const unsupportedImportEquals: Array<{ local: string; start: number }> = [];
   const sourceMatchesTarget = (specifier: string): boolean =>
     resolveModuleFile(importerPath, specifier, deps) === targetPath;
 
   for (const statement of program.body) {
     if (statement.kind === "ImportDeclaration") {
-      if (!sourceMatchesTarget(statement.source.value)) {
+      const matchesTarget = sourceMatchesTarget(statement.source.value);
+      if (statement.namespaceImport !== null && matchesTarget) {
+        namespaceLocals.add(statement.namespaceImport.name);
+      }
+      if (!matchesTarget) {
         continue;
       }
       for (const specifier of statement.namedImports) {
@@ -236,6 +281,18 @@ function scanImporter(
         } else {
           add({ start: specifier.imported.start, end: specifier.imported.end, text: next });
         }
+      }
+      continue;
+    }
+    if (statement.kind === "ImportEqualsDeclaration") {
+      const specifier = directRequireSpecifier(statement.moduleReference);
+      if (specifier === null) {
+        // Not a direct `require("./relative")`: it may alias another namespace
+        // or a transformed value. Follow it only far enough to fail when it
+        // would otherwise leave a renamed member reference stale.
+        unsupportedImportEquals.push({ local: statement.name.name, start: statement.start });
+      } else if (sourceMatchesTarget(specifier)) {
+        namespaceLocals.add(statement.name.name);
       }
       continue;
     }
@@ -296,6 +353,62 @@ function scanImporter(
     };
   }
 
+  for (const local of namespaceLocals) {
+    const scan = scanNamespaceMemberEdits(program, importerPath, local, rename);
+    if (scan.diagnostics !== null) {
+      return {
+        edits: [],
+        diagnostics: `cannot rename \`${rename.from}\` to \`${rename.to}\` in ${importerPath}: ${scan.diagnostics}`,
+      };
+    }
+    const unsupported = scan.unsupported[0];
+    if (unsupported !== undefined) {
+      return {
+        edits: [],
+        diagnostics: memberDiagnostic(
+          source,
+          importerPath,
+          rename,
+          unsupported.start,
+          unsupported.message,
+        ),
+      };
+    }
+    for (const edit of scan.edits) {
+      add(edit);
+    }
+  }
+
+  for (const entry of unsupportedImportEquals) {
+    const scan = scanNamespaceMemberEdits(program, importerPath, entry.local, rename);
+    if (scan.diagnostics !== null) {
+      return {
+        edits: [],
+        diagnostics: `cannot rename \`${rename.from}\` to \`${rename.to}\` in ${importerPath}: ${scan.diagnostics}`,
+      };
+    }
+    const unsupported = scan.unsupported[0];
+    const edit = scan.edits[0];
+    if (unsupported === undefined && edit === undefined) {
+      // No reference to the renamed member through this local; leave the
+      // declaration alone.
+      continue;
+    }
+    const declarationLine = sourceLineAt(source, entry.start).text.trim();
+    return {
+      edits: [],
+      diagnostics: memberDiagnostic(
+        source,
+        importerPath,
+        rename,
+        unsupported?.start ?? edit?.start ?? entry.start,
+        `unsupported \`import =\` declaration for \`${entry.local}\` (${declarationLine}) ` +
+          `is not a direct relative \`require(...)\`; refusing to leave ` +
+          `\`${entry.local}.${rename.from}\` stale`,
+      ),
+    };
+  }
+
   return { edits: [...edits.values()], diagnostics: null };
 }
 
@@ -305,8 +418,12 @@ function scanImporter(
  * of every workspace file that resolves back to that declaration.
  *
  * Relative module specifiers are resolved through the supplied `fileExists` and
- * `isSafePath` callbacks; path aliases, default/namespace imports, `import =`,
- * dynamic imports, and barrel/re-export chains are out of scope.
+ * `isSafePath` callbacks. Named imports/re-exports, namespace-import member
+ * accesses, and direct relative `import = require` member accesses are followed;
+ * path aliases, default/dynamic imports, barrel/re-export chains, computed or
+ * dynamic member access, destructuring that reads the renamed member, and
+ * non-direct `import =` shapes are out of scope and fail rather than silently
+ * leaving a stale reference.
  */
 export function resolveWorkspaceRename(
   source: string,

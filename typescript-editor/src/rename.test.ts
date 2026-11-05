@@ -770,4 +770,283 @@ describe("resolveWorkspaceRename", () => {
       ].join("\n"),
     );
   });
+
+  test("updates namespace-import member calls atomically", () => {
+    const files = {
+      "src/a.ts": ['import * as ns from "./b";', "export const n = ns.helper();", ""].join("\n"),
+      "src/b.ts": TARGET,
+    };
+    const result = workspaceRename(files, "src/b.ts", "helper", "function", "helper", "helper2");
+    expect(result.ok).toBe(true);
+    if (!result.ok) {
+      return;
+    }
+    expect(result.files.map((file) => file.path).sort()).toEqual(["src/a.ts", "src/b.ts"]);
+    const output = applyWorkspaceRename(files, result);
+    expect(output["src/a.ts"]).toBe(
+      ['import * as ns from "./b";', "export const n = ns.helper2();", ""].join("\n"),
+    );
+    expect(output["src/b.ts"]).toContain("export function helper2");
+  });
+
+  test("updates optional-chaining namespace member calls", () => {
+    const files = {
+      "src/a.ts": ['import * as ns from "./b";', "export const n = ns?.helper();", ""].join("\n"),
+      "src/b.ts": TARGET,
+    };
+    const result = workspaceRename(files, "src/b.ts", "helper", "function", "helper", "helper2");
+    const output = applyWorkspaceRename(files, result);
+    expect(output["src/a.ts"]).toBe(
+      ['import * as ns from "./b";', "export const n = ns?.helper2();", ""].join("\n"),
+    );
+  });
+
+  test("updates only the renamed member of a nested member expression", () => {
+    const files = {
+      "src/a.ts": [
+        'import * as ns from "./b";',
+        "export const a = ns.helper.call(null);",
+        "export const b = ns /* keep */ . helper.deep;",
+        "export const c = ns.other.helper;",
+        "",
+      ].join("\n"),
+      "src/b.ts": [
+        "export const helper = { call: () => 1, deep: 2 };",
+        "export const other = {};",
+        "",
+      ].join("\n"),
+    };
+    const result = workspaceRename(files, "src/b.ts", "helper", "const", "helper", "helper2");
+    const output = applyWorkspaceRename(files, result);
+    expect(output["src/a.ts"]).toBe(
+      [
+        'import * as ns from "./b";',
+        "export const a = ns.helper2.call(null);",
+        "export const b = ns /* keep */ . helper2.deep;",
+        "export const c = ns.other.helper;",
+        "",
+      ].join("\n"),
+    );
+  });
+
+  test("updates an aliased namespace local without renaming the local", () => {
+    const files = {
+      "src/a.ts": ['import * as lib from "./b";', "export const n = lib.helper();", ""].join("\n"),
+      "src/b.ts": TARGET,
+    };
+    const result = workspaceRename(files, "src/b.ts", "helper", "function", "helper", "helper2");
+    const output = applyWorkspaceRename(files, result);
+    expect(output["src/a.ts"]).toBe(
+      ['import * as lib from "./b";', "export const n = lib.helper2();", ""].join("\n"),
+    );
+  });
+
+  test("combines namespace and named import updates in one file", () => {
+    const files = {
+      "src/a.ts": [
+        'import * as ns from "./b";',
+        'import { helper } from "./b";',
+        "export const nested = ns.helper();",
+        "export const direct = helper();",
+        "",
+      ].join("\n"),
+      "src/b.ts": TARGET,
+    };
+    const result = workspaceRename(files, "src/b.ts", "helper", "function", "helper", "helper2");
+    const output = applyWorkspaceRename(files, result);
+    expect(output["src/a.ts"]).toBe(
+      [
+        'import * as ns from "./b";',
+        'import { helper2 } from "./b";',
+        "export const nested = ns.helper2();",
+        "export const direct = helper2();",
+        "",
+      ].join("\n"),
+    );
+  });
+
+  test("updates a direct import-equals member call", () => {
+    const files = {
+      "src/a.ts": ['import lib = require("./b");', "export const n = lib.helper();", ""].join("\n"),
+      "src/b.ts": TARGET,
+    };
+    const result = workspaceRename(files, "src/b.ts", "helper", "function", "helper", "helper2");
+    const output = applyWorkspaceRename(files, result);
+    expect(output["src/a.ts"]).toBe(
+      ['import lib = require("./b");', "export const n = lib.helper2();", ""].join("\n"),
+    );
+  });
+
+  test("updates namespace type references and typeof member references", () => {
+    const target = [
+      "export function helper(): number {",
+      "  return 1;",
+      "}",
+      "export interface Helper {",
+      "  value: number;",
+      "}",
+      "",
+    ].join("\n");
+    const files = {
+      "src/a.ts": [
+        'import * as ns from "./b";',
+        "export type T = ns.Helper;",
+        "export const n = typeof ns.helper;",
+        "",
+      ].join("\n"),
+      "src/b.ts": target,
+    };
+
+    const typeResult = workspaceRename(
+      files,
+      "src/b.ts",
+      "Helper",
+      "interface",
+      "Helper",
+      "Helper2",
+    );
+    const typeOutput = applyWorkspaceRename(files, typeResult);
+    expect(typeOutput["src/a.ts"]).toContain("export type T = ns.Helper2;");
+    expect(typeOutput["src/a.ts"]).toContain("export const n = typeof ns.helper;");
+
+    const valueResult = workspaceRename(
+      files,
+      "src/b.ts",
+      "helper",
+      "function",
+      "helper",
+      "helper2",
+    );
+    const valueOutput = applyWorkspaceRename(files, valueResult);
+    expect(valueOutput["src/a.ts"]).toContain("export type T = ns.Helper;");
+    expect(valueOutput["src/a.ts"]).toContain("export const n = typeof ns.helper2;");
+  });
+
+  test("ignores a shadowing local or parameter of the namespace name", () => {
+    const files = {
+      "src/a.ts": [
+        'import * as ns from "./b";',
+        "function inner(ns: { helper(): number }): number {",
+        "  return ns.helper();",
+        "}",
+        "export const n = ns.helper();",
+        "",
+      ].join("\n"),
+      "src/b.ts": TARGET,
+    };
+    const result = workspaceRename(files, "src/b.ts", "helper", "function", "helper", "helper2");
+    expect(result.ok).toBe(true);
+    if (!result.ok) {
+      return;
+    }
+    const output = applyWorkspaceRename(files, result);
+    expect(output["src/a.ts"]).toBe(
+      [
+        'import * as ns from "./b";',
+        "function inner(ns: { helper(): number }): number {",
+        "  return ns.helper();",
+        "}",
+        "export const n = ns.helper2();",
+        "",
+      ].join("\n"),
+    );
+  });
+
+  test("fails on a computed namespace access instead of leaving it stale", () => {
+    for (const expression of ['ns["helper"]', "ns[key]"]) {
+      const files = {
+        "src/a.ts": [
+          'import * as ns from "./b";',
+          'const key = "helper";',
+          `export const n = ${expression};`,
+          "",
+        ].join("\n"),
+        "src/b.ts": TARGET,
+      };
+      const result = workspaceRename(files, "src/b.ts", "helper", "function", "helper", "helper2");
+      expect(result.ok).toBe(false);
+      if (result.ok) {
+        continue;
+      }
+      expect(result.path).toBe("src/a.ts");
+      expect(result.diagnostics).toContain("computed");
+      expect(result.diagnostics).toContain("src/a.ts");
+      expect(result.diagnostics).toContain("ns[");
+      expect(result.diagnostics).toContain("source:");
+    }
+  });
+
+  test("fails on a computed import-equals access", () => {
+    const files = {
+      "src/a.ts": ['import lib = require("./b");', 'export const n = lib["helper"];', ""].join(
+        "\n",
+      ),
+      "src/b.ts": TARGET,
+    };
+    const result = workspaceRename(files, "src/b.ts", "helper", "function", "helper", "helper2");
+    expect(result.ok).toBe(false);
+    if (result.ok) {
+      return;
+    }
+    expect(result.path).toBe("src/a.ts");
+    expect(result.diagnostics).toContain("computed");
+    expect(result.diagnostics).toContain('lib["helper"]');
+  });
+
+  test("fails on an unsupported import-equals alias of a namespace", () => {
+    const files = {
+      "src/a.ts": [
+        'import * as ns from "./b";',
+        "import lib = ns;",
+        "export const n = lib.helper();",
+        "",
+      ].join("\n"),
+      "src/b.ts": TARGET,
+    };
+    const result = workspaceRename(files, "src/b.ts", "helper", "function", "helper", "helper2");
+    expect(result.ok).toBe(false);
+    if (result.ok) {
+      return;
+    }
+    expect(result.path).toBe("src/a.ts");
+    expect(result.diagnostics).toContain("import =");
+    expect(result.diagnostics).toContain("lib.helper");
+    expect(result.diagnostics).toContain("src/a.ts");
+  });
+
+  test("leaves a direct import-equals from another module untouched", () => {
+    const files = {
+      "src/a.ts": ['import lib = require("./c");', "export const n = lib.helper();", ""].join("\n"),
+      "src/b.ts": TARGET,
+      "src/c.ts": TARGET,
+    };
+    const result = workspaceRename(files, "src/b.ts", "helper", "function", "helper", "helper2");
+    expect(result.ok).toBe(true);
+    if (!result.ok) {
+      return;
+    }
+    expect(result.files.map((file) => file.path)).toEqual(["src/b.ts"]);
+    const output = applyWorkspaceRename(files, result);
+    expect(output["src/a.ts"]).toBe(files["src/a.ts"]);
+  });
+
+  test("fails on destructuring that reads the renamed namespace member", () => {
+    const files = {
+      "src/a.ts": [
+        'import * as ns from "./b";',
+        "const { helper } = ns;",
+        "const { other } = ns;",
+        "",
+      ].join("\n"),
+      "src/b.ts": TARGET,
+    };
+    const result = workspaceRename(files, "src/b.ts", "helper", "function", "helper", "helper2");
+    expect(result.ok).toBe(false);
+    if (result.ok) {
+      return;
+    }
+    expect(result.path).toBe("src/a.ts");
+    expect(result.diagnostics).toContain("destructuring");
+    expect(result.diagnostics).toContain("src/a.ts");
+  });
 });

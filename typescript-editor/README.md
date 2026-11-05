@@ -44,8 +44,9 @@ is at its best when an agent needs a small, auditable edit against a known
 workspace:
 
 - **Semantic renames.** A top-level named export rename follows relative named
-  imports and re-exports, preserves aliases, and rejects duplicate-export
-  collisions instead of guessing from text.
+  imports and re-exports plus static namespace/`import = require` member
+  accesses, preserves aliases, and rejects duplicate-export collisions instead
+  of guessing from text.
 - **Preview/apply parity.** `--dry-run` runs the same resolve/format/gate/
   preflight pipeline as `--write`, lists every affected path, and leaves the
   workspace byte-identical. Add `--diff` to render a per-file unified diff from
@@ -296,13 +297,22 @@ top-level declaration that the target file exports as a named export also
 updates workspace files that import or re-export it through a relative
 specifier: unaliased named imports (and their local uses), aliased imports (only
 the imported name), and named re-exports (the source-side name; an alias keeps
-its public name). The rename is rejected if the target or an affected importer
-would export the new name twice, and a dry run lists every affected file.
+its public name). A namespace import (`import * as ns from "./b"`) and a direct
+relative `import lib = require("./b")` also update their static member accesses
+(`ns.member`, `ns?.member`, `lib.member`): only the member property is renamed,
+and a base that resolves to a shadowing local or parameter is skipped. The
+rename is rejected if the target or an affected importer would export the new
+name twice, and a dry run lists every affected file.
 
-Cross-file renames do not follow default or namespace imports, `import =`, or
-dynamic imports, and do not resolve path aliases or traverse barrel/re-export
-chains. The target file's public export name must change for importers to be
-updated, so a binding exported only under an alias stays a same-file rename.
+Computed member access (`ns["member"]`, `ns[key]`), escaped member spellings,
+object destructuring that reads the renamed member, and non-direct `import =`
+shapes (`import lib = ns`, `require("./b").default`, property access, `as`, or
+extra arguments) fail at the `address` stage instead of leaving a stale
+reference. A destructuring or `import =` edge that does not mention the renamed
+member is left untouched. Cross-file renames do not follow default or dynamic
+imports, and do not resolve path aliases or traverse barrel/re-export chains.
+The target file's public export name must change for importers to be updated, so
+a binding exported only under an alias stays a same-file rename.
 
 ### Workspace and path safety
 

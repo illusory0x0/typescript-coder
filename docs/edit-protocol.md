@@ -454,18 +454,27 @@ resolves to the declaration file, and every named re-export from it, is updated
 atomically with the declaration. An unaliased import renames its local binding
 and same-file uses; an aliased import changes only the imported name; a
 re-export changes the source-side name and preserves its alias, so an aliased
-public name stays stable. `export *` contributes no edge.
+public name stays stable. `export *` contributes no edge. A namespace import
+(`import * as ns from "./b"`) and a direct relative `import lib = require("./b")`
+also contribute static member accesses (`ns.member`, `ns?.member`,
+`lib.member`); only the member property is renamed, and a base that resolves to a
+shadowing local or parameter is skipped. Computed access (`ns["member"]`,
+`ns[key]`), escaped member spellings, destructuring that reads the member, and
+non-direct `import =` shapes fail at `address` instead of leaving a stale
+reference; a destructuring or `import =` edge that does not mention the renamed
+member stays untouched.
 
 Object-literal member targets are **not renameable** (an `address` failure);
 computed member names and static blocks have no name-addressable declaration to
 rename. A same-file rename of an ordinary binding, namespace, class, enum,
 interface, type alias, enum member, class field/method, or interface/type-literal
 member is supported. A cross-file rename only follows direct, relative named
-import/re-export edges: it does not resolve path aliases, traverse barrels or
-re-export chains, or touch default/namespace imports, `import = require`, or
-dynamic imports. The target must be an unqualified top-level declaration whose
-export name changes; nested and alias-only exports stay same-file. A rename is
-not a full type-checker rename.
+import/re-export edges, namespace-import member accesses, and direct relative
+`import = require` member accesses: it does not resolve path aliases, traverse
+barrels or re-export chains, follow default or dynamic imports, or follow
+non-direct `import =` shapes. The target must be an unqualified top-level
+declaration whose export name changes; nested and alias-only exports stay
+same-file. A rename is not a full type-checker rename.
 
 A rename failure (unresolved or ambiguous address, invalid new name, or a
 collision at the same scope/qualified path) is reported at the `address` stage
