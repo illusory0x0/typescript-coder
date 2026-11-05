@@ -129,12 +129,7 @@ describe("tsed flag protocol", () => {
 
   test("--read is repeatable", () => {
     const workspace = makeWorkspace({ "src/other.ts": "export const other = true;\n" });
-    const result = run(workspace, [
-      "--read",
-      "src/helper.ts",
-      "--read",
-      "src/other.ts",
-    ]);
+    const result = run(workspace, ["--read", "src/helper.ts", "--read", "src/other.ts"]);
     expect(result.status).toBe(0);
     expect(result.stdout).toContain("src/helper.ts (whole file");
     expect(result.stdout).toContain("src/other.ts (whole file");
@@ -150,7 +145,7 @@ describe("tsed flag protocol", () => {
     expect(result.stderr).toBe("");
   });
 
-  test("--replace-file --write applies a patch relative to the spawn cwd", () => {
+  test("--replace-file --write applies a patch relative to the workspace root", () => {
     const workspace = makeWorkspace({ "patch.txt": ANSWER_TWO });
     const result = run(workspace, [
       "--select",
@@ -226,25 +221,79 @@ describe("tsed flag protocol", () => {
     expect(read(join(workspace, "src/helper.ts"))).toBe(rewritten);
   });
 
-  test("-C selects the workspace and payload files stay relative to the spawn cwd", () => {
-    const workspace = makeWorkspace({ "patch.txt": ANSWER_TWO });
+  test("-C selects the workspace for reads and edits", () => {
+    const workspace = makeWorkspace();
     const result = run(workspace, ["-C", "src", "--read", "helper.ts"]);
     expect(result.status).toBe(0);
     expect(result.stdout).toContain("helper.ts (whole file");
+  });
 
-    const applied = run(workspace, [
+  test("payload files resolve from the -C workspace root", () => {
+    const parent = makeWorkspace({
+      "work/src/helper.ts": HELPER,
+      "work/patch.txt": ANSWER_TWO,
+      "work/absolute.txt": "export function answer(): number {\n  return 3;\n}\n",
+      "work/content.txt": "export const workspaceContent = true;\n",
+      "patch.txt": "export const wrongPatch = true;\n",
+      "content.txt": "export const wrongContent = true;\n",
+    });
+
+    const applied = run(parent, [
       "-C",
-      "src",
+      "work",
       "--select",
       "answer",
       "--in",
-      "helper.ts",
+      "src/helper.ts",
       "--replace-file",
       "patch.txt",
       "--write",
     ]);
     expect(applied.status).toBe(0);
-    expect(read(join(workspace, "src/helper.ts"))).toBe(AFTER_REPLACE);
+    expect(read(join(parent, "work/src/helper.ts"))).toBe(AFTER_REPLACE);
+
+    const absolute = run(parent, [
+      "-C",
+      "work",
+      "--select",
+      "answer",
+      "--in",
+      "src/helper.ts",
+      "--replace-file",
+      join(parent, "work/absolute.txt"),
+      "--write",
+    ]);
+    expect(absolute.status).toBe(0);
+    expect(read(join(parent, "work/src/helper.ts"))).toBe(ANSWER_THREE);
+
+    const rewritten = run(parent, [
+      "-C",
+      "work",
+      "--rewrite",
+      "src/helper.ts",
+      "--content-file",
+      "content.txt",
+      "--write",
+    ]);
+    expect(rewritten.status).toBe(0);
+    expect(read(join(parent, "work/src/helper.ts"))).toBe(
+      "export const workspaceContent = true;\n",
+    );
+  });
+
+  test("a missing payload file reports the resolved workspace path", () => {
+    const workspace = makeWorkspace();
+    const result = run(workspace, [
+      "--select",
+      "answer",
+      "--in",
+      "src/helper.ts",
+      "--replace-file",
+      "missing.txt",
+      "--write",
+    ]);
+    expect(result.status).toBe(2);
+    expect(result.stderr).toContain(join(workspace, "missing.txt"));
   });
 });
 

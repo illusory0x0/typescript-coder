@@ -71,8 +71,9 @@ replacement is the whole selected declaration. `--match` narrows the
 replacement to the matched snippet; `--pick` narrows it to a line/column range
 and requires a replacement. One `--select` group is allowed per invocation; use
 `dsl` or `json` for batch replies. `--replace-file` and `--rename` are mutually
-exclusive. `--replace-file` and `--content-file` are read from the process
-working directory, not from `--directory`.
+exclusive. Relative `--replace-file` and `--content-file` paths resolve against
+the `--directory` workspace root (the process cwd when `--directory` is
+omitted); absolute paths are used as-is.
 
 The stdin formats:
 

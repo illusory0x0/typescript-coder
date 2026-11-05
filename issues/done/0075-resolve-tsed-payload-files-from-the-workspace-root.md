@@ -1,7 +1,7 @@
 ---
 id: 75
 title: "Resolve tsed payload files from the workspace root"
-status: todo
+status: done
 priority: medium
 milestone: null
 parent: 73
@@ -50,3 +50,4 @@ just typecheck && just test
   files outside the workspace remain allowed; workspace path-safety applies only
   to edit targets.
 - `--directory` itself is still resolved from the process cwd when relative.
+- Payload files now resolve through resolvePayloadPath(): absolute paths pass through, relative --replace-file/--content-file paths resolve against the resolved -C/--directory root (or process cwd when omitted). main resolves cwd once and passes it to buildPayload; read errors report the resolved path. Replaced the old spawn-cwd assertion with tests that spawn from a parent directory with -C work and use conflicting root-level payload files, covering relative replace, absolute replace, relative content, and missing-file diagnostics. README documents the rule. Verified: bun test typescript-editor/src/cli.test.ts (21 pass), just typecheck, just test (editor 873, harness 703, scripts 16, acceptance 9/9), just tsed-check (8 targets up to date).

@@ -1,5 +1,6 @@
 #!/usr/bin/env bun
 import { readFileSync } from "node:fs";
+import { isAbsolute, resolve } from "node:path";
 import { applyEditDsl, readEditDsl } from "./api";
 import type { EditDslApplyResult, EditDslReadResult } from "./api";
 import { EditProtocolError, parseJsonEditRequest, renderEditRequest } from "./protocol";
@@ -28,11 +29,16 @@ function usageFailure(message: string): number {
   return 2;
 }
 
-function readFileArg(path: string, label: string): string {
+function resolvePayloadPath(path: string, workspaceRoot: string): string {
+  return isAbsolute(path) ? path : resolve(workspaceRoot, path);
+}
+
+function readFileArg(path: string, label: string, workspaceRoot: string): string {
+  const resolved = resolvePayloadPath(path, workspaceRoot);
   try {
-    return readFileSync(path, "utf8");
+    return readFileSync(resolved, "utf8");
   } catch (error) {
-    throw new UsageError(`cannot read ${label} ${JSON.stringify(path)}: ${messageOf(error)}`);
+    throw new UsageError(`cannot read ${label} ${JSON.stringify(resolved)}: ${messageOf(error)}`);
   }
 }
 
@@ -73,7 +79,7 @@ function readStdin(format: StdinFormat): string {
   return text;
 }
 
-function renderFlagRequest(values: TsedArgs): string {
+function renderFlagRequest(values: TsedArgs, workspaceRoot: string): string {
   const selectOnly: readonly { flag: string; present: boolean }[] = [
     { flag: "--kind", present: values.kind !== undefined },
     { flag: "--resolve", present: values.resolve !== undefined },
@@ -102,7 +108,7 @@ function renderFlagRequest(values: TsedArgs): string {
     if (values.content_file === undefined) {
       throw new UsageError("--rewrite requires --content-file <FILE>");
     }
-    rewriteContent = readFileArg(values.content_file, "content file");
+    rewriteContent = readFileArg(values.content_file, "content file", workspaceRoot);
   } else if (values.content_file !== undefined) {
     throw new UsageError("--content-file requires --rewrite <PATH>");
   }
@@ -159,7 +165,7 @@ function renderFlagRequest(values: TsedArgs): string {
       selection.rename = values.rename;
     }
     if (values.replace_file !== undefined) {
-      selection.replace = readFileArg(values.replace_file, "replacement file");
+      selection.replace = readFileArg(values.replace_file, "replacement file", workspaceRoot);
     }
     operations.push(selection);
   }
@@ -168,10 +174,10 @@ function renderFlagRequest(values: TsedArgs): string {
   return renderEditRequest(request);
 }
 
-function buildPayload(values: TsedArgs): string {
+function buildPayload(values: TsedArgs, workspaceRoot: string): string {
   const format = values.protocol_format;
   if (format === "flag") {
-    return renderFlagRequest(values);
+    return renderFlagRequest(values, workspaceRoot);
   }
   rejectNativeFlags(values, format);
   const text = readStdin(format);
@@ -221,8 +227,9 @@ async function main(argv: readonly string[]): Promise<number> {
   try {
     const parsed = parse([...argv]);
     const values = parsed.values as unknown as TsedArgs;
-    const payload = buildPayload(values);
-    const options = { cwd: values.directory ?? process.cwd() };
+    const cwd = resolve(values.directory ?? process.cwd());
+    const payload = buildPayload(values, cwd);
+    const options = { cwd };
     if (values.write) {
       const result = await applyEditDsl(payload, options);
       return reportResult(result, true);
