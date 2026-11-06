@@ -1,7 +1,7 @@
 ---
 id: 92
 title: "Allow multiple disjoint edit regions for one declaration"
-status: todo
+status: done
 priority: high
 milestone: null
 parent: null

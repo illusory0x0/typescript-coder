@@ -758,8 +758,10 @@ write or for a targeted `modify`/`create`/`delete`/`rename` edit. A targeted edi
 resets the repeat tracking, and there is no fixed cap.
 
 The hard application guardrail stays: each clause in one reply must resolve to a
-different declaration `(path, symbol, kind)`. Multiple edits to one declaration
-are split across replies, even with different `match`/`pick` spans.
+different declaration `(path, symbol, kind)`, except that multiple `match`/`pick`
+editor clauses may share one declaration when their resolved spans are pairwise
+disjoint. Overlapping spans, a viewer/rename/whole-symbol conflict, and repeated
+creates are rejected; split those edits across replies.
 
 ### 7.2 Applying a reply
 

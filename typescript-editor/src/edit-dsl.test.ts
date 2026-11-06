@@ -307,7 +307,7 @@ describe("resolveEditDslReply (#111)", () => {
     );
   });
 
-  test("two editors on one declaration with distinct match spans are duplicates (#40)", () => {
+  test("two disjoint match editors on one declaration both apply (#92)", () => {
     const source = [
       "export function once(): number {",
       "  const value = 1;",
@@ -334,22 +334,17 @@ describe("resolveEditDslReply (#111)", () => {
       ].join("\n"),
     );
     const result = resolveEditDslReply(selections, deps(source));
-    // The first clause is queued; the second is rejected before its matcher
-    // can run, even though the two spans do not overlap.
-    expect(result.regions).toHaveLength(1);
-    expect(result.failures).toHaveLength(1);
-    const failure = result.failures[0];
-    expect(failure?.index).toBe(1);
-    expect(failure?.stage).toBe("duplicate");
-    expect(failure?.cause).toBeNull();
-    expect(failure?.diagnostics).toContain("stage: duplicate");
-    expect(failure?.diagnostics).toContain(
-      'clause 1 and clause 2 both select the same function "once" in "a.ts"',
-    );
-    expect(failure?.diagnostics).toContain("nothing is written");
+    expect(result.failures).toEqual([]);
+    expect(result.regions).toHaveLength(2);
+    expect(result.regions.map((region) => region.index)).toEqual([0, 1]);
+    expect(result.regions.map((region) => region.text)).toEqual([
+      "const value = 2;",
+      "return value + 1;",
+    ]);
+    expect(result.regions[0]?.end).toBeLessThanOrEqual(result.regions[1]?.start ?? 0);
   });
 
-  test("two pick spans on one declaration are duplicates (#40)", () => {
+  test("two disjoint pick editors on one declaration both apply (#92)", () => {
     const clause = (line: number, text: string): string =>
       [
         "select function twice in a.ts",
@@ -364,12 +359,186 @@ describe("resolveEditDslReply (#111)", () => {
       parseSelection([clause(2, "  return 2;"), clause(3, "  return 3;")].join("\n")),
       deps(TWICE),
     );
+    expect(result.failures).toEqual([]);
+    expect(result.regions).toHaveLength(2);
+    expect(result.regions.map((region) => region.index)).toEqual([0, 1]);
+    expect(result.regions.map((region) => region.text)).toEqual(["  return 2;", "  return 3;"]);
+  });
+
+  test("a pick editor and a disjoint match editor share one declaration (#92)", () => {
+    const source = [
+      "export function mixed(): number {",
+      "  const first = 1;",
+      "  return first;",
+      "}",
+      "",
+    ].join("\n");
+    const selections = parseSelection(
+      [
+        "select function mixed in a.ts",
+        "pick 2",
+        "replace with",
+        "TC_EDIT_BEGIN",
+        "  const first = 2;",
+        "TC_EDIT_END",
+        "end",
+        "select function mixed in a.ts",
+        "match `return first;`",
+        "replace with",
+        "TC_EDIT_BEGIN",
+        "return first + 1;",
+        "TC_EDIT_END",
+        "end",
+      ].join("\n"),
+    );
+    const result = resolveEditDslReply(selections, deps(source));
+    expect(result.failures).toEqual([]);
+    expect(result.regions).toHaveLength(2);
+    expect(result.regions.map((region) => region.text)).toEqual([
+      "  const first = 2;",
+      "return first + 1;",
+    ]);
+  });
+
+  test("overlapping match editors on one declaration fail as duplicates (#92)", () => {
+    const source = [
+      "export function once(): number {",
+      "  const value = 1;",
+      "  return value;",
+      "}",
+      "",
+    ].join("\n");
+    const clause = (text: string): string =>
+      [
+        "select function once in a.ts",
+        "match `return value;`",
+        "replace with",
+        "TC_EDIT_BEGIN",
+        text,
+        "TC_EDIT_END",
+        "end",
+      ].join("\n");
+    const result = resolveEditDslReply(
+      parseSelection([clause("return value + 1;"), clause("return value + 2;")].join("\n")),
+      deps(source),
+    );
     expect(result.regions).toHaveLength(1);
+    expect(result.failures).toHaveLength(1);
+    const failure = result.failures[0];
+    expect(failure?.index).toBe(1);
+    expect(failure?.stage).toBe("duplicate");
+    expect(failure?.cause).toBeNull();
+    expect(failure?.diagnostics).toContain(
+      'clause 1 and clause 2 both edit the same function "once" in "a.ts" with overlapping resolved spans',
+    );
+    expect(failure?.diagnostics).toContain("pairwise-disjoint");
+  });
+
+  test("two zero-width matches at one offset fail as duplicates (#92)", () => {
+    const source = [
+      "export function once(): number {",
+      "  const value = 1;",
+      "  return value;",
+      "}",
+      "",
+    ].join("\n");
+    const clause = (text: string): string =>
+      [
+        "select function once in a.ts",
+        "match /(?=return)/",
+        "replace with",
+        "TC_EDIT_BEGIN",
+        text,
+        "TC_EDIT_END",
+        "end",
+      ].join("\n");
+    const result = resolveEditDslReply(
+      parseSelection([clause("// one"), clause("// two")].join("\n")),
+      deps(source),
+    );
+    expect(result.regions).toHaveLength(1);
+    expect(result.failures).toHaveLength(1);
+    expect(result.failures[0]?.stage).toBe("duplicate");
+    expect(result.failures[0]?.diagnostics).toContain(
+      'clause 1 and clause 2 both edit the same function "once" in "a.ts" with overlapping resolved spans',
+    );
+  });
+
+  test("overlapping pick editors on one declaration fail as duplicates (#92)", () => {
+    const clause = (range: string, text: string): string =>
+      [
+        "select function twice in a.ts",
+        `pick ${range}`,
+        "replace with",
+        "TC_EDIT_BEGIN",
+        text,
+        "TC_EDIT_END",
+        "end",
+      ].join("\n");
+    const result = resolveEditDslReply(
+      parseSelection([clause("2-3", "  return 4;"), clause("3", "  return 5;")].join("\n")),
+      deps(TWICE),
+    );
+    expect(result.regions).toHaveLength(1);
+    expect(result.failures).toHaveLength(1);
+    expect(result.failures[0]?.stage).toBe("duplicate");
+    expect(result.failures[0]?.diagnostics).toContain(
+      'clause 1 and clause 2 both edit the same function "twice" in "a.ts" with overlapping resolved spans',
+    );
+  });
+
+  test("a viewer and a partial editor on one declaration remain duplicates (#92)", () => {
+    const source = [
+      "export function once(): number {",
+      "  const value = 1;",
+      "  return value;",
+      "}",
+      "",
+    ].join("\n");
+    const selections = parseSelection(
+      [
+        "select function once in a.ts",
+        "match `return value;`",
+        "end",
+        "select function once in a.ts",
+        "match `const value = 1;`",
+        "replace with",
+        "TC_EDIT_BEGIN",
+        "const value = 2;",
+        "TC_EDIT_END",
+        "end",
+      ].join("\n"),
+    );
+    const result = resolveEditDslReply(selections, deps(source));
+    expect(result.viewers).toHaveLength(1);
+    expect(result.regions).toEqual([]);
+    expect(result.failures).toHaveLength(1);
     expect(result.failures[0]?.index).toBe(1);
     expect(result.failures[0]?.stage).toBe("duplicate");
     expect(result.failures[0]?.diagnostics).toContain(
-      'clause 1 and clause 2 both select the same function "twice" in "a.ts"',
+      'clause 1 and clause 2 both select the same function "once" in "a.ts"',
     );
+  });
+
+  test("a whole-symbol editor and a partial editor remain duplicates (#92)", () => {
+    const selections = parseSelection(
+      [
+        wholeReplace("a.ts", "function", "once", "function once(): number {\n  return 2;\n}"),
+        "select function once in a.ts",
+        "match `return 1;`",
+        "replace with",
+        "TC_EDIT_BEGIN",
+        "return 3;",
+        "TC_EDIT_END",
+        "end",
+      ].join("\n"),
+    );
+    const result = resolveEditDslReply(selections, deps(ONCE));
+    expect(result.regions).toHaveLength(1);
+    expect(result.failures).toHaveLength(1);
+    expect(result.failures[0]?.index).toBe(1);
+    expect(result.failures[0]?.stage).toBe("duplicate");
+    expect(result.failures[0]?.diagnostics).toContain('same function "once" in "a.ts"');
   });
 
   test("a viewer and an editor on one declaration are duplicates (#40)", () => {

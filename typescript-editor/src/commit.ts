@@ -262,6 +262,25 @@ export function gateDiagnostics(
   return lines.join("\n");
 }
 
+// Two resolved regions can share one file's edit pass only when their half-open
+// spans are disjoint. A zero-width insertion collides only with another
+// insertion at the same offset; exactly on a non-zero span's boundary it is
+// disjoint and can be spliced beside it (#92).
+function committableRegionsOverlap(left: CommittableRegion, right: CommittableRegion): boolean {
+  const leftEmpty = left.start === left.end;
+  const rightEmpty = right.start === right.end;
+  if (leftEmpty && rightEmpty) {
+    return left.start === right.start;
+  }
+  if (leftEmpty) {
+    return left.start > right.start && left.start < right.end;
+  }
+  if (rightEmpty) {
+    return right.start > left.start && right.start < left.end;
+  }
+  return left.start < right.end && right.start < left.end;
+}
+
 /**
  * Apply already-resolved regions, one pass per file: overlap rejection, the
  * prev-broken/gate/duplicate/format/no-op guards, and the final formatted write.
@@ -293,7 +312,17 @@ export async function applyResolvedRegions<T extends CommittableRegion>(input: {
   const writes: { path: string; source: string }[] = [];
   for (const [path, group] of groups) {
     const payloadSource = input.fileSourceOf(path);
-    const ordered = [...group].sort((left, right) => left.start - right.start);
+    const ordered = [...group].sort((left, right) => {
+      if (left.start !== right.start) {
+        return left.start - right.start;
+      }
+      // At one start offset, order a zero-width insert before the non-zero
+      // span so the from-end pass splices the span first and the insert keeps
+      // its original boundary.
+      const leftEmpty = left.start === left.end;
+      const rightEmpty = right.start === right.end;
+      return leftEmpty === rightEmpty ? 0 : leftEmpty ? -1 : 1;
+    });
     // Overlap policy (#78): two regions share source text, so the whole
     // exchange is discarded and both regions are named.
     let overlapping: [T, T] | null = null;
@@ -304,7 +333,17 @@ export async function applyResolvedRegions<T extends CommittableRegion>(input: {
     for (let i = 0; i < ordered.length; i += 1) {
       const previous = ordered[i - 1];
       const current = ordered[i];
-      if (previous !== undefined && current !== undefined && current.start < previous.end) {
+      const bothZeroWidth =
+        previous !== undefined &&
+        current !== undefined &&
+        previous.start === previous.end &&
+        current.start === current.end;
+      if (
+        previous !== undefined &&
+        current !== undefined &&
+        !bothZeroWidth &&
+        committableRegionsOverlap(previous, current)
+      ) {
         overlapping = [previous, current];
         break;
       }

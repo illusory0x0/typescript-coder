@@ -674,7 +674,8 @@ The fence is validated before anything is written:
 - A duplicate top-level name, a duplicate member name (respecting static vs
   instance and getter/setter identity), an unsafe path, a malformed fence, or
   an empty fence is a `stage: address` or `stage: duplicate` failure and writes
-  nothing. Each `(path, symbol, kind)` is claimed once per reply.
+  nothing. Each `(path, symbol, kind)` is claimed once per reply except for
+  pairwise-disjoint `match`/`pick` editor regions (see the target rule below).
 
 The declaration is appended at the file's end (creating the file and parent
 directories when absent); a member is inserted before the owner body's closing
@@ -838,14 +839,21 @@ that path is a path-conflict rejection (a declaration create may share a file
 with an edit of a different declaration, but not with a whole-file `write`, a
 `delete`, or an empty-file `create`).
 
-**One target per reply.** Every select clause in one reply — viewer, editor, or
-rename — plus every create (implicit or explicit) must resolve to a distinct
-`(path, symbol, kind)`. `resolve`, `match`, and `pick` do not make a new target.
-A file-level select claims the file's owner once per reply; a
-module create is unique by `(path, statement text)`. A repeat fails at
-`stage: duplicate` before any matcher or write runs, naming both statement
-numbers and the resolved address; the whole reply writes nothing. Split edits to
-one declaration across exchanges.
+**One target per reply, except disjoint editor regions.** Every select clause in
+one reply — viewer, editor, or rename — plus every create (implicit or explicit)
+must resolve to a distinct `(path, symbol, kind)`. `resolve`, `match`, and `pick`
+do not make a new target. The exception is multiple `match`/`pick` editor clauses
+on one declaration: they may share it only when every resolved region is
+pairwise disjoint. Regions are half-open spans; two ordinary spans overlap when
+they intersect, two zero-width insertions overlap only at the same offset, and a
+zero-width insertion at a non-zero span's boundary is disjoint. An overlap, a
+duplicate resolved span, a viewer+editor, a rename+editor, or a
+whole-symbol+partial mix fails at `stage: duplicate` before any write, naming
+both statement numbers and the resolved address; nothing from the rejected
+clause is queued and the whole reply writes nothing. A file-level select claims
+the file's owner once per reply; a module create is unique by
+`(path, statement text)`. Split conflicting edits to one declaration across
+exchanges.
 
 Canonical examples:
 
@@ -862,6 +870,28 @@ TC_EDIT_BEGIN
 return input.trim();
 TC_EDIT_END
 ```
+
+Two disjoint editors on one declaration in one reply:
+
+```text
+select function answer in src/helper.ts
+match `const value = 1;`
+replace with
+TC_EDIT_BEGIN
+const value = 2;
+TC_EDIT_END
+
+select function answer in src/helper.ts
+match `return value;`
+replace with
+TC_EDIT_BEGIN
+return value + 1;
+TC_EDIT_END
+```
+
+The resolved spans are disjoint, so both edits apply atomically. An overlapping
+span, a repeated resolved span, a second whole-declaration edit, or a
+viewer/rename on the same declaration still fails at `stage: duplicate`.
 
 A viewer slice returns only the selected declaration lines:
 
@@ -1188,8 +1218,8 @@ Retry policy around a rejection is owned by
 Nothing is written until the candidate passes, in order: address resolution,
 the **revision guard** (a claimed `rev` must equal the source read for the
 clause), the **unique-target claim** (every `select`, `rename`, and implicit create in
-one reply resolves to a distinct `(path, symbol, kind)`), matcher/range
-resolution, then the splice, the **parse gate** (a file that parsed must still
+one reply resolves to a distinct `(path, symbol, kind)`, except pairwise-disjoint
+`match`/`pick` editor regions), matcher/range resolution, then the splice, the **parse gate** (a file that parsed must still
 parse), the **duplicate-declaration guard** (a top-level `function`, `class`, or
 `type` name may not be added twice), the **formatter**, and the **post-format
 no-op check** (a candidate that differs only by formatting is rejected as a
@@ -1198,8 +1228,13 @@ no-op). A failing gate writes nothing and reports its stage.
 Edit-dsl replies are **atomic across the editing statements**. Every statement
 resolves against its file's current source. Before any matcher runs, each
 select clause (viewer, editor, or rename) and each implicit create claims its
-resolved target; a repeated `(path, symbol, kind)` is a `stage: duplicate`
+resolved target; a repeated hard `(path, symbol, kind)` — viewer, rename,
+whole-symbol editor, create, or a hard/partial mix — is a `stage: duplicate`
 rejection that names both statements and the address and discards the reply.
+Multiple `match`/`pick` editor clauses may share a declaration only when their
+resolved spans are pairwise disjoint; an overlap or duplicate span is also a
+`stage: duplicate` rejection naming both clauses, and nothing from the rejected
+clause is queued.
 If any editing statement fails resolution at a non-`no-op` stage, or the apply
 pipeline reports any non-`no-op` guard/overlap failure, the whole reply is
 discarded and nothing is written — no file, including creates, deletes, and

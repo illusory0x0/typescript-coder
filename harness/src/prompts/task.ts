@@ -359,7 +359,7 @@ export function taskEditDslInstruction(): string {
   return [
     "A declaration edit is one or more `select … end` clauses; file commands are `create`, `delete`, `read`, and `write <path> with <fence>`. No prose and no JSON: the first non-whitespace token must be `select`, `create`, `delete`, `read`, or `write`.",
     "",
-    "Every clause in one reply must resolve to a different declaration `(path, symbol, kind)`; target one declaration at most once per reply, even with different `match` or `pick` spans, and split edits to one declaration across replies.",
+    "Every clause in one reply must resolve to a different declaration `(path, symbol, kind)`, except that multiple `match`/`pick` editor clauses may target one declaration only when their resolved spans are pairwise disjoint; overlapping spans, viewer+editor, rename+editor, and whole-symbol+partial edits are duplicates, so split those across replies.",
     "",
     "Clause: `select <symbol> in <path> [ resolve <value|type|namespace> ] [ match <snippet> | match /<regex>/ ] [ [ pick <range> ] replace with <fence> | rename <old> to <new> end | end ]`. A replacement ends at the fence close; a viewer or rename ends with `end`.",
     "`match` accepts only a backtick snippet or `/regex/`; the matcher has no parentheses, so a parenthesized matcher and unquoted code are rejected. A snippet must be a complete statement or expression, or a contiguous run of complete statements copied from the target, never an unbalanced partial function body; if the span is hard to copy, omit `match` and rewrite the whole declaration. It locates a span inside the declaration; `pick` narrows a match and requires `replace`; omit `match` to rewrite the whole declaration; an empty body deletes it. The fence is line-sensitive: open the body with `TC_EDIT_BEGIN` on its own line and close it with `TC_EDIT_END` on its own line; the body is raw text (hyphen runs, backticks, `done`, and `end` are ordinary body lines), and the close terminates the clause, so do not add `end` after it. `pick` coordinates are the 1-based file-absolute lines of the content view.",
@@ -499,7 +499,7 @@ export function buildTaskTurnPrompt(input: TaskTurnInput): string {
     }
   }
   blocks.push(
-    "Reply with the edit-dsl clauses or file commands for this work node. You may use multiple clauses and multiple actions in one reply; each declaration may appear at most once. No tools are available: send edit-dsl text only, never DSML/tool-call markup, and treat the sentinel block as literal text.",
+    "Reply with the edit-dsl clauses or file commands for this work node. You may use multiple clauses and multiple actions in one reply; each declaration may appear at most once, except for multiple `match`/`pick` editor clauses whose resolved spans are pairwise disjoint. No tools are available: send edit-dsl text only, never DSML/tool-call markup, and treat the sentinel block as literal text.",
   );
   return blocks.join("\n");
 }

@@ -629,6 +629,44 @@ describe("tsed stdin protocols", () => {
     expect(read(join(workspace, "src/helper.ts"))).toBe(HELPER);
   });
 
+  test("dsl --dry-run applies two disjoint pick clauses to one declaration (#92)", () => {
+    const source = [
+      "export function two(): number {",
+      "  const first = 1;",
+      "  return first;",
+      "}",
+      "",
+    ].join("\n");
+    const workspace = makeWorkspace({ "src/two.ts": source });
+    const reply = [
+      "select function two in src/two.ts",
+      "pick 2",
+      "replace with",
+      BEGIN,
+      "  const first = 2;",
+      END,
+      "end",
+      "",
+      "select function two in src/two.ts",
+      "pick 3",
+      "replace with",
+      BEGIN,
+      "  return first + 1;",
+      END,
+      "end",
+      "",
+    ].join("\n");
+    const result = run(workspace, ["--protocol-format", "dsl", "--dry-run", "--diff"], reply);
+    expect(result.status).toBe(0);
+    expect(result.stdout).toContain("would change: src/two.ts");
+    expect(result.stdout).toContain("-  const first = 1;");
+    expect(result.stdout).toContain("+  const first = 2;");
+    expect(result.stdout).toContain("-  return first;");
+    expect(result.stdout).toContain("+  return first + 1;");
+    expect(result.stderr).toBe("");
+    expect(read(join(workspace, "src/two.ts"))).toBe(source);
+  });
+
   test("flag --dry-run --diff prints the diff too", () => {
     const workspace = makeWorkspace({ "patch.txt": ANSWER_TWO });
     const result = run(workspace, [

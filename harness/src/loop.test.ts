@@ -4417,11 +4417,12 @@ describe("runLoop", () => {
       // #41: the lead covers both a duplicate top-level declaration and two
       // clauses addressing one resolved declaration.
       expect(duplicate.correction).toContain("second top-level copy");
-      expect(duplicate.correction).toContain("two clauses target the same resolved declaration");
-      expect(duplicate.correction).toContain("Address one declaration once per reply");
-      expect(duplicate.correction).toContain("split its edits across exchanges");
+      expect(duplicate.correction).toContain("two clauses address the same resolved declaration");
+      expect(duplicate.correction).toContain(
+        "Address one declaration once per reply except for multiple",
+      );
       expect(duplicate.escalation).toContain("MUST return a replacement that differs");
-      expect(duplicate.escalation).toContain("more than one clause");
+      expect(duplicate.escalation).toContain("conflicting clauses");
       // A duplicated-modifier format failure exits instead of retrying.
       expect(rejectionPolicy("format-export-duplication")).toEqual({
         action: "terminate",
@@ -4436,7 +4437,10 @@ describe("runLoop", () => {
       }
       expect(policy.correction).toContain("a replacement ends at its fence close");
       expect(policy.correction).toContain("different resolved declaration");
-      expect(policy.correction).toContain("split its edits across exchanges");
+      expect(policy.correction).toContain(
+        "multiple `match`/`pick` editor clauses may target one declaration only when their resolved spans are pairwise disjoint",
+      );
+      expect(policy.correction).toContain("split its other edits across exchanges");
       expect(policy.correction).not.toContain("flat JSON object");
       expect(policy.escalation).toContain("`select … end`");
       expect(policy.escalation).not.toContain("flat JSON object");
@@ -7297,7 +7301,7 @@ describe("edit-dsl protocol (#111/#119)", () => {
     expect(rejected).toBeDefined();
     expect(rejected?.diagnostics).toContain("stage: duplicate");
     expect(rejected?.diagnostics).toContain(
-      'clause 1 and clause 2 both select the same function "one" in "src/pair.ts"',
+      'clause 1 and clause 2 both edit the same function "one" in "src/pair.ts" with overlapping resolved spans',
     );
     expect(rejected?.diagnostics).toContain("the whole edit-dsl reply is discarded");
     expect(rejected?.diagnostics).toContain("nothing is written");
@@ -8017,13 +8021,15 @@ describe("edit-dsl protocol (#111/#119)", () => {
     expect(prompt).toContain("an empty body deletes it");
     expect(prompt).toContain("no JSON edit payload");
     expect(prompt).toContain("naming it in the clause's own `select`");
-    // #41: one declaration may be addressed at most once per reply, whatever
-    // spans its clauses name.
+    // #92: multiple `match`/`pick` editors may share one declaration only when
+    // their resolved spans are pairwise disjoint.
     expect(prompt).toContain(
       "every clause in one reply must resolve to a different declaration `(path, symbol, kind)`",
     );
-    expect(prompt).toContain("target one declaration at most once per reply");
-    expect(prompt).toContain("split edits to one declaration across exchanges");
+    expect(prompt).toContain(
+      "except that multiple `match`/`pick` editor clauses may target one declaration only when their resolved spans are pairwise disjoint",
+    );
+    expect(prompt).toContain("split those across exchanges");
     // The pick turn is edit-dsl too: a select viewer leads to `# details`.
     expect(prompt).toContain(
       "First you will be asked to select the target or act on files directly. Reply with ONLY one `select <symbol> in <path>",

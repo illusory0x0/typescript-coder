@@ -197,6 +197,12 @@ export interface EditDslTargetClaim {
   index: number;
   /** True when the claiming clause was an implicit create. */
   create: boolean;
+  /**
+   * True when the claiming clause was a `match`/`pick` editor, i.e. it edits
+   * only a resolved span of the declaration. Two partial claims may share the
+   * key when their resolved spans are pairwise disjoint (#92).
+   */
+  partial: boolean;
 }
 
 /**
@@ -525,25 +531,105 @@ function duplicateTargetDiagnostics(
   return [
     "stage: duplicate",
     `clause ${first + 1} and clause ${second + 1} both select the same ${address.kind} ${JSON.stringify(address.name)} in ${JSON.stringify(address.path)}; the whole edit-dsl reply is discarded and nothing is written`,
-    `select ${JSON.stringify(address.name)} once per reply, and split edits to one declaration across exchanges`,
+    `a declaration may repeat only for pairwise-disjoint \`pick\`/\`match\` editor regions; select ${JSON.stringify(address.name)} once otherwise and split its other edits across exchanges`,
   ].join("\n");
 }
 
+function partialOverlapDiagnostics(
+  address: EditDslTargetAddress,
+  earlierIndex: number,
+  index: number,
+): string {
+  const first = Math.min(earlierIndex, index);
+  const second = Math.max(earlierIndex, index);
+  return [
+    "stage: duplicate",
+    `clause ${first + 1} and clause ${second + 1} both edit the same ${address.kind} ${JSON.stringify(address.name)} in ${JSON.stringify(address.path)} with overlapping resolved spans; the whole edit-dsl reply is discarded and nothing is written`,
+    "only pairwise-disjoint `pick`/`match` editor regions may share a declaration; make the spans disjoint or split the edits across replies",
+  ].join("\n");
+}
+
+/** A half-open source span resolved by a `match` or `pick` editor clause. */
+interface ResolvedEditSpan {
+  start: number;
+  end: number;
+}
+
+/** A partial editor's resolved span and the clause that queued it. */
+interface PartialEditSpan extends ResolvedEditSpan {
+  index: number;
+}
+
 /**
- * Claim a resolved `select` target for one reply. Viewers, replace editors,
- * renames, and implicit creates all resolve to the same `(path, name, kind)`
- * key, so a repeat is a `duplicate` for the later clause before any matcher or
- * write can apply. Returns the diagnostic, or null after recording the claim.
+ * Whether two resolved edit-dsl spans cannot both be spliced. Ordinary
+ * half-open spans overlap when they share source text; two zero-width
+ * insertions collide only at one offset, while a zero-width span exactly on a
+ * non-zero span's boundary is disjoint.
+ */
+function editDslSpansOverlap(left: ResolvedEditSpan, right: ResolvedEditSpan): boolean {
+  const leftEmpty = left.start === left.end;
+  const rightEmpty = right.start === right.end;
+  if (leftEmpty && rightEmpty) {
+    return left.start === right.start;
+  }
+  if (leftEmpty) {
+    return left.start > right.start && left.start < right.end;
+  }
+  if (rightEmpty) {
+    return right.start > left.start && right.start < left.end;
+  }
+  return left.start < right.end && right.start < left.end;
+}
+
+function spansOverlapEachOther(spans: readonly ResolvedEditSpan[]): boolean {
+  for (let left = 0; left < spans.length; left += 1) {
+    for (let right = left + 1; right < spans.length; right += 1) {
+      const first = spans[left];
+      const second = spans[right];
+      if (first !== undefined && second !== undefined && editDslSpansOverlap(first, second)) {
+        return true;
+      }
+    }
+  }
+  return false;
+}
+
+function firstOverlappingPartialSpan(
+  earlier: readonly PartialEditSpan[],
+  current: ResolvedEditSpan,
+): PartialEditSpan | null {
+  for (const span of earlier) {
+    if (editDslSpansOverlap(span, current)) {
+      return span;
+    }
+  }
+  return null;
+}
+
+/**
+ * Claim a resolved `select` target for one reply. Viewers, whole-symbol
+ * editors, renames, creates, and partial (`match`/`pick`) editors all resolve
+ * to the same `(path, name, kind)` key. A repeated hard claim — or a hard/partial
+ * mix — is a `duplicate` for the later clause before any matcher or write can
+ * apply. Two `partial` claims may share the key; `resolveEditDslReply` checks
+ * their resolved spans for pairwise disjointness (#92). Returns the diagnostic,
+ * or null after recording or accepting the claim.
  */
 export function claimEditDslTarget(
   claims: EditDslTargetClaims,
   address: EditDslTargetAddress,
   index: number,
   create: boolean,
+  partial = false,
 ): string | null {
   const key = editDslTargetKey(address);
   const earlier = claims.get(key);
   if (earlier !== undefined) {
+    // #92: partial editors defer to the span check; keep the earlier claim so a
+    // later hard claim still conflicts with the first clause.
+    if (earlier.partial && partial) {
+      return null;
+    }
     // Preserve the #13 create wording when both clauses add the same
     // declaration; every other duplicate names the resolved address only.
     return earlier.create && create
@@ -555,7 +641,7 @@ export function claimEditDslTarget(
         )
       : duplicateTargetDiagnostics(address, earlier.index, index);
   }
-  claims.set(key, { index, create });
+  claims.set(key, { index, create, partial });
   return null;
 }
 
@@ -593,11 +679,14 @@ export function resolveEditDslReply(
   const viewers: EditDslViewer[] = [];
   const failures: EditDslFailure[] = [];
   // #40: every `select` clause claims its resolved target as `(path, name,
-  // kind)` before a matcher can run. A repeat rejects the later clause, and the
-  // loop discards the whole reply: one declaration may be addressed once per
-  // reply, whatever spans its `match`/`pick` name. `resolveMultiEditor` passes
-  // its map in so rename clauses join the same uniqueness set.
+  // kind)` before a matcher can run. A hard repeat (viewer, rename, whole-symbol
+  // editor, create, or a hard/partial mix) rejects the later clause, and the
+  // loop discards the whole reply. #92 lets several partial (`match`/`pick`)
+  // editors share one declaration; `partialSpans` tracks the resolved regions
+  // they queued so only a pairwise overlap is rejected. `resolveMultiEditor`
+  // passes its map in so rename clauses join the same uniqueness set.
   const claims: EditDslTargetClaims = targetClaims ?? new Map();
+  const partialSpans = new Map<string, PartialEditSpan[]>();
 
   for (let position = 0; position < selections.length; position += 1) {
     const selection = selections[position];
@@ -853,16 +942,18 @@ export function resolveEditDslReply(
       });
       continue;
     }
-    const duplicate = claimEditDslTarget(
-      claims,
-      {
-        path: address.entry.locator.path,
-        name: address.entry.locator.name,
-        kind: address.entry.locator.kind,
-      },
-      index,
-      false,
-    );
+    // #92: a `match`/`pick` editor claims only its resolved region(s), so
+    // several may share one declaration when their spans are pairwise
+    // disjoint. Every other clause keeps the hard one-target claim.
+    const resolvedAddress: EditDslTargetAddress = {
+      path: address.entry.locator.path,
+      name: address.entry.locator.name,
+      kind: address.entry.locator.kind,
+    };
+    const partial =
+      selection.replacement !== null && (selection.matcher !== null || selection.pick !== null);
+    const key = editDslTargetKey(resolvedAddress);
+    const duplicate = claimEditDslTarget(claims, resolvedAddress, index, false, partial);
     if (duplicate !== null) {
       failures.push({
         index,
@@ -974,16 +1065,7 @@ export function resolveEditDslReply(
         continue;
       }
       const ordered = [...expanded].sort((left, right) => left.start - right.start);
-      let overlaps = false;
-      for (let position = 1; position < ordered.length; position += 1) {
-        const previous = ordered[position - 1];
-        const current = ordered[position];
-        if (previous !== undefined && current !== undefined && current.start < previous.end) {
-          overlaps = true;
-          break;
-        }
-      }
-      if (overlaps) {
+      if (spansOverlapEachOther(ordered)) {
         failures.push({
           index,
           path,
@@ -994,6 +1076,32 @@ export function resolveEditDslReply(
           undeclaredName: null,
         });
         continue;
+      }
+      if (partial) {
+        const earlierSpans = partialSpans.get(key) ?? [];
+        let collision: PartialEditSpan | null = null;
+        for (const part of ordered) {
+          collision = firstOverlappingPartialSpan(earlierSpans, part);
+          if (collision !== null) {
+            break;
+          }
+        }
+        if (collision !== null) {
+          failures.push({
+            index,
+            path,
+            locator: selection.locator,
+            stage: "duplicate",
+            cause: null,
+            diagnostics: partialOverlapDiagnostics(resolvedAddress, collision.index, index),
+            undeclaredName: null,
+          });
+          continue;
+        }
+        for (const part of ordered) {
+          earlierSpans.push({ index, start: part.start, end: part.end });
+        }
+        partialSpans.set(key, earlierSpans);
       }
       for (const part of ordered) {
         regions.push({
@@ -1027,6 +1135,24 @@ export function resolveEditDslReply(
         undeclaredName: null,
       });
       continue;
+    }
+    if (partial) {
+      const earlierSpans = partialSpans.get(key) ?? [];
+      const earlier = firstOverlappingPartialSpan(earlierSpans, resolved);
+      if (earlier !== null) {
+        failures.push({
+          index,
+          path,
+          locator: selection.locator,
+          stage: "duplicate",
+          cause: null,
+          diagnostics: partialOverlapDiagnostics(resolvedAddress, earlier.index, index),
+          undeclaredName: null,
+        });
+        continue;
+      }
+      earlierSpans.push({ index, start: resolved.start, end: resolved.end });
+      partialSpans.set(key, earlierSpans);
     }
     regions.push({
       index,
