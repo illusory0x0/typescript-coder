@@ -903,16 +903,18 @@ with an edit of a different declaration, but not with a whole-file `write`, a
 one reply — viewer, editor, or rename — plus every create (implicit or explicit)
 must resolve to a distinct `(path, symbol, kind)`. `resolve`, `match`, and `pick`
 do not make a new target. The exception is multiple `match`/`pick` editor clauses
-on one declaration: they may share it only when every resolved region is
-pairwise disjoint. Regions are half-open spans; two ordinary spans overlap when
-they intersect, two zero-width insertions overlap only at the same offset, and a
-zero-width insertion at a non-zero span's boundary is disjoint. An overlap, a
-duplicate resolved span, a viewer+editor, a rename+editor, or a
-whole-symbol+partial mix fails at `stage: duplicate` before any write, naming
-both statement numbers and the resolved address; nothing from the rejected
-clause is queued and the whole reply writes nothing. A file-level select claims
-the file's owner once per reply; a module create is unique by
-`(path, statement text)`. Split conflicting edits to one declaration across
+on one declaration, and multiple file-level editor clauses on one file: they may
+share the target only when every resolved region is pairwise disjoint. Regions
+are half-open spans; two ordinary spans overlap when they intersect, two
+zero-width insertions overlap only at the same offset, and a zero-width insertion
+at a non-zero span's boundary is disjoint. An overlap, a duplicate resolved span,
+a viewer+editor, a rename+editor, a whole-symbol+partial mix, or a file-level
+hard/partial mix fails at `stage: duplicate` before any write, naming both
+statement numbers and the resolved address or file path; nothing from the
+rejected clause is queued and the whole reply writes nothing. A file-level
+viewer (a `select file` without `replace`) and any file-level clause without a
+`match`/`pick`/anchor is a hard claim; a module create is unique by `(path,
+statement text)`. Split conflicting edits to one declaration or file across
 exchanges.
 
 Canonical examples:
@@ -952,6 +954,28 @@ TC_EDIT_END
 The resolved spans are disjoint, so both edits apply atomically. An overlapping
 span, a repeated resolved span, a second whole-declaration edit, or a
 viewer/rename on the same declaration still fails at `stage: duplicate`.
+
+Two disjoint file-level editors on one file in one reply:
+
+```text
+select file src/reader.ts
+match `type Datum =`
+replace with
+TC_EDIT_BEGIN
+export type Datum =
+TC_EDIT_END
+
+select file src/reader.ts
+match `const MAX_DEPTH = 100;`
+replace with
+TC_EDIT_BEGIN
+const MAX_DEPTH = 1000;
+TC_EDIT_END
+```
+
+The file-level spans are also disjoint, so both edits apply atomically. An
+overlapping span, a duplicate span, or two insertions at one offset still fails
+at `stage: duplicate`, naming both clauses and the file path.
 
 A viewer slice returns only the selected declaration lines:
 
@@ -1007,8 +1031,9 @@ TC_EDIT_END
 ```
 
 A file-level select edits one unique span, such as an import/export statement
-or specifier, or a statement inside a callback; a module create adds one
-statement at the module boundary:
+or specifier, or a statement inside a callback; several file-level editors may
+share one file in a reply when their spans are pairwise disjoint. A module
+create adds one statement at the module boundary:
 
 ```text
 select file src/parser.ts
@@ -1279,7 +1304,7 @@ Nothing is written until the candidate passes, in order: address resolution,
 the **revision guard** (a claimed `rev` must equal the source read for the
 clause), the **unique-target claim** (every `select`, `rename`, and implicit create in
 one reply resolves to a distinct `(path, symbol, kind)`, except pairwise-disjoint
-`match`/`pick` editor regions), matcher/range resolution, then the splice, the **parse gate** (a file that parsed must still
+`match`/`pick` editor regions on one declaration or one file), matcher/range resolution, then the splice, the **parse gate** (a file that parsed must still
 parse), the **duplicate-declaration guard** (a top-level `function`, `class`, or
 `type` name may not be added twice), the **formatter**, and the **post-format
 no-op check** (a candidate that differs only by formatting is rejected as a
@@ -1291,10 +1316,10 @@ select clause (viewer, editor, or rename) and each implicit create claims its
 resolved target; a repeated hard `(path, symbol, kind)` — viewer, rename,
 whole-symbol editor, create, or a hard/partial mix — is a `stage: duplicate`
 rejection that names both statements and the address and discards the reply.
-Multiple `match`/`pick` editor clauses may share a declaration only when their
-resolved spans are pairwise disjoint; an overlap or duplicate span is also a
-`stage: duplicate` rejection naming both clauses, and nothing from the rejected
-clause is queued.
+Multiple `match`/`pick` editor clauses may share a declaration, and multiple
+file-level editors may share a file, only when their resolved spans are pairwise
+disjoint; an overlap or duplicate span is also a `stage: duplicate` rejection
+naming both clauses, and nothing from the rejected clause is queued.
 If any editing statement fails resolution at a non-`no-op` stage, or the apply
 pipeline reports any non-`no-op` guard/overlap failure, the whole reply is
 discarded and nothing is written — no file, including creates, deletes, and

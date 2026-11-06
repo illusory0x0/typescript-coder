@@ -4419,7 +4419,7 @@ describe("runLoop", () => {
       expect(duplicate.correction).toContain("second top-level copy");
       expect(duplicate.correction).toContain("two clauses address the same resolved declaration");
       expect(duplicate.correction).toContain(
-        "Address one declaration once per reply except for multiple",
+        "Address one declaration or file once per reply except for multiple",
       );
       expect(duplicate.escalation).toContain("MUST return a replacement that differs");
       expect(duplicate.escalation).toContain("conflicting clauses");
@@ -4438,7 +4438,7 @@ describe("runLoop", () => {
       expect(policy.correction).toContain("a replacement ends at its fence close");
       expect(policy.correction).toContain("different resolved declaration");
       expect(policy.correction).toContain(
-        "multiple `match`/`pick` editor clauses may target one declaration only when their resolved spans are pairwise disjoint",
+        "multiple `match`/`pick`/anchor editor clauses may target one declaration or one file only when their resolved spans are pairwise disjoint",
       );
       expect(policy.correction).toContain("split its other edits across exchanges");
       expect(policy.correction).not.toContain("flat JSON object");
@@ -8023,12 +8023,15 @@ describe("edit-dsl protocol (#111/#119)", () => {
     expect(prompt).toContain("naming it in the clause's own `select`");
     // #92: multiple `match`/`pick` editors may share one declaration only when
     // their resolved spans are pairwise disjoint.
+    // #92/#94: multiple `match`/`pick` editors may share one declaration or
+    // one file only when their resolved spans are pairwise disjoint.
     expect(prompt).toContain(
       "every clause in one reply must resolve to a different declaration `(path, symbol, kind)`",
     );
     expect(prompt).toContain(
-      "except that multiple `match`/`pick` editor clauses may target one declaration only when their resolved spans are pairwise disjoint",
+      "except that multiple `match`/`pick`/anchor editor clauses may target one declaration or one file only when their resolved spans are pairwise disjoint",
     );
+    expect(prompt).toContain("file-level hard/partial mixes are duplicates");
     expect(prompt).toContain("split those across exchanges");
     // The pick turn is edit-dsl too: a select viewer leads to `# details`.
     expect(prompt).toContain(

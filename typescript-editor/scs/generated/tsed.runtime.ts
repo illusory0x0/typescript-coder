@@ -907,6 +907,11 @@ function argumentLine(field: FieldSpec): string {
   return head + valuePart(field);
 }
 
+/** True when the root owns positional slots, as a wrapper does. */
+function hasRootPositionals(): boolean {
+  return SPEC.rootFields.some((field) => field.positional);
+}
+
 /** The short synopsis used in usage-error messages. */
 export function usage(): string {
   // A commandless CLI has one root usage line and no help subcommand line.
@@ -914,6 +919,12 @@ export function usage(): string {
     return "usage:\n  " + SPEC.name + synopsisOf(SPEC.rootFields);
   }
   const lines: string[] = ["usage:"];
+  // A wrapper accepts its root command line without a subcommand; an ordinary
+  // command tree has nothing to say there, so its first line stays the first
+  // command (docs/spec \u00A73.3).
+  if (hasRootPositionals()) {
+    lines.push("  " + SPEC.name + synopsisOf(SPEC.rootFields));
+  }
   for (const command of SPEC.commands) {
     if (command.hidden) continue;
     lines.push("  " + SPEC.name + " " + command.name + synopsisOf(effectiveFields(command)));
@@ -985,12 +996,68 @@ function rootSummaryLines(): string[] {
   return lines;
 }
 
+/** The wrapper summary: the root usage line, the command usage line, the
+ *  command list, then the root positionals and options. */
+function wrapperSummaryLines(): string[] {
+  const fields = SPEC.rootFields;
+  const positionals = fields.filter((field) => field.positional && !field.hidden);
+  const options = fields.filter((field) => !field.positional && !field.hidden);
+  const lines: string[] = [];
+  lines.push(SPEC.name + " \u2014 " + SPEC.about);
+  lines.push("");
+  const rootUsage = synopsisOf(fields);
+  lines.push("Usage: " + SPEC.name + rootUsage);
+  lines.push("       " + SPEC.name + rootUsage + " <COMMAND>");
+  lines.push("");
+
+  const visible = SPEC.commands.filter((command) => !command.hidden);
+  const names = visible.map((command) => command.name).concat(["help"]);
+  let nameWidth = 0;
+  for (const name of names) nameWidth = Math.max(nameWidth, name.length);
+  lines.push("Commands:");
+  for (const command of visible) {
+    lines.push("  " + pad(command.name, nameWidth + 2) + command.help);
+  }
+  lines.push("  " + pad("help", nameWidth + 2) + "Print help");
+
+  if (positionals.length > 0) {
+    let width = 0;
+    for (const field of positionals) width = Math.max(width, argumentLine(field).length);
+    lines.push("");
+    lines.push("Arguments:");
+    for (const field of positionals) {
+      const spelling = argumentLine(field);
+      lines.push("  " + (field.help === null ? spelling : pad(spelling, width + 3) + field.help));
+    }
+  }
+
+  lines.push("");
+  lines.push("Options:");
+  const spellings = options.map(argumentLine);
+  spellings.push("-" + SPEC.help.short + ", --" + SPEC.help.long);
+  if (SPEC.versionFlag !== null) {
+    spellings.push("-" + SPEC.versionFlag.short + ", --" + SPEC.versionFlag.long);
+  }
+  let width = 0;
+  for (const spelling of spellings) width = Math.max(width, spelling.length);
+  for (const field of options) {
+    const spelling = argumentLine(field);
+    lines.push("  " + (field.help === null ? spelling : pad(spelling, width + 3) + field.help));
+  }
+  lines.push("  " + pad(spellings[options.length] as string, width + 3) + "Print help");
+  if (SPEC.versionFlag !== null) {
+    lines.push("  " + pad(spellings[options.length + 1] as string, width + 3) + "Print version");
+  }
+  return lines;
+}
+
 /** The summary lines shared by summaryText() and the full helpText(): the
  *  about line, the <COMMAND> usage line, the command list (each command's
  *  help, plus help), and the built-in -h/--help (and -V/--version when the CLI
  *  declares a version). Everything but a per-command section. */
 function summaryLines(): string[] {
   if (SPEC.commands.length === 0) return rootSummaryLines();
+  if (hasRootPositionals()) return wrapperSummaryLines();
   const visible = SPEC.commands.filter((command) => !command.hidden);
   const names = visible.map((command) => command.name).concat(["help"]);
   let nameWidth = 0;
@@ -1335,7 +1402,14 @@ export function parse(argv: string[]): ParseResult {
     if (!assigned) throw new UsageError("unexpected argument '" + word + "'");
   }
 
-  if (SPEC.commands.length > 0 && context === null && external === null) {
+  if (
+    SPEC.commands.length > 0 &&
+    context === null &&
+    external === null &&
+    SPEC.rootFields.every((f) => !f.positional)
+  ) {
+    // An ordinary command tree requires a subcommand. A wrapper has root
+    // positionals, so no subcommand is a valid reading (docs/spec \u00A73.3).
     throw new UsageError("a subcommand is required");
   }
 

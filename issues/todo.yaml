@@ -2,14 +2,6 @@
 # rewrites it; `add` appends; other writes keep it. `check` enforces it.
 # A dep, and every child of an umbrella, must be listed before its dependent.
 
-- id: 94
-  title: "Allow disjoint file-level select clauses and fix duplicate diagnostics"
-  status: todo
-  priority: medium
-  milestone: null
-  parent: null
-  deps: []
-  file: 0094-allow-disjoint-file-level-select-clauses-and-fix-duplicate-diagnostics.md
 - id: 95
   title: "Let file-level match replace class and object members in owner context"
   status: todo

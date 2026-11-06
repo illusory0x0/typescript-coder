@@ -1,7 +1,7 @@
 ---
 id: 94
 title: "Allow disjoint file-level select clauses and fix duplicate diagnostics"
-status: todo
+status: done
 priority: medium
 milestone: null
 parent: null
@@ -70,3 +70,4 @@ Expected after the fix: both changes appear in the diff. Current behavior: `stag
 - Assumption: the intended UX is the multi-statement example, so this issue extends the disjoint-region exception to file-level selects rather than only correcting the consumer prompt. If protocol owners decide file-level selects must stay unique, close this by aligning the example and docs; the path-in-diagnostic acceptance still applies.
 - This is a follow-up to #83 (file-level select scope) and #92 (disjoint regions for one declaration).
 - No live/API/benchmark run is required for acceptance.
+- Verification: manual two-same-file repro now applies both edits; targeted `edit-dsl`/`multi-editor`/`cli`/`selection` tests 426 pass; `just typecheck` pass; `just test` editor 1154 pass, harness 704 pass, scripts 16 pass, acceptance 9 pass; `just tsed-check` pass after refreshing the pre-existing stale generated `tsed.runtime.ts` with `just tsed-generate`.

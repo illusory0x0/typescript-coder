@@ -667,6 +667,69 @@ describe("tsed stdin protocols", () => {
     expect(read(join(workspace, "src/two.ts"))).toBe(source);
   });
 
+  test("dsl --dry-run applies two disjoint file-level match clauses to one file (#94)", () => {
+    const source = ["export const x = 1;", "export const y = 2;", ""].join("\n");
+    const workspace = makeWorkspace({ "src/a.ts": source });
+    const reply = [
+      "select file src/a.ts",
+      "match `export const x = 1;`",
+      "replace with",
+      BEGIN,
+      "export const x = 10;",
+      END,
+      "end",
+      "",
+      "select file src/a.ts",
+      "match `export const y = 2;`",
+      "replace with",
+      BEGIN,
+      "export const y = 20;",
+      END,
+      "end",
+      "",
+    ].join("\n");
+    const result = run(workspace, ["--protocol-format", "dsl", "--dry-run", "--diff"], reply);
+    expect(result.status).toBe(0);
+    expect(result.stdout).toContain("would change: src/a.ts");
+    expect(result.stdout).toContain("-export const x = 1;");
+    expect(result.stdout).toContain("+export const x = 10;");
+    expect(result.stdout).toContain("-export const y = 2;");
+    expect(result.stdout).toContain("+export const y = 20;");
+    expect(result.stderr).toBe("");
+    expect(read(join(workspace, "src/a.ts"))).toBe(source);
+  });
+
+  test("dsl --dry-run discards the whole reply when a second file-level clause overlaps (#94)", () => {
+    const source = ["export const x = 1;", "export const y = 2;", ""].join("\n");
+    const workspace = makeWorkspace({ "src/a.ts": source });
+    const reply = [
+      "select file src/a.ts",
+      "match `export const x = 1;`",
+      "replace with",
+      BEGIN,
+      "export const x = 10;",
+      END,
+      "end",
+      "",
+      "select file src/a.ts",
+      "match `export const x = 1;`",
+      "replace with",
+      BEGIN,
+      "export const x = 20;",
+      END,
+      "end",
+      "",
+    ].join("\n");
+    const result = run(workspace, ["--protocol-format", "dsl", "--dry-run", "--diff"], reply);
+    expect(result.status).toBe(1);
+    expect(result.stderr).toContain("stage: duplicate");
+    expect(result.stderr).toContain("clause 1 and clause 2");
+    expect(result.stderr).toContain('file "src/a.ts"');
+    expect(result.stderr).not.toContain('file ""');
+    expect(result.stdout).not.toContain("would change: src/a.ts");
+    expect(read(join(workspace, "src/a.ts"))).toBe(source);
+  });
+
   test("flag --dry-run --diff prints the diff too", () => {
     const workspace = makeWorkspace({ "patch.txt": ANSWER_TWO });
     const result = run(workspace, [

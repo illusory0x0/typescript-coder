@@ -1,4 +1,6 @@
 import { describe, expect, test } from "bun:test";
+import { readFileSync } from "node:fs";
+import { join } from "node:path";
 import {
   foldMarker,
   ignoredInertClausesWarning,
@@ -1377,6 +1379,215 @@ describe("file-level module-boundary select (#54)", () => {
     );
     expect(missing.failures[0]?.stage).toBe("address");
     expect(missing.failures[0]?.diagnostics).toContain("does not exist");
+  });
+
+  const FILE_SOURCE = [
+    "export type Datum = string | number;",
+    "export const MAX_DEPTH = 100;",
+    "export function read(source: string): Datum {",
+    "  return source;",
+    "}",
+    "",
+  ].join("\n");
+
+  function filePickClause(needle: string, text: string): string {
+    const offset = FILE_SOURCE.indexOf(needle);
+    const before = FILE_SOURCE.slice(0, offset);
+    const line = before.split("\n").length;
+    const column = offset - before.lastIndexOf("\n");
+    const endColumn = column + needle.length - 1;
+    return ["select file a.ts", `pick ${line}:${column}-${line}:${endColumn}`, replace(text)].join(
+      "\n",
+    );
+  }
+
+  test("two disjoint file-level match editors on one file both apply (#94)", () => {
+    const result = resolveEditDslReply(
+      parseSelection(
+        [
+          "select file a.ts",
+          "match `export type Datum = string | number;`",
+          replace("export type Datum = string | number | null;"),
+          "select file a.ts",
+          "match `export const MAX_DEPTH = 100;`",
+          replace("export const MAX_DEPTH = 1000;"),
+        ].join("\n"),
+      ),
+      fileDeps({ "a.ts": FILE_SOURCE }),
+    );
+    expect(result.failures).toEqual([]);
+    expect(result.regions.map((region) => region.index)).toEqual([0, 1]);
+    expect(result.regions.map((region) => region.text)).toEqual([
+      "export type Datum = string | number | null;",
+      "export const MAX_DEPTH = 1000;",
+    ]);
+    const [first, second] = result.regions;
+    expect(first?.end).toBeLessThanOrEqual(second?.start ?? 0);
+  });
+
+  test("two disjoint file-level pick editors on one file both apply (#94)", () => {
+    const result = resolveEditDslReply(
+      parseSelection(
+        [filePickClause("Datum", "Value"), filePickClause("MAX_DEPTH", "MAX_SIZE")].join("\n"),
+      ),
+      fileDeps({ "a.ts": FILE_SOURCE }),
+    );
+    expect(result.failures).toEqual([]);
+    expect(result.regions.map((region) => region.index)).toEqual([0, 1]);
+    expect(result.regions.map((region) => region.text)).toEqual(["Value", "MAX_SIZE"]);
+    expect(result.regions.every((region) => region.stage === "pick")).toBe(true);
+  });
+
+  test("a disjoint file-level pick editor and match editor share one file (#94)", () => {
+    const result = resolveEditDslReply(
+      parseSelection(
+        [
+          filePickClause("MAX_DEPTH", "MAX_SIZE"),
+          "select file a.ts",
+          "match `export type Datum = string | number;`",
+          replace("export type Datum = string | number | null;"),
+        ].join("\n"),
+      ),
+      fileDeps({ "a.ts": FILE_SOURCE }),
+    );
+    expect(result.failures).toEqual([]);
+    expect(result.regions.map((region) => region.index)).toEqual([0, 1]);
+    expect(result.regions.map((region) => region.text)).toEqual([
+      "MAX_SIZE",
+      "export type Datum = string | number | null;",
+    ]);
+  });
+
+  test("overlapping file-level editors fail as duplicates and name the file (#94)", () => {
+    const result = resolveEditDslReply(
+      parseSelection(
+        [
+          "select file a.ts",
+          "match `export function read(source: string): Datum {`",
+          replace("export function load(source: string): Datum {"),
+          "select file a.ts",
+          "match /export function read/",
+          replace("export function load"),
+        ].join("\n"),
+      ),
+      fileDeps({ "a.ts": FILE_SOURCE }),
+    );
+    expect(result.regions).toHaveLength(1);
+    expect(result.failures).toHaveLength(1);
+    const failure = result.failures[0];
+    expect(failure?.index).toBe(1);
+    expect(failure?.stage).toBe("duplicate");
+    expect(failure?.cause).toBeNull();
+    expect(failure?.diagnostics).toContain(
+      'clause 1 and clause 2 both edit the same file "a.ts" with overlapping resolved spans',
+    );
+    expect(failure?.diagnostics).toContain("only pairwise-disjoint");
+    expect(failure?.diagnostics).not.toContain('file ""');
+    expect(failure?.diagnostics).not.toContain('select ""');
+  });
+
+  test("two disjoint file-level anchors on one file both apply (#94)", () => {
+    const source = ["const one = 1;", "const two = 2;", ""].join("\n");
+    const clause = (position: "before" | "after", anchor: string, text: string): string =>
+      ["select file a.ts", `pick ${position} \`${anchor}\``, replace(text)].join("\n");
+    const result = resolveEditDslReply(
+      parseSelection(
+        [
+          clause("after", "const one = 1;", " // first"),
+          clause("before", "const two = 2;", " // second"),
+        ].join("\n"),
+      ),
+      fileDeps({ "a.ts": source }),
+    );
+    expect(result.failures).toEqual([]);
+    expect(result.regions).toHaveLength(2);
+    expect(result.regions.every((region) => region.start === region.end)).toBe(true);
+    expect(result.regions[0]?.start).not.toBe(result.regions[1]?.start);
+  });
+
+  test("file-level insertions touching at one zero-width offset fail (#94)", () => {
+    const source = ["const one = 1;const two = 2;", ""].join("\n");
+    const result = resolveEditDslReply(
+      parseSelection(
+        [
+          "select file a.ts",
+          "pick after `const one = 1;`",
+          replace(" // first"),
+          "select file a.ts",
+          "pick before `const two = 2;`",
+          replace(" // second"),
+        ].join("\n"),
+      ),
+      fileDeps({ "a.ts": source }),
+    );
+    expect(result.regions).toHaveLength(1);
+    expect(result.failures).toHaveLength(1);
+    expect(result.failures[0]?.index).toBe(1);
+    expect(result.failures[0]?.stage).toBe("duplicate");
+    expect(result.failures[0]?.diagnostics).toContain('same file "a.ts"');
+  });
+
+  test("a duplicate resolved file-level span fails as a duplicate (#94)", () => {
+    const clause = (text: string): string =>
+      ["select file a.ts", "match `export const MAX_DEPTH = 100;`", replace(text)].join("\n");
+    const result = resolveEditDslReply(
+      parseSelection(
+        [clause("export const MAX_DEPTH = 1000;"), clause("export const MAX_DEPTH = 2000;")].join(
+          "\n",
+        ),
+      ),
+      fileDeps({ "a.ts": FILE_SOURCE }),
+    );
+    expect(result.regions).toHaveLength(1);
+    expect(result.failures).toHaveLength(1);
+    expect(result.failures[0]?.index).toBe(1);
+    expect(result.failures[0]?.stage).toBe("duplicate");
+    expect(result.failures[0]?.diagnostics).toContain(
+      'clause 1 and clause 2 both edit the same file "a.ts" with overlapping resolved spans',
+    );
+  });
+
+  test("a file-level viewer and editor remain duplicates that name the path (#94)", () => {
+    const editor = ["select file a.ts", "match `beta`", replace("gamma")].join("\n");
+    const viewer = ["select file a.ts", "match `beta`", "end"].join("\n");
+    const result = resolveEditDslReply(
+      parseSelection([editor, viewer].join("\n")),
+      fileDeps({ "a.ts": SOURCE }),
+    );
+    expect(result.regions).toHaveLength(1);
+    expect(result.failures).toHaveLength(1);
+    const failure = result.failures[0];
+    expect(failure?.stage).toBe("duplicate");
+    expect(failure?.diagnostics).toContain(
+      'clause 1 and clause 2 both select the same file "a.ts"',
+    );
+    expect(failure?.diagnostics).toContain('select "a.ts" once');
+    expect(failure?.diagnostics).not.toContain('file ""');
+    expect(failure?.diagnostics).not.toContain('select ""');
+  });
+
+  test("the scheme-tsed two-same-file reply shape applies (#94 regression fixture)", () => {
+    const reply = readFileSync(
+      join(import.meta.dir, "fixtures", "file-level-disjoint-reply.dsl"),
+      "utf8",
+    );
+    const source = [
+      "type Datum = string | number;",
+      "const MAX_DEPTH = 100;",
+      "export function read(source: string): Datum {",
+      "  return source;",
+      "}",
+      "",
+    ].join("\n");
+    const result = resolveEditDslReply(
+      parseSelection(reply),
+      fileDeps({ "src/reader.ts": source }),
+    );
+    expect(result.failures).toEqual([]);
+    expect(result.regions.map((region) => region.text)).toEqual([
+      "export type Datum =",
+      "const MAX_DEPTH = 1000;",
+    ]);
   });
 });
 

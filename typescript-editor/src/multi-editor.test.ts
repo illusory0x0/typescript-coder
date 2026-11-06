@@ -1153,6 +1153,33 @@ describe("module-boundary create (#54)", () => {
     expect(withEmptyCreate.failures[0]?.diagnostics).toContain("empty-file create");
   });
 
+  test("allows two disjoint file-level selects on one file (#94)", () => {
+    const source = 'import { a } from "./a";\nexport const x = 1;\n';
+    const fileSelect = (match: string, body: string): string =>
+      [
+        "select file src/a.ts",
+        `match \`${match}\``,
+        "replace with",
+        "TC_EDIT_BEGIN",
+        body,
+        "TC_EDIT_END",
+        "end",
+      ].join("\n");
+    const result = resolve(
+      [
+        fileSelect('import { a } from "./a";', 'import { a } from "./a2";'),
+        fileSelect("export const x = 1;", "export const x = 2;"),
+      ].join("\n\n"),
+      { "src/a.ts": source },
+    );
+    expect(result.failures).toEqual([]);
+    expect(result.regions).toHaveLength(2);
+    expect(result.regions.map((region) => region.text)).toEqual([
+      'import { a } from "./a2";',
+      "export const x = 2;",
+    ]);
+  });
+
   test("allows a module create and a declaration edit in the same file", () => {
     const source = "export const existing = 1;\n";
     const result = resolve(

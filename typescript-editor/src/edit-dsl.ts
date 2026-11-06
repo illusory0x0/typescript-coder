@@ -538,6 +538,13 @@ function duplicateTargetDiagnostics(
   // resolved later (a rename is claimed after editors whatever its position).
   const first = Math.min(earlierIndex, index);
   const second = Math.max(earlierIndex, index);
+  if (address.kind === "file") {
+    return [
+      "stage: duplicate",
+      `clause ${first + 1} and clause ${second + 1} both select the same file ${JSON.stringify(address.path)}; the whole edit-dsl reply is discarded and nothing is written`,
+      `a file may repeat only for pairwise-disjoint \`pick\`/\`match\` editor regions; select ${JSON.stringify(address.path)} once otherwise and split its other edits across exchanges`,
+    ].join("\n");
+  }
   return [
     "stage: duplicate",
     `clause ${first + 1} and clause ${second + 1} both select the same ${address.kind} ${JSON.stringify(address.name)} in ${JSON.stringify(address.path)}; the whole edit-dsl reply is discarded and nothing is written`,
@@ -552,6 +559,13 @@ function partialOverlapDiagnostics(
 ): string {
   const first = Math.min(earlierIndex, index);
   const second = Math.max(earlierIndex, index);
+  if (address.kind === "file") {
+    return [
+      "stage: duplicate",
+      `clause ${first + 1} and clause ${second + 1} both edit the same file ${JSON.stringify(address.path)} with overlapping resolved spans; the whole edit-dsl reply is discarded and nothing is written`,
+      "only pairwise-disjoint `pick`/`match` editor regions may share a file; make the spans disjoint or split the edits across replies",
+    ].join("\n");
+  }
   return [
     "stage: duplicate",
     `clause ${first + 1} and clause ${second + 1} both edit the same ${address.kind} ${JSON.stringify(address.name)} in ${JSON.stringify(address.path)} with overlapping resolved spans; the whole edit-dsl reply is discarded and nothing is written`,
@@ -754,12 +768,16 @@ export function resolveEditDslReply(
         });
         continue;
       }
-      const fileDuplicate = claimEditDslTarget(
-        claims,
-        { path, name: "", kind: "file" },
-        index,
-        false,
-      );
+      // #94: a file-level `match`/`pick`/anchor editor claims only its resolved
+      // span, so several may edit one file when their spans are pairwise
+      // disjoint. A missing replacement (or a bare select) stays a hard claim.
+      const fileAddress: EditDslTargetAddress = { path, name: "", kind: "file" };
+      const hasFileSpan =
+        selection.matcher !== null ||
+        selection.pick !== null ||
+        (selection.anchor ?? null) !== null;
+      const filePartial = selection.replacement !== null && hasFileSpan;
+      const fileDuplicate = claimEditDslTarget(claims, fileAddress, index, false, filePartial);
       if (fileDuplicate !== null) {
         failures.push({
           index,
@@ -784,6 +802,25 @@ export function resolveEditDslReply(
           undeclaredName: null,
         });
         continue;
+      }
+      const fileKey = editDslTargetKey(fileAddress);
+      if (filePartial) {
+        const earlierSpans = partialSpans.get(fileKey) ?? [];
+        const earlier = firstOverlappingPartialSpan(earlierSpans, fileResolved);
+        if (earlier !== null) {
+          failures.push({
+            index,
+            path,
+            locator: selection.locator,
+            stage: "duplicate",
+            cause: null,
+            diagnostics: partialOverlapDiagnostics(fileAddress, earlier.index, index),
+            undeclaredName: null,
+          });
+          continue;
+        }
+        earlierSpans.push({ index, start: fileResolved.start, end: fileResolved.end });
+        partialSpans.set(fileKey, earlierSpans);
       }
       regions.push({
         index,

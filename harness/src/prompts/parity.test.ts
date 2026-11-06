@@ -19,14 +19,14 @@ import type { SourceFile } from "@tc/typescript-editor/utility";
 // Golden hashes for the current prompt snapshots. They make intentional prompt
 // edits visible: a text change must update the matching hash in the same commit.
 const GOLDEN: Record<string, string> = {
-  systemEditDsl: "71914dbdab39a3d5755c27f0e61b9b41218af44f3b64f9bd0dfe14fa5f459c1c",
-  editDsl: "c874ab6bc4c0b7924139548a330d3d85cdf3f74ca82a9f0ac531ae5ae518d1dc",
-  createDsl: "8017b1f415abeb9c765ced45153b4cb370d60b36a3b7a0cf8080b761ebf28de1",
+  systemEditDsl: "c1545e29e2c93a9fddd371d75e534642bbea42fead38231efb44d31419e28ee9",
+  editDsl: "2f46628da037a073589ae29637699d09c4e5d1033f17f4a0b7984c4ea4dbf2cc",
+  createDsl: "3e9fff7d8baef588fdeda523484b26a63d074dd2c098817809669cc16374650d",
   dslSelectionRetry: "f98647d7bf2e5d118c70757673a6565de04de028d43269d72b9876825697ebac",
   dslSelectionContinuation: "e1934ecc1cb71c604d3e89830d12a7c3154fee68e02d03b2ddbe0fd94dedcb9c",
   dslUser: "24d29a2def1aa583bb82d344b101951e11ae8dca877e635c4358e9e449ae9fd2",
-  dslDetails: "06011f07e219a35810356d613cb268d2528eaced8799689cb94abb072925f8b8",
-  dslCreate: "04134f9cc01db72218fceaa80af1645479ee7201399d698d95bea6c811cbfed8",
+  dslDetails: "95432ffdf3bc71d68f8b645c2e441abbb4242f332e3157b7e62f293fb3b8ae67",
+  dslCreate: "b9806784ebbf9a4df7242286f01085ec7fe7b210b9dd729af77554f7df2bcc1b",
   dslModified: "9f42714af7262f6a57e68cc94c989ff24b19024fa2c8d9c55c05eecf67ddd019",
   dslIndex: "886b377d739a5cf3dac6e3d7de9a0e6ac1d8c66f7cd52604f60b57c15f12b2b6",
   numberedBlock: "d9faeb4ee96019066acac996f3d09a0fcabb0bbb492e7739afb9539d24382d90",
