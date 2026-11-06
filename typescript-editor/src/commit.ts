@@ -23,6 +23,11 @@ export interface CommittableRegion {
   readonly text: string;
   /** The raw replacement, used by the gate diagnostic's code frame. */
   readonly replacement: string;
+  /**
+   * The owner context of a file-level member replacement (#95), e.g. "class
+   * body"; the gate diagnostic names it when the fence is invalid there.
+   */
+  readonly ownerContext?: string | null;
   /** True for an implicit create (a new whole declaration). */
   readonly create: boolean;
 }
@@ -248,12 +253,18 @@ export function gateDiagnostics(
   spliceStart: number,
   replacement: string,
   failure: ParseFailure,
+  ownerContext?: string | null,
 ): string {
   const lines = [
     "stage: gate",
     "the edit was discarded because the resulting source does not parse; nothing was written",
-    `${failure.message} (line ${failure.line}, column ${failure.column})`,
   ];
+  if (ownerContext !== undefined && ownerContext !== null) {
+    lines.push(
+      `the matched span is a member of the ${ownerContext}; the replacement must be valid member syntax in that owner context`,
+    );
+  }
+  lines.push(`${failure.message} (line ${failure.line}, column ${failure.column})`);
   if (failure.offset >= spliceStart && failure.offset <= spliceStart + replacement.length) {
     const { line, column } = lineColumnAt(replacement, failure.offset - spliceStart);
     lines.push(`replacement line ${line}, column ${column}:`);
@@ -396,7 +407,12 @@ export async function applyResolvedRegions<T extends CommittableRegion>(input: {
           region,
           path,
           stage: "gate",
-          diagnostics: gateDiagnostics(region.start, region.replacement, gate.failure),
+          diagnostics: gateDiagnostics(
+            region.start,
+            region.replacement,
+            gate.failure,
+            region.ownerContext,
+          ),
         });
       }
       continue;

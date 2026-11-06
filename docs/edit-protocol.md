@@ -410,8 +410,8 @@ descriptor and modifier validation.
 without a synthetic declaration name. The owner is the file source; no
 symbol-index entry is resolved. The path must be safe, inside the workspace, and
 an existing regular file. The span may be inside an import/export statement, a
-function body, a test callback, an object literal, or a template-literal body;
-`create import|export` remains module-boundary-only.
+class or object member, a function body, a test callback, an object literal, or
+a template-literal body; `create import|export` remains module-boundary-only.
 
 - `match` (a structural snippet or `/regex/`) or `pick` locates the target.
 - `pick before|after <matcher>` is the insertion form: the literal snippet (or
@@ -441,6 +441,18 @@ function body, a test callback, an object literal, or a template-literal body;
   Outside a module statement an empty fence deletes exactly the matched or
   picked span, with no line expansion. The parse gate, formatter, duplicate
   guard, atomic apply, and task/node gate are unchanged.
+- A structural `match` on a member resolves to that member's syntax node, whose
+  parser span excludes its trailing `;`/`,`. When the fence's last non-whitespace
+  character is a separator the owner accepts (class or interface member,
+  object-literal property or method, enum member), the matched span also
+  consumes that member's following separator. A natural full-member fence such
+  as `  field = 10;` or `  timeout: 200,` therefore replaces the member
+  atomically instead of splicing a doubled `;;`/`,,`; a fence that does not end
+  in a separator keeps the existing one. The replacement is parsed in the
+  matched span's owner context (class body, object literal, interface/type
+  literal, or enum body): invalid member syntax fails at `stage: gate`, names
+  that owner, and writes nothing. `pick before`/`pick after` remain zero-width
+  insertions at the anchor and are not member replacements.
 - A file-level select is an **editor only** and requires `replace` at
   resolution. The DSL reader accepts the no-replacement shape so the native
   `--select-file` form can report an `address` failure with the
@@ -1308,7 +1320,10 @@ one reply resolves to a distinct `(path, symbol, kind)`, except pairwise-disjoin
 parse), the **duplicate-declaration guard** (a top-level `function`, `class`, or
 `type` name may not be added twice), the **formatter**, and the **post-format
 no-op check** (a candidate that differs only by formatting is rejected as a
-no-op). A failing gate writes nothing and reports its stage.
+no-op). A failing gate writes nothing and reports its stage. A file-level member
+replacement is parsed in the matched span's owner context (class body, object
+literal, interface/type literal, or enum body); an invalid member fence fails
+there, names that context, and writes nothing.
 
 Edit-dsl replies are **atomic across the editing statements**. Every statement
 resolves against its file's current source. Before any matcher runs, each

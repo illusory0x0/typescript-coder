@@ -1,7 +1,7 @@
 ---
 id: 95
 title: "Let file-level match replace class and object members in owner context"
-status: todo
+status: done
 priority: medium
 milestone: null
 parent: null
@@ -88,3 +88,4 @@ The first must change the field; the second must keep working. An invalid member
 - `pick` is a valid workaround, not a substitute for the documented `match` behavior; the issue is owner-context parsing, not a request to remove the gate.
 - This is a follow-up to #83 (file-level select scope); it is distinct from #92 (multiple disjoint regions on one declaration).
 - No live/API/benchmark run is required for acceptance.
+- Verification: the actual failure was the member node span excluding its trailing `;`/`,`, so a full-member fence spliced `;;`/`,,`. The resolver now consumes the member-owned following separator only when the fence ends with one, never a preceding sibling separator; `pick` stays zero-width. Added a class/object owner label to the gate diagnostic. Manual class and object dry-runs pass; invalid replacements fail at `stage: gate` and write nothing; targeted tests 283 pass; `just tsed-check` pass; `just typecheck` pass; `just test` editor 1166 pass, harness 704 pass, scripts 16 pass, acceptance 9 pass.

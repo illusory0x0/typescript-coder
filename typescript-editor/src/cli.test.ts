@@ -1189,6 +1189,148 @@ describe("tsed file-level span select (#83)", () => {
   });
 });
 
+describe("tsed file-level member replacement (#95)", () => {
+  const CLASS_SOURCE = ["export class A {", "  field = 1;", "  other = 2;", "}", ""].join("\n");
+  const OBJECT_SOURCE = ["const config = {", "  timeout: 100,", "  other: 2,", "};", ""].join("\n");
+
+  function reply(match: string, body: readonly string[], anchor?: "before" | "after"): string {
+    return [
+      "select file src/a.ts",
+      anchor === undefined ? `match \`${match}\`` : `pick ${anchor} \`${match}\``,
+      "replace with",
+      BEGIN,
+      ...body,
+      END,
+      "",
+    ].join("\n");
+  }
+
+  test("a class-field match replaces the whole member in a dry run", () => {
+    const workspace = makeWorkspace({ "src/a.ts": CLASS_SOURCE });
+    const result = run(
+      workspace,
+      ["--protocol-format", "dsl", "--dry-run", "--diff"],
+      reply("  field = 1;", ["  field = 10;"]),
+    );
+    expect(result.status).toBe(0);
+    expect(result.stdout).toContain("would change: src/a.ts");
+    expect(result.stdout).toContain("-  field = 1;");
+    expect(result.stdout).toContain("+  field = 10;");
+    expect(result.stderr).toBe("");
+    expect(read(join(workspace, "src/a.ts"))).toBe(CLASS_SOURCE);
+  });
+
+  test("a multi-field class replacement applies atomically", () => {
+    const workspace = makeWorkspace({ "src/a.ts": CLASS_SOURCE });
+    const result = run(
+      workspace,
+      ["--protocol-format", "dsl", "--write"],
+      reply("  field = 1;", ["  field = 10;", "  foldCase = false;"]),
+    );
+    expect(result.status).toBe(0);
+    expect(result.stdout).toContain("changed: src/a.ts");
+    expect(read(join(workspace, "src/a.ts"))).toBe(
+      ["export class A {", "  field = 10;", "  foldCase = false;", "  other = 2;", "}", ""].join(
+        "\n",
+      ),
+    );
+  });
+
+  test("the recorded src/port.ts filePath/foldCase replacement applies (#95)", () => {
+    const source = ["export class Port {", '  filePath = "src";', "  other = 2;", "}", ""].join(
+      "\n",
+    );
+    const workspace = makeWorkspace({ "src/a.ts": source });
+    const result = run(
+      workspace,
+      ["--protocol-format", "dsl", "--write"],
+      reply('  filePath = "src";', ['  filePath = "lib";', "  foldCase = false;"]),
+    );
+    expect(result.status).toBe(0);
+    expect(read(join(workspace, "src/a.ts"))).toBe(
+      [
+        "export class Port {",
+        '  filePath = "lib";',
+        "  foldCase = false;",
+        "  other = 2;",
+        "}",
+        "",
+      ].join("\n"),
+    );
+  });
+
+  test("an object-literal member match replaces multiple members in a dry run", () => {
+    const workspace = makeWorkspace({ "src/a.ts": OBJECT_SOURCE });
+    const result = run(
+      workspace,
+      ["--protocol-format", "dsl", "--dry-run", "--diff"],
+      reply("  timeout: 100,", ["  timeout: 200,", "  retries: 3,"]),
+    );
+    expect(result.status).toBe(0);
+    expect(result.stdout).toContain("would change: src/a.ts");
+    expect(result.stdout).toContain("-  timeout: 100,");
+    expect(result.stdout).toContain("+  timeout: 200,");
+    expect(result.stdout).toContain("+  retries: 3,");
+    expect(result.stderr).toBe("");
+    expect(read(join(workspace, "src/a.ts"))).toBe(OBJECT_SOURCE);
+  });
+
+  test("a final object member without a trailing comma keeps its preceding comma", () => {
+    const source = ["const config = {", "  first: 1,", "  timeout: 100", "};", ""].join("\n");
+    const workspace = makeWorkspace({ "src/a.ts": source });
+    const result = run(
+      workspace,
+      ["--protocol-format", "dsl", "--write"],
+      reply("  timeout: 100", ["  timeout: 200"]),
+    );
+    expect(result.status).toBe(0);
+    expect(read(join(workspace, "src/a.ts"))).toBe(
+      ["const config = {", "  first: 1,", "  timeout: 200,", "};", ""].join("\n"),
+    );
+  });
+
+  test("an invalid class-field replacement fails the gate with the owner context", () => {
+    const workspace = makeWorkspace({ "src/a.ts": CLASS_SOURCE });
+    const result = run(
+      workspace,
+      ["--protocol-format", "dsl", "--write"],
+      reply("  field = 1;", ["  field = ;"]),
+    );
+    expect(result.status).toBe(1);
+    expect(result.stderr).toContain("stage: gate");
+    expect(result.stderr).toContain("member of the class body");
+    expect(result.stderr).toContain('unexpected token ";"');
+    expect(read(join(workspace, "src/a.ts"))).toBe(CLASS_SOURCE);
+  });
+
+  test("an invalid object-member replacement fails the gate with the owner context", () => {
+    const workspace = makeWorkspace({ "src/a.ts": OBJECT_SOURCE });
+    const result = run(
+      workspace,
+      ["--protocol-format", "dsl", "--write"],
+      reply("  timeout: 100,", ["  timeout: ,"]),
+    );
+    expect(result.status).toBe(1);
+    expect(result.stderr).toContain("stage: gate");
+    expect(result.stderr).toContain("member of the object literal");
+    expect(read(join(workspace, "src/a.ts"))).toBe(OBJECT_SOURCE);
+  });
+
+  test("pick after a class field still inserts instead of replacing the member", () => {
+    const workspace = makeWorkspace({ "src/a.ts": CLASS_SOURCE });
+    const result = run(
+      workspace,
+      ["--protocol-format", "dsl", "--write"],
+      reply("  field = 1;", ["", "  extra = 3;"], "after"),
+    );
+    expect(result.status).toBe(0);
+    const written = read(join(workspace, "src/a.ts"));
+    expect(written).toContain("field = 1;");
+    expect(written).toContain("extra = 3;");
+    expect(written).toContain("other = 2;");
+  });
+});
+
 describe("tsed cross-file rename", () => {
   const IMPORTER = ['import { helper } from "./b";', "export const n = helper();", ""].join("\n");
   const TARGET = "export function helper(): number { return 1; }\n";

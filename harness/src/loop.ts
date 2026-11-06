@@ -2219,6 +2219,7 @@ export function editDslRegionToResolved(region: EditDslRegion): ResolvedRegion {
     end: region.end,
     text: region.text,
     replacement: region.text,
+    ownerContext: region.ownerContext,
     stage: region.stage,
     matcherKind: region.matcherKind,
     create: region.create,
@@ -2238,6 +2239,8 @@ export interface ResolvedRegion {
   text: string;
   /** The raw replacement, used by the gate diagnostic's code frame. */
   replacement: string;
+  /** The owner context of a file-level member replacement (#95), or null. */
+  ownerContext?: string | null;
   /** The cascade stage that resolved the region (#110). */
   stage: SelectionStage;
   /** The matcher form that resolved it (#110), or null. */

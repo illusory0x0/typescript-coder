@@ -76,6 +76,12 @@ export interface EditDslRegion {
   /** The matcher form that resolved it, or `null` for a whole-declaration edit. */
   matcherKind: EditDslMatcherKind | null;
   /**
+   * The owner context of a file-level member replacement (#95), e.g. "class
+   * body" or "object literal"; the parse gate names it when the fence is not
+   * valid member syntax there. Absent for other regions.
+   */
+  ownerContext?: string | null;
+  /**
    * True when the clause is an implicit create: a whole-declaration editor
    * whose symbol is absent, so its fence body is appended as a new declaration
    * (`docs/edit-protocol.md` §6). Only the edit-dsl path ever sets this.
@@ -831,6 +837,7 @@ export function resolveEditDslReply(
         text: fileResolved.text,
         stage: fileResolved.stage,
         matcherKind: selectionMatcherKind(selection),
+        ownerContext: fileResolved.ownerContext,
         create: false,
       });
       continue;

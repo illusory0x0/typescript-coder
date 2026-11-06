@@ -329,6 +329,7 @@ export async function applyEditDsl(
     end: region.end,
     text: region.text,
     replacement: region.text,
+    ownerContext: region.ownerContext,
     create: region.create,
   }));
 

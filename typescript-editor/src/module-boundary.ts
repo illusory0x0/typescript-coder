@@ -42,6 +42,8 @@ export type FileSelectionResolution =
       text: string;
       stage: SelectionStage;
       gateStart: number;
+      /** The owner context of a file-level member replacement (#95), or null. */
+      ownerContext: string | null;
     }
   | {
       ok: false;
@@ -370,6 +372,107 @@ function dedupeSpans(spans: readonly Span[]): Span[] {
   return unique;
 }
 
+/** The owner body that accepts a member node's replacement syntax (#95). */
+interface MemberOwnerContext {
+  /** Diagnostic label for the surrounding body, e.g. "class body". */
+  owner: string;
+  /** Separators the owner accepts after a member. */
+  separators: string;
+}
+
+interface MemberContainer {
+  key: string;
+  owner: string;
+  separators: string;
+}
+
+// A structural match on a member resolves to the member node, whose parser span
+// excludes its trailing `;`/`,`. These containers tell the file-level resolver
+// which following separator belongs to the member when the fence supplies one.
+const MEMBER_CONTAINERS: Readonly<Record<string, readonly MemberContainer[]>> = {
+  ClassDeclaration: [{ key: "members", owner: "class body", separators: ";" }],
+  ClassExpression: [{ key: "members", owner: "class body", separators: ";" }],
+  ObjectLiteral: [{ key: "properties", owner: "object literal", separators: "," }],
+  InterfaceDeclaration: [{ key: "members", owner: "interface body", separators: ";," }],
+  TypeLiteral: [{ key: "members", owner: "type literal", separators: ";," }],
+  EnumDeclaration: [{ key: "members", owner: "enum body", separators: "," }],
+};
+
+function astRecord(value: unknown): Record<string, unknown> | null {
+  if (typeof value !== "object" || value === null || Array.isArray(value)) {
+    return null;
+  }
+  const record = value as Record<string, unknown>;
+  if (
+    typeof record["start"] !== "number" ||
+    typeof record["end"] !== "number" ||
+    typeof record["kind"] !== "string"
+  ) {
+    return null;
+  }
+  return record;
+}
+
+/**
+ * The member owner whose direct member list contains `target` exactly. Only an
+ * exact element span counts: a matcher on a child identifier keeps editing that
+ * child, not the surrounding member.
+ */
+function memberOwnerAt(value: unknown, target: Span): MemberOwnerContext | null {
+  if (Array.isArray(value)) {
+    for (const item of value) {
+      const found = memberOwnerAt(item, target);
+      if (found !== null) {
+        return found;
+      }
+    }
+    return null;
+  }
+  const record = astRecord(value);
+  if (record === null) {
+    return null;
+  }
+  const kind = record["kind"] as string;
+  for (const container of MEMBER_CONTAINERS[kind] ?? []) {
+    const members = record[container.key];
+    if (!Array.isArray(members)) {
+      continue;
+    }
+    for (const member of members) {
+      const node = astRecord(member);
+      if (node !== null && node["start"] === target.start && node["end"] === target.end) {
+        return { owner: container.owner, separators: container.separators };
+      }
+    }
+  }
+  for (const key of Object.keys(record)) {
+    if (key === "source") {
+      continue;
+    }
+    const found = memberOwnerAt(record[key], target);
+    if (found !== null) {
+      return found;
+    }
+  }
+  return null;
+}
+
+function endsWithMemberSeparator(replacement: string, separators: string): boolean {
+  const trimmed = replacement.trimEnd();
+  const last = trimmed[trimmed.length - 1];
+  return last !== undefined && separators.includes(last);
+}
+
+/** Consume the member's own following separator, never a preceding one. */
+function followingSeparatorEnd(source: string, start: number, separators: string): number | null {
+  let cursor = start;
+  while (cursor < source.length && /\s/.test(source[cursor] ?? "")) {
+    cursor += 1;
+  }
+  const next = source[cursor];
+  return next !== undefined && separators.includes(next) ? cursor + 1 : null;
+}
+
 /**
  * Expand an empty-fence specifier deletion to the whole named specifier and its
  * separator. Structural matching a bare `Foo` hits the identifier inside
@@ -488,6 +591,7 @@ export function resolveFileSelection(
       text: selection.replacement,
       stage: "match",
       gateStart: point,
+      ownerContext: null,
     };
   }
   let candidates: Span[] = [];
@@ -597,6 +701,12 @@ export function resolveFileSelection(
     );
   }
   const statement = moduleStatementAt(program, target);
+  // A member match resolves to the member node, whose span omits the trailing
+  // separator (#95). When the fence carries its own separator, consume the
+  // member's following one so the natural full-member replacement does not
+  // splice a doubled `;;`/`,,`. Never touch a preceding separator: the final
+  // member of an object may have none, and that comma belongs to its sibling.
+  const memberOwner = memberOwnerAt(program, target);
 
   let start = target.start;
   let end = target.end;
@@ -612,6 +722,14 @@ export function resolveFileSelection(
         end = specifier.end;
       }
     }
+  } else if (
+    memberOwner !== null &&
+    endsWithMemberSeparator(selection.replacement, memberOwner.separators)
+  ) {
+    const separatorEnd = followingSeparatorEnd(source, target.end, memberOwner.separators);
+    if (separatorEnd !== null) {
+      end = separatorEnd;
+    }
   }
   if (selection.replacement === source.slice(start, end)) {
     return moduleEditFailure(
@@ -626,6 +744,7 @@ export function resolveFileSelection(
     text: selection.replacement,
     stage,
     gateStart: start,
+    ownerContext: memberOwner === null ? null : memberOwner.owner,
   };
 }
 

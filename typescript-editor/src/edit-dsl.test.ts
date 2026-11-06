@@ -1589,6 +1589,75 @@ describe("file-level module-boundary select (#54)", () => {
       "const MAX_DEPTH = 1000;",
     ]);
   });
+
+  test("replaces a class field with its own separator through match (#95)", () => {
+    const source = ["export class A {", "  field = 1;", "  other = 2;", "}", ""].join("\n");
+    const result = resolveEditDslReply(
+      parseSelection(
+        [
+          "select file a.ts",
+          "match `  field = 1;`",
+          replace("  field = 10;\n  foldCase = false;"),
+        ].join("\n"),
+      ),
+      fileDeps({ "a.ts": source }),
+    );
+    expect(result.failures).toEqual([]);
+    const region = result.regions[0];
+    expect(source.slice(region?.start ?? 0, region?.end ?? 0)).toBe("field = 1;");
+    expect(region?.ownerContext).toBe("class body");
+  });
+
+  test("replaces an object-literal member with its own separator through match (#95)", () => {
+    const source = ["const config = {", "  timeout: 100,", "  other: 2,", "};", ""].join("\n");
+    const result = resolveEditDslReply(
+      parseSelection(
+        [
+          "select file a.ts",
+          "match `  timeout: 100,`",
+          replace("  timeout: 200,\n  retries: 3,"),
+        ].join("\n"),
+      ),
+      fileDeps({ "a.ts": source }),
+    );
+    expect(result.failures).toEqual([]);
+    const region = result.regions[0];
+    expect(source.slice(region?.start ?? 0, region?.end ?? 0)).toBe("timeout: 100,");
+    expect(region?.ownerContext).toBe("object literal");
+  });
+
+  test("keeps the preceding separator when replacing a final object member (#95)", () => {
+    const source = ["const config = {", "  first: 1,", "  timeout: 100", "};", ""].join("\n");
+    const result = resolveEditDslReply(
+      parseSelection(
+        ["select file a.ts", "match `  timeout: 100`", replace("  timeout: 200")].join("\n"),
+      ),
+      fileDeps({ "a.ts": source }),
+    );
+    expect(result.failures).toEqual([]);
+    const region = result.regions[0];
+    expect(source.slice(region?.start ?? 0, region?.end ?? 0)).toBe("timeout: 100");
+    const spliced =
+      source.slice(0, region?.start ?? 0) + (region?.text ?? "") + source.slice(region?.end ?? 0);
+    expect(spliced).toContain("  first: 1,\n    timeout: 200\n};");
+    expect(region?.ownerContext).toBe("object literal");
+  });
+
+  test("pick after remains an insertion rather than a member replacement (#95)", () => {
+    const source = ["export class A {", "  field = 1;", "  other = 2;", "}", ""].join("\n");
+    const result = resolveEditDslReply(
+      parseSelection(
+        ["select file a.ts", "pick after `  field = 1;`", replace("\n  extra = 3;")].join("\n"),
+      ),
+      fileDeps({ "a.ts": source }),
+    );
+    expect(result.failures).toEqual([]);
+    const region = result.regions[0];
+    const anchorEnd = source.indexOf("  field = 1;") + "  field = 1;".length;
+    expect(region?.start).toBe(anchorEnd);
+    expect(region?.end).toBe(anchorEnd);
+    expect(region?.ownerContext ?? null).toBeNull();
+  });
 });
 
 describe("nested declaration addresses (#52)", () => {
