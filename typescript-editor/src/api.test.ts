@@ -254,6 +254,54 @@ describe("applyEditDsl", () => {
     expect(read(target)).toBe(before);
   });
 
+  test("an absent dotted member selector fails at address and writes nothing (#96)", async () => {
+    const source = "export class N {\n  value = 1;\n}\n";
+    const directory = makeWorkspace({ "src/new.ts": source });
+    const target = join(directory, "src/new.ts");
+    const text = [
+      "select N.newMethod in src/new.ts",
+      "replace with",
+      "TC_EDIT_BEGIN",
+      "  private newMethod(): void {",
+      "    return;",
+      "  }",
+      "TC_EDIT_END",
+    ].join("\n");
+
+    const result = await applyEditDsl(text, { cwd: directory });
+
+    expect(result.ok).toBe(false);
+    expect(result.failures).toHaveLength(1);
+    expect(result.failures[0]?.stage).toBe("address");
+    expect(result.failures[0]?.diagnostics).not.toContain("let N.newMethod");
+    expect(result.text).toContain('create method N.newMethod in "src/new.ts" with <fence>');
+    expect(result.changed).toEqual([]);
+    expect(read(target)).toBe(source);
+  });
+
+  test("explicit create method Owner.name inserts the member (#96)", async () => {
+    const source = "export class N {\n  value = 1;\n}\n";
+    const directory = makeWorkspace({ "src/new.ts": source });
+    const target = join(directory, "src/new.ts");
+    const text = [
+      "create method N.newMethod in src/new.ts with",
+      "TC_EDIT_BEGIN",
+      "  private newMethod(): void {",
+      "    return;",
+      "  }",
+      "TC_EDIT_END",
+    ].join("\n");
+
+    const result = await applyEditDsl(text, { cwd: directory });
+
+    expect(result.ok).toBe(true);
+    expect(result.failures).toEqual([]);
+    expect(result.changed).toEqual(["src/new.ts"]);
+    const edited = read(target);
+    expect(edited).toContain("private newMethod(): void {");
+    expect(edited).toContain("value = 1;");
+  });
+
   test("a clean edit plus one failing edit writes nothing", async () => {
     const directory = makeWorkspace({ "src/helper.ts": HELPER });
     const target = join(directory, "src/helper.ts");

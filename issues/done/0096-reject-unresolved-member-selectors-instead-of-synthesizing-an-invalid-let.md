@@ -1,7 +1,7 @@
 ---
 id: 96
 title: "Reject unresolved member selectors instead of synthesizing an invalid let"
-status: todo
+status: done
 priority: medium
 milestone: null
 parent: null
@@ -90,3 +90,4 @@ The first must be a clear address failure with no `let`; the second must show th
 - Assumption: `select Owner.name` is for existing members; adding a member is the explicit `create method Owner.name` path. If a member implicit-create syntax is intended instead, it must emit a valid member insertion, not the current `let`.
 - This is a robustness/diagnostic fix; the parse gate already prevents a bad write.
 - No live/API/benchmark run is required for acceptance.
+- Verification: absent dotted method/property selectors now fail at `stage: address` with `code: EDIT_SELECT_MEMBER_MISSING` and no synthesized `let`; explicit `create method` and existing-member replacement both work; top-level implicit create is unchanged; absent-member writes leave the file byte-identical. Also normalized declaration-level whole-member replacements to consume a following `;`/`,` when the fence supplies one, so the natural full-member fence replaces instead of splicing `;;`/`,,`. Targeted tests 475 pass; `just tsed-check` pass; `just typecheck` pass; `just test` editor 1178 pass, harness 704 pass, scripts 16 pass, acceptance 9 pass.

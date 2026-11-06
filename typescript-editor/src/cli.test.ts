@@ -730,6 +730,22 @@ describe("tsed stdin protocols", () => {
     expect(read(join(workspace, "src/a.ts"))).toBe(source);
   });
 
+  test("dsl writes a full class-field member fence without doubling its separator (#96)", () => {
+    const source = ["export class N {", "  value = 1;", "  other = 2;", "}", ""].join("\n");
+    const workspace = makeWorkspace({ "src/new.ts": source });
+    const reply = ["select N.value in src/new.ts", "replace with", BEGIN, "  value = 2;", END].join(
+      "\n",
+    );
+    const result = run(workspace, ["--protocol-format", "dsl", "--write"], reply);
+    expect(result.status).toBe(0);
+    expect(result.stdout).toContain("changed: src/new.ts");
+    expect(result.stderr).toBe("");
+    const edited = read(join(workspace, "src/new.ts"));
+    expect(edited).toContain("  value = 2;");
+    expect(edited).not.toContain("value = 2;;");
+    expect(edited).toContain("  other = 2;");
+  });
+
   test("flag --dry-run --diff prints the diff too", () => {
     const workspace = makeWorkspace({ "patch.txt": ANSWER_TWO });
     const result = run(workspace, [

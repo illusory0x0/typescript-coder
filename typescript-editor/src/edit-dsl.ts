@@ -364,6 +364,124 @@ function declaredNames(root: Binder["rootScope"]): string {
   return names.length === 0 ? "no top-level declaration" : names.join(", ");
 }
 
+// #96: a dotted locator names a member of an existing owner. The implicit path
+// only appends a top-level declaration, so a member fence would be wrapped as
+// `let Owner.member = …` and fail the parse gate. Reject it at the address
+// stage instead, before any replacement text is synthesized.
+function isMemberSelectorName(name: string): boolean {
+  return name.includes(".");
+}
+
+function fenceTopLevelKind(body: string): string | null {
+  let program: Program;
+  try {
+    program = new Parser(body).parseProgram();
+  } catch {
+    return null;
+  }
+  const declarations = program.body.filter(isDeclarationStatement);
+  const statement = declarations[0];
+  if (declarations.length !== 1 || statement === undefined) {
+    return null;
+  }
+  if (statement.kind === "ExportNamedDeclaration") {
+    return statement.declaration === null ? null : declarationKindOf(statement.declaration);
+  }
+  if (statement.kind === "ExportDefaultDeclaration") {
+    return declarationKindOf(statement.declaration);
+  }
+  return declarationKindOf(statement);
+}
+
+function classMemberCreateKind(member: Node): string | null {
+  switch ((member as Node & { kind: string }).kind) {
+    case "MethodDeclaration": {
+      const accessor = (member as Node & { accessor?: "get" | "set" }).accessor;
+      return accessor === "get" ? "getter" : accessor === "set" ? "setter" : "method";
+    }
+    case "PropertyDeclaration":
+      return "property";
+    case "ConstructorDeclaration":
+      return "constructor";
+    default:
+      return null;
+  }
+}
+
+function classMemberIdentifier(member: Node): string | null {
+  const name = (member as Node & { name?: Node }).name;
+  if (name === undefined) {
+    return null;
+  }
+  const candidate = name as Node & { kind: string; name?: string; value?: string; raw?: string };
+  switch (candidate.kind) {
+    case "Identifier":
+      return candidate.name ?? null;
+    case "StringLiteral":
+      return candidate.value ?? null;
+    case "NumberLiteral":
+      return candidate.raw ?? null;
+    default:
+      return null;
+  }
+}
+
+function fenceMemberKind(body: string, name: string): string | null {
+  let program: Program;
+  try {
+    program = new Parser(`class __TC_MEMBER__ {\n${body}\n}`).parseProgram();
+  } catch {
+    return null;
+  }
+  const declaration = program.body[0];
+  if (declaration === undefined || declaration.kind !== "ClassDeclaration") {
+    return null;
+  }
+  const candidates = declaration.members
+    .map((member) => ({
+      kind: classMemberCreateKind(member),
+      name: classMemberIdentifier(member),
+    }))
+    .filter((candidate) => candidate.kind !== null);
+  const exact = candidates.find((candidate) => candidate.name === name);
+  if (exact?.kind !== undefined && exact.kind !== null) {
+    return exact.kind;
+  }
+  return candidates.length === 1 ? (candidates[0]?.kind ?? null) : null;
+}
+
+function suggestedCreateKind(selection: Selection, body: string, name: string): string {
+  const topLevel = fenceTopLevelKind(body);
+  if (topLevel !== null) {
+    return topLevel;
+  }
+  const inferred = fenceMemberKind(body, name);
+  if (inferred !== null) {
+    return inferred;
+  }
+  const requested = selection.locator.kind;
+  if (requested !== "" && requested !== "file" && requested !== "block") {
+    return requested;
+  }
+  return "<kind>";
+}
+
+function memberSelectorCreateDiagnostics(selection: Selection, body: string): string {
+  const { locator } = selection;
+  const separator = locator.name.lastIndexOf(".");
+  const owner = separator > 0 ? locator.name.slice(0, separator) : locator.name;
+  const name = separator > 0 ? locator.name.slice(separator + 1) : locator.name;
+  const path = JSON.stringify(locator.path);
+  const kind = suggestedCreateKind(selection, body, name);
+  const space = selection.space === null ? "" : ` in the ${JSON.stringify(selection.space)} space`;
+  return [
+    "stage: address",
+    "code: EDIT_SELECT_MEMBER_MISSING",
+    `cannot select ${JSON.stringify(locator.name)} in ${path}: a dotted selector addresses an existing member, and ${JSON.stringify(locator.name)} is not declared${space}`,
+    `hint: \`select Owner.name\` requires an existing member; to create the absent member, use \`create ${kind} ${locator.name} in ${path} with <fence>\` (the owner ${JSON.stringify(owner)} must already exist; a dotted create never creates its owner)`,
+  ].join("\n");
+}
+
 // The create fence is either a declaration list or a body to wrap. A
 // declaration list must carry exactly one top-level declaration named after the
 // clause's symbol (a declaration list is never wrapped), and a `resolve` space
@@ -911,6 +1029,18 @@ export function resolveEditDslReply(
         replacement !== null &&
         replacement.trim() !== "";
       if (createsDeclaration) {
+        if (isMemberSelectorName(selection.locator.name)) {
+          failures.push({
+            index,
+            path,
+            locator: selection.locator,
+            stage: "address",
+            cause: null,
+            diagnostics: memberSelectorCreateDiagnostics(selection, replacement.trim()),
+            undeclaredName: null,
+          });
+          continue;
+        }
         const created = createBodyText(selection, replacement.trim());
         if (!created.ok) {
           failures.push({

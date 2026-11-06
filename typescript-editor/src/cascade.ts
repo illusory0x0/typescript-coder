@@ -82,6 +82,24 @@ function stripLeadingExport(replacement: string, modifier: string | null): strin
     : stripLeadingExportModifier(replacement, modifier.includes("default"));
 }
 
+// A declaration-level member's node span excludes its trailing `,`/`;`, while a
+// replacement fence copied from the source naturally keeps it. When the fence's
+// last non-whitespace character is the same separator that follows the span,
+// consume that following separator so the natural whole-member fence applies
+// without doubling it. A following `}` or the file end leaves the span alone,
+// and a preceding separator is never consumed.
+function extendMemberReplacementEnd(source: string, end: number, replacement: string): number {
+  const last = replacement.trimEnd().at(-1);
+  if (last !== ";" && last !== ",") {
+    return end;
+  }
+  let next = end;
+  while (next < source.length && /\s/.test(source[next] ?? "")) {
+    next += 1;
+  }
+  return source[next] === last ? next + 1 : end;
+}
+
 function declarationLabel(entry: IndexEntry): string {
   const { kind, name, path } = entry.locator;
   return `${kind} ${JSON.stringify(name)} in ${path}`;
@@ -602,6 +620,19 @@ export function resolveCascade(
       start = memberRange.start;
       end = memberRange.end;
     }
+  }
+
+  // #96: a declaration-level dotted member replacement keeps the node's
+  // trailing separator when the fence carries it. Extend over that following
+  // separator before the no-op guard so a full-member replacement is judged
+  // against the text it actually replaces.
+  if (
+    entry.locator.name.includes(".") &&
+    selection.matcher === null &&
+    selection.pick === null &&
+    selection.replacement.trim() !== ""
+  ) {
+    end = extendMemberReplacementEnd(source, end, selection.replacement);
   }
 
   // A target that begins at the declaration gets the `export` tolerance; a

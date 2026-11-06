@@ -376,7 +376,7 @@ insertion of a `replace` fence (the anchor form requires `replace`).
 | Top-level function                                                                   | `select function NAME in PATH` (kind optional)                                                                                       | whole-symbol; `match`; `/regex/`; `pick`; `create function NAME`                                                                                                                    | The declaration is appended at the file end; a body-level edit needs a selector.                                                                                                                |
 | Top-level `const`/`let`/`var`/`using`                                                | `select const NAME`, `select let NAME`, or `select var NAME`; `using` uses an omitted kind (`select NAME`)                           | whole-symbol; `match`; `/regex/`; `pick`; `create const`, `create let`, `create var`, or `create using`                                                                             | `const`/`let`/`var` are the grammar's variable kinds; `select using NAME` is an **expected syntax failure**. Body-only create is accepted for these kinds.                                      |
 | Top-level class, interface, type alias, enum, namespace                              | `select <kind> NAME` with `class`, `interface`, `type`, `enum`, or `namespace` (kind optional)                                       | whole-symbol; `match`; `/regex/`; `pick`; `create` the same declaration kind                                                                                                        | Class and enum occupy value and type spaces, interface/type alias type, namespace namespace. Create appends exactly one declaration.                                                            |
-| Class method/property                                                                | `select Widget.render`; `select Widget.count` (omitted kind)                                                                         | whole-symbol; `match`; `/regex/`; `pick`; `create method Widget.render`; `create property Widget.count` (optional `static`)                                                         | The indexed span is the member; an empty-fence delete also removes its separator.                                                                                                               |
+| Class method/property                                                                | `select Widget.render`; `select Widget.count` (omitted kind)                                                                         | whole-symbol; `match`; `/regex/`; `pick`; `create method Widget.render`; `create property Widget.count` (optional `static`)                                                         | The indexed span is the member; an empty-fence delete also removes its separator. The member must already exist; an absent member is created explicitly with `create method`/`create property`. |
 | Class getter/setter                                                                  | `select Widget.value` when only one accessor exists                                                                                  | whole-symbol; `match`; `/regex/`; `pick`; `create getter`, `create setter`, or `create accessor Widget.value`                                                                       | A getter/setter **pair shares the name**, so the address is ambiguous; select the class owner and `match`/`pick` one accessor. `accessor` create accepts a get or set fence; the pair is legal. |
 | Class constructor                                                                    | Owner only: `select class Widget`                                                                                                    | Owner + `match`/`/regex/`/`pick`; `create constructor Widget`                                                                                                                       | No name address: the constructor has no index entry.                                                                                                                                            |
 | Class static block, computed member, index signature, constructor parameter property | Owner only: `select class Widget`                                                                                                    | Owner + `match`/`/regex/`/`pick`; no create                                                                                                                                         | Not name-addressable. Static blocks and computed names are reached through the class-member context; index signatures and parameter properties are anonymous.                                   |
@@ -733,7 +733,9 @@ The fence is validated before anything is written:
   The owner must resolve to exactly one existing class, interface, namespace,
   or enum. A missing owner, a merged/ambiguous owner with candidates, or a
   wrong-kind owner is an `address` failure. A dotted create never creates its
-  owner; create the top-level declaration in a separate statement.
+  owner; create the top-level declaration in a separate statement. Conversely,
+  `select Owner.name` requires the member to exist; an absent member is an
+  `address` failure that points at this member-create form.
 - Modifiers carried by the fence (`export`, `default`, `declare`, `abstract`,
   `static`, `readonly`, access modifiers, `override`, `async`, generator) are
   validated against the descriptor and owner. A static/instance identity
@@ -1379,6 +1381,14 @@ when the symbol is missing. Viewers never create. The kind-aware
 `create <kind> <name> in <path> with <fence>` statement (§2.1) is the
 precise form when the fence is not a complete declaration or when a member is
 the target; the implicit path remains for a whole-declaration `select … replace`.
+
+**A dotted selector is never an implicit create.** `select Owner.name` addresses
+an existing member of an existing owner. When the member is absent, or exists
+only in another symbol space, the clause fails at `stage: address` and names the
+explicit member create, for example
+`create method N.newMethod in "src/new.ts" with <fence>` (a property fence names
+`create property`). The owner must already exist, and a dotted create never
+creates its owner. No `let Owner.name = …` declaration is synthesized.
 
 The fence body is validated before it is appended:
 

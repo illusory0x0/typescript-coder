@@ -253,6 +253,87 @@ describe("resolveEditDslReply (#111)", () => {
     expect(result.regions[0]?.locator.kind).toBe("");
   });
 
+  test("an absent dotted method selector is an address failure, not an implicit create (#96)", () => {
+    const source = ["export class N {", "  value = 1;", "}"].join("\n");
+    const selections = parseSelection(
+      [
+        "select N.newMethod in a.ts",
+        "replace with",
+        "TC_EDIT_BEGIN",
+        "  private newMethod(): void {",
+        "    return;",
+        "  }",
+        "TC_EDIT_END",
+      ].join("\n"),
+    );
+    const result = resolveEditDslReply(selections, deps(source));
+    expect(result.regions).toEqual([]);
+    expect(result.failures).toHaveLength(1);
+    const failure = result.failures[0];
+    expect(failure?.stage).toBe("address");
+    expect(failure?.undeclaredName).toBeNull();
+    expect(failure?.diagnostics).toContain('create method N.newMethod in "a.ts" with <fence>');
+    expect(failure?.diagnostics).not.toContain("let N.newMethod");
+  });
+
+  test("an absent dotted property selector is an address failure, not an implicit create (#96)", () => {
+    const source = ["export class N {", "  value = 1;", "}"].join("\n");
+    const selections = parseSelection(
+      [
+        "select N.missingProperty in a.ts",
+        "replace with",
+        "TC_EDIT_BEGIN",
+        "missingProperty = 2",
+        "TC_EDIT_END",
+      ].join("\n"),
+    );
+    const result = resolveEditDslReply(selections, deps(source));
+    expect(result.regions).toEqual([]);
+    expect(result.failures).toHaveLength(1);
+    const failure = result.failures[0];
+    expect(failure?.stage).toBe("address");
+    expect(failure?.undeclaredName).toBeNull();
+    expect(failure?.diagnostics).toContain(
+      'create property N.missingProperty in "a.ts" with <fence>',
+    );
+    expect(failure?.diagnostics).not.toContain("let N.missingProperty");
+  });
+
+  test("an absent dotted namespace member names its declaration-kind create form (#96)", () => {
+    const source = ["export namespace Util {", "  export const existing = 1;", "}"].join("\n");
+    const selections = parseSelection(
+      [
+        "select Util.helper in a.ts",
+        "replace with",
+        "TC_EDIT_BEGIN",
+        "export function helper(): number {",
+        "  return 1;",
+        "}",
+        "TC_EDIT_END",
+      ].join("\n"),
+    );
+    const result = resolveEditDslReply(selections, deps(source));
+    expect(result.regions).toEqual([]);
+    expect(result.failures[0]?.stage).toBe("address");
+    expect(result.failures[0]?.diagnostics).toContain(
+      'create function Util.helper in "a.ts" with <fence>',
+    );
+  });
+
+  test("an existing dotted member still replaces in place (#96)", () => {
+    const source = ["export class N {", "  value = 1;", "}"].join("\n");
+    const selections = parseSelection(
+      ["select N.value in a.ts", "replace with", "TC_EDIT_BEGIN", "value = 2", "TC_EDIT_END"].join(
+        "\n",
+      ),
+    );
+    const result = resolveEditDslReply(selections, deps(source));
+    expect(result.failures).toEqual([]);
+    expect(result.regions).toHaveLength(1);
+    expect(result.regions[0]?.create).toBe(false);
+    expect(result.regions[0]?.text).toBe("value = 2");
+  });
+
   test("rejects repeated implicit creates of the same declaration (#13)", () => {
     // The #11 json-parser reply: two creates followed by a "correction" that
     // asks for the other locator kind. Both fences add the same type alias /
@@ -1675,7 +1756,7 @@ describe("nested declaration addresses (#52)", () => {
     expect(modify.failures).toEqual([]);
     const modified = modify.regions[0];
     expect(modified?.start).toBe(source.indexOf("value: number"));
-    expect(modified?.end).toBe(source.indexOf("value: number") + "value: number".length);
+    expect(modified?.end).toBe(source.indexOf("value: number") + "value: number;".length);
 
     const remove = resolveEditDslReply(
       parseSelection(`select Cell.value in a.ts\n${replace("")}`),
@@ -1746,6 +1827,61 @@ describe("nested declaration addresses (#52)", () => {
     const portStart = source.indexOf("port: 80");
     expect(port.regions[0]?.start).toBe(source.lastIndexOf(",", portStart));
     expect(port.regions[0]?.end).toBe(portStart + "port: 80".length);
+  });
+
+  test("replaces a class field with its own trailing separator through its dotted address (#96)", () => {
+    const source = ["export class N {", "  value = 1;", "  other = 2;", "}"].join("\n");
+    const result = resolveEditDslReply(
+      parseSelection(`select N.value in a.ts\n${replace("value = 2;")}`),
+      deps(source),
+    );
+    expect(result.failures).toEqual([]);
+    const region = result.regions[0];
+    expect(source.slice(region?.start ?? 0, region?.end ?? 0)).toBe("value = 1;");
+    expect(region?.text).toBe("value = 2;");
+  });
+
+  test("keeps a final class field whole-member fence on its own separator (#96)", () => {
+    const source = ["export class N {", "  value = 1;", "  other = 2;", "}"].join("\n");
+    const result = resolveEditDslReply(
+      parseSelection(`select N.other in a.ts\n${replace("other = 3;")}`),
+      deps(source),
+    );
+    expect(result.failures).toEqual([]);
+    const region = result.regions[0];
+    expect(source.slice(region?.start ?? 0, region?.end ?? 0)).toBe("other = 2;");
+  });
+
+  test("replaces an object-literal member with its own trailing comma (#96)", () => {
+    const source = ["const config = {", "  timeout: 100,", "  retries: 3", "};"].join("\n");
+    const result = resolveEditDslReply(
+      parseSelection(`select config.timeout in a.ts\n${replace("timeout: 200,")}`),
+      deps(source),
+    );
+    expect(result.failures).toEqual([]);
+    const region = result.regions[0];
+    expect(source.slice(region?.start ?? 0, region?.end ?? 0)).toBe("timeout: 100,");
+  });
+
+  test("does not consume the preceding comma for a final object-literal member (#96)", () => {
+    const source = ["const config = {", "  timeout: 100,", "  retries: 3", "};"].join("\n");
+    const result = resolveEditDslReply(
+      parseSelection(`select config.retries in a.ts\n${replace("retries: 4,")}`),
+      deps(source),
+    );
+    expect(result.failures).toEqual([]);
+    const region = result.regions[0];
+    expect(source.slice(region?.start ?? 0, region?.end ?? 0)).toBe("retries: 3");
+  });
+
+  test("a whole-member fence identical to the member plus its separator is a no-op (#96)", () => {
+    const source = ["export class N {", "  value = 1;", "}"].join("\n");
+    const result = resolveEditDslReply(
+      parseSelection(`select N.value in a.ts\n${replace("value = 1;")}`),
+      deps(source),
+    );
+    expect(result.regions).toEqual([]);
+    expect(result.failures[0]?.stage).toBe("no-op");
   });
 
   test("modifies and deletes a named default export through its declared name", () => {
