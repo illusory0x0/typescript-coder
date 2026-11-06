@@ -91,6 +91,9 @@ digraph issues {
   "84" [label="#84 Add tsed --unify block markers and block-select editing"];
   "85" [label="#85 Update namespace and import-equals references on cross-file rename"];
   "86" [label="#86 Resolve path aliases and barrel re-export chains on cross-file rename"];
+  "87" [label="#87 Resolve local tsconfig extends chains for cross-file rename"];
+  "88" [label="#88 Support static computed namespace member renames"];
+  "89" [label="#89 Support object destructuring of namespace exports"];
 
   // parent edges (parent -> child), solid
   "1" -> "2";

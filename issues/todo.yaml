@@ -1,3 +1,28 @@
 # Open issues in picking order. This order is authoritative: `reorder`
 # rewrites it; `add` appends; other writes keep it. `check` enforces it.
 # A dep, and every child of an umbrella, must be listed before its dependent.
+
+- id: 87
+  title: "Resolve local tsconfig extends chains for cross-file rename"
+  status: in-progress
+  priority: medium
+  milestone: null
+  parent: null
+  deps: []
+  file: 0087-resolve-local-tsconfig-extends-chains-for-cross-file-rename.md
+- id: 88
+  title: "Support static computed namespace member renames"
+  status: todo
+  priority: medium
+  milestone: null
+  parent: null
+  deps: []
+  file: 0088-support-static-computed-namespace-member-renames.md
+- id: 89
+  title: "Support object destructuring of namespace exports"
+  status: todo
+  priority: medium
+  milestone: null
+  parent: null
+  deps: []
+  file: 0089-support-object-destructuring-of-namespace-exports.md
