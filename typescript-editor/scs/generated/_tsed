@@ -20,6 +20,7 @@ _tsed() {
     '--select=[Select a declaration for a viewer or edit]:symbol:' \
     '--select-file=[Select a unique file span for an edit]:path:' \
     '--in=[File that contains the selected declaration]:path:' \
+    '--rev=[Expected source revision from a viewer or read (8 lowercase hex)]:token:' \
     '--kind=[Declaration kind filter]:kind:' \
     '--resolve=[TypeScript symbol space filter]:space:(value type namespace)' \
     '--match=[Snippet that must match inside the declaration]:snippet:' \

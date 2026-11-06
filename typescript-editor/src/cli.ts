@@ -51,6 +51,7 @@ const NATIVE_FLAGS: readonly { flag: string; used: (values: TsedArgs) => boolean
   { flag: "--in", used: (values) => values.input !== undefined },
   { flag: "--kind", used: (values) => values.kind !== undefined },
   { flag: "--resolve", used: (values) => values.resolve !== undefined },
+  { flag: "--rev", used: (values) => values.rev !== undefined },
   { flag: "--match", used: (values) => values.match !== undefined },
   { flag: "--pick", used: (values) => values.pick !== undefined },
   { flag: "--within", used: (values) => values.within !== undefined },
@@ -206,6 +207,7 @@ function renderFlagRequest(values: TsedArgs, workspaceRoot: string): string {
   const selectOnly: readonly { flag: string; present: boolean; file: boolean }[] = [
     { flag: "--kind", present: values.kind !== undefined, file: false },
     { flag: "--resolve", present: values.resolve !== undefined, file: false },
+    { flag: "--rev", present: values.rev !== undefined, file: true },
     { flag: "--match", present: values.match !== undefined, file: true },
     { flag: "--pick", present: values.pick !== undefined, file: true },
     { flag: "--replace-file", present: values.replace_file !== undefined, file: true },
@@ -288,6 +290,9 @@ function renderFlagRequest(values: TsedArgs, workspaceRoot: string): string {
       op: "select-file",
       path: values.select_file,
     };
+    if (values.rev !== undefined) {
+      selection.rev = values.rev;
+    }
     if (values.match !== undefined) {
       selection.match = values.match;
     }
@@ -305,6 +310,9 @@ function renderFlagRequest(values: TsedArgs, workspaceRoot: string): string {
       symbol: values.select,
       path: values.input,
     };
+    if (values.rev !== undefined) {
+      selection.rev = values.rev;
+    }
     if (values.kind !== undefined) {
       selection.kind = values.kind;
     }

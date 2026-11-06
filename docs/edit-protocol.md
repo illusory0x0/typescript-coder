@@ -92,7 +92,14 @@ carry `within`.
   declaration is indexed as a variable binding and is addressed with an omitted
   kind (`select resource in …`); `using` is not a `select` kind token, so
   `select using resource in …` is a syntax error. `create using` is supported.
-- **`resolve`**: optional, after the path. `resolve value`, `resolve type`, or
+- **`rev`**: optional, immediately after the path on a declaration, file-level,
+  or block select. It is the 8-character lowercase hex token printed by a
+  viewer or `read` header for the full file source. When present, it must match
+  the source the resolver reads; a stale token fails at `stage: range` and
+  writes nothing, naming the refreshed viewer/read workflow. Omitting `rev`
+  preserves the old behavior. The token is an integrity check, not a lock:
+  concurrent writers are out of scope.
+- **`resolve`**: optional, after the path (`rev` when present). `resolve value`, `resolve type`, or
   `resolve namespace` filters the address to that TypeScript symbol space; it is
   the disambiguator when the same name is declared more than once. Omitted, any
   space is accepted.
@@ -367,6 +374,8 @@ function body, a test callback, an object literal, or a template-literal body;
 `create import|export` remains module-boundary-only.
 
 - `match` (a structural snippet or `/regex/`) or `pick` locates the target.
+- `rev <token>` is the optional freshness guard from a viewer/read header,
+  placed after the path and before `match`/`pick`.
   A snippet that is not valid TypeScript on its own (for example an incomplete
   block header such as `if (value === 1) {`) is treated as an exact literal
   source span. A candidate is labelled with its module statement kind when it
@@ -416,7 +425,8 @@ comment, so the annotated view stays syntactically valid.
   declarations share a display name, the symbol ID is suffixed with the
   declaration's start line (and column if needed) to stay unique.
 - `select block <symbol-id>:<node-id> in <path> …` resolves that block's half-open
-  brace span (`{` through `}` inclusive). `match` (structural snippet or
+  brace span (`{` through `}` inclusive). An optional `rev <token>` after the
+  path guards those coordinates like every other select. `match` (structural snippet or
   `/regex/`) narrows structurally inside the span, and `pick` narrows by
   1-based file-absolute coordinates; with both, the match candidates are
   filtered by the pick. The block span is the whole target when neither is
@@ -529,6 +539,7 @@ module-kind  = 'import' | 'export' ;
 create-name  = symbol | dotted-symbol | owner ;  (* constructor names only its owner *)
 
 select-clause = 'select', [ kind ], symbol, 'in', path,
+                [ 'rev', revision ],
                 [ 'resolve', space ],
                 [ 'within', selecters ],
                 [ 'match', ( snippet | regex ) ],
@@ -537,6 +548,7 @@ select-clause = 'select', [ kind ], symbol, 'in', path,
 select-tail  = replacer | renamer | 'end' ;
 
 file-select-clause = 'select', 'file', path,
+                     [ 'rev', revision ],
                      [ 'match', ( snippet | regex ) ],
                      [ 'pick', selecters ],
                      ( 'replace', 'with', fence | 'end' ) ;
@@ -544,6 +556,7 @@ file-select-clause = 'select', 'file', path,
                         missing replacement; validate it as an address failure *)
 
 block-select-clause = 'select', 'block', block-id, 'in', path,
+                      [ 'rev', revision ],
                       [ 'match', ( snippet | regex ) ],
                       [ 'pick', selecters ],
                       ( 'replace', 'with', fence | 'end' ) ;
@@ -566,6 +579,8 @@ kind         = 'function' | 'const' | 'let' | 'var' | 'class'
              | 'type' | 'interface' | 'enum' | 'namespace' ;
 space        = 'value' | 'type' | 'namespace' ;
 path         = ? file path token ? ;
+revision     = ? exactly 8 lowercase hexadecimal characters, as printed by
+                 a viewer or read header, e.g. 1a2b3c4d ? ;
 symbol       = ? declared identifier ? ;
 block-id     = ? '<symbol-id>:<positive node id>' printed by `tsed --unify` ? ;
 dotted-symbol = symbol, '.', symbol, { '.', symbol } ;
@@ -797,7 +812,9 @@ TC_EDIT_END
   nothing. A missing path is an `address` failure. A `read` always sees the
   source as it was before the current reply, even when the same reply also
   writes that file. A failed `read` reports its error as feedback and does not
-  discard the reply's editing statements. A whole-file result is folded (§4):
+  discard the reply's editing statements. Its block header prints
+  `rev <token>` for the full file source, so a following clause can quote it. A
+  whole-file result is folded (§4):
   the marker names the hidden range and line counts, and
   `read <path> within <start>-<end> end` returns that range unfolded.
 - **`write`** replaces the whole file when `within` is absent, or the selected
@@ -1104,7 +1121,11 @@ These guards run before any gate:
 
 A select clause with no `replace` writes nothing and reports the declaration as
 the next prompt's `# details` block: the source is numbered with its
-file-absolute lines. A declaration or file block is folded by indentation when
+file-absolute lines. Its header carries `rev <token>` for the full file source,
+and `read` output carries the same token in its block header. Copying that token
+into the next clause as `rev <token>` proves the coordinates came from this
+revision; omitting it edits the current source. The token is deterministic and
+changes when a single source character changes. A declaration or file block is folded by indentation when
 it has nested blocks: headers, closing lines, and the first level of body lines
 stay visible, while long nested bodies become a marker. A flat block with no
 usable indentation structure keeps the three-head/three-tail fallback. The marker
@@ -1146,7 +1167,7 @@ shared by every reply path so metrics compare.
 | `protocol`  | The reply is not edit-dsl, including a JSON edit payload.                                                                     |
 | `address`   | The address does not resolve uniquely.                                                                                        |
 | `matcher`   | `matcher-unparseable`, `matcher-not-found`, `matcher-ambiguous`, or `regex-invalid`.                                          |
-| `range`     | A `range`/`pick` that is out of bounds, empty, inverted, or outside the declaration.                                          |
+| `range`     | A `range`/`pick` that is out of bounds, empty, inverted, outside the declaration, or copied from a stale `rev` token.         |
 | `no-op`     | The replacement equals the text it replaces; ignored when another clause in the reply applies, otherwise a rejection.         |
 | `duplicate` | A repeated resolved target; a duplicate top-level declaration or create.                                                      |
 | `gate`      | The file parsed before and does not parse after.                                                                              |
@@ -1165,7 +1186,8 @@ Retry policy around a rejection is owned by
 ## 6. Application and gating
 
 Nothing is written until the candidate passes, in order: address resolution,
-the **unique-target claim** (every `select`, `rename`, and implicit create in
+the **revision guard** (a claimed `rev` must equal the source read for the
+clause), the **unique-target claim** (every `select`, `rename`, and implicit create in
 one reply resolves to a distinct `(path, symbol, kind)`), matcher/range
 resolution, then the splice, the **parse gate** (a file that parsed must still
 parse), the **duplicate-declaration guard** (a top-level `function`, `class`, or

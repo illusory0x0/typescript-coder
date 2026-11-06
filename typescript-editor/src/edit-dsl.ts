@@ -19,6 +19,7 @@ import type { Selection } from "./selection";
 import { Binder } from "./utility";
 import type { IndexEntry, Locator, SymbolSpace } from "./utility";
 import { duplicateDeclarations, wholeSymbolRestrictionDiagnostics } from "./utility";
+import { sourceRevision } from "./range";
 import type { EditRange } from "./range";
 
 /** #110 `MatcherKind`, mirrored to avoid a value-level import cycle with loop. */
@@ -121,6 +122,12 @@ export interface EditDslViewer {
   /** The #14 duplicate note naming every location and the delete repair, or null. */
   duplicateNote: string | null;
   occurrences: EditDslOccurrence[];
+  /**
+   * The full-file source revision these coordinates belong to (#91). It is
+   * always the hash of the resolver's source, never of a folded or truncated
+   * display block.
+   */
+  revision: string;
 }
 
 /** One clause that could not resolve, carrying its typed cause. */
@@ -615,6 +622,26 @@ export function resolveEditDslReply(
       continue;
     }
     const source = deps.sourceFor(path);
+    // #91: a claimed revision must match the source the resolver is about to
+    // read, so coordinates copied from an older viewer/read block fail typed
+    // before claims, matching, or any write.
+    const revision = sourceRevision(source);
+    if (
+      selection.revision !== undefined &&
+      selection.revision !== null &&
+      selection.revision !== revision
+    ) {
+      failures.push({
+        index,
+        path,
+        locator: selection.locator,
+        stage: "range",
+        cause: "range-invalid",
+        diagnostics: `stage: range\nthe clause's revision ${selection.revision} is stale for ${path} (current revision ${revision}); refresh the numbered source with a viewer or read, then copy its new \`rev ${revision}\` token, or omit \`rev\` to edit the current source`,
+        undeclaredName: null,
+      });
+      continue;
+    }
     if (isFileSelection(selection)) {
       if (deps.fileExists !== undefined && !deps.fileExists(path)) {
         failures.push({
@@ -886,6 +913,7 @@ export function resolveEditDslReply(
       viewers.push({
         index,
         path,
+        revision,
         locator: selection.locator,
         space: selection.space,
         within,
@@ -1281,6 +1309,7 @@ export function renderViewerFeedback(
     const { kind, name } = viewer.locator;
     let head =
       kind === "" ? `select ${name} in ${viewer.path}` : `select ${kind} ${name} in ${viewer.path}`;
+    head += ` rev ${viewer.revision}`;
     if (viewer.space !== null) {
       head += ` resolve ${viewer.space}`;
     }

@@ -45,6 +45,11 @@ export interface Selection {
   within?: EditRange[] | null;
   replacement: string | null;
   rename?: RenameSpec | null;
+  /**
+   * The optional `rev <token>` source revision this clause's coordinates were
+   * copied from (#91). `null`/absent means the clause did not claim a revision.
+   */
+  revision?: string | null;
 }
 
 /** A `create <path> end` file command. */
@@ -859,6 +864,7 @@ class SelectionReader {
   private parseFileEditor(): Selection {
     this.expectKeyword("file", "expected `file` after `select`");
     const path = this.readToken("expected a file path after `select file`");
+    const revision = this.parseRevision();
     if (this.matchKeyword("resolve")) {
       this.syntax(
         "EDIT_UNKNOWN_FIELD",
@@ -919,13 +925,17 @@ class SelectionReader {
     // resolution failure, not a syntax one: the protocol renderer emits this
     // shape for `--select-file` without `--replace-file`, and the resolver adds
     // the `--replace-file` hint. `pick` without `replace` takes the same path.
-    return {
+    const selection: Selection = {
       locator: { path, name: "", kind: "file" },
       space: null,
       matcher,
       pick,
       replacement,
     };
+    if (revision !== null) {
+      selection.revision = revision;
+    }
+    return selection;
   }
 
   private rejectFileRename(): never {
@@ -962,6 +972,7 @@ class SelectionReader {
     }
     this.expectKeyword("in", "expected `in <path>` after the block ID");
     const path = this.readToken("expected a file path after `in`");
+    const revision = this.parseRevision();
     if (this.matchKeyword("resolve")) {
       this.syntax(
         "EDIT_BLOCK_RESOLVE_UNSUPPORTED",
@@ -1029,13 +1040,17 @@ class SelectionReader {
         },
       );
     }
-    return {
+    const selection: Selection = {
       locator: { path, name: rawId, kind: "block" },
       space: null,
       matcher,
       pick,
       replacement,
     };
+    if (revision !== null) {
+      selection.revision = revision;
+    }
+    return selection;
   }
 
   private rejectBlockRename(): never {
@@ -1091,6 +1106,7 @@ class SelectionReader {
     this.pos += 2; // consume `in`
 
     const path = this.readToken("expected a file path after `in`");
+    const revision = this.parseRevision();
 
     let space: SymbolSpace | null = null;
     if (this.matchKeyword("resolve")) {
@@ -1245,6 +1261,9 @@ class SelectionReader {
       pick,
       replacement,
     };
+    if (revision !== null) {
+      selection.revision = revision;
+    }
     if (within !== null) {
       selection.within = within;
     }
@@ -1660,6 +1679,31 @@ class SelectionReader {
       bodyLineStart = end + 1;
     }
   }
+  /**
+   * The optional `rev <token>` after the path (#91): a claimed source revision
+   * for the coordinates in this clause. Malformed tokens are syntax errors; a
+   * matching token changes nothing and a stale one fails at `stage: range`.
+   */
+  private parseRevision(): string | null {
+    if (!this.matchKeyword("rev")) {
+      return null;
+    }
+    const start = this.pos;
+    const token = this.readToken("expected an 8-character lowercase hex revision after `rev`");
+    if (!/^[0-9a-f]{8}$/.test(token)) {
+      this.syntax(
+        "EDIT_REV_MALFORMED",
+        `the revision ${JSON.stringify(token)} is not an 8-character lowercase hex token`,
+        {
+          offset: start,
+          expected: ["8 lowercase hex characters"],
+          found: token,
+          hint: "copy the token from a viewer or read header; do not invent one",
+        },
+      );
+    }
+    return token;
+  }
 }
 
 /**
@@ -1971,6 +2015,9 @@ export function serializeSelection(selection: Selection): string {
       locator.kind === ""
         ? `select ${locator.name} in ${locator.path}`
         : `select ${locator.kind} ${locator.name} in ${locator.path}`;
+  }
+  if (selection.revision !== undefined && selection.revision !== null) {
+    head += ` rev ${selection.revision}`;
   }
   if (selection.space !== null) {
     head += ` resolve ${selection.space}`;

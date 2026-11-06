@@ -132,8 +132,8 @@ _tsed() {
     # again after it has been given.
     case "$cmd" in
         *)
-            pool="--protocol-format --write --dry-run --diff --directory -C --read --unify --unify-min-lines --select --select-file --in --kind --resolve --match --pick --within --replace-file --rename --create --delete --rewrite --content-file --help -h --version -V"
-            vpool="--protocol-format --directory -C --read --unify --unify-min-lines --select --select-file --in --kind --resolve --match --pick --within --replace-file --rename --create --delete --rewrite --content-file"
+            pool="--protocol-format --write --dry-run --diff --directory -C --read --unify --unify-min-lines --select --select-file --in --rev --kind --resolve --match --pick --within --replace-file --rename --create --delete --rewrite --content-file --help -h --version -V"
+            vpool="--protocol-format --directory -C --read --unify --unify-min-lines --select --select-file --in --rev --kind --resolve --match --pick --within --replace-file --rename --create --delete --rewrite --content-file"
             always="--read --unify --create --delete --help -h --version -V"
             ;;
     esac

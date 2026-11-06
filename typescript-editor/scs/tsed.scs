@@ -46,6 +46,9 @@ interface TsedArgs {
   @arg({ long: "in", valueName: "PATH", help: "File that contains the selected declaration" })
   input: string?
 
+  @arg({ help: "Expected source revision from a viewer or read (8 lowercase hex)", valueName: "TOKEN" })
+  rev: string?
+
   @arg({ help: "Declaration kind filter", valueName: "KIND" })
   kind: string?
 

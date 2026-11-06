@@ -8,6 +8,7 @@ import {
 } from "./edit-dsl";
 import type { EditDslDeps } from "./edit-dsl";
 import { parseSelection } from "./selection";
+import { sourceRevision } from "./range";
 import { buildIndexTolerant, declarationSpaces } from "./utility";
 import type { Locator, SymbolSpace } from "./utility";
 
@@ -789,7 +790,7 @@ describe("resolveEditDslReply (#111)", () => {
       [
         "Located occurrences (viewer clauses write nothing):",
         "",
-        "select answer in src/helper.ts resolve value",
+        `select answer in src/helper.ts rev ${sourceRevision(ONCE.replace(/once/g, "answer"))} resolve value`,
         "  src/helper.ts:1:8",
         "    1 | export function answer(): number {",
         "    2 |   return 1;",
@@ -809,7 +810,7 @@ describe("resolveEditDslReply (#111)", () => {
       [
         "Located occurrences (viewer clauses write nothing):",
         "",
-        "select answer in src/helper.ts resolve value",
+        `select answer in src/helper.ts rev ${sourceRevision(ONCE.replace(/once/g, "answer"))} resolve value`,
         "  src/helper.ts:2:3",
         "    1 | export function answer(): number {",
         "⁉️  2 |   return 1;",
@@ -827,7 +828,7 @@ describe("resolveEditDslReply (#111)", () => {
       [
         "Located occurrences (viewer clauses write nothing):",
         "",
-        "select function twice in a.ts",
+        `select function twice in a.ts rev ${sourceRevision(TWICE)}`,
         "  a.ts:2:3",
         "  a.ts:3:3",
         "    1 | export function twice(): number {",
@@ -950,7 +951,7 @@ describe("resolveEditDslReply (#111)", () => {
       [
         "Located occurrences (viewer clauses write nothing):",
         "",
-        "select function twice in a.ts",
+        `select function twice in a.ts rev ${sourceRevision(TWICE)}`,
         "  (no occurrences)",
         "",
         "Reply with an edit clause: add `replace` (use `pick` only with `replace`).",
@@ -1469,5 +1470,60 @@ describe("block select integration (#84)", () => {
     expect(result.regions).toEqual([]);
     expect(result.failures[0]?.stage).toBe("address");
     expect(result.failures[0]?.diagnostics).toContain("replace with <fence>");
+  });
+});
+
+describe("source revision guard (#91)", () => {
+  const source = ONCE.replace(/once/g, "answer");
+  const token = sourceRevision(source);
+  const replacement = source.replace("return 1;", "return 2;");
+  const edit = (head: string): string =>
+    [head, "replace with", "TC_EDIT_BEGIN", replacement, "TC_EDIT_END", "end"].join("\n");
+
+  test("a fresh rev resolves an editor and a viewer records the token", () => {
+    const editor = resolveEditDslReply(
+      parseSelection(edit(`select answer in a.ts rev ${token}`)),
+      deps(source),
+    );
+    expect(editor.failures).toEqual([]);
+    expect(editor.regions).toHaveLength(1);
+    expect(editor.regions[0]?.text).toContain("return 2;");
+    const viewer = resolveEditDslReply(
+      parseSelection(`select answer in a.ts rev ${token} end`),
+      deps(source),
+    );
+    expect(viewer.failures).toEqual([]);
+    expect(viewer.viewers[0]?.revision).toBe(token);
+  });
+
+  test("a stale rev fails at range before anything is written", () => {
+    const stale = "00000000";
+    const result = resolveEditDslReply(
+      parseSelection(edit(`select answer in a.ts rev ${stale}`)),
+      deps(source),
+    );
+    expect(result.regions).toEqual([]);
+    expect(result.failures).toHaveLength(1);
+    expect(result.failures[0]?.stage).toBe("range");
+    expect(result.failures[0]?.cause).toBe("range-invalid");
+    expect(result.failures[0]?.diagnostics).toContain("stage: range");
+    expect(result.failures[0]?.diagnostics).toContain("refresh");
+    expect(result.failures[0]?.diagnostics).toContain(token);
+  });
+
+  test("omitting rev preserves the current behavior", () => {
+    const result = resolveEditDslReply(parseSelection(edit("select answer in a.ts")), deps(source));
+    expect(result.failures).toEqual([]);
+    expect(result.regions).toHaveLength(1);
+  });
+
+  test("a viewer header can be copied into the next edit clause", () => {
+    const viewer = resolveEditDslReply(parseSelection("select answer in a.ts end"), deps(source));
+    const feedback = renderViewerFeedback(viewer.viewers);
+    const head = feedback.split("\n")[2] ?? "";
+    expect(head).toBe(`select answer in a.ts rev ${token}`);
+    const result = resolveEditDslReply(parseSelection(edit(head)), deps(source));
+    expect(result.failures).toEqual([]);
+    expect(result.regions).toHaveLength(1);
   });
 });

@@ -24,6 +24,7 @@ module completions {
     --select: string          # Select a declaration for a viewer or edit
     --select-file: string     # Select a unique file span for an edit
     --in: string              # File that contains the selected declaration
+    --rev: string             # Expected source revision from a viewer or read (8 lowercase hex)
     --kind: string            # Declaration kind filter
     --resolve: string@"nu-complete tsed resolve" # TypeScript symbol space filter
     --match: string           # Snippet that must match inside the declaration

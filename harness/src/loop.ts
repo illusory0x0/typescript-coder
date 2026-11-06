@@ -58,6 +58,7 @@ import {
   wholeSymbolRestrictionDiagnostics,
 } from "@tc/typescript-editor/utility";
 import { buildSignatureViewFromEntry } from "@tc/typescript-editor/scroll";
+import { sourceRevision } from "@tc/typescript-editor/range";
 import { checkTool, testTool } from "./tools";
 import { billableCostForLoopTokens } from "./pricing";
 import { usageFromRaw } from "./replay-format";
@@ -357,7 +358,12 @@ export interface RetryPromptInput {
    */
   approach?: string;
   /** Goal + symbol index for the edit-dsl prompt shape, plus the start line. */
-  editDslContext?: { issue: string; indexText: string; startLine?: number };
+  editDslContext?: {
+    issue: string;
+    indexText: string;
+    startLine?: number;
+    revision?: string | null;
+  };
   /**
    * Bounded self-verification result (#73), appended after the Diagnostics
    * block as a `Self-check result:` section. Rendered only on the prompt that
@@ -1194,9 +1200,9 @@ export function rejectionPolicy(cause: RejectionCause): RejectionPolicy {
       return {
         action: "retry",
         correction:
-          "The `pick` range is invalid for the current source: copy the 1-based file-absolute line and column positions from the numbered source block, keep the end inclusive, and keep the range inside the pinned declaration — or omit `pick`.",
+          "The `pick` range is invalid for the current source: copy the 1-based file-absolute line and column positions from the numbered source block, keep the end inclusive, and keep the range inside the pinned declaration — or omit `pick`. If the block printed `rev <token>` and the source changed, refresh the viewer or read and copy the new token, or omit `rev`.",
         escalation:
-          "This attempt MUST address the current source: omit `pick` and return the complete declaration (or a verbatim `match`) rather than repeating invalid coordinates.",
+          "This attempt MUST address the current source: omit `pick` and return the complete declaration (or a verbatim `match`) rather than repeating invalid coordinates; refresh the viewer/read before reusing a `rev` token.",
       };
     case "no-op":
       return {
@@ -3487,6 +3493,7 @@ async function runEditDslLoop(options: LoopOptions): Promise<LoopResult> {
             startLine,
             markedLines,
             duplicateDeclarationNote(selection.locator.path, pickSource, entry),
+            sourceRevision(pickSource),
           );
         } else {
           initialContentPrompt = buildEditDslCreatePrompt(
@@ -3584,6 +3591,7 @@ async function runEditDslLoop(options: LoopOptions): Promise<LoopResult> {
               diskSource,
               repair,
             ),
+            revision: sourceRevision(diskSource),
           },
         });
       }
@@ -4279,6 +4287,8 @@ async function runEditDslLoop(options: LoopOptions): Promise<LoopResult> {
           editDslIndexText,
           modifiedText,
           modifiedStartLine,
+          [],
+          modifiedSource === null ? null : sourceRevision(modifiedSource),
         );
         let confirmation: ChatResponse;
         try {

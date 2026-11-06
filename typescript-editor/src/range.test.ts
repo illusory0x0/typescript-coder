@@ -1,5 +1,5 @@
 import { describe, expect, test } from "bun:test";
-import { SPEC_FILE_LIMIT, resolveEditRange } from "./range";
+import { SPEC_FILE_LIMIT, resolveEditRange, sourceRevision } from "./range";
 
 describe("resolveEditRange (#72)", () => {
   test("maps 1-based inclusive positions and rejects bad ranges", () => {
@@ -124,5 +124,20 @@ describe("resolveEditRange (#72)", () => {
         tailDeclaration,
       ),
     ).toMatchObject({ ok: false, reason: "outside-declaration" });
+  });
+});
+
+describe("sourceRevision (#91)", () => {
+  test("is a stable 8-character lowercase hex token", () => {
+    const first = sourceRevision("export const value = 1;\n");
+    expect(first).toMatch(/^[0-9a-f]{8}$/);
+    expect(sourceRevision("export const value = 1;\n")).toBe(first);
+    expect(sourceRevision("export const value = 2;\n")).not.toBe(first);
+  });
+
+  test("hashes UTF-16 code units deterministically, including empty source", () => {
+    expect(sourceRevision("")).toMatch(/^[0-9a-f]{8}$/);
+    expect(sourceRevision("")).toBe(sourceRevision(""));
+    expect(sourceRevision("a")).not.toBe(sourceRevision("b"));
   });
 });

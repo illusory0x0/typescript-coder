@@ -3,6 +3,7 @@ import { applyResolvedRegions, parseCheck } from "./commit";
 import { renderReadFailureFeedback, renderReadFeedback, resolveMultiEditor } from "./multi-editor";
 import type { MultiEditorDeps } from "./multi-editor";
 import { parseMultiEditor } from "./selection";
+import { sourceRevision } from "./range";
 import type { Selection } from "./selection";
 import { buildIndexTolerant } from "./utility";
 import type { Locator, SymbolSpace } from "./utility";
@@ -88,7 +89,9 @@ describe("resolveMultiEditor file commands", () => {
     const source = Array.from({ length: 10 }, (_, index) => `line ${index + 1}`).join("\n");
     const read = resolve("read src/a.ts end", { "src/a.ts": source });
     const feedback = renderReadFeedback(read.reads);
-    expect(feedback).toContain("src/a.ts (whole file, 10 lines; folded):");
+    expect(feedback).toContain(
+      `src/a.ts (whole file, 10 lines; rev ${sourceRevision(source)}; folded):`,
+    );
     expect(feedback).toContain("1 | line 1");
     expect(feedback).toContain("3 | line 3");
     expect(feedback).toContain("... // content folded, src/a.ts: 4-7L");
@@ -116,7 +119,9 @@ describe("resolveMultiEditor file commands", () => {
     ].join("\n");
     const read = resolve("read src/a.ts end", { "src/a.ts": source });
     const feedback = renderReadFeedback(read.reads);
-    expect(feedback).toContain("src/a.ts (whole file, 12 lines; folded):");
+    expect(feedback).toContain(
+      `src/a.ts (whole file, 12 lines; rev ${sourceRevision(source)}; folded):`,
+    );
     expect(feedback).toContain("1 | export function first(): number {");
     expect(feedback).toContain("... // content folded, src/a.ts: 2-8L");
     expect(feedback).toContain("9 | }");
@@ -128,7 +133,9 @@ describe("resolveMultiEditor file commands", () => {
     const source = Array.from({ length: 40 }, (_, index) => `line ${index + 1}`).join("\n");
     const read = resolve("read src/a.ts within 1-20 end", { "src/a.ts": source });
     const feedback = renderReadFeedback(read.reads);
-    expect(feedback).toContain("src/a.ts (selected lines, 20 lines):");
+    expect(feedback).toContain(
+      `src/a.ts (selected lines, 20 lines; rev ${sourceRevision(source)}):`,
+    );
     expect(feedback).toContain("1 | line 1");
     expect(feedback).toContain("20 | line 20");
     expect(feedback).not.toContain("content folded");
@@ -138,7 +145,9 @@ describe("resolveMultiEditor file commands", () => {
   test("a short read keeps the quiet header shape", () => {
     const read = resolve("read src/a.ts end", { "src/a.ts": "one\ntwo\nthree\n" });
     const feedback = renderReadFeedback(read.reads);
-    expect(feedback).toContain("src/a.ts (whole file, 3 lines):");
+    expect(feedback).toContain(
+      `src/a.ts (whole file, 3 lines; rev ${sourceRevision("one\ntwo\nthree\n")}):`,
+    );
     expect(feedback).not.toContain("folded");
   });
 

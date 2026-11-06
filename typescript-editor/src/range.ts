@@ -104,3 +104,19 @@ export function resolveEditRange(
   }
   return { ok: true, start, end };
 }
+
+/**
+ * The deterministic 8-character lowercase hex revision token for one source
+ * snapshot (#91). It is FNV-1a over the UTF-16 code units, so the same source
+ * always hashes to the same token and a one-character change always moves it.
+ * Viewer and read headers print this token; an edit clause may quote it as
+ * `rev <token>` so coordinates copied from a stale block fail before writing.
+ */
+export function sourceRevision(source: string): string {
+  let hash = 0x811c9dc5;
+  for (let index = 0; index < source.length; index += 1) {
+    hash ^= source.charCodeAt(index);
+    hash = Math.imul(hash, 0x01000193) >>> 0;
+  }
+  return hash.toString(16).padStart(8, "0");
+}

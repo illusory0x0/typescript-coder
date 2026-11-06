@@ -86,6 +86,8 @@ tsed --select answer --in src/helper.ts \
   --within 5-7                                  # unfold a viewer slice
 tsed --select answer --in src/helper.ts \
   --replace-file patch.txt --write              # editor
+tsed --select answer --in src/helper.ts \
+  --rev 1a2b3c4d --replace-file patch.txt --write  # stale-safe editor
 tsed --select-file src/helper.ts \
   --match 'if (value === 1) {' \
   --replace-file patch.txt --write              # unique file-level span
@@ -129,17 +131,25 @@ works with all three formats: add it to a flag command or to a `dsl`/`json`
 stdin command.
 
 `--select` supports optional `--kind`, `--resolve value|type|namespace`,
-`--match <snippet>`, and `--pick <range>`. Without `--match`/`--pick`, the
-replacement is the whole selected declaration. `--match` narrows the
-replacement to the matched snippet; `--pick` narrows it to a line/column range
-and requires a replacement. One `--select` group is allowed per invocation; use
-`dsl` or `json` for batch replies. `--replace-file` and `--rename` are mutually
-exclusive. Relative `--replace-file` and `--content-file` paths resolve against
-the `--directory` workspace root (the process cwd when `--directory` is
-omitted); absolute paths are used as-is.
+`--match <snippet>`, `--pick <range>`, and `--rev <TOKEN>`. Without
+`--match`/`--pick`, the replacement is the whole selected declaration.
+`--match` narrows the replacement to the matched snippet; `--pick` narrows it to
+a line/column range and requires a replacement. One `--select` group is allowed
+per invocation; use `dsl` or `json` for batch replies. `--replace-file` and
+`--rename` are mutually exclusive. Relative `--replace-file` and
+`--content-file` paths resolve against the `--directory` workspace root (the
+process cwd when `--directory` is omitted); absolute paths are used as-is.
+
+`--rev <TOKEN>` is the optional source-revision guard. It takes the
+8-character lowercase hex token printed as `rev <token>` in a `--read` or
+`--select` header and binds the operation to the full-file source that header
+described. A token that no longer matches fails at `stage: range` before
+anything is written, so coordinates copied from an older viewer cannot silently
+edit a newer file. Omitting `--rev` keeps the historical behavior. It applies to
+`--select` and `--select-file` only.
 
 `--select-file <PATH>` is the file-level editor: the owner is the file, not a
-declaration. It accepts the same `--match` and `--pick` selectors and
+declaration. It accepts the same `--match`, `--pick`, and `--rev` selectors and
 `--replace-file`, and resolves a **unique span anywhere in the file** — an
 import/export statement, a statement inside a function body or test callback, an
 object literal, or a template-literal body. A snippet that is not valid
@@ -154,7 +164,9 @@ replacement hint. Use `--pick` for a precise line range, and `--within` only for
 `--read` accepts `--within <RANGES>` to print only those file lines, unfolded;
 the same range applies to every repeated `--read` path. Read and viewer output
 is numbered by default with 1-based, file-absolute line numbers; there is no
-opt-in flag. `--select` accepts
+opt-in flag. Each block header carries the 8-character `rev <token>` of the
+**full** file source, even when the block itself is folded or sliced, so it can
+be copied into a later `--rev`/`rev` clause. `--select` accepts
 `--within <RANGES>` for a bare viewer slice, using the same range syntax as
 `--pick` and the fold markers. `within` is viewer-only: it requires `--read` or
 `--select`, and it is rejected with `--replace-file`, `--rename`, `--create`,
@@ -215,14 +227,14 @@ A file-level span edit has no symbol; `match`/`pick` select the unique span:
 
 Operation fields:
 
-| Operation     | Fields                                                                                                    |
-| ------------- | --------------------------------------------------------------------------------------------------------- |
-| `read`        | `path` (required), `within` (optional)                                                                    |
-| `select`      | `symbol`, `path` (required); `kind`, `resolve`, `within`, `match`, `pick`, `replace`, `rename` (optional) |
-| `select-file` | `path` (required); `match`, `pick`, `replace` (optional)                                                  |
-| `create`      | `path` (required)                                                                                         |
-| `delete`      | `path` (required)                                                                                         |
-| `rewrite`     | `path`, `content` (required)                                                                              |
+| Operation     | Fields                                                                                                           |
+| ------------- | ---------------------------------------------------------------------------------------------------------------- |
+| `read`        | `path` (required), `within` (optional)                                                                           |
+| `select`      | `symbol`, `path` (required); `kind`, `resolve`, `within`, `match`, `pick`, `rev`, `replace`, `rename` (optional) |
+| `select-file` | `path` (required); `match`, `pick`, `rev`, `replace` (optional)                                                  |
+| `create`      | `path` (required)                                                                                                |
+| `delete`      | `path` (required)                                                                                                |
+| `rewrite`     | `path`, `content` (required)                                                                                     |
 
 A `select` is a viewer without `replace`/`rename`; `within` slices a bare viewer
 and is rejected with `match`, `pick`, `replace`, or `rename`. `replace` and
@@ -233,8 +245,11 @@ it to a line/column range. A `select-file` is the file-level editor equivalent:
 it takes `path` plus an optional `match`/`pick`/`replace` and renders to
 `select file <path> …`. It never carries `symbol`, `kind`, `resolve`, `within`,
 or `rename`.
-Unknown fields and malformed JSON are usage errors. The operation list only
-expresses operations; `--write` still controls whether mutations are applied.
+Unknown fields and malformed JSON are usage errors. A `rev` on a `select` or
+`select-file` is the optional 8-character lowercase hex freshness token from a
+read/viewer header; a mismatch is a `stage: range` failure and writes nothing.
+The operation list only expresses operations; `--write` still controls whether
+mutations are applied.
 
 ### Exit codes and output
 
@@ -279,7 +294,7 @@ are usage errors, and `--unify-min-lines` requires `--unify`.
 The edit-dsl block editor addresses the same marker:
 
 ```text
-select block <symbol-id>:<node-id> in <path> [ match <snippet> | match /<regex>/ ] [ pick <selecters> ] replace with <fence>
+select block <symbol-id>:<node-id> in <path> [ rev <token> ] [ match <snippet> | match /<regex>/ ] [ pick <selecters> ] replace with <fence>
 ```
 
 Without `match`/`pick` the target is the block's brace span. `match` and `pick`

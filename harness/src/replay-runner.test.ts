@@ -14,6 +14,7 @@ import {
 import { REPLAY_BUNDLE_FORMAT, ReplayRecorder } from "./replay-format";
 import { parseReplayBundle, ReplayProvider, runReplay, summarizeReplay } from "./replay-runner";
 import { serializeSelections } from "@tc/typescript-editor/selection";
+import { sourceRevision } from "@tc/typescript-editor/range";
 import { buildIndexTolerant } from "@tc/typescript-editor/utility";
 import type { LoopRecord, LoopResult } from "./loop";
 import type { ChatMessage } from "./openai";
@@ -104,7 +105,16 @@ function editDslRecordedCalls(fixtureDir: string): ReplayCall[] {
     { role: "assistant", content: pick },
     {
       role: "user",
-      content: buildEditDslDetailsPrompt(ISSUE, indexText, declaration, specFiles, 1),
+      content: buildEditDslDetailsPrompt(
+        ISSUE,
+        indexText,
+        declaration,
+        specFiles,
+        1,
+        null,
+        null,
+        sourceRevision(ORIGINAL_HELPER),
+      ),
     },
   ];
   // A verified edit-dsl edit gets one `# modified text` confirmation turn; prose
@@ -131,7 +141,17 @@ function editDslRecordedCalls(fixtureDir: string): ReplayCall[] {
         systemMessage,
         userMessage,
         { role: "assistant", content: edit },
-        { role: "user", content: buildEditDslModifiedPrompt(ISSUE, indexText, modified, 1) },
+        {
+          role: "user",
+          content: buildEditDslModifiedPrompt(
+            ISSUE,
+            indexText,
+            modified,
+            1,
+            [],
+            sourceRevision(`${modified}\n`),
+          ),
+        },
       ],
       content: "Great! I resolve this problem!",
       toolCalls: [],

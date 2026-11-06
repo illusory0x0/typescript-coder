@@ -3,7 +3,7 @@
 
 # --- helpers ---
 function __fish_tsed_root_options
-    string join \n protocol-format= write dry-run diff C/directory= read= unify= unify-min-lines= select= select-file= in= kind= resolve= match= pick= within= replace-file= rename= create= delete= rewrite= content-file= h/help V/version
+    string join \n protocol-format= write dry-run diff C/directory= read= unify= unify-min-lines= select= select-file= in= rev= kind= resolve= match= pick= within= replace-file= rename= create= delete= rewrite= content-file= h/help V/version
 end
 
 function __fish_tsed_needs_command
@@ -88,6 +88,7 @@ complete -c tsed -n '__fish_tsed_offer \'\' \'unify-min-lines\'' -l unify-min-li
 complete -c tsed -n '__fish_tsed_offer \'\' \'select\'' -l select -r -d 'Select a declaration for a viewer or edit'
 complete -c tsed -n '__fish_tsed_offer \'\' \'select-file\'' -l select-file -r -d 'Select a unique file span for an edit'
 complete -c tsed -n '__fish_tsed_offer \'\' \'in\'' -l in -r -d 'File that contains the selected declaration'
+complete -c tsed -n '__fish_tsed_offer \'\' \'rev\'' -l rev -r -d 'Expected source revision from a viewer or read (8 lowercase hex)'
 complete -c tsed -n '__fish_tsed_offer \'\' \'kind\'' -l kind -r -d 'Declaration kind filter'
 complete -c tsed -n '__fish_tsed_offer \'\' \'resolve\'' -l resolve -r -f -a 'value type namespace' -d 'TypeScript symbol space filter'
 complete -c tsed -n '__fish_tsed_offer \'\' \'match\'' -l match -r -d 'Snippet that must match inside the declaration'
@@ -101,4 +102,4 @@ complete -c tsed -n '__fish_tsed_offer \'\' \'rewrite\'' -l rewrite -r -d 'Rewri
 complete -c tsed -n '__fish_tsed_offer \'\' \'content-file\'' -l content-file -r -F -d 'File holding the content for --rewrite'
 complete -c tsed -n 'not __fish_seen_argument -s V -l version' -s V -l version -d 'Print version'
 complete -c tsed -n 'not __fish_seen_argument -s h -l help' -s h -l help -d 'Print help'
-complete -c tsed -n 'test (__fish_tsed_slot --protocol-format --directory -C --read --unify --unify-min-lines --select --select-file --in --kind --resolve --match --pick --within --replace-file --rename --create --delete --rewrite --content-file) -ge 0' -f
+complete -c tsed -n 'test (__fish_tsed_slot --protocol-format --directory -C --read --unify --unify-min-lines --select --select-file --in --rev --kind --resolve --match --pick --within --replace-file --rename --create --delete --rewrite --content-file) -ge 0' -f

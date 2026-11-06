@@ -8,6 +8,7 @@ import type {
   EditDslTargetClaims,
   EditDslViewer,
 } from "./edit-dsl";
+import { sourceRevision } from "./range";
 import type { EditRange } from "./range";
 import { resolveLocalRename } from "./rename";
 import type { RenameEdit, RenameTarget } from "./rename";
@@ -35,6 +36,8 @@ export interface MultiEditorRead {
   path: string;
   ranges: EditRange[] | null;
   lines: MultiEditorLine[];
+  /** The full-file source revision of exactly these lines (#91). */
+  revision: string;
 }
 
 /** A queued `create`/`delete` mutation (applied by the loop after all guards). */
@@ -69,8 +72,8 @@ export function renderReadFeedback(reads: readonly MultiEditorRead[]): string {
     const folded = rendered.some((line) => line.marker);
     const header =
       read.lines.length > 0
-        ? `${read.path} (${label}, ${read.lines.length} lines${folded ? "; folded" : ""}):`
-        : `${read.path} (${label}):`;
+        ? `${read.path} (${label}, ${read.lines.length} lines; rev ${read.revision}${folded ? "; folded" : ""}):`
+        : `${read.path} (${label}; rev ${read.revision}):`;
     lines.push("", header, "```text");
     if (read.lines.length === 0) {
       lines.push("(empty file)");
@@ -874,7 +877,13 @@ export function resolveMultiEditor(
           readFailures.push(fsFailure(index, fs.path, "range", lines));
           continue;
         }
-        reads.push({ index, path: fs.path, ranges: fs.ranges, lines });
+        reads.push({
+          index,
+          path: fs.path,
+          ranges: fs.ranges,
+          revision: sourceRevision(source),
+          lines,
+        });
         continue;
       }
       case "write": {

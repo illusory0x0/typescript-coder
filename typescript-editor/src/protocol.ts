@@ -11,6 +11,8 @@ export type EditOperation =
       op: "select";
       symbol: string;
       path: string;
+      /** The optional `rev <token>` source revision (#91). */
+      rev?: string;
       kind?: string;
       resolve?: "value" | "type" | "namespace";
       match?: string;
@@ -19,7 +21,14 @@ export type EditOperation =
       replace?: string;
       rename?: string;
     }
-  | { op: "select-file"; path: string; match?: string; pick?: string; replace?: string }
+  | {
+      op: "select-file";
+      path: string;
+      rev?: string;
+      match?: string;
+      pick?: string;
+      replace?: string;
+    }
   | { op: "create"; path: string }
   | { op: "delete"; path: string }
   | { op: "rewrite"; path: string; content: string };
@@ -46,6 +55,7 @@ const OPERATION_FIELDS: Record<OperationKind, readonly string[]> = {
     "op",
     "symbol",
     "path",
+    "rev",
     "kind",
     "resolve",
     "within",
@@ -57,7 +67,7 @@ const OPERATION_FIELDS: Record<OperationKind, readonly string[]> = {
   create: ["op", "path"],
   delete: ["op", "path"],
   rewrite: ["op", "path", "content"],
-  "select-file": ["op", "path", "match", "pick", "replace"],
+  "select-file": ["op", "path", "rev", "match", "pick", "replace"],
 };
 
 const REQUIRED_FIELDS: Record<OperationKind, readonly string[]> = {
@@ -105,6 +115,14 @@ function rangeToken(operation: OperationKind, field: string, value: string): voi
   }
 }
 
+/** The optional `rev <token>` (#91): exactly 8 lowercase hex characters. */
+function revisionToken(operation: OperationKind, field: string, value: string): void {
+  if (!/^[0-9a-f]{8}$/.test(value)) {
+    reject(
+      `${operation}.${field} must be an 8-character lowercase hex source revision; copy it from a viewer or read header`,
+    );
+  }
+}
 function fence(operation: OperationKind, body: string): string {
   if (containsEditFenceEnd(body)) {
     reject(
@@ -127,6 +145,9 @@ function validateOperation(operation: EditOperation): void {
     case "select": {
       wordToken(operation.op, "symbol", operation.symbol);
       pathToken(operation.op, "path", operation.path);
+      if (operation.rev !== undefined) {
+        revisionToken(operation.op, "rev", operation.rev);
+      }
       if (operation.kind !== undefined) {
         wordToken(operation.op, "kind", operation.kind);
       }
@@ -157,6 +178,9 @@ function validateOperation(operation: EditOperation): void {
     }
     case "select-file": {
       pathToken(operation.op, "path", operation.path);
+      if (operation.rev !== undefined) {
+        revisionToken(operation.op, "rev", operation.rev);
+      }
       if (operation.pick !== undefined) {
         rangeToken(operation.op, "pick", operation.pick);
       }
@@ -192,6 +216,9 @@ function renderOperation(operation: EditOperation): string {
     case "select": {
       const kind = operation.kind === undefined ? "" : `${operation.kind} `;
       let head = `select ${kind}${operation.symbol} in ${operation.path}`;
+      if (operation.rev !== undefined) {
+        head += ` rev ${operation.rev}`;
+      }
       if (operation.resolve !== undefined) {
         head += ` resolve ${operation.resolve}`;
       }
@@ -214,6 +241,9 @@ function renderOperation(operation: EditOperation): string {
     }
     case "select-file": {
       let head = `select file ${operation.path}`;
+      if (operation.rev !== undefined) {
+        head += ` rev ${operation.rev}`;
+      }
       if (operation.match !== undefined) {
         head += `\nmatch \`${escapeSnippet(operation.match)}\``;
       }
@@ -320,12 +350,16 @@ function parseJsonOperation(raw: unknown, index: number): EditOperation {
         symbol: stringField("symbol"),
         path: stringField("path"),
       };
+      const rev = optionalField("rev");
       const kind = optionalField("kind");
       const match = optionalField("match");
       const pick = optionalField("pick");
       const within = optionalField("within");
       const replace = optionalField("replace");
       const rename = optionalField("rename");
+      if (rev !== undefined) {
+        selection.rev = rev;
+      }
       if (kind !== undefined) {
         selection.kind = kind;
       }
@@ -355,9 +389,13 @@ function parseJsonOperation(raw: unknown, index: number): EditOperation {
         op: "select-file",
         path: stringField("path"),
       };
+      const rev = optionalField("rev");
       const match = optionalField("match");
       const pick = optionalField("pick");
       const replace = optionalField("replace");
+      if (rev !== undefined) {
+        selection.rev = rev;
+      }
       if (match !== undefined) {
         selection.match = match;
       }

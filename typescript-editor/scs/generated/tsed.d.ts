@@ -27,6 +27,8 @@ export interface TsedArgs {
   select_file?: string;
   /** File that contains the selected declaration */
   input?: string;
+  /** Expected source revision from a viewer or read (8 lowercase hex) */
+  rev?: string;
   /** Declaration kind filter */
   kind?: string;
   /** TypeScript symbol space filter */
@@ -64,6 +66,7 @@ export type ValueName =
   | "select"
   | "select_file"
   | "input"
+  | "rev"
   | "kind"
   | "resolve"
   | "match"
@@ -84,9 +87,9 @@ export interface Tsed {
  * Runtime-boundary note:
  * Only enum- and union-typed options have narrow types. `directory`,
  * `read`, `unify`, `unify_min_lines`, `select`, `select_file`, `input`,
- * `kind`, `match`, `pick`, `within`, `replace_file`, `rename`, `create`,
- * `delete`, `rewrite` and `content_file` are `number`/`string` because the
- * .scs source carries no value range or format information. Narrowing
- * those would make the .d.ts assert more than the completion script can
- * guarantee.
+ * `rev`, `kind`, `match`, `pick`, `within`, `replace_file`, `rename`,
+ * `create`, `delete`, `rewrite` and `content_file` are `number`/`string`
+ * because the .scs source carries no value range or format information.
+ * Narrowing those would make the .d.ts assert more than the completion
+ * script can guarantee.
  */

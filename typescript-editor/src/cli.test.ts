@@ -3,6 +3,7 @@ import { spawnSync } from "node:child_process";
 import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
+import { sourceRevision } from "./range";
 
 const CLI = join(import.meta.dir, "cli.ts");
 const BEGIN = "TC_EDIT_BEGIN";
@@ -149,7 +150,9 @@ describe("tsed flag protocol", () => {
     const workspace = makeWorkspace();
     const result = run(workspace, ["--read", "src/helper.ts", "--within", "2-3"]);
     expect(result.status).toBe(0);
-    expect(result.stdout).toContain("src/helper.ts (selected lines, 2 lines):");
+    expect(result.stdout).toContain(
+      `src/helper.ts (selected lines, 2 lines; rev ${sourceRevision(HELPER)}):`,
+    );
     expect(result.stdout).toContain("2 |   return 1;");
     expect(result.stdout).toContain("3 | }");
     expect(result.stdout).not.toContain("1 | export function helper");
@@ -165,6 +168,64 @@ describe("tsed flag protocol", () => {
     expect(result.stderr).toBe("");
   });
 
+  test("--select prints a rev that --rev accepts, and a stale rev writes nothing", () => {
+    const workspace = makeWorkspace({ "patch.txt": ANSWER_TWO });
+    const token = sourceRevision(HELPER);
+    const viewer = run(workspace, ["--select", "answer", "--in", "src/helper.ts"]);
+    expect(viewer.status).toBe(0);
+    expect(viewer.stdout).toContain(`select answer in src/helper.ts rev ${token}`);
+
+    const fresh = run(workspace, [
+      "--select",
+      "answer",
+      "--in",
+      "src/helper.ts",
+      "--rev",
+      token,
+      "--replace-file",
+      "patch.txt",
+      "--dry-run",
+    ]);
+    expect(fresh.status).toBe(0);
+    expect(fresh.stdout).toContain("would change: src/helper.ts");
+    expect(read(join(workspace, "src/helper.ts"))).toBe(HELPER);
+
+    const stale = run(workspace, [
+      "--select",
+      "answer",
+      "--in",
+      "src/helper.ts",
+      "--rev",
+      "00000000",
+      "--replace-file",
+      "patch.txt",
+      "--dry-run",
+    ]);
+    expect(stale.status).toBe(1);
+    expect(stale.stderr).toContain("stage: range");
+    expect(stale.stderr).toContain("refresh");
+    expect(stale.stdout).not.toContain("would change:");
+    expect(read(join(workspace, "src/helper.ts"))).toBe(HELPER);
+  });
+
+  test("a malformed --rev is a usage error", () => {
+    const workspace = makeWorkspace({ "patch.txt": ANSWER_TWO });
+    const result = run(workspace, [
+      "--select",
+      "answer",
+      "--in",
+      "src/helper.ts",
+      "--rev",
+      "XYZ",
+      "--replace-file",
+      "patch.txt",
+      "--dry-run",
+    ]);
+    expect(result.status).toBe(2);
+    expect(result.stderr).toContain("rev");
+    expect(result.stderr).toContain("8-character lowercase hex");
+  });
+
   test("--select --in --within prints the viewer slice unfolded", () => {
     const workspace = makeWorkspace();
     const result = run(workspace, [
@@ -176,7 +237,9 @@ describe("tsed flag protocol", () => {
       "6-7",
     ]);
     expect(result.status).toBe(0);
-    expect(result.stdout).toContain("select answer in src/helper.ts within 6-7");
+    expect(result.stdout).toContain(
+      `select answer in src/helper.ts rev ${sourceRevision(HELPER)} within 6-7`,
+    );
     expect(result.stdout).toContain("6 |   return 1;");
     expect(result.stdout).toContain("7 | }");
     expect(result.stdout).not.toContain("5 | export function answer");
@@ -629,6 +692,34 @@ describe("tsed stdin protocols", () => {
     expect(result.stdout).toContain("would change: src/helper.ts");
     expect(result.stdout).not.toContain("changed: src/helper.ts");
     expect(result.stderr).toBe("");
+    expect(read(join(workspace, "src/helper.ts"))).toBe(HELPER);
+  });
+
+  test("json select accepts rev and rejects a stale token", () => {
+    const workspace = makeWorkspace();
+    const token = sourceRevision(HELPER);
+    const operation = {
+      op: "select",
+      symbol: "answer",
+      path: "src/helper.ts",
+      rev: token,
+      replace: ANSWER_TWO,
+    };
+    const fresh = run(
+      workspace,
+      ["--protocol-format", "json", "--dry-run"],
+      JSON.stringify({ operations: [operation] }),
+    );
+    expect(fresh.status).toBe(0);
+    expect(fresh.stdout).toContain("would change: src/helper.ts");
+
+    const stale = run(
+      workspace,
+      ["--protocol-format", "json", "--dry-run"],
+      JSON.stringify({ operations: [{ ...operation, rev: "00000000" }] }),
+    );
+    expect(stale.status).toBe(1);
+    expect(stale.stderr).toContain("stage: range");
     expect(read(join(workspace, "src/helper.ts"))).toBe(HELPER);
   });
 

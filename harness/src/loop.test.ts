@@ -2,7 +2,7 @@ import { afterEach, describe, expect, spyOn, test } from "bun:test";
 import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { basename, join } from "node:path";
-import { resolveEditRange } from "@tc/typescript-editor/range";
+import { resolveEditRange, sourceRevision } from "@tc/typescript-editor/range";
 import { resolveCurrentEntry } from "@tc/typescript-editor/resolve-entry";
 import { renderFailureArtifact } from "./failure-artifact";
 import {
@@ -5915,6 +5915,42 @@ describe("edit-dsl protocol (#111/#119)", () => {
     expect(details).toContain("4 |   return 1;");
     expect(details).not.toContain("1 | export function answer");
     expect(details).toContain("A reply is one or more `select` clauses");
+  });
+
+  test("the edit-dsl prompts print the full-file rev token for the next clause", () => {
+    const indexText = "select answer in src/helper.ts resolve value";
+    const source = ["export function answer(): number {", "  return 1;", "}"].join("\n");
+    const token = sourceRevision(source);
+    const details = buildEditDslDetailsPrompt(
+      "make the answer test pass",
+      indexText,
+      source,
+      [],
+      1,
+      null,
+      null,
+      token,
+    );
+    expect(details).toContain(`# details\n\nrev ${token}\n\n\`\`\`text`);
+    const modified = buildEditDslModifiedPrompt(
+      "make the answer test pass",
+      indexText,
+      source,
+      1,
+      [],
+      token,
+    );
+    expect(modified).toContain(`# modified text\n\nrev ${token}\n\n\`\`\`text`);
+    const retry = buildRetryPrompt({
+      exchangeNumber: 2,
+      mode: "modify",
+      currentSource: source,
+      diagnostics: "stage: tests",
+      failure: "verification",
+      editDslContext: { issue: "fold it", indexText, startLine: 1, revision: token },
+    });
+    expect(retry).toContain(`# details\n\nrev ${token}\n\n\`\`\`text`);
+    expect(details).toContain("copy it after the path");
   });
 
   test("the edit-dsl details prompt marks matched lines only when given marks", () => {

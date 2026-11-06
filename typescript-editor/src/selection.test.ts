@@ -1676,3 +1676,57 @@ describe("block select statements (#84)", () => {
     expectSyntax("select block outer:2 in src/a.ts pick 3 end", "`pick` requires a `replace`");
   });
 });
+
+describe("source revision token (#91)", () => {
+  test("parses an optional rev after the path on declaration, file, and block selects", () => {
+    expect(first("select answer in src/a.ts rev 1a2b3c4d resolve value end").revision).toBe(
+      "1a2b3c4d",
+    );
+    expect(first("select file src/a.ts rev 1a2b3c4d end").revision).toBe("1a2b3c4d");
+    expect(first("select block outer:2 in src/a.ts rev 1a2b3c4d end").revision).toBe("1a2b3c4d");
+  });
+
+  test("omitting rev keeps the selection shape unchanged", () => {
+    expect(first("select answer in src/a.ts end").revision).toBeUndefined();
+    expect(first("select file src/a.ts end").revision).toBeUndefined();
+  });
+
+  test("rejects a malformed rev as a syntax error", () => {
+    const error = expectSyntax(
+      "select answer in src/a.ts rev xyz end",
+      "not an 8-character lowercase hex token",
+    );
+    expect(error.issues[0]?.code).toBe("EDIT_REV_MALFORMED");
+    expectSyntax("select answer in src/a.ts rev 1234567 end", "8-character");
+    expectSyntax("select answer in src/a.ts rev 123456789 end", "8-character");
+    expectSyntax("select answer in src/a.ts rev 1A2B3C4D end", "8-character");
+  });
+
+  test("serializes rev after the path and before resolve, then round-trips", () => {
+    const selection: Selection = {
+      locator: { path: "src/a.ts", name: "answer", kind: "" },
+      space: "value",
+      matcher: null,
+      pick: null,
+      replacement: null,
+      revision: "1a2b3c4d",
+    };
+    const text = serializeSelection(selection);
+    expect(text.split("\n")[0]).toBe("select answer in src/a.ts rev 1a2b3c4d resolve value");
+    expect(first(text)).toEqual(selection);
+  });
+
+  test("serializes a file-level rev and round-trips", () => {
+    const selection: Selection = {
+      locator: { path: "src/a.ts", name: "", kind: "file" },
+      space: null,
+      matcher: { kind: "snippet", value: 'import { a } from "./a";' },
+      pick: null,
+      replacement: 'import { a } from "./b";',
+      revision: "1a2b3c4d",
+    };
+    const text = serializeSelection(selection);
+    expect(text.split("\n")[0]).toBe("select file src/a.ts rev 1a2b3c4d");
+    expect(first(text)).toEqual(selection);
+  });
+});
