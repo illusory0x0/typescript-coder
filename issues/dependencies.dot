@@ -94,6 +94,10 @@ digraph issues {
   "87" [label="#87 Resolve local tsconfig extends chains for cross-file rename"];
   "88" [label="#88 Support static computed namespace member renames"];
   "89" [label="#89 Support object destructuring of namespace exports"];
+  "90" [label="#90 Allow pick ranges in files larger than the prompt fold limit"];
+  "91" [label="#91 Version viewer coordinates with a source revision token"];
+  "92" [label="#92 Allow multiple disjoint edit regions for one declaration"];
+  "93" [label="#93 Add content-anchored before/after insertion selectors"];
 
   // parent edges (parent -> child), solid
   "1" -> "2";
