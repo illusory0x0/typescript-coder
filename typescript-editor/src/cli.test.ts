@@ -1073,10 +1073,13 @@ describe("tsed cross-file rename", () => {
     expect(read(join(workspace, "src/b.ts"))).toContain("export function helper2");
   });
 
-  test("a computed namespace access fails with an address diagnostic", () => {
-    const importer = ['import * as ns from "./b";', 'export const n = ns["helper"];', ""].join(
-      "\n",
-    );
+  test("a dynamic namespace access fails with an address diagnostic", () => {
+    const importer = [
+      'import * as ns from "./b";',
+      'const key = "helper";',
+      "export const n = ns[key];",
+      "",
+    ].join("\n");
     const workspace = makeWorkspace({ "src/a.ts": importer, "src/b.ts": TARGET });
     const result = run(workspace, [
       "--select",
@@ -1091,10 +1094,42 @@ describe("tsed cross-file rename", () => {
     expect(result.stderr).toContain("stage: address");
     expect(result.stderr).toContain("computed");
     expect(result.stderr).toContain("src/a.ts");
-    expect(result.stderr).toContain('ns["helper"]');
+    expect(result.stderr).toContain("ns[key]");
     expect(result.stdout).not.toContain("would change:");
     expect(read(join(workspace, "src/a.ts"))).toBe(importer);
     expect(read(join(workspace, "src/b.ts"))).toBe(TARGET);
+  });
+
+  test("static string-keyed namespace accesses rename in dry-run and apply", () => {
+    const importer = [
+      'import * as ns from "./b";',
+      'export const n = ns["helper"];',
+      'export const m = ns?.["helper"];',
+      "",
+    ].join("\n");
+    const workspace = makeWorkspace({ "src/a.ts": importer, "src/b.ts": TARGET });
+    const args = ["--select", "helper", "--in", "src/b.ts", "--rename", "helper2"];
+
+    const preview = run(workspace, [...args, "--dry-run"]);
+    expect(preview.status).toBe(0);
+    expect(preview.stdout).toContain("would change: src/a.ts");
+    expect(preview.stdout).toContain("would change: src/b.ts");
+    expect(preview.stderr).toBe("");
+    expect(read(join(workspace, "src/a.ts"))).toBe(importer);
+
+    const applied = run(workspace, [...args, "--write"]);
+    expect(applied.status).toBe(0);
+    expect(applied.stdout).toContain("changed: src/a.ts");
+    expect(applied.stderr).toBe("");
+    expect(read(join(workspace, "src/a.ts"))).toBe(
+      [
+        'import * as ns from "./b";',
+        'export const n = ns["helper2"];',
+        'export const m = ns?.["helper2"];',
+        "",
+      ].join("\n"),
+    );
+    expect(read(join(workspace, "src/b.ts"))).toContain("export function helper2");
   });
 
   test("resolves tsconfig path aliases in dry-run and apply", () => {

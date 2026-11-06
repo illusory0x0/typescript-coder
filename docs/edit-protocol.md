@@ -464,14 +464,17 @@ an aliased import changes only the imported name; a re-export changes the
 source-side name and preserves its alias, so an aliased public name stays
 stable. A namespace import (`import * as ns from "@/b"`) and a direct
 `import lib = require("@/b")` also contribute static member accesses
-(`ns.member`, `ns?.member`, `lib.member`); only the member property is renamed,
-and a base that resolves to a shadowing local or parameter is skipped. Computed
-access (`ns["member"]`, `ns[key]`), escaped member spellings, destructuring that
-reads the member, and non-direct `import =` shapes fail at `address` instead of
-leaving a stale reference; a destructuring or `import =` edge that does not
-mention the renamed member stays untouched. An ambiguous alias, an unresolved
-relative/alias barrel edge, and conflicting `export *` sources that could hide
-the renamed name fail at `address` with the file and specifier.
+(`ns.member`, `ns?.member`, `ns["member"]`, `ns?.["member"]`, `lib["member"]`);
+only the member property is renamed (a static string key keeps its original
+quote), a static key naming another property is left untouched, and a base that
+resolves to a shadowing local or parameter is skipped. Dynamic computed access
+(`ns[key]`, `ns["member" + suffix]`, template literals or string keys with
+escapes), escaped member spellings, destructuring that reads the member, and
+non-direct `import =` shapes fail at `address` instead of leaving a stale
+reference; a destructuring or `import =` edge that does not mention the renamed
+member stays untouched. An ambiguous alias, an unresolved relative/alias barrel
+edge, and conflicting `export *` sources that could hide the renamed name fail
+at `address` with the file and specifier.
 
 Object-literal member targets are **not renameable** (an `address` failure);
 computed member names and static blocks have no name-addressable declaration to
@@ -480,7 +483,7 @@ interface, type alias, enum member, class field/method, or interface/type-litera
 member is supported. A cross-file rename follows relative and tsconfig-`paths`
 aliased named import/re-export edges plus named and `export *` re-export chains,
 namespace-import member accesses, and direct `import = require` member accesses;
-it does not follow default or dynamic imports, computed/dynamic member access,
+it does not follow default or dynamic imports, dynamic member access,
 `export * as ns` member propagation, or non-direct `import =` shapes. The target
 must be an unqualified top-level declaration whose export name changes; nested
 and alias-only exports stay same-file. A rename is not a full type-checker

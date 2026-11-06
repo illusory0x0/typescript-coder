@@ -247,15 +247,80 @@ function readIdentifierAt(source: string, offset: number): string {
 }
 
 type MemberSuffix =
-  | { kind: "member"; name: string; start: number; end: number }
+  | {
+      kind: "member";
+      name: string;
+      start: number;
+      end: number;
+      quote: '"' | "'" | null;
+    }
   | { kind: "computed"; start: number; end: number }
   | { kind: "unsupported"; start: number; end: number; text: string }
   | { kind: "none" };
 
+type ComputedKey =
+  | { kind: "static"; name: string; start: number; end: number; quote: '"' | "'" }
+  | { kind: "dynamic"; end: number };
+
 /**
- * Read the accessor that directly follows an identifier. `.member` and
- * `?.member` are statically renameable; any computed form (`[`, `?.[`) is
- * reported as unsupported because the property is not provably the renamed
+ * Read the key of a computed accessor starting at the `[` at `offset`. Only a
+ * plain single- or double-quoted string literal with no escape sequences,
+ * followed by trivia and the closing `]`, is provably static. Everything else
+ * is dynamic: decoding escapes or evaluating expressions would be guessing.
+ */
+function scanComputedKey(source: string, offset: number): ComputedKey {
+  const quoteIndex = skipTrivia(source, offset + 1);
+  const quote = source[quoteIndex];
+  if (quote !== '"' && quote !== "'") {
+    return { kind: "dynamic", end: quoteIndex };
+  }
+  let index = quoteIndex + 1;
+  for (;;) {
+    const char = source[index];
+    if (char === undefined || char === "\n" || char === "\r") {
+      return { kind: "dynamic", end: Math.min(source.length, index) };
+    }
+    if (char === "\\") {
+      return { kind: "dynamic", end: Math.min(source.length, index) };
+    }
+    if (char === quote) {
+      break;
+    }
+    index += 1;
+  }
+  const end = index + 1;
+  const close = skipTrivia(source, end);
+  if (source[close] !== "]") {
+    return { kind: "dynamic", end: close };
+  }
+  return {
+    kind: "static",
+    name: source.slice(quoteIndex + 1, index),
+    start: quoteIndex,
+    end,
+    quote,
+  };
+}
+
+function computedMemberSuffix(source: string, offset: number, bracket: number): MemberSuffix {
+  const key = scanComputedKey(source, bracket);
+  if (key.kind === "static") {
+    return {
+      kind: "member",
+      name: key.name,
+      start: key.start,
+      end: key.end,
+      quote: key.quote,
+    };
+  }
+  return { kind: "computed", start: offset, end: key.end };
+}
+
+/**
+ * Read the accessor that directly follows an identifier. `.member`, `?.member`,
+ * and static string-keyed computed members (`["member"]`, `?.['member']`) are
+ * statically renameable; a dynamic computed form (`[key]`, `["member" + suffix]`)
+ * is reported as unsupported because the property is not provably the renamed
  * export. Whitespace, comments, and non-null assertions between the base and
  * the accessor are allowed.
  */
@@ -271,7 +336,7 @@ function scanMemberSuffix(source: string, offset: number): MemberSuffix {
   }
   const char = source[index];
   if (char === "[") {
-    return { kind: "computed", start: offset, end: index + 1 };
+    return computedMemberSuffix(source, offset, index);
   }
   let optional = false;
   if (char === "?" && source[index + 1] === ".") {
@@ -284,7 +349,7 @@ function scanMemberSuffix(source: string, offset: number): MemberSuffix {
   }
   index = skipTrivia(source, index);
   if (optional && source[index] === "[") {
-    return { kind: "computed", start: offset, end: index + 1 };
+    return computedMemberSuffix(source, offset, index);
   }
   const name = readIdentifierAt(source, index);
   if (name === "") {
@@ -301,7 +366,7 @@ function scanMemberSuffix(source: string, offset: number): MemberSuffix {
     }
     return { kind: "none" };
   }
-  return { kind: "member", name, start: index, end: index + name.length };
+  return { kind: "member", name, start: index, end: index + name.length, quote: null };
 }
 
 /** The top-level property names an object destructuring pattern reads. */
@@ -1833,10 +1898,11 @@ class RenameModel {
   }
 
   /**
-   * Find direct `local.member` accesses that provably resolve to an imported
-   * namespace/import-equals binding, plus the computed/dynamic shapes a rename
-   * cannot update. `local` must be the lexical import binding; a shadowing
-   * local/parameter resolves to a different binding and is skipped.
+   * Find direct `local.member`, `local["member"]`, and `local?.["member"]`
+   * accesses that provably resolve to an imported namespace/import-equals
+   * binding, plus the dynamic shapes a rename cannot update. `local` must be
+   * the lexical import binding; a shadowing local/parameter resolves to a
+   * different binding and is skipped.
    */
   scanNamespaceMembers(local: string, rename: { from: string; to: string }): NamespaceMemberScan {
     const targets = this.findTargets({ path: this.fileName, name: local, kind: "import" }, {});
@@ -1886,7 +1952,8 @@ class RenameModel {
             edits.set(`${suffix.start}:${suffix.end}`, {
               start: suffix.start,
               end: suffix.end,
-              text: rename.to,
+              text:
+                suffix.quote === null ? rename.to : `${suffix.quote}${rename.to}${suffix.quote}`,
             });
           }
           break;
@@ -1985,9 +2052,10 @@ class RenameModel {
  * Scan one imported namespace local (`import * as ns` or a direct relative
  * `import ns = require(...)`) for member accesses of a renamed export.
  *
- * Static `.member`/`?.member` accesses produce property-only edits. Computed
- * accesses, escaped member spellings, and object destructuring that reads the
- * renamed property produce `unsupported` edges instead of a silent skip.
+ * Static `.member`/`?.member` and plain string-keyed `["member"]`/`?.["member"]`
+ * accesses produce property-only edits, preserving the original quote. Dynamic
+ * computed keys, escaped member spellings, and object destructuring that reads
+ * the renamed property produce `unsupported` edges instead of a silent skip.
  */
 export function scanNamespaceMemberEdits(
   program: Program,

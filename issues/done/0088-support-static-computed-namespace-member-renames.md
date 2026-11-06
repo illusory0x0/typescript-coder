@@ -1,7 +1,7 @@
 ---
 id: 88
 title: "Support static computed namespace member renames"
-status: todo
+status: done
 priority: medium
 milestone: null
 parent: null

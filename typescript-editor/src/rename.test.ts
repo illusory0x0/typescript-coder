@@ -952,12 +952,87 @@ describe("resolveWorkspaceRename", () => {
     );
   });
 
-  test("fails on a computed namespace access instead of leaving it stale", () => {
-    for (const expression of ['ns["helper"]', "ns[key]"]) {
+  test("renames static string-keyed namespace accesses and preserves the quote", () => {
+    for (const [expression, expected] of [
+      ['ns["helper"]', 'ns["helper2"]'],
+      ["ns['helper']", "ns['helper2']"],
+      ['ns?.["helper"]', 'ns?.["helper2"]'],
+      ["ns?.['helper']", "ns?.['helper2']"],
+    ] as const) {
+      const files = {
+        "src/a.ts": ['import * as ns from "./b";', `export const n = ${expression};`, ""].join(
+          "\n",
+        ),
+        "src/b.ts": TARGET,
+      };
+      const result = workspaceRename(files, "src/b.ts", "helper", "function", "helper", "helper2");
+      expect(result.ok).toBe(true);
+      if (!result.ok) {
+        continue;
+      }
+      const output = applyWorkspaceRename(files, result);
+      expect(output["src/a.ts"]).toBe(
+        ['import * as ns from "./b";', `export const n = ${expected};`, ""].join("\n"),
+      );
+    }
+  });
+
+  test("renames a static string-keyed import-equals access", () => {
+    const files = {
+      "src/a.ts": ['import lib = require("./b");', "export const n = lib['helper'];", ""].join(
+        "\n",
+      ),
+      "src/b.ts": TARGET,
+    };
+    const result = workspaceRename(files, "src/b.ts", "helper", "function", "helper", "helper2");
+    expect(result.ok).toBe(true);
+    if (!result.ok) {
+      return;
+    }
+    const output = applyWorkspaceRename(files, result);
+    expect(output["src/a.ts"]).toBe(
+      ['import lib = require("./b");', "export const n = lib['helper2'];", ""].join("\n"),
+    );
+  });
+
+  test("leaves a static key naming another property untouched", () => {
+    const files = {
+      "src/a.ts": [
+        'import * as ns from "./b";',
+        'export const other = ns["other"];',
+        'export const n = ns["helper"];',
+        "",
+      ].join("\n"),
+      "src/b.ts": TARGET,
+    };
+    const result = workspaceRename(files, "src/b.ts", "helper", "function", "helper", "helper2");
+    expect(result.ok).toBe(true);
+    if (!result.ok) {
+      return;
+    }
+    const output = applyWorkspaceRename(files, result);
+    expect(output["src/a.ts"]).toBe(
+      [
+        'import * as ns from "./b";',
+        'export const other = ns["other"];',
+        'export const n = ns["helper2"];',
+        "",
+      ].join("\n"),
+    );
+  });
+
+  test("fails on a dynamic namespace access instead of leaving it stale", () => {
+    for (const expression of [
+      "ns[key]",
+      'ns["helper" + suffix]',
+      "ns[`helper`]",
+      'ns["hel\\u0062er"]',
+    ]) {
       const files = {
         "src/a.ts": [
           'import * as ns from "./b";',
           'const key = "helper";',
+          "const suffix = '';",
           `export const n = ${expression};`,
           "",
         ].join("\n"),
@@ -974,23 +1049,6 @@ describe("resolveWorkspaceRename", () => {
       expect(result.diagnostics).toContain("ns[");
       expect(result.diagnostics).toContain("source:");
     }
-  });
-
-  test("fails on a computed import-equals access", () => {
-    const files = {
-      "src/a.ts": ['import lib = require("./b");', 'export const n = lib["helper"];', ""].join(
-        "\n",
-      ),
-      "src/b.ts": TARGET,
-    };
-    const result = workspaceRename(files, "src/b.ts", "helper", "function", "helper", "helper2");
-    expect(result.ok).toBe(false);
-    if (result.ok) {
-      return;
-    }
-    expect(result.path).toBe("src/a.ts");
-    expect(result.diagnostics).toContain("computed");
-    expect(result.diagnostics).toContain('lib["helper"]');
   });
 
   test("fails on an unsupported import-equals alias of a namespace", () => {

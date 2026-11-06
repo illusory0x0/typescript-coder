@@ -307,21 +307,24 @@ entries are skipped. Named and `export *` re-export chains are followed
 cycle-safely and only when the renamed name is actually visible through the
 chain. A namespace import (`import * as ns from "@/b"`) and a direct
 `import lib = require("@/b")` also update their static member accesses
-(`ns.member`, `ns?.member`, `lib.member`): only the member property is renamed,
-and a base that resolves to a shadowing local or parameter is skipped. The
+(`ns.member`, `ns?.member`, `ns["member"]`, `ns?.["member"]`, `lib["member"]`):
+only the member property is renamed (a static string key keeps its original
+quote), a static key naming another property is left untouched, and a base that
+resolves to a shadowing local or parameter is skipped. The
 rename is rejected if the target or an affected importer would export the new
 name twice, and a dry run lists every affected file.
 
-Computed member access (`ns["member"]`, `ns[key]`), escaped member spellings,
-object destructuring that reads the renamed member, and non-direct `import =`
-shapes (`import lib = ns`, `require("./b").default`, property access, `as`, or
-extra arguments) fail at the `address` stage instead of leaving a stale
+Dynamic computed member access (`ns[key]`, `ns["member" + suffix]`, template
+literals or string keys with escapes), escaped member spellings, object
+destructuring that reads the renamed member, and non-direct `import =` shapes
+(`import lib = ns`, `require("./b").default`, property access, `as`, or extra
+arguments) fail at the `address` stage instead of leaving a stale
 reference. An ambiguous `paths` alias, an unresolved relative/alias barrel
 edge, and conflicting `export *` sources that could hide the renamed name also
 fail at `address` with the file and specifier. A destructuring or `import =`
 edge that does not mention the renamed member is left untouched. Cross-file
-renames do not follow default or dynamic imports, computed/dynamic member
-access, or `export * as ns` member propagation. The target file's public export
+renames do not follow default or dynamic imports, dynamic member access, or
+`export * as ns` member propagation. The target file's public export
 name must change for importers to be updated, so a binding exported only under
 an alias stays a same-file rename.
 
