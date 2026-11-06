@@ -25,6 +25,7 @@ import type {
   Program,
   Property,
   Statement,
+  StringLiteral,
   Type,
   TypeMember,
   TypeParameter,
@@ -121,10 +122,8 @@ interface QualifiedReference {
 }
 
 interface DestructuringAccess {
-  /** Top-level property names read from the namespace object. */
-  names: string[];
-  /** A rest or computed property makes the read names unknowable. */
-  dynamic: boolean;
+  /** The top-level pattern initialized directly from the namespace local. */
+  pattern: ObjectPattern;
 }
 
 interface Reference {
@@ -369,31 +368,97 @@ function scanMemberSuffix(source: string, offset: number): MemberSuffix {
   return { kind: "member", name, start: index, end: index + name.length, quote: null };
 }
 
-/** The top-level property names an object destructuring pattern reads. */
-function destructuringAccess(pattern: ObjectPattern): DestructuringAccess {
-  const names: string[] = [];
-  let dynamic = false;
+/** A static string-key edit preserving the literal's original quote. */
+function staticStringKeyEdit(key: StringLiteral, to: string): RenameEdit | null {
+  const quote = key.raw.startsWith('"') ? '"' : key.raw.startsWith("'") ? "'" : null;
+  if (quote === null || key.raw.includes("\\")) {
+    return null;
+  }
+  return { start: key.start, end: key.end, text: `${quote}${to}${quote}` };
+}
+
+/**
+ * The property-key edits an object destructuring initialized from a namespace
+ * local needs, plus the shapes that may read the renamed member but cannot be
+ * rewritten safely.
+ */
+function scanDestructuring(
+  pattern: ObjectPattern,
+  local: string,
+  rename: { from: string; to: string },
+): { edits: RenameEdit[]; unsupported: NamespaceMemberUnsupported[] } {
+  const edits: RenameEdit[] = [];
+  const unsupported: NamespaceMemberUnsupported[] = [];
+  const fail = (start: number, end: number, reason: string): void => {
+    unsupported.push({
+      start,
+      end,
+      message: `destructuring from \`${local}\` ${reason} cannot be updated safely`,
+    });
+  };
+
   for (const property of pattern.properties) {
-    if (property.computed || property.rest) {
-      dynamic = true;
+    if (property.rest) {
+      fail(property.start, property.end, "with a rest property");
       continue;
     }
     const key = property.key;
-    if (key !== null) {
-      if (key.kind === "Identifier") {
-        names.push(key.name);
-      } else if (key.kind === "StringLiteral") {
-        names.push(key.value);
-      } else {
-        dynamic = true;
-      }
-    } else if (property.binding.kind === "Identifier") {
-      names.push(property.binding.name);
-    } else {
-      dynamic = true;
+    if (key === null) {
+      fail(property.start, property.end, "with an unknown key");
+      continue;
     }
+    if (property.computed) {
+      if (key.kind !== "StringLiteral") {
+        // A computed expression may read the renamed property; only a literal
+        // string key is provably static.
+        fail(key.start, key.end, "with a dynamic computed key");
+      } else if (key.value === rename.from) {
+        const edit = staticStringKeyEdit(key, rename.to);
+        if (edit === null) {
+          fail(key.start, key.end, "with an escaped string key");
+        } else {
+          edits.push(edit);
+        }
+      }
+      continue;
+    }
+    if (key.kind === "Identifier") {
+      if (key.name !== rename.from) {
+        continue;
+      }
+      if (
+        property.binding.kind === "Identifier" &&
+        key.start === property.binding.start &&
+        key.end === property.binding.end
+      ) {
+        // A shorthand key is also the local binding; expand it to an explicit
+        // pair so the local name (and any trailing default) stays stable.
+        edits.push({
+          start: key.start,
+          end: key.end,
+          text: `${rename.to}: ${property.binding.name}`,
+        });
+      } else {
+        edits.push({ start: key.start, end: key.end, text: rename.to });
+      }
+      continue;
+    }
+    if (key.kind === "StringLiteral") {
+      if (key.value !== rename.from) {
+        continue;
+      }
+      const edit = staticStringKeyEdit(key, rename.to);
+      if (edit === null) {
+        fail(key.start, key.end, "with an escaped string key");
+      } else {
+        edits.push(edit);
+      }
+      continue;
+    }
+    fail(key.start, key.end, "with an unsupported key");
   }
-  return { names, dynamic };
+
+  return { edits, unsupported };
 }
 
 /** Unwrap transparent expressions around a destructuring initializer. */
@@ -1086,7 +1151,7 @@ class RenameModel {
     if (target === null) {
       return;
     }
-    const access = destructuringAccess(pattern);
+    const access = { pattern };
     for (let index = firstReference; index < this.references.length; index += 1) {
       const reference = this.references[index];
       if (
@@ -1973,13 +2038,12 @@ class RenameModel {
           break;
         case "none":
           if (reference.destructuring !== undefined) {
-            const access = reference.destructuring;
-            if (access.dynamic || access.names.includes(rename.from)) {
-              addUnsupported(
-                reference.start,
-                reference.end,
-                `destructuring from \`${local}\` cannot be updated safely`,
-              );
+            const scan = scanDestructuring(reference.destructuring.pattern, local, rename);
+            for (const edit of scan.edits) {
+              edits.set(`${edit.start}:${edit.end}`, edit);
+            }
+            for (const item of scan.unsupported) {
+              addUnsupported(item.start, item.end, item.message);
             }
           }
           break;
@@ -2052,10 +2116,12 @@ class RenameModel {
  * Scan one imported namespace local (`import * as ns` or a direct relative
  * `import ns = require(...)`) for member accesses of a renamed export.
  *
- * Static `.member`/`?.member` and plain string-keyed `["member"]`/`?.["member"]`
- * accesses produce property-only edits, preserving the original quote. Dynamic
- * computed keys, escaped member spellings, and object destructuring that reads
- * the renamed property produce `unsupported` edges instead of a silent skip.
+ * Static `.member`/`?.member`, plain string-keyed `["member"]`/`?.["member"]`,
+ * and static object-destructuring keys produce property-only edits, preserving
+ * the original quote (a shorthand key expands to `property: local`, keeping the
+ * local binding stable). Dynamic computed keys, escaped member spellings,
+ * rest/dynamic destructuring, and destructuring string escapes it cannot decode
+ * produce `unsupported` edges instead of a silent skip.
  */
 export function scanNamespaceMemberEdits(
   program: Program,

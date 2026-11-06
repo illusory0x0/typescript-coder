@@ -1088,24 +1088,127 @@ describe("resolveWorkspaceRename", () => {
     expect(output["src/a.ts"]).toBe(files["src/a.ts"]);
   });
 
-  test("fails on destructuring that reads the renamed namespace member", () => {
+  test("rewrites static object-destructuring keys without renaming local bindings", () => {
+    for (const [pattern, expected, local] of [
+      ["{ helper }", "{ helper2: helper }", "helper"],
+      ["{ helper: local }", "{ helper2: local }", "local"],
+      ['{ "helper": local }', '{ "helper2": local }', "local"],
+      ["{ 'helper': local }", "{ 'helper2': local }", "local"],
+      ["{ helper = fallback }", "{ helper2: helper = fallback }", "helper"],
+      ["{ helper: { value } }", "{ helper2: { value } }", "value"],
+      ['{ ["helper"]: local }', '{ ["helper2"]: local }', "local"],
+    ] as const) {
+      const files = {
+        "src/a.ts": [
+          'import * as ns from "./b";',
+          "const fallback = 0;",
+          `const ${pattern} = ns;`,
+          `export const n = ${local};`,
+          "",
+        ].join("\n"),
+        "src/b.ts": TARGET,
+      };
+      const result = workspaceRename(files, "src/b.ts", "helper", "function", "helper", "helper2");
+      expect(result.ok).toBe(true);
+      if (!result.ok) {
+        continue;
+      }
+      const output = applyWorkspaceRename(files, result);
+      expect(output["src/a.ts"]).toBe(
+        [
+          'import * as ns from "./b";',
+          "const fallback = 0;",
+          `const ${expected} = ns;`,
+          `export const n = ${local};`,
+          "",
+        ].join("\n"),
+      );
+    }
+  });
+
+  test("rewrites a static destructuring key from a direct import-equals", () => {
     const files = {
       "src/a.ts": [
-        'import * as ns from "./b";',
-        "const { helper } = ns;",
-        "const { other } = ns;",
+        'import lib = require("./b");',
+        "const { helper } = lib;",
+        "export const n = helper();",
         "",
       ].join("\n"),
       "src/b.ts": TARGET,
     };
     const result = workspaceRename(files, "src/b.ts", "helper", "function", "helper", "helper2");
-    expect(result.ok).toBe(false);
-    if (result.ok) {
+    expect(result.ok).toBe(true);
+    if (!result.ok) {
       return;
     }
-    expect(result.path).toBe("src/a.ts");
-    expect(result.diagnostics).toContain("destructuring");
-    expect(result.diagnostics).toContain("src/a.ts");
+    const output = applyWorkspaceRename(files, result);
+    expect(output["src/a.ts"]).toBe(
+      [
+        'import lib = require("./b");',
+        "const { helper2: helper } = lib;",
+        "export const n = helper();",
+        "",
+      ].join("\n"),
+    );
+  });
+
+  test("leaves unrelated destructuring keys untouched and succeeds", () => {
+    const files = {
+      "src/a.ts": [
+        'import * as ns from "./b";',
+        "const { other } = ns;",
+        'const { ["other"]: otherLocal } = ns;',
+        "export const n = other();",
+        "",
+      ].join("\n"),
+      "src/b.ts": TARGET,
+    };
+    const result = workspaceRename(files, "src/b.ts", "helper", "function", "helper", "helper2");
+    expect(result.ok).toBe(true);
+    if (!result.ok) {
+      return;
+    }
+    const output = applyWorkspaceRename(files, result);
+    expect(output["src/a.ts"]).toBe(
+      [
+        'import * as ns from "./b";',
+        "const { other } = ns;",
+        'const { ["other"]: otherLocal } = ns;',
+        "export const n = other();",
+        "",
+      ].join("\n"),
+    );
+  });
+
+  test("fails on destructuring whose keys may read the renamed member", () => {
+    for (const pattern of [
+      "{ [key]: local }",
+      "{ [key + suffix]: local }",
+      "{ ...rest }",
+      "{ other, ...rest }",
+      "{ helper, ...rest }",
+      "{ helper, [key]: local }",
+      '{ "hel\\u0070er": local }',
+    ]) {
+      const files = {
+        "src/a.ts": [
+          'import * as ns from "./b";',
+          'const key = "helper";',
+          'const suffix = "";',
+          `const ${pattern} = ns;`,
+          "",
+        ].join("\n"),
+        "src/b.ts": TARGET,
+      };
+      const result = workspaceRename(files, "src/b.ts", "helper", "function", "helper", "helper2");
+      expect(result.ok).toBe(false);
+      if (result.ok) {
+        continue;
+      }
+      expect(result.path).toBe("src/a.ts");
+      expect(result.diagnostics).toContain("destructuring");
+      expect(result.diagnostics).toContain("src/a.ts");
+    }
   });
 
   test("resolves tsconfig baseUrl paths for named imports", () => {

@@ -928,14 +928,18 @@ summaries; the historical `@1` schema used numeric task/edit ids.
 - **Rename follows aliased and barrel edges.** A top-level declaration rename
   updates relative and tsconfig-`paths` aliased named imports/re-exports plus
   static namespace-member accesses (`import * as ns`), including plain
-  string-keyed forms (`ns["member"]`, `ns?.["member"]`), and direct
-  `import = require` members. The root `tsconfig.json` mapping follows local
+  string-keyed forms (`ns["member"]`, `ns?.["member"]`), static
+  object-destructuring keys, and direct `import = require` members. A
+  shorthand destructuring key expands to `member2: member`, so local bindings
+  and their uses stay stable. The root `tsconfig.json` mapping follows local
   relative `extends` chains; package-name `extends` entries are skipped. Named
   and `export *` re-export chains are followed cycle-safely. Ambiguous aliases,
   unresolved relative/alias barrel edges, and conflicting star exports fail at
   `address`. Default and dynamic imports,
-  dynamic member access, `export * as ns` member propagation,
-  destructuring of the renamed member, and non-direct `import =` shapes remain
+  dynamic member access, dynamic computed destructuring keys, rest properties,
+  destructuring string keys with escapes,
+  `export * as ns` member propagation,
+  and non-direct `import =` shapes remain
   out of scope or fail at `address` rather than leaving a stale reference.
 - **Planner inspection is budget-bounded.** The planner sees the signature index
   and spec files, and may make read-only `select`/`read` viewer requests.

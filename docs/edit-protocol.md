@@ -464,15 +464,20 @@ an aliased import changes only the imported name; a re-export changes the
 source-side name and preserves its alias, so an aliased public name stays
 stable. A namespace import (`import * as ns from "@/b"`) and a direct
 `import lib = require("@/b")` also contribute static member accesses
-(`ns.member`, `ns?.member`, `ns["member"]`, `ns?.["member"]`, `lib["member"]`);
+(`ns.member`, `ns?.member`, `ns["member"]`, `ns?.["member"]`, `lib["member"]`)
+and static object-destructuring keys (`const { helper } = ns`,
+`const { helper: local } = ns`, `const { ["helper"]: local } = ns`);
 only the member property is renamed (a static string key keeps its original
-quote), a static key naming another property is left untouched, and a base that
-resolves to a shadowing local or parameter is skipped. Dynamic computed access
-(`ns[key]`, `ns["member" + suffix]`, template literals or string keys with
-escapes), escaped member spellings, destructuring that reads the member, and
-non-direct `import =` shapes fail at `address` instead of leaving a stale
-reference; a destructuring or `import =` edge that does not mention the renamed
-member stays untouched. An ambiguous alias, an unresolved relative/alias barrel
+quote, and a shorthand destructuring key expands to `helper2: helper` so the
+local binding and its uses stay stable), a static key naming another property is
+left untouched, and a base that resolves to a shadowing local or parameter is
+skipped. Dynamic computed access (`ns[key]`, `ns["member" + suffix]`, template
+literals or string keys with escapes), escaped member spellings, dynamic
+computed destructuring keys, rest properties, destructuring string keys with
+escapes, and non-direct `import =` shapes fail at `address` instead of leaving a
+stale reference; a destructuring without a matching key or an unsupported
+dynamic/rest property, or an `import =` edge that does not mention the renamed
+member, stays untouched. An ambiguous alias, an unresolved relative/alias barrel
 edge, and conflicting `export *` sources that could hide the renamed name fail
 at `address` with the file and specifier.
 

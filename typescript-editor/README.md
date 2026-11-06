@@ -310,19 +310,24 @@ chain. A namespace import (`import * as ns from "@/b"`) and a direct
 (`ns.member`, `ns?.member`, `ns["member"]`, `ns?.["member"]`, `lib["member"]`):
 only the member property is renamed (a static string key keeps its original
 quote), a static key naming another property is left untouched, and a base that
-resolves to a shadowing local or parameter is skipped. The
+resolves to a shadowing local or parameter is skipped. A static
+object-destructuring key also updates only the property (`const { helper } = ns`
+becomes `const { helper2: helper } = ns`; an alias or static string key keeps
+its local binding), so local bindings and their uses stay stable. The
 rename is rejected if the target or an affected importer would export the new
 name twice, and a dry run lists every affected file.
 
 Dynamic computed member access (`ns[key]`, `ns["member" + suffix]`, template
-literals or string keys with escapes), escaped member spellings, object
-destructuring that reads the renamed member, and non-direct `import =` shapes
+literals or string keys with escapes), escaped member spellings, dynamic
+computed destructuring keys, rest properties, destructuring string keys with
+escapes, and non-direct `import =` shapes
 (`import lib = ns`, `require("./b").default`, property access, `as`, or extra
 arguments) fail at the `address` stage instead of leaving a stale
 reference. An ambiguous `paths` alias, an unresolved relative/alias barrel
 edge, and conflicting `export *` sources that could hide the renamed name also
-fail at `address` with the file and specifier. A destructuring or `import =`
-edge that does not mention the renamed member is left untouched. Cross-file
+fail at `address` with the file and specifier. A destructuring without a
+matching key or an unsupported dynamic/rest property, or an `import =` edge
+that does not mention the renamed member, is left untouched. Cross-file
 renames do not follow default or dynamic imports, dynamic member access, or
 `export * as ns` member propagation. The target file's public export
 name must change for importers to be updated, so a binding exported only under

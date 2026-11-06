@@ -1,7 +1,7 @@
 ---
 id: 89
 title: "Support object destructuring of namespace exports"
-status: todo
+status: done
 priority: medium
 milestone: null
 parent: null
