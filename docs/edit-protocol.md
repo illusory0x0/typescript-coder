@@ -453,9 +453,13 @@ also reaches workspace files: every named import and named re-export whose
 relative or tsconfig-`paths` aliased specifier resolves to the declaration,
 directly or through a named/`export *` re-export chain, is updated atomically
 with the declaration. The workspace root `tsconfig.json` `baseUrl`/`paths`
-mapping is read once per rename (`extends` is not followed). A re-export chain
-is followed cycle-safely and only when the renamed name is actually visible
-through it. An unaliased import renames its local binding and same-file uses;
+mapping is read once per rename, following local relative `extends` entries (a
+string or an array; later parents and the child override earlier values). A
+declared `baseUrl` is relative to its config file, inherited `paths` use the
+effective `baseUrl`, and package-name `extends` entries are skipped. A
+re-export chain is followed cycle-safely and only when the renamed name is
+actually visible through it. An unaliased import renames its local binding and
+same-file uses;
 an aliased import changes only the imported name; a re-export changes the
 source-side name and preserves its alias, so an aliased public name stays
 stable. A namespace import (`import * as ns from "@/b"`) and a direct

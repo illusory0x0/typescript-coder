@@ -928,9 +928,11 @@ summaries; the historical `@1` schema used numeric task/edit ids.
 - **Rename follows aliased and barrel edges.** A top-level declaration rename
   updates relative and tsconfig-`paths` aliased named imports/re-exports plus
   static namespace-member accesses (`import * as ns`) and direct
-  `import = require` members. Named and `export *` re-export chains are followed
-  cycle-safely. Ambiguous aliases, unresolved relative/alias barrel edges, and
-  conflicting star exports fail at `address`. Default and dynamic imports,
+  `import = require` members. The root `tsconfig.json` mapping follows local
+  relative `extends` chains; package-name `extends` entries are skipped. Named
+  and `export *` re-export chains are followed cycle-safely. Ambiguous aliases,
+  unresolved relative/alias barrel edges, and conflicting star exports fail at
+  `address`. Default and dynamic imports,
   computed/dynamic member access, `export * as ns` member propagation,
   destructuring of the renamed member, and non-direct `import =` shapes remain
   out of scope or fail at `address` rather than leaving a stale reference.

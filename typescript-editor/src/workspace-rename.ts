@@ -205,18 +205,158 @@ interface ModuleConfig {
   paths: readonly AliasPattern[];
 }
 
+/** Effective `baseUrl`/`paths` contributed by one config file. */
+interface ConfigOptions {
+  /** Workspace-relative `baseUrl`, or null when no config declares one. */
+  baseUrl: string | null;
+  /** A declared `baseUrl` normalized outside the workspace. */
+  invalidBaseUrl: boolean;
+  /** The last declared `paths` object, or null when none declares one. */
+  paths: readonly AliasPattern[] | null;
+}
+
+const EMPTY_CONFIG_OPTIONS: ConfigOptions = {
+  baseUrl: null,
+  invalidBaseUrl: false,
+  paths: null,
+};
+
 type ModuleResolution =
   | { kind: "resolved"; path: string }
   | { kind: "package" }
   | { kind: "missing"; specifier: string; alias: boolean }
   | { kind: "ambiguous"; specifier: string; candidates: readonly string[] };
 
-function normalizeBaseUrl(value: string): string | null {
+/** Normalize a workspace-relative path, rejecting escapes and absolutes. */
+function normalizeWorkspacePath(value: string): string | null {
   const normalized = posix.normalize(value.replace(/\\/g, "/"));
   if (posix.isAbsolute(normalized) || normalized === ".." || normalized.startsWith("../")) {
     return null;
   }
   return normalized === "." ? "" : normalized;
+}
+
+/** Resolve a config-file-relative value into a workspace-relative path. */
+function resolveConfigRelative(configPath: string, value: string): string | null {
+  const normalizedValue = value.replace(/\\/g, "/");
+  if (posix.isAbsolute(normalizedValue)) {
+    return null;
+  }
+  const directory = posix.dirname(configPath);
+  const joined = directory === "." ? normalizedValue : posix.join(directory, normalizedValue);
+  return normalizeWorkspacePath(joined);
+}
+
+/**
+ * Resolve a local relative `extends` entry to an existing config file. Package
+ * names (and other non-relative entries) are not resolved from `node_modules`.
+ */
+function resolveExtendsPath(
+  specifier: string,
+  configPath: string,
+  deps: Pick<WorkspaceRenameDeps, "fileExists" | "isSafePath">,
+): string | null {
+  const normalized = specifier.replace(/\\/g, "/");
+  if (!normalized.startsWith("./") && !normalized.startsWith("../")) {
+    return null;
+  }
+  const base = resolveConfigRelative(configPath, normalized);
+  if (base === null || base === "") {
+    return null;
+  }
+  const candidates = base.endsWith(".json") ? [base] : [base, `${base}.json`];
+  for (const candidate of candidates) {
+    if (deps.isSafePath(candidate) && deps.fileExists(candidate)) {
+      return candidate;
+    }
+  }
+  return null;
+}
+
+/** Merge one config's contribution over its already-merged parents. */
+function mergeConfigOptions(base: ConfigOptions, override: ConfigOptions): ConfigOptions {
+  const declaresBaseUrl = override.baseUrl !== null || override.invalidBaseUrl;
+  return {
+    baseUrl: declaresBaseUrl ? override.baseUrl : base.baseUrl,
+    invalidBaseUrl: declaresBaseUrl ? override.invalidBaseUrl : base.invalidBaseUrl,
+    paths: override.paths ?? base.paths,
+  };
+}
+
+interface ConfigChain {
+  options: ConfigOptions;
+  /** The config file itself could not be read or parsed. */
+  unreadable: boolean;
+}
+
+/**
+ * Read one config file plus its local relative `extends` chain. Parents merge in
+ * declaration order, later parents win over earlier ones, and the child's own
+ * `compilerOptions` wins over every parent. A config already on the current
+ * chain contributes nothing, so cycles terminate.
+ */
+function readConfigChain(
+  configPath: string,
+  deps: Pick<WorkspaceRenameDeps, "fileExists" | "isSafePath" | "sourceFor">,
+  visited: Set<string>,
+): ConfigChain {
+  if (visited.has(configPath)) {
+    return { options: EMPTY_CONFIG_OPTIONS, unreadable: false };
+  }
+  visited.add(configPath);
+  try {
+    if (!deps.isSafePath(configPath) || !deps.fileExists(configPath)) {
+      return { options: EMPTY_CONFIG_OPTIONS, unreadable: true };
+    }
+    let parsed: unknown;
+    try {
+      const raw = deps.sourceFor(configPath).replace(/^\uFEFF/, "");
+      parsed = JSON.parse(stripTrailingCommas(stripJsonComments(raw)));
+    } catch {
+      return { options: EMPTY_CONFIG_OPTIONS, unreadable: true };
+    }
+    if (!isRecord(parsed)) {
+      return { options: EMPTY_CONFIG_OPTIONS, unreadable: true };
+    }
+    let options = EMPTY_CONFIG_OPTIONS;
+    const extendsValue = parsed["extends"];
+    const parents =
+      typeof extendsValue === "string"
+        ? [extendsValue]
+        : Array.isArray(extendsValue)
+          ? extendsValue.filter((entry): entry is string => typeof entry === "string")
+          : [];
+    for (const parentSpecifier of parents) {
+      const parentPath = resolveExtendsPath(parentSpecifier, configPath, deps);
+      if (parentPath === null) {
+        continue;
+      }
+      const parent = readConfigChain(parentPath, deps, visited);
+      if (!parent.unreadable) {
+        options = mergeConfigOptions(options, parent.options);
+      }
+    }
+    const compilerOptions = parsed["compilerOptions"];
+    if (isRecord(compilerOptions)) {
+      const own: ConfigOptions = { baseUrl: null, invalidBaseUrl: false, paths: null };
+      const baseUrlValue = compilerOptions["baseUrl"];
+      if (typeof baseUrlValue === "string") {
+        const resolved = resolveConfigRelative(configPath, baseUrlValue);
+        if (resolved === null) {
+          own.invalidBaseUrl = true;
+        } else {
+          own.baseUrl = resolved;
+        }
+      }
+      if (Object.prototype.hasOwnProperty.call(compilerOptions, "paths")) {
+        own.paths = parseAliasPatterns(compilerOptions["paths"]);
+      }
+      options = mergeConfigOptions(options, own);
+    }
+    return { options, unreadable: false };
+  } finally {
+    visited.delete(configPath);
+  }
 }
 
 function parseAliasPatterns(value: unknown): AliasPattern[] {
@@ -248,36 +388,23 @@ function parseAliasPatterns(value: unknown): AliasPattern[] {
 }
 
 /**
- * Read the workspace-root `tsconfig.json` `baseUrl`/`paths` mapping. A missing
- * or malformed config falls back to relative-only resolution; `extends` is not
- * followed because there is no shared config helper to reuse.
+ * Read the workspace-root `tsconfig.json` `baseUrl`/`paths` mapping, following
+ * local relative `extends` chains (string or array). A missing or malformed root
+ * config falls back to relative-only resolution; missing/malformed parents and
+ * package-name `extends` entries are skipped.
  */
 function readModuleConfig(
-  deps: Pick<WorkspaceRenameDeps, "fileExists" | "sourceFor">,
+  deps: Pick<WorkspaceRenameDeps, "fileExists" | "isSafePath" | "sourceFor">,
 ): ModuleConfig | null {
   try {
-    if (!deps.fileExists(TS_CONFIG_PATH)) {
-      return null;
-    }
-    const raw = deps.sourceFor(TS_CONFIG_PATH).replace(/^\uFEFF/, "");
-    const parsed: unknown = JSON.parse(stripTrailingCommas(stripJsonComments(raw)));
-    if (!isRecord(parsed)) {
-      return null;
-    }
-    const compilerOptions = parsed["compilerOptions"];
-    if (!isRecord(compilerOptions)) {
-      return { baseUrl: "", hasBaseUrl: false, paths: [] };
-    }
-    const baseUrlValue = compilerOptions["baseUrl"];
-    const hasBaseUrl = typeof baseUrlValue === "string";
-    const baseUrl = hasBaseUrl ? normalizeBaseUrl(baseUrlValue) : "";
-    if (baseUrl === null) {
+    const chain = readConfigChain(TS_CONFIG_PATH, deps, new Set<string>());
+    if (chain.unreadable || chain.options.invalidBaseUrl) {
       return null;
     }
     return {
-      baseUrl,
-      hasBaseUrl,
-      paths: parseAliasPatterns(compilerOptions["paths"]),
+      baseUrl: chain.options.baseUrl ?? "",
+      hasBaseUrl: chain.options.baseUrl !== null,
+      paths: chain.options.paths ?? [],
     };
   } catch {
     return null;
@@ -1188,9 +1315,10 @@ function scanImporter(
  * top-level unqualified declaration, against the named import/re-export edges
  * of every workspace file that resolves back to that declaration.
  *
- * The workspace-root `tsconfig.json` `baseUrl`/`paths` mapping resolves aliased
- * specifiers as well as relative ones. Named imports/re-exports, `export *`
- * re-export chains, namespace-import member accesses, and direct
+ * The workspace-root `tsconfig.json` `baseUrl`/`paths` mapping, including local
+ * relative `extends` chains, resolves aliased specifiers as well as relative
+ * ones. Named imports/re-exports, `export *` re-export chains,
+ * namespace-import member accesses, and direct
  * `import = require` member accesses are followed cycle-safely; an ambiguous
  * alias, an unresolved relative/alias barrel edge, or conflicting star exports
  * fail at `address` rather than silently leaving a stale reference.

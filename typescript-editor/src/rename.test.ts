@@ -1389,4 +1389,194 @@ describe("resolveWorkspaceRename", () => {
     const output = applyWorkspaceRename(files, result);
     expect(output["src/a.ts"]).toBe(files["src/a.ts"]);
   });
+
+  test("inherits tsconfig baseUrl and paths from a local relative parent", () => {
+    const files = {
+      "tsconfig.json": '{"extends":"./config/tsconfig.base.json"}\n',
+      "config/tsconfig.base.json":
+        '{"compilerOptions":{"baseUrl":"..","paths":{"@/*":["src/*"]}}}\n',
+      "src/a.ts": ['import { helper } from "@/b";', "export const n = helper();", ""].join("\n"),
+      "src/b.ts": TARGET,
+    };
+    const result = workspaceRename(files, "src/b.ts", "helper", "function", "helper", "helper2");
+    expect(result.ok).toBe(true);
+    if (!result.ok) {
+      return;
+    }
+    const output = applyWorkspaceRename(files, result);
+    expect(output["src/a.ts"]).toBe(
+      ['import { helper2 } from "@/b";', "export const n = helper2();", ""].join("\n"),
+    );
+  });
+
+  test("follows multi-level local tsconfig extends chains", () => {
+    const files = {
+      "tsconfig.json": '{"extends":"./config/middle.json"}\n',
+      "config/middle.json": '{"extends":"./base.json","compilerOptions":{"strict":true}}\n',
+      "config/base.json": '{"compilerOptions":{"baseUrl":"..","paths":{"@/*":["src/*"]}}}\n',
+      "src/a.ts": ['import { helper } from "@/b";', "export const n = helper();", ""].join("\n"),
+      "src/b.ts": TARGET,
+    };
+    const result = workspaceRename(files, "src/b.ts", "helper", "function", "helper", "helper2");
+    expect(result.ok).toBe(true);
+    if (!result.ok) {
+      return;
+    }
+    const output = applyWorkspaceRename(files, result);
+    expect(output["src/a.ts"]).toBe(
+      ['import { helper2 } from "@/b";', "export const n = helper2();", ""].join("\n"),
+    );
+  });
+
+  test("merges tsconfig extends arrays in order with later parents overriding", () => {
+    const files = {
+      "tsconfig.json": '{"extends":["./config/first.json","./config/second.json"]}\n',
+      "config/first.json": '{"compilerOptions":{"baseUrl":".","paths":{"@/*":["lib/*"]}}}\n',
+      "config/second.json": '{"compilerOptions":{"baseUrl":"..","paths":{"@/*":["src/*"]}}}\n',
+      "src/a.ts": ['import { helper } from "@/b";', "export const n = helper();", ""].join("\n"),
+      "src/b.ts": TARGET,
+    };
+    const result = workspaceRename(files, "src/b.ts", "helper", "function", "helper", "helper2");
+    expect(result.ok).toBe(true);
+    if (!result.ok) {
+      return;
+    }
+    const output = applyWorkspaceRename(files, result);
+    expect(output["src/a.ts"]).toBe(
+      ['import { helper2 } from "@/b";', "export const n = helper2();", ""].join("\n"),
+    );
+  });
+
+  test("resolves inherited tsconfig paths against a child baseUrl override", () => {
+    const files = {
+      "tsconfig.json": '{"extends":"./config/base.json","compilerOptions":{"baseUrl":"src"}}\n',
+      "config/base.json": '{"compilerOptions":{"baseUrl":".","paths":{"@/*":["*"]}}}\n',
+      "src/a.ts": ['import { helper } from "@/b";', "export const n = helper();", ""].join("\n"),
+      "src/b.ts": TARGET,
+    };
+    const result = workspaceRename(files, "src/b.ts", "helper", "function", "helper", "helper2");
+    expect(result.ok).toBe(true);
+    if (!result.ok) {
+      return;
+    }
+    const output = applyWorkspaceRename(files, result);
+    expect(output["src/a.ts"]).toBe(
+      ['import { helper2 } from "@/b";', "export const n = helper2();", ""].join("\n"),
+    );
+  });
+
+  test("lets a child tsconfig paths object replace inherited paths", () => {
+    const files = {
+      "tsconfig.json":
+        '{"extends":"./config/base.json","compilerOptions":{"paths":{"@/*":["src/*"]}}}\n',
+      "config/base.json": '{"compilerOptions":{"baseUrl":"..","paths":{"@/*":["lib/*"]}}}\n',
+      "src/a.ts": ['import { helper } from "@/b";', "export const n = helper();", ""].join("\n"),
+      "src/b.ts": TARGET,
+    };
+    const result = workspaceRename(files, "src/b.ts", "helper", "function", "helper", "helper2");
+    expect(result.ok).toBe(true);
+    if (!result.ok) {
+      return;
+    }
+    const output = applyWorkspaceRename(files, result);
+    expect(output["src/a.ts"]).toBe(
+      ['import { helper2 } from "@/b";', "export const n = helper2();", ""].join("\n"),
+    );
+  });
+
+  test("handles cyclic local tsconfig extends without hanging", () => {
+    const files = {
+      "tsconfig.json": '{"extends":"./config/a.json"}\n',
+      "config/a.json":
+        '{"extends":"./b.json","compilerOptions":{"baseUrl":".","paths":{"@/*":["../src/*"]}}}\n',
+      "config/b.json": '{"extends":"./a.json"}\n',
+      "src/a.ts": ['import { helper } from "@/b";', "export const n = helper();", ""].join("\n"),
+      "src/b.ts": TARGET,
+    };
+    const result = workspaceRename(files, "src/b.ts", "helper", "function", "helper", "helper2");
+    expect(result.ok).toBe(true);
+    if (!result.ok) {
+      return;
+    }
+    const output = applyWorkspaceRename(files, result);
+    expect(output["src/a.ts"]).toBe(
+      ['import { helper2 } from "@/b";', "export const n = helper2();", ""].join("\n"),
+    );
+  });
+
+  test("skips missing and package tsconfig extends entries", () => {
+    const files = {
+      "tsconfig.json":
+        '{"extends":["./config/missing.json","@tsconfig/strictest/tsconfig.json"],"compilerOptions":{"baseUrl":".","paths":{"@/*":["src/*"]}}}\n',
+      "src/a.ts": ['import { helper } from "@/b";', "export const n = helper();", ""].join("\n"),
+      "src/c.ts": ['import { helper } from "./b";', "export const m = helper();", ""].join("\n"),
+      "src/b.ts": TARGET,
+    };
+    const result = workspaceRename(files, "src/b.ts", "helper", "function", "helper", "helper2");
+    expect(result.ok).toBe(true);
+    if (!result.ok) {
+      return;
+    }
+    const output = applyWorkspaceRename(files, result);
+    expect(output["src/a.ts"]).toBe(
+      ['import { helper2 } from "@/b";', "export const n = helper2();", ""].join("\n"),
+    );
+    expect(output["src/c.ts"]).toBe(
+      ['import { helper2 } from "./b";', "export const m = helper2();", ""].join("\n"),
+    );
+  });
+
+  test("keeps child tsconfig options when a parent config is malformed", () => {
+    const files = {
+      "tsconfig.json":
+        '{"extends":"./config/broken.json","compilerOptions":{"baseUrl":".","paths":{"@/*":["src/*"]}}}\n',
+      "config/broken.json": '{"compilerOptions":\n',
+      "src/a.ts": ['import { helper } from "@/b";', "export const n = helper();", ""].join("\n"),
+      "src/b.ts": TARGET,
+    };
+    const result = workspaceRename(files, "src/b.ts", "helper", "function", "helper", "helper2");
+    expect(result.ok).toBe(true);
+    if (!result.ok) {
+      return;
+    }
+    const output = applyWorkspaceRename(files, result);
+    expect(output["src/a.ts"]).toBe(
+      ['import { helper2 } from "@/b";', "export const n = helper2();", ""].join("\n"),
+    );
+  });
+
+  test("accepts JSONC in extended tsconfig files", () => {
+    const files = {
+      "tsconfig.json": [
+        "{",
+        "  // the root extends a shared parent",
+        '  "extends": ["./config/base.json",],',
+        "}",
+        "",
+      ].join("\n"),
+      "config/base.json": [
+        "{",
+        "  // shared aliases",
+        '  "compilerOptions": {',
+        '    "baseUrl": "..",',
+        '    "paths": {',
+        '      "@/*": ["src/*"],',
+        "    },",
+        "  },",
+        "}",
+        "",
+      ].join("\n"),
+      "src/a.ts": ['import { helper } from "@/b";', "export const n = helper();", ""].join("\n"),
+      "src/b.ts": TARGET,
+    };
+    const result = workspaceRename(files, "src/b.ts", "helper", "function", "helper", "helper2");
+    expect(result.ok).toBe(true);
+    if (!result.ok) {
+      return;
+    }
+    const output = applyWorkspaceRename(files, result);
+    expect(output["src/a.ts"]).toBe(
+      ['import { helper2 } from "@/b";', "export const n = helper2();", ""].join("\n"),
+    );
+  });
 });

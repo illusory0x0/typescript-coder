@@ -1,7 +1,7 @@
 ---
 id: 87
 title: "Resolve local tsconfig extends chains for cross-file rename"
-status: in-progress
+status: done
 priority: medium
 milestone: null
 parent: null

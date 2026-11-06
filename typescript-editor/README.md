@@ -299,10 +299,13 @@ updates workspace files that import or re-export it through a relative or
 tsconfig-`paths` aliased specifier: unaliased named imports (and their local
 uses), aliased imports (only the imported name), and named re-exports (the
 source-side name; an alias keeps its public name). The workspace root
-`tsconfig.json` `baseUrl`/`paths` mapping is read once per rename; `extends` is
-not followed. Named and `export *` re-export chains are followed cycle-safely
-and only when the renamed name is actually visible through the chain. A
-namespace import (`import * as ns from "@/b"`) and a direct
+`tsconfig.json` `baseUrl`/`paths` mapping is read once per rename, following
+local relative `extends` entries (a string or an array; later parents and the
+child override earlier values). A declared `baseUrl` is relative to its config
+file, inherited `paths` use the effective `baseUrl`, and package-name `extends`
+entries are skipped. Named and `export *` re-export chains are followed
+cycle-safely and only when the renamed name is actually visible through the
+chain. A namespace import (`import * as ns from "@/b"`) and a direct
 `import lib = require("@/b")` also update their static member accesses
 (`ns.member`, `ns?.member`, `lib.member`): only the member property is renamed,
 and a base that resolves to a shadowing local or parameter is skipped. The
