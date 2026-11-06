@@ -98,6 +98,9 @@ digraph issues {
   "91" [label="#91 Version viewer coordinates with a source revision token"];
   "92" [label="#92 Allow multiple disjoint edit regions for one declaration"];
   "93" [label="#93 Add content-anchored before/after insertion selectors"];
+  "94" [label="#94 Allow disjoint file-level select clauses and fix duplicate diagnostics"];
+  "95" [label="#95 Let file-level match replace class and object members in owner context"];
+  "96" [label="#96 Reject unresolved member selectors instead of synthesizing an invalid let"];
 
   // parent edges (parent -> child), solid
   "1" -> "2";
