@@ -1049,4 +1049,344 @@ describe("resolveWorkspaceRename", () => {
     expect(result.diagnostics).toContain("destructuring");
     expect(result.diagnostics).toContain("src/a.ts");
   });
+
+  test("resolves tsconfig baseUrl paths for named imports", () => {
+    const files = {
+      "tsconfig.json": [
+        "{",
+        "  // workspace aliases",
+        '  "compilerOptions": {',
+        '    "baseUrl": ".",',
+        '    "paths": {',
+        '      "@/*": ["src/*"],',
+        "    },",
+        "  },",
+        "}",
+        "",
+      ].join("\n"),
+      "src/a.ts": ['import { helper } from "@/b";', "export const n = helper();", ""].join("\n"),
+      "src/b.ts": TARGET,
+    };
+    const result = workspaceRename(files, "src/b.ts", "helper", "function", "helper", "helper2");
+    expect(result.ok).toBe(true);
+    if (!result.ok) {
+      return;
+    }
+    expect(result.files.map((file) => file.path).sort()).toEqual(["src/a.ts", "src/b.ts"]);
+    const output = applyWorkspaceRename(files, result);
+    expect(output["src/a.ts"]).toBe(
+      ['import { helper2 } from "@/b";', "export const n = helper2();", ""].join("\n"),
+    );
+  });
+
+  test("falls back to baseUrl for bare specifiers", () => {
+    const files = {
+      "tsconfig.json": '{"compilerOptions":{"baseUrl":"src"}}\n',
+      "src/a.ts": ['import { helper } from "b";', "export const n = helper();", ""].join("\n"),
+      "src/b.ts": TARGET,
+    };
+    const result = workspaceRename(files, "src/b.ts", "helper", "function", "helper", "helper2");
+    const output = applyWorkspaceRename(files, result);
+    expect(output["src/a.ts"]).toBe(
+      ['import { helper2 } from "b";', "export const n = helper2();", ""].join("\n"),
+    );
+  });
+
+  test("does not treat bare specifiers as root-relative without baseUrl", () => {
+    const files = {
+      "tsconfig.json": '{"compilerOptions":{"strict":true}}\n',
+      "src/a.ts": ['import { helper } from "src/b";', "export const n = helper();", ""].join("\n"),
+      "src/b.ts": TARGET,
+    };
+    const result = workspaceRename(files, "src/b.ts", "helper", "function", "helper", "helper2");
+    expect(result.ok).toBe(true);
+    if (!result.ok) {
+      return;
+    }
+    expect(result.files.map((file) => file.path)).toEqual(["src/b.ts"]);
+    const output = applyWorkspaceRename(files, result);
+    expect(output["src/a.ts"]).toBe(files["src/a.ts"]);
+  });
+
+  test("resolves aliased namespace and import-equals member accesses", () => {
+    const files = {
+      "tsconfig.json": '{"compilerOptions":{"baseUrl":".","paths":{"@/*":["src/*"]}}}\n',
+      "src/a.ts": ['import * as ns from "@/b";', "export const n = ns.helper();", ""].join("\n"),
+      "src/c.ts": ['import lib = require("@/b");', "export const m = lib.helper();", ""].join("\n"),
+      "src/b.ts": TARGET,
+    };
+    const result = workspaceRename(files, "src/b.ts", "helper", "function", "helper", "helper2");
+    const output = applyWorkspaceRename(files, result);
+    expect(output["src/a.ts"]).toBe(
+      ['import * as ns from "@/b";', "export const n = ns.helper2();", ""].join("\n"),
+    );
+    expect(output["src/c.ts"]).toBe(
+      ['import lib = require("@/b");', "export const m = lib.helper2();", ""].join("\n"),
+    );
+  });
+
+  test("resolves tsconfig aliases inside barrels", () => {
+    const files = {
+      "tsconfig.json": '{"compilerOptions":{"baseUrl":".","paths":{"@/*":["src/*"]}}}\n',
+      "src/b.ts": TARGET,
+      "src/index.ts": 'export * from "@/b";\n',
+      "src/a.ts": ['import { helper } from "./index";', "export const n = helper();", ""].join(
+        "\n",
+      ),
+    };
+    const result = workspaceRename(files, "src/b.ts", "helper", "function", "helper", "helper2");
+    const output = applyWorkspaceRename(files, result);
+    expect(output["src/a.ts"]).toBe(
+      ['import { helper2 } from "./index";', "export const n = helper2();", ""].join("\n"),
+    );
+  });
+
+  test("follows chained export * barrels", () => {
+    const files = {
+      "src/b.ts": TARGET,
+      "src/barrel2.ts": 'export * from "./b";\n',
+      "src/barrel1.ts": 'export * from "./barrel2";\n',
+      "src/a.ts": ['import { helper } from "./barrel1";', "export const n = helper();", ""].join(
+        "\n",
+      ),
+    };
+    const result = workspaceRename(files, "src/b.ts", "helper", "function", "helper", "helper2");
+    expect(result.ok).toBe(true);
+    if (!result.ok) {
+      return;
+    }
+    expect(result.files.map((file) => file.path).sort()).toEqual(["src/a.ts", "src/b.ts"]);
+    const output = applyWorkspaceRename(files, result);
+    expect(output["src/a.ts"]).toBe(
+      ['import { helper2 } from "./barrel1";', "export const n = helper2();", ""].join("\n"),
+    );
+    expect(output["src/barrel1.ts"]).toBe(files["src/barrel1.ts"]);
+    expect(output["src/barrel2.ts"]).toBe(files["src/barrel2.ts"]);
+  });
+
+  test("updates namespace members imported through a barrel", () => {
+    const files = {
+      "src/b.ts": TARGET,
+      "src/index.ts": 'export * from "./b";\n',
+      "src/a.ts": ['import * as ns from "./index";', "export const n = ns.helper();", ""].join(
+        "\n",
+      ),
+    };
+    const result = workspaceRename(files, "src/b.ts", "helper", "function", "helper", "helper2");
+    const output = applyWorkspaceRename(files, result);
+    expect(output["src/a.ts"]).toBe(
+      ['import * as ns from "./index";', "export const n = ns.helper2();", ""].join("\n"),
+    );
+  });
+
+  test("follows explicit re-export chains", () => {
+    const files = {
+      "src/b.ts": TARGET,
+      "src/index.ts": 'export { helper } from "./b";\n',
+      "src/barrel.ts": 'export { helper } from "./index";\n',
+      "src/a.ts": ['import { helper } from "./barrel";', "export const n = helper();", ""].join(
+        "\n",
+      ),
+    };
+    const result = workspaceRename(files, "src/b.ts", "helper", "function", "helper", "helper2");
+    const output = applyWorkspaceRename(files, result);
+    expect(output["src/a.ts"]).toBe(
+      ['import { helper2 } from "./barrel";', "export const n = helper2();", ""].join("\n"),
+    );
+    expect(output["src/index.ts"]).toBe('export { helper2 } from "./b";\n');
+    expect(output["src/barrel.ts"]).toBe('export { helper2 } from "./index";\n');
+  });
+
+  test("follows a local import and export through a barrel", () => {
+    const files = {
+      "src/b.ts": TARGET,
+      "src/index.ts": ['import { helper } from "./b";', "export { helper };", ""].join("\n"),
+      "src/a.ts": ['import { helper } from "./index";', "export const n = helper();", ""].join(
+        "\n",
+      ),
+    };
+    const result = workspaceRename(files, "src/b.ts", "helper", "function", "helper", "helper2");
+    const output = applyWorkspaceRename(files, result);
+    expect(output["src/a.ts"]).toBe(
+      ['import { helper2 } from "./index";', "export const n = helper2();", ""].join("\n"),
+    );
+    expect(output["src/index.ts"]).toBe(
+      ['import { helper2 } from "./b";', "export { helper2 };", ""].join("\n"),
+    );
+  });
+
+  test("keeps a same-name explicit export alias public", () => {
+    const files = {
+      "src/b.ts": TARGET,
+      "src/index.ts": ['import { helper } from "./b";', "export { helper as helper };", ""].join(
+        "\n",
+      ),
+      "src/a.ts": ['import { helper } from "./index";', "export const n = helper();", ""].join(
+        "\n",
+      ),
+    };
+    const result = workspaceRename(files, "src/b.ts", "helper", "function", "helper", "helper2");
+    const output = applyWorkspaceRename(files, result);
+    expect(output["src/index.ts"]).toBe(
+      ['import { helper2 } from "./b";', "export { helper2 as helper };", ""].join("\n"),
+    );
+    expect(output["src/a.ts"]).toBe(files["src/a.ts"]);
+  });
+
+  test("keeps a same-name import alias and local re-export public", () => {
+    const files = {
+      "src/b.ts": TARGET,
+      "src/index.ts": ['import { helper as helper } from "./b";', "export { helper };", ""].join(
+        "\n",
+      ),
+      "src/a.ts": ['import { helper } from "./index";', "export const n = helper();", ""].join(
+        "\n",
+      ),
+    };
+    const result = workspaceRename(files, "src/b.ts", "helper", "function", "helper", "helper2");
+    expect(result.ok).toBe(true);
+    if (!result.ok) {
+      return;
+    }
+    const output = applyWorkspaceRename(files, result);
+    expect(output["src/index.ts"]).toBe(
+      ['import { helper2 as helper } from "./b";', "export { helper };", ""].join("\n"),
+    );
+    expect(output["src/a.ts"]).toBe(files["src/a.ts"]);
+  });
+
+  test("handles cyclic export * chains without duplicate edits", () => {
+    const files = {
+      "src/b.ts": TARGET,
+      "src/one.ts": 'export * from "./two";\n',
+      "src/two.ts": ['export * from "./one";', 'export * from "./b";', ""].join("\n"),
+      "src/a.ts": ['import { helper } from "./one";', "export const n = helper();", ""].join("\n"),
+    };
+    const result = workspaceRename(files, "src/b.ts", "helper", "function", "helper", "helper2");
+    expect(result.ok).toBe(true);
+    if (!result.ok) {
+      return;
+    }
+    const paths = result.files.map((file) => file.path).sort();
+    expect(paths).toEqual(["src/a.ts", "src/b.ts"]);
+    expect(new Set(paths).size).toBe(paths.length);
+    const output = applyWorkspaceRename(files, result);
+    expect(output["src/a.ts"]).toBe(
+      ['import { helper2 } from "./one";', "export const n = helper2();", ""].join("\n"),
+    );
+  });
+
+  test("handles a diamond export * graph without duplicate edits", () => {
+    const files = {
+      "src/b.ts": TARGET,
+      "src/one.ts": ['export * from "./left";', 'export * from "./right";', ""].join("\n"),
+      "src/left.ts": 'export * from "./b";\n',
+      "src/right.ts": 'export * from "./b";\n',
+      "src/a.ts": ['import { helper } from "./one";', "export const n = helper();", ""].join("\n"),
+    };
+    const result = workspaceRename(files, "src/b.ts", "helper", "function", "helper", "helper2");
+    expect(result.ok).toBe(true);
+    if (!result.ok) {
+      return;
+    }
+    const paths = result.files.map((file) => file.path).sort();
+    expect(paths).toEqual(["src/a.ts", "src/b.ts"]);
+    expect(new Set(paths).size).toBe(paths.length);
+  });
+
+  test("fails on an ambiguous tsconfig path alias", () => {
+    const files = {
+      "tsconfig.json": '{"compilerOptions":{"baseUrl":".","paths":{"@/*":["src/*","lib/*"]}}}\n',
+      "src/a.ts": ['import { helper } from "@/b";', "export const n = helper();", ""].join("\n"),
+      "src/b.ts": TARGET,
+      "lib/b.ts": ["export function helper(): number {", "  return 2;", "}", ""].join("\n"),
+    };
+    const result = workspaceRename(files, "src/b.ts", "helper", "function", "helper", "helper2");
+    expect(result.ok).toBe(false);
+    if (result.ok) {
+      return;
+    }
+    expect(result.path).toBe("src/a.ts");
+    expect(result.diagnostics).toContain("@/b");
+    expect(result.diagnostics).toContain("ambiguous");
+    expect(result.diagnostics).toContain("lib/b.ts");
+    expect(result.diagnostics).toContain("src/b.ts");
+  });
+
+  test("fails on an aliased specifier that resolves to no file", () => {
+    const files = {
+      "tsconfig.json": '{"compilerOptions":{"baseUrl":".","paths":{"@/*":["src/*"]}}}\n',
+      "src/a.ts": ['import { helper } from "@/missing";', "export const n = helper();", ""].join(
+        "\n",
+      ),
+      "src/b.ts": TARGET,
+    };
+    const result = workspaceRename(files, "src/b.ts", "helper", "function", "helper", "helper2");
+    expect(result.ok).toBe(false);
+    if (result.ok) {
+      return;
+    }
+    expect(result.path).toBe("src/a.ts");
+    expect(result.diagnostics).toContain("@/missing");
+    expect(result.diagnostics).toContain("paths");
+  });
+
+  test("fails on an unresolved relative barrel edge", () => {
+    const files = {
+      "src/b.ts": TARGET,
+      "src/index.ts": 'export * from "./missing";\n',
+      "src/a.ts": ['import { helper } from "./index";', "export const n = helper();", ""].join(
+        "\n",
+      ),
+    };
+    const result = workspaceRename(files, "src/b.ts", "helper", "function", "helper", "helper2");
+    expect(result.ok).toBe(false);
+    if (result.ok) {
+      return;
+    }
+    expect(result.path).toBe("src/a.ts");
+    expect(result.diagnostics).toContain("./missing");
+    expect(result.diagnostics).toContain("src/index.ts");
+    expect(result.diagnostics).toContain("does not resolve");
+  });
+
+  test("fails when export * sources disagree about the renamed name", () => {
+    const files = {
+      "src/b.ts": TARGET,
+      "src/c.ts": ["export function helper(): number {", "  return 2;", "}", ""].join("\n"),
+      "src/index.ts": ['export * from "./b";', 'export * from "./c";', ""].join("\n"),
+      "src/a.ts": ['import { helper } from "./index";', "export const n = helper();", ""].join(
+        "\n",
+      ),
+    };
+    const result = workspaceRename(files, "src/b.ts", "helper", "function", "helper", "helper2");
+    expect(result.ok).toBe(false);
+    if (result.ok) {
+      return;
+    }
+    expect(result.path).toBe("src/a.ts");
+    expect(result.diagnostics).toContain("ambiguous");
+    expect(result.diagnostics).toContain("src/index.ts");
+    expect(result.diagnostics).toContain("./b");
+    expect(result.diagnostics).toContain("./c");
+  });
+
+  test("lets an explicit re-export shadow a conflicting export *", () => {
+    const files = {
+      "src/b.ts": TARGET,
+      "src/c.ts": ["export function helper(): number {", "  return 2;", "}", ""].join("\n"),
+      "src/index.ts": ['export { helper } from "./c";', 'export * from "./b";', ""].join("\n"),
+      "src/a.ts": ['import { helper } from "./index";', "export const n = helper();", ""].join(
+        "\n",
+      ),
+    };
+    const result = workspaceRename(files, "src/b.ts", "helper", "function", "helper", "helper2");
+    expect(result.ok).toBe(true);
+    if (!result.ok) {
+      return;
+    }
+    expect(result.files.map((file) => file.path)).toEqual(["src/b.ts"]);
+    const output = applyWorkspaceRename(files, result);
+    expect(output["src/a.ts"]).toBe(files["src/a.ts"]);
+  });
 });

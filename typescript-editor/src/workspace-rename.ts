@@ -1,6 +1,15 @@
 import { posix } from "node:path";
 import { Parser } from "./parser";
-import type { BindingName, Expression, Program, Statement } from "./parser";
+import type {
+  BindingName,
+  ExportAllDeclaration,
+  ExportNamedDeclaration,
+  Expression,
+  Identifier,
+  Program,
+  Statement,
+  StringLiteral,
+} from "./parser";
 import { sourceLineAt } from "./dsl-diagnostics";
 import { resolveLocalRename, scanNamespaceMemberEdits } from "./rename";
 import type { RenameEdit, RenameOptions, RenameTarget } from "./rename";
@@ -31,6 +40,7 @@ export type WorkspaceRenameResult =
 const MODULE_EXTENSION = /\.(?:ts|tsx|mts|cts)$/;
 const JS_EXTENSION = /\.(?:js|jsx|mjs|cjs)$/;
 const CANDIDATE_EXTENSIONS: readonly string[] = [".ts", ".tsx", ".mts", ".cts", ".d.ts"];
+const TS_CONFIG_PATH = "tsconfig.json";
 
 function bindingNames(name: BindingName): string[] {
   switch (name.kind) {
@@ -66,36 +76,771 @@ function declaredNames(statement: Statement): string[] {
   }
 }
 
-function resolveModuleFile(
-  importerPath: string,
-  specifier: string,
+function nodeName(node: Identifier | StringLiteral): string {
+  return node.kind === "Identifier" ? node.name : node.value;
+}
+
+function isRecord(value: unknown): value is Record<string, unknown> {
+  return typeof value === "object" && value !== null && !Array.isArray(value);
+}
+
+/** Strip `//` and block comments without touching string contents. */
+function stripJsonComments(source: string): string {
+  let output = "";
+  let index = 0;
+  let inString = false;
+  while (index < source.length) {
+    const character = source[index];
+    if (character === undefined) {
+      break;
+    }
+    if (inString) {
+      output += character;
+      if (character === "\\") {
+        const next = source[index + 1];
+        if (next !== undefined) {
+          output += next;
+          index += 2;
+          continue;
+        }
+      } else if (character === '"') {
+        inString = false;
+      }
+      index += 1;
+      continue;
+    }
+    if (character === '"') {
+      inString = true;
+      output += character;
+      index += 1;
+      continue;
+    }
+    if (character === "/" && source[index + 1] === "/") {
+      index += 2;
+      while (index < source.length && source[index] !== "\n") {
+        index += 1;
+      }
+      continue;
+    }
+    if (character === "/" && source[index + 1] === "*") {
+      index += 2;
+      while (index < source.length && !(source[index] === "*" && source[index + 1] === "/")) {
+        index += 1;
+      }
+      index += 2;
+      continue;
+    }
+    output += character;
+    index += 1;
+  }
+  return output;
+}
+
+/** Remove trailing commas before `}`/`]` without touching string contents. */
+function stripTrailingCommas(source: string): string {
+  let output = "";
+  let index = 0;
+  let inString = false;
+  while (index < source.length) {
+    const character = source[index];
+    if (character === undefined) {
+      break;
+    }
+    if (inString) {
+      output += character;
+      if (character === "\\") {
+        const next = source[index + 1];
+        if (next !== undefined) {
+          output += next;
+          index += 2;
+          continue;
+        }
+      } else if (character === '"') {
+        inString = false;
+      }
+      index += 1;
+      continue;
+    }
+    if (character === '"') {
+      inString = true;
+      output += character;
+      index += 1;
+      continue;
+    }
+    if (character === ",") {
+      let lookahead = index + 1;
+      while (lookahead < source.length) {
+        const next = source[lookahead];
+        if (next === " " || next === "\t" || next === "\n" || next === "\r") {
+          lookahead += 1;
+          continue;
+        }
+        break;
+      }
+      const next = source[lookahead];
+      if (next === "}" || next === "]") {
+        index += 1;
+        continue;
+      }
+    }
+    output += character;
+    index += 1;
+  }
+  return output;
+}
+
+interface AliasPattern {
+  /** Pattern text before `*`; the entire pattern for an exact entry. */
+  prefix: string;
+  /** Pattern text after `*`, or null for an exact entry. */
+  suffix: string | null;
+  replacements: readonly string[];
+}
+
+interface ModuleConfig {
+  /** Workspace-relative `baseUrl`, with `""` meaning the workspace root. */
+  baseUrl: string;
+  /** Whether the config explicitly supplies `compilerOptions.baseUrl`. */
+  hasBaseUrl: boolean;
+  paths: readonly AliasPattern[];
+}
+
+type ModuleResolution =
+  | { kind: "resolved"; path: string }
+  | { kind: "package" }
+  | { kind: "missing"; specifier: string; alias: boolean }
+  | { kind: "ambiguous"; specifier: string; candidates: readonly string[] };
+
+function normalizeBaseUrl(value: string): string | null {
+  const normalized = posix.normalize(value.replace(/\\/g, "/"));
+  if (posix.isAbsolute(normalized) || normalized === ".." || normalized.startsWith("../")) {
+    return null;
+  }
+  return normalized === "." ? "" : normalized;
+}
+
+function parseAliasPatterns(value: unknown): AliasPattern[] {
+  if (!isRecord(value)) {
+    return [];
+  }
+  const patterns: AliasPattern[] = [];
+  for (const [pattern, replacementsValue] of Object.entries(value)) {
+    if (pattern === "" || !Array.isArray(replacementsValue)) {
+      continue;
+    }
+    const replacements = replacementsValue.filter(
+      (replacement): replacement is string => typeof replacement === "string",
+    );
+    if (replacements.length === 0) {
+      continue;
+    }
+    const star = pattern.indexOf("*");
+    if (star !== -1 && star !== pattern.lastIndexOf("*")) {
+      continue;
+    }
+    patterns.push({
+      prefix: star === -1 ? pattern : pattern.slice(0, star),
+      suffix: star === -1 ? null : pattern.slice(star + 1),
+      replacements,
+    });
+  }
+  return patterns;
+}
+
+/**
+ * Read the workspace-root `tsconfig.json` `baseUrl`/`paths` mapping. A missing
+ * or malformed config falls back to relative-only resolution; `extends` is not
+ * followed because there is no shared config helper to reuse.
+ */
+function readModuleConfig(
+  deps: Pick<WorkspaceRenameDeps, "fileExists" | "sourceFor">,
+): ModuleConfig | null {
+  try {
+    if (!deps.fileExists(TS_CONFIG_PATH)) {
+      return null;
+    }
+    const raw = deps.sourceFor(TS_CONFIG_PATH).replace(/^\uFEFF/, "");
+    const parsed: unknown = JSON.parse(stripTrailingCommas(stripJsonComments(raw)));
+    if (!isRecord(parsed)) {
+      return null;
+    }
+    const compilerOptions = parsed["compilerOptions"];
+    if (!isRecord(compilerOptions)) {
+      return { baseUrl: "", hasBaseUrl: false, paths: [] };
+    }
+    const baseUrlValue = compilerOptions["baseUrl"];
+    const hasBaseUrl = typeof baseUrlValue === "string";
+    const baseUrl = hasBaseUrl ? normalizeBaseUrl(baseUrlValue) : "";
+    if (baseUrl === null) {
+      return null;
+    }
+    return {
+      baseUrl,
+      hasBaseUrl,
+      paths: parseAliasPatterns(compilerOptions["paths"]),
+    };
+  } catch {
+    return null;
+  }
+}
+
+function moduleCandidates(base: string): string[] {
+  if (MODULE_EXTENSION.test(base)) {
+    return [base];
+  }
+  // TypeScript's NodeNext resolution maps a `./x.js` specifier to `x.ts`,
+  // and extensionless specifiers to the usual TS extensions.
+  const stem = base.replace(JS_EXTENSION, "");
+  const candidates: string[] = [];
+  for (const extension of CANDIDATE_EXTENSIONS) {
+    candidates.push(`${stem}${extension}`);
+  }
+  candidates.push(`${stem}/index.ts`, `${stem}/index.tsx`);
+  return candidates;
+}
+
+function firstExistingModule(
+  base: string,
   deps: Pick<WorkspaceRenameDeps, "fileExists" | "isSafePath">,
 ): string | null {
-  if (!specifier.startsWith("./") && !specifier.startsWith("../")) {
-    return null;
-  }
-  const base = posix.normalize(posix.join(posix.dirname(importerPath), specifier));
-  if (base === ".." || base.startsWith("../") || posix.isAbsolute(base)) {
-    return null;
-  }
-  const candidates: string[] = [];
-  if (MODULE_EXTENSION.test(base)) {
-    candidates.push(base);
-  } else {
-    // TypeScript's NodeNext resolution maps a `./x.js` specifier to `x.ts`,
-    // and extensionless specifiers to the usual TS extensions.
-    const stem = base.replace(JS_EXTENSION, "");
-    for (const extension of CANDIDATE_EXTENSIONS) {
-      candidates.push(`${stem}${extension}`);
-    }
-    candidates.push(`${stem}/index.ts`, `${stem}/index.tsx`);
-  }
-  for (const candidate of candidates) {
+  for (const candidate of moduleCandidates(base)) {
     if (deps.isSafePath(candidate) && deps.fileExists(candidate)) {
       return candidate;
     }
   }
   return null;
+}
+
+/** Join a workspace-relative base and a specifier, rejecting escapes. */
+function joinWorkspacePath(base: string, specifier: string): string | null {
+  const normalizedSpecifier = specifier.replace(/\\/g, "/");
+  if (posix.isAbsolute(normalizedSpecifier)) {
+    return null;
+  }
+  const joined = posix.normalize(posix.join(base === "" ? "." : base, normalizedSpecifier));
+  if (posix.isAbsolute(joined) || joined === ".." || joined.startsWith("../")) {
+    return null;
+  }
+  return joined === "." ? "" : joined;
+}
+
+interface AliasMatch {
+  pattern: AliasPattern;
+  /** The `*` capture, or null for an exact pattern. */
+  capture: string | null;
+}
+
+function aliasPatternBeats(candidate: AliasPattern, current: AliasPattern): boolean {
+  if (candidate.prefix.length !== current.prefix.length) {
+    return candidate.prefix.length > current.prefix.length;
+  }
+  const candidateSuffix = candidate.suffix?.length ?? 0;
+  const currentSuffix = current.suffix?.length ?? 0;
+  if (candidateSuffix !== currentSuffix) {
+    return candidateSuffix > currentSuffix;
+  }
+  return candidate.prefix.length + candidateSuffix > current.prefix.length + currentSuffix;
+}
+
+function matchAlias(patterns: readonly AliasPattern[], specifier: string): AliasMatch | null {
+  for (const pattern of patterns) {
+    if (pattern.suffix === null && specifier === pattern.prefix) {
+      return { pattern, capture: null };
+    }
+  }
+  let best: AliasMatch | null = null;
+  for (const pattern of patterns) {
+    const suffix = pattern.suffix;
+    if (suffix === null) {
+      continue;
+    }
+    if (!specifier.startsWith(pattern.prefix) || !specifier.endsWith(suffix)) {
+      continue;
+    }
+    if (specifier.length < pattern.prefix.length + suffix.length) {
+      continue;
+    }
+    const capture = specifier.slice(pattern.prefix.length, specifier.length - suffix.length);
+    if (best === null || aliasPatternBeats(pattern, best.pattern)) {
+      best = { pattern, capture };
+    }
+  }
+  return best;
+}
+
+function substituteAlias(replacement: string, capture: string | null): string {
+  if (capture === null) {
+    return replacement;
+  }
+  return replacement.split("*").join(capture);
+}
+
+class WorkspaceModuleResolver {
+  private readonly config: ModuleConfig | null;
+
+  constructor(private readonly deps: WorkspaceRenameDeps) {
+    this.config = readModuleConfig(deps);
+  }
+
+  resolve(importerPath: string, specifier: string): ModuleResolution {
+    if (specifier.startsWith("./") || specifier.startsWith("../")) {
+      const base = joinWorkspacePath(posix.dirname(importerPath), specifier);
+      const path = base === null ? null : firstExistingModule(base, this.deps);
+      if (path !== null) {
+        return { kind: "resolved", path };
+      }
+      return { kind: "missing", specifier, alias: false };
+    }
+    const config = this.config;
+    if (config !== null) {
+      const match = matchAlias(config.paths, specifier);
+      if (match !== null) {
+        const files = new Set<string>();
+        for (const replacement of match.pattern.replacements) {
+          const substituted = substituteAlias(replacement, match.capture);
+          const base = joinWorkspacePath(config.baseUrl, substituted);
+          if (base === null) {
+            continue;
+          }
+          const path = firstExistingModule(base, this.deps);
+          if (path !== null) {
+            files.add(path);
+          }
+        }
+        if (files.size === 1) {
+          const path = [...files][0];
+          if (path !== undefined) {
+            return { kind: "resolved", path };
+          }
+        }
+        if (files.size > 1) {
+          return { kind: "ambiguous", specifier, candidates: [...files].sort() };
+        }
+        return { kind: "missing", specifier, alias: true };
+      }
+      // TypeScript falls back to `baseUrl` for bare specifiers that no `paths`
+      // pattern matched. A miss is still an ordinary package import. Without an
+      // explicit `baseUrl`, a bare specifier is never workspace-root relative.
+      if (config.hasBaseUrl) {
+        const base = joinWorkspacePath(config.baseUrl, specifier);
+        if (base !== null) {
+          const path = firstExistingModule(base, this.deps);
+          if (path !== null) {
+            return { kind: "resolved", path };
+          }
+        }
+      }
+    }
+    return { kind: "package" };
+  }
+}
+
+/** What a module's public name becomes when the target's export is renamed. */
+type ExportOrigin = "target" | "other" | "none" | OriginProblem;
+
+interface OriginProblem {
+  kind: "ambiguous" | "unresolved";
+  detail: string;
+}
+
+interface ExportEdge {
+  /** Source specifier, or null for a local export/declaration. */
+  specifier: string | null;
+  origin: ExportOrigin;
+}
+
+interface ParsedModule {
+  source: string;
+  program: Program;
+}
+
+function isOriginProblem(origin: ExportOrigin): origin is OriginProblem {
+  return typeof origin === "object";
+}
+
+function originProblem(kind: "ambiguous" | "unresolved", detail: string): OriginProblem {
+  return { kind, detail };
+}
+
+function resolutionDetail(
+  modulePath: string,
+  specifier: string,
+  resolution: ModuleResolution,
+): string {
+  if (resolution.kind === "ambiguous") {
+    return (
+      `module ${JSON.stringify(specifier)} in ${modulePath} is ambiguous; ` +
+      `it matches ${resolution.candidates.map((candidate) => JSON.stringify(candidate)).join(", ")}`
+    );
+  }
+  if (resolution.kind === "missing") {
+    return (
+      `module ${JSON.stringify(specifier)} in ${modulePath} ` +
+      (resolution.alias
+        ? "matches a tsconfig `paths` alias but does not resolve to a workspace file"
+        : "does not resolve to a workspace file")
+    );
+  }
+  return `module ${JSON.stringify(specifier)} in ${modulePath} could not be resolved`;
+}
+
+function sourceResolutionDetail(
+  modulePath: string,
+  source: string,
+  literal: StringLiteral,
+  resolution: ModuleResolution,
+): string {
+  const location = sourceLineAt(source, literal.start);
+  return (
+    `${resolutionDetail(modulePath, literal.value, resolution)} ` +
+    `(at ${location.line}:${location.column})`
+  );
+}
+
+function ambiguousExportProblem(
+  modulePath: string,
+  publicName: string,
+  edges: readonly ExportEdge[],
+): OriginProblem {
+  const sources = [
+    ...new Set(
+      edges
+        .map((edge) => edge.specifier)
+        .filter((specifier): specifier is string => specifier !== null)
+        .map((specifier) => JSON.stringify(specifier)),
+    ),
+  ];
+  return originProblem(
+    "ambiguous",
+    `\`${publicName}\` is re-exported ambiguously from ${modulePath} through ` +
+      `${sources.length === 0 ? "local exports" : sources.join(", ")}; ` +
+      `the sources disagree about whether it is the renamed declaration`,
+  );
+}
+
+function combineExplicit(
+  modulePath: string,
+  publicName: string,
+  edges: readonly ExportEdge[],
+): ExportOrigin {
+  let target = false;
+  let other = false;
+  let unresolved: OriginProblem | null = null;
+  let ambiguous: OriginProblem | null = null;
+  for (const edge of edges) {
+    if (edge.origin === "target") {
+      target = true;
+    } else if (edge.origin === "other" || edge.origin === "none") {
+      other = true;
+    } else if (edge.origin.kind === "unresolved") {
+      unresolved ??= edge.origin;
+    } else {
+      ambiguous ??= edge.origin;
+    }
+  }
+  if (unresolved !== null) {
+    return unresolved;
+  }
+  if (ambiguous !== null) {
+    return ambiguous;
+  }
+  if (target && other) {
+    return ambiguousExportProblem(modulePath, publicName, edges);
+  }
+  return target ? "target" : "other";
+}
+
+function combineStars(
+  modulePath: string,
+  publicName: string,
+  edges: readonly ExportEdge[],
+): ExportOrigin {
+  let target = false;
+  let other = false;
+  let unresolved: OriginProblem | null = null;
+  let ambiguous: OriginProblem | null = null;
+  for (const edge of edges) {
+    if (edge.origin === "target") {
+      target = true;
+    } else if (edge.origin === "other") {
+      other = true;
+    } else if (edge.origin === "none") {
+      // A cycle re-entry contributes nothing.
+    } else if (edge.origin.kind === "unresolved") {
+      unresolved ??= edge.origin;
+    } else {
+      ambiguous ??= edge.origin;
+    }
+  }
+  if (unresolved !== null) {
+    return unresolved;
+  }
+  if (ambiguous !== null) {
+    return ambiguous;
+  }
+  if (target && other) {
+    return ambiguousExportProblem(modulePath, publicName, edges);
+  }
+  if (target) {
+    return "target";
+  }
+  return other ? "other" : "none";
+}
+
+class WorkspaceRenameGraph {
+  private readonly resolver: WorkspaceModuleResolver;
+  private readonly modules = new Map<string, ParsedModule | null>();
+
+  constructor(
+    private readonly deps: WorkspaceRenameDeps,
+    private readonly targetPath: string,
+    private readonly rename: { from: string; to: string },
+  ) {
+    this.resolver = new WorkspaceModuleResolver(deps);
+  }
+
+  resolveModule(importerPath: string, specifier: string): ModuleResolution {
+    return this.resolver.resolve(importerPath, specifier);
+  }
+
+  targetFile(): string {
+    return this.targetPath;
+  }
+
+  /** Origin for a source literal in `modulePath`, with a fresh cycle set. */
+  originOfSource(
+    modulePath: string,
+    source: string,
+    literal: StringLiteral,
+    publicName: string,
+  ): ExportOrigin {
+    return this.sourceOrigin(modulePath, source, literal, publicName, new Set<string>());
+  }
+
+  /** Whether `modulePath` publicly exports `publicName` as the renamed name. */
+  origin(modulePath: string, publicName: string): ExportOrigin {
+    return this.originInto(modulePath, publicName, new Set<string>());
+  }
+
+  private moduleFor(path: string): ParsedModule | null {
+    const cached = this.modules.get(path);
+    if (cached !== undefined) {
+      return cached;
+    }
+    if (!this.deps.isSafePath(path) || !this.deps.fileExists(path)) {
+      this.modules.set(path, null);
+      return null;
+    }
+    try {
+      const source = this.deps.sourceFor(path);
+      const parsed = { source, program: new Parser(source).parseProgram() };
+      this.modules.set(path, parsed);
+      return parsed;
+    } catch {
+      this.modules.set(path, null);
+      return null;
+    }
+  }
+
+  private sourceOrigin(
+    modulePath: string,
+    source: string,
+    literal: StringLiteral,
+    publicName: string,
+    visited: Set<string>,
+  ): ExportOrigin {
+    const resolution = this.resolver.resolve(modulePath, literal.value);
+    switch (resolution.kind) {
+      case "package":
+        return "other";
+      case "resolved":
+        return this.originInto(resolution.path, publicName, visited);
+      case "missing":
+        return originProblem(
+          "unresolved",
+          sourceResolutionDetail(modulePath, source, literal, resolution),
+        );
+      case "ambiguous":
+        return originProblem(
+          "ambiguous",
+          sourceResolutionDetail(modulePath, source, literal, resolution),
+        );
+    }
+  }
+
+  private originInto(modulePath: string, publicName: string, visited: Set<string>): ExportOrigin {
+    if (modulePath === this.targetPath) {
+      return publicName === this.rename.from ? "target" : "other";
+    }
+    if (visited.has(modulePath)) {
+      return "none";
+    }
+    visited.add(modulePath);
+    try {
+      const parsed = this.moduleFor(modulePath);
+      if (parsed === null) {
+        return originProblem(
+          "unresolved",
+          `cannot read or parse ${modulePath} while resolving \`${publicName}\``,
+        );
+      }
+      const explicit: ExportEdge[] = [];
+      const stars: ExportEdge[] = [];
+      for (const statement of parsed.program.body) {
+        if (statement.kind === "ExportNamedDeclaration") {
+          this.collectNamedExport(
+            modulePath,
+            parsed.source,
+            statement,
+            publicName,
+            visited,
+            explicit,
+          );
+        } else if (statement.kind === "ExportAllDeclaration") {
+          this.collectStarExport(
+            modulePath,
+            parsed.source,
+            statement,
+            publicName,
+            visited,
+            explicit,
+            stars,
+          );
+        }
+      }
+      if (explicit.length > 0) {
+        return combineExplicit(modulePath, publicName, explicit);
+      }
+      return combineStars(modulePath, publicName, stars);
+    } finally {
+      visited.delete(modulePath);
+    }
+  }
+
+  private collectNamedExport(
+    modulePath: string,
+    source: string,
+    statement: ExportNamedDeclaration,
+    publicName: string,
+    visited: Set<string>,
+    out: ExportEdge[],
+  ): void {
+    if (statement.declaration !== null) {
+      if (declaredNames(statement.declaration).includes(publicName)) {
+        out.push({ specifier: null, origin: "other" });
+      }
+      return;
+    }
+    for (const specifier of statement.specifiers) {
+      const localName = nodeName(specifier.local);
+      const exportedName = specifier.exported === null ? localName : nodeName(specifier.exported);
+      if (exportedName !== publicName) {
+        continue;
+      }
+      // The rename engine preserves an explicit exported name (including a
+      // same-spelling alias such as `export { helper as helper }`), so only a
+      // shorthand entry changes its public name with the binding.
+      const aliased = specifier.exported !== null;
+      if (aliased) {
+        // The public name is fixed, so renaming the source-side name cannot
+        // change it; do not recurse or fail for this public name.
+        out.push({ specifier: statement.source?.value ?? null, origin: "other" });
+        continue;
+      }
+      if (statement.source === null) {
+        out.push({
+          specifier: null,
+          origin: this.localExportOrigin(modulePath, source, localName, visited),
+        });
+      } else {
+        out.push({
+          specifier: statement.source.value,
+          origin: this.sourceOrigin(modulePath, source, statement.source, localName, visited),
+        });
+      }
+    }
+  }
+
+  /**
+   * A local `export { helper }` follows a same-name named import, which the
+   * importer rename rewrites together with the local export specifier. Aliased
+   * imports, namespace/default/import-equals locals, and declarations stay
+   * fixed.
+   */
+  private localExportOrigin(
+    modulePath: string,
+    source: string,
+    localName: string,
+    visited: Set<string>,
+  ): ExportOrigin {
+    if (localName !== this.rename.from) {
+      return "other";
+    }
+    const parsed = this.moduleFor(modulePath);
+    if (parsed === null) {
+      return originProblem(
+        "unresolved",
+        `cannot read or parse ${modulePath} while resolving local export \`${localName}\``,
+      );
+    }
+    const matches: ExportEdge[] = [];
+    for (const statement of parsed.program.body) {
+      if (statement.kind !== "ImportDeclaration") {
+        continue;
+      }
+      for (const specifier of statement.namedImports) {
+        if (specifier.local.name !== localName) {
+          continue;
+        }
+        // Match scanImporter's span rule: only a truly unaliased named import
+        // renames the local binding. `import { helper as helper }` changes the
+        // imported name but keeps the local/public name `helper` fixed.
+        if (specifier.imported.kind !== "Identifier") {
+          continue;
+        }
+        if (
+          specifier.imported.start !== specifier.local.start ||
+          specifier.imported.end !== specifier.local.end
+        ) {
+          continue;
+        }
+        const importedName = specifier.imported.name;
+        if (importedName !== this.rename.from) {
+          continue;
+        }
+        matches.push({
+          specifier: statement.source.value,
+          origin: this.sourceOrigin(modulePath, source, statement.source, importedName, visited),
+        });
+      }
+    }
+    if (matches.length === 0) {
+      return "other";
+    }
+    return combineExplicit(modulePath, localName, matches);
+  }
+
+  private collectStarExport(
+    modulePath: string,
+    source: string,
+    statement: ExportAllDeclaration,
+    publicName: string,
+    visited: Set<string>,
+    explicit: ExportEdge[],
+    stars: ExportEdge[],
+  ): void {
+    if (statement.exported !== null) {
+      // `export * as ns from "S"` only exports the namespace object under `ns`.
+      if (statement.exported.name === publicName) {
+        explicit.push({ specifier: statement.source.value, origin: "other" });
+      }
+      return;
+    }
+    stars.push({
+      specifier: statement.source.value,
+      origin: this.sourceOrigin(modulePath, source, statement.source, publicName, visited),
+    });
+  }
 }
 
 /**
@@ -145,9 +890,9 @@ interface PublicNameEntry {
  * Every public name a module exports, before and after this rename. A local
  * export specifier bound to the renamed binding (`export { helper }`) changes
  * with it; an alias (`export { helper as publicHelper }`) keeps its public name.
- * Re-exports with a source only change when that source resolves to the renamed
- * file and the specifier names the renamed binding. `export *` is out of scope
- * and contributes no entries.
+ * A re-export with a source only changes when its source-side name resolves to
+ * the renamed target through the export-origin graph. `export *` is handled by
+ * the origin graph and contributes no collision entries.
  */
 function exportState(
   program: Program,
@@ -155,7 +900,7 @@ function exportState(
   to: string,
   declarationLocal: string | null,
   importLocal: string | null,
-  isRenamedSource: ((specifier: string) => boolean) | null,
+  isRenamedSource: ((specifier: string, localName: string) => boolean) | null,
 ): PublicNameEntry[] {
   const entries: PublicNameEntry[] = [];
   for (const statement of program.body) {
@@ -169,14 +914,8 @@ function exportState(
       continue;
     }
     for (const specifier of statement.specifiers) {
-      const localName =
-        specifier.local.kind === "Identifier" ? specifier.local.name : specifier.local.value;
-      const exportedName =
-        specifier.exported === null
-          ? null
-          : specifier.exported.kind === "Identifier"
-            ? specifier.exported.name
-            : specifier.exported.value;
+      const localName = nodeName(specifier.local);
+      const exportedName = specifier.exported === null ? null : nodeName(specifier.exported);
       const before = exportedName ?? localName;
       let localAfter = localName;
       if (statement.source === null) {
@@ -188,8 +927,9 @@ function exportState(
           localAfter = to;
         }
       } else {
-        const renamedSource = isRenamedSource !== null && isRenamedSource(statement.source.value);
-        if (renamedSource && specifier.local.kind === "Identifier" && localName === from) {
+        const renamedSource =
+          isRenamedSource !== null && isRenamedSource(statement.source.value, localName);
+        if (renamedSource) {
           localAfter = to;
         }
       }
@@ -223,13 +963,16 @@ interface ImporterScan {
   diagnostics: string | null;
 }
 
+function reExportKey(specifier: string, localName: string): string {
+  return `${specifier}\u0000${localName}`;
+}
+
 function scanImporter(
   source: string,
   importerPath: string,
-  targetPath: string,
   mapping: ReadonlyMap<string, string>,
   rename: { from: string; to: string },
-  deps: WorkspaceRenameDeps,
+  graph: WorkspaceRenameGraph,
 ): ImporterScan {
   let program: Program;
   try {
@@ -245,26 +988,37 @@ function scanImporter(
   };
   const renamedImportLocals = new Set<string>();
   const namespaceLocals = new Set<string>();
+  const renamedReExports = new Set<string>();
   const unsupportedImportEquals: Array<{ local: string; start: number }> = [];
-  const sourceMatchesTarget = (specifier: string): boolean =>
-    resolveModuleFile(importerPath, specifier, deps) === targetPath;
+  const failure = (offset: number, message: string): ImporterScan => ({
+    edits: [],
+    diagnostics: memberDiagnostic(source, importerPath, rename, offset, message),
+  });
+  const originFailure = (offset: number, origin: OriginProblem): ImporterScan =>
+    failure(offset, origin.detail);
 
   for (const statement of program.body) {
     if (statement.kind === "ImportDeclaration") {
-      const matchesTarget = sourceMatchesTarget(statement.source.value);
-      if (statement.namespaceImport !== null && matchesTarget) {
-        namespaceLocals.add(statement.namespaceImport.name);
-      }
-      if (!matchesTarget) {
-        continue;
+      if (statement.namespaceImport !== null) {
+        const origin = graph.originOfSource(importerPath, source, statement.source, rename.from);
+        if (isOriginProblem(origin)) {
+          return originFailure(statement.source.start, origin);
+        }
+        if (origin === "target") {
+          namespaceLocals.add(statement.namespaceImport.name);
+        }
       }
       for (const specifier of statement.namedImports) {
-        const importedName =
-          specifier.imported.kind === "Identifier"
-            ? specifier.imported.name
-            : specifier.imported.value;
+        const importedName = nodeName(specifier.imported);
         const next = mapping.get(importedName);
         if (next === undefined) {
+          continue;
+        }
+        const origin = graph.originOfSource(importerPath, source, statement.source, importedName);
+        if (isOriginProblem(origin)) {
+          return originFailure(statement.source.start, origin);
+        }
+        if (origin !== "target") {
           continue;
         }
         if (specifier.imported.kind === "StringLiteral") {
@@ -291,24 +1045,41 @@ function scanImporter(
         // or a transformed value. Follow it only far enough to fail when it
         // would otherwise leave a renamed member reference stale.
         unsupportedImportEquals.push({ local: statement.name.name, start: statement.start });
-      } else if (sourceMatchesTarget(specifier)) {
-        namespaceLocals.add(statement.name.name);
+      } else {
+        const resolution = graph.resolveModule(importerPath, specifier);
+        if (resolution.kind === "package") {
+          continue;
+        }
+        if (resolution.kind === "missing" || resolution.kind === "ambiguous") {
+          return failure(statement.start, resolutionDetail(importerPath, specifier, resolution));
+        }
+        const origin = graph.origin(resolution.path, rename.from);
+        if (isOriginProblem(origin)) {
+          return originFailure(statement.start, origin);
+        }
+        if (origin === "target") {
+          namespaceLocals.add(statement.name.name);
+        }
       }
       continue;
     }
     if (statement.kind === "ExportNamedDeclaration" && statement.source !== null) {
-      if (!sourceMatchesTarget(statement.source.value)) {
-        continue;
-      }
       for (const specifier of statement.specifiers) {
-        const localName =
-          specifier.local.kind === "Identifier" ? specifier.local.name : specifier.local.value;
+        const localName = nodeName(specifier.local);
         const next = mapping.get(localName);
         if (next === undefined) {
           continue;
         }
+        const origin = graph.originOfSource(importerPath, source, statement.source, localName);
+        if (isOriginProblem(origin)) {
+          return originFailure(statement.source.start, origin);
+        }
+        if (origin !== "target") {
+          continue;
+        }
         // Re-exports only change the source-side specifier; an alias stays.
         add({ start: specifier.local.start, end: specifier.local.end, text: next });
+        renamedReExports.add(reExportKey(statement.source.value, localName));
       }
     }
   }
@@ -342,14 +1113,14 @@ function scanImporter(
     rename.to,
     null,
     importLocal,
-    sourceMatchesTarget,
+    (specifier, localName) => renamedReExports.has(reExportKey(specifier, localName)),
   );
   if (hasExportCollision(entries, rename.to)) {
     return {
       edits: [],
       diagnostics:
         `cannot rename \`${rename.from}\` to \`${rename.to}\` in ${importerPath}: collision; ` +
-        `the module would export \`${rename.to}\` more than once after updating its import/re-export from ${targetPath}`,
+        `the module would export \`${rename.to}\` more than once after updating its import/re-export from ${graph.targetFile()}`,
     };
   }
 
@@ -417,13 +1188,16 @@ function scanImporter(
  * top-level unqualified declaration, against the named import/re-export edges
  * of every workspace file that resolves back to that declaration.
  *
- * Relative module specifiers are resolved through the supplied `fileExists` and
- * `isSafePath` callbacks. Named imports/re-exports, namespace-import member
- * accesses, and direct relative `import = require` member accesses are followed;
- * path aliases, default/dynamic imports, barrel/re-export chains, computed or
- * dynamic member access, destructuring that reads the renamed member, and
- * non-direct `import =` shapes are out of scope and fail rather than silently
- * leaving a stale reference.
+ * The workspace-root `tsconfig.json` `baseUrl`/`paths` mapping resolves aliased
+ * specifiers as well as relative ones. Named imports/re-exports, `export *`
+ * re-export chains, namespace-import member accesses, and direct
+ * `import = require` member accesses are followed cycle-safely; an ambiguous
+ * alias, an unresolved relative/alias barrel edge, or conflicting star exports
+ * fail at `address` rather than silently leaving a stale reference.
+ * Default/dynamic imports, computed or dynamic member access, `export * as ns`
+ * member propagation, destructuring that reads the renamed member, and
+ * non-direct `import =` shapes remain out of scope and fail when they could
+ * leave a stale reference.
  */
 export function resolveWorkspaceRename(
   source: string,
@@ -473,6 +1247,7 @@ export function resolveWorkspaceRename(
     };
   }
 
+  const graph = new WorkspaceRenameGraph(deps, fileName, rename);
   const files = new Map<string, RenameEdit[]>();
   files.set(fileName, local.edits);
   const paths = [...new Set(deps.listFiles())].sort();
@@ -489,7 +1264,7 @@ export function resolveWorkspaceRename(
     } catch {
       continue;
     }
-    const scan = scanImporter(importerSource, path, fileName, mapping, rename, deps);
+    const scan = scanImporter(importerSource, path, mapping, rename, graph);
     if (scan.diagnostics !== null) {
       return { ok: false, path, diagnostics: scan.diagnostics };
     }

@@ -1,7 +1,7 @@
 ---
 id: 86
 title: "Resolve path aliases and barrel re-export chains on cross-file rename"
-status: todo
+status: done
 priority: medium
 milestone: null
 parent: null

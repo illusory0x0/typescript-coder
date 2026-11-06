@@ -925,13 +925,15 @@ summaries; the historical `@1` schema used numeric task/edit ids.
   or callback statement, an object literal, or a template-literal body;
   `create import|export` inserts one statement after the shebang, directives,
   and existing imports.
-- **Rename follows named and namespace import edges.** A top-level declaration
-  rename updates direct relative named imports/re-exports plus static
-  namespace-member accesses (`import * as ns`) and direct relative
-  `import = require` members. Default and dynamic imports, path aliases,
-  barrel/re-export chains, computed/dynamic member access, destructuring of the
-  renamed member, and non-direct `import =` shapes remain out of scope or fail
-  at `address` rather than leaving a stale reference.
+- **Rename follows aliased and barrel edges.** A top-level declaration rename
+  updates relative and tsconfig-`paths` aliased named imports/re-exports plus
+  static namespace-member accesses (`import * as ns`) and direct
+  `import = require` members. Named and `export *` re-export chains are followed
+  cycle-safely. Ambiguous aliases, unresolved relative/alias barrel edges, and
+  conflicting star exports fail at `address`. Default and dynamic imports,
+  computed/dynamic member access, `export * as ns` member propagation,
+  destructuring of the renamed member, and non-direct `import =` shapes remain
+  out of scope or fail at `address` rather than leaving a stale reference.
 - **Planner inspection is budget-bounded.** The planner sees the signature index
   and spec files, and may make read-only `select`/`read` viewer requests.
 - **Passed nodes are immutable.** Later work goes in a new node.

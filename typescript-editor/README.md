@@ -43,10 +43,11 @@ gate/preflight pipeline without writing.
 is at its best when an agent needs a small, auditable edit against a known
 workspace:
 
-- **Semantic renames.** A top-level named export rename follows relative named
-  imports and re-exports plus static namespace/`import = require` member
-  accesses, preserves aliases, and rejects duplicate-export collisions instead
-  of guessing from text.
+- **Semantic renames.** A top-level named export rename follows relative and
+  tsconfig-`paths` aliased named imports and re-exports plus static
+  namespace/`import = require` member accesses, follows named/`export *`
+  re-export chains cycle-safely, preserves aliases, and rejects duplicate-export
+  collisions instead of guessing from text.
 - **Preview/apply parity.** `--dry-run` runs the same resolve/format/gate/
   preflight pipeline as `--write`, lists every affected path, and leaves the
   workspace byte-identical. Add `--diff` to render a per-file unified diff from
@@ -294,11 +295,15 @@ block-select form. `tsed --unify` is the intended way to discover an ID.
 `--rename` rewrites the selected declaration and every same-file reference. A
 rename is semantic: `match` and `pick` are rejected rather than ignored. A
 top-level declaration that the target file exports as a named export also
-updates workspace files that import or re-export it through a relative
-specifier: unaliased named imports (and their local uses), aliased imports (only
-the imported name), and named re-exports (the source-side name; an alias keeps
-its public name). A namespace import (`import * as ns from "./b"`) and a direct
-relative `import lib = require("./b")` also update their static member accesses
+updates workspace files that import or re-export it through a relative or
+tsconfig-`paths` aliased specifier: unaliased named imports (and their local
+uses), aliased imports (only the imported name), and named re-exports (the
+source-side name; an alias keeps its public name). The workspace root
+`tsconfig.json` `baseUrl`/`paths` mapping is read once per rename; `extends` is
+not followed. Named and `export *` re-export chains are followed cycle-safely
+and only when the renamed name is actually visible through the chain. A
+namespace import (`import * as ns from "@/b"`) and a direct
+`import lib = require("@/b")` also update their static member accesses
 (`ns.member`, `ns?.member`, `lib.member`): only the member property is renamed,
 and a base that resolves to a shadowing local or parameter is skipped. The
 rename is rejected if the target or an affected importer would export the new
@@ -308,11 +313,14 @@ Computed member access (`ns["member"]`, `ns[key]`), escaped member spellings,
 object destructuring that reads the renamed member, and non-direct `import =`
 shapes (`import lib = ns`, `require("./b").default`, property access, `as`, or
 extra arguments) fail at the `address` stage instead of leaving a stale
-reference. A destructuring or `import =` edge that does not mention the renamed
-member is left untouched. Cross-file renames do not follow default or dynamic
-imports, and do not resolve path aliases or traverse barrel/re-export chains.
-The target file's public export name must change for importers to be updated, so
-a binding exported only under an alias stays a same-file rename.
+reference. An ambiguous `paths` alias, an unresolved relative/alias barrel
+edge, and conflicting `export *` sources that could hide the renamed name also
+fail at `address` with the file and specifier. A destructuring or `import =`
+edge that does not mention the renamed member is left untouched. Cross-file
+renames do not follow default or dynamic imports, computed/dynamic member
+access, or `export * as ns` member propagation. The target file's public export
+name must change for importers to be updated, so a binding exported only under
+an alias stays a same-file rename.
 
 ### Workspace and path safety
 

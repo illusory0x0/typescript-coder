@@ -1,12 +1,3 @@
 # Open issues in picking order. This order is authoritative: `reorder`
 # rewrites it; `add` appends; other writes keep it. `check` enforces it.
 # A dep, and every child of an umbrella, must be listed before its dependent.
-
-- id: 86
-  title: "Resolve path aliases and barrel re-export chains on cross-file rename"
-  status: todo
-  priority: medium
-  milestone: null
-  parent: null
-  deps: []
-  file: 0086-resolve-path-aliases-and-barrel-re-export-chains-on-cross-file-rename.md
