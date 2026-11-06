@@ -615,6 +615,63 @@ describe("resolveCascade: pick-only editor", () => {
   });
 });
 
+describe("resolveCascade: range resolution ignores file size (#90)", () => {
+  const BIG_FILE =
+    "export function head(): number {\n  return 1;\n}\n" +
+    `${"x".repeat(9_000)}\n` +
+    "export function tail(): number {\n  return 2;\n}\n";
+
+  test("a declaration pick near the start resolves in a file over the old limit", () => {
+    expect(BIG_FILE.length).toBeGreaterThan(8_000);
+    const entry = entryFor(BIG_FILE, "head", "function");
+    const result = ok(
+      resolveCascade(
+        BIG_FILE,
+        entry,
+        firstSelection(
+          "select function head in a.ts\npick 2:3-2:10\nreplace with\nTC_EDIT_BEGIN\nreturn 10;\nTC_EDIT_END\nend",
+        ),
+      ),
+    );
+    expect(result.stage).toBe<SelectionStage>("pick");
+    const start = BIG_FILE.indexOf("  return 1;") + 2;
+    expect(result.start).toBe(start);
+    expect(result.end).toBe(start + "return 1".length);
+  });
+
+  test("a declaration pick near the end resolves in a file over the old limit", () => {
+    const entry = entryFor(BIG_FILE, "tail", "function");
+    const result = ok(
+      resolveCascade(
+        BIG_FILE,
+        entry,
+        firstSelection(
+          "select function tail in a.ts\npick 6:3-6:10\nreplace with\nTC_EDIT_BEGIN\nreturn 20;\nTC_EDIT_END\nend",
+        ),
+      ),
+    );
+    expect(result.stage).toBe<SelectionStage>("pick");
+    const start = BIG_FILE.indexOf("  return 2;") + 2;
+    expect(result.start).toBe(start);
+    expect(result.end).toBe(start + "return 2".length);
+  });
+
+  test("declaration bounds still reject a pick outside the declaration", () => {
+    const entry = entryFor(BIG_FILE, "tail", "function");
+    const result = failure(
+      resolveCascade(
+        BIG_FILE,
+        entry,
+        firstSelection(
+          "select function tail in a.ts\npick 1\nreplace with\nTC_EDIT_BEGIN\nreturn 20;\nTC_EDIT_END\nend",
+        ),
+      ),
+    );
+    expect(result.cause).toBe("range-invalid");
+    expect(result.diagnostics).toContain("outside-declaration");
+  });
+});
+
 describe("resolveCascade: precedence", () => {
   test("pick without replace is a parse error", () => {
     expect(() => parseSelection("select function twice in a.ts\npick 2\nend")).toThrow(/pick/);

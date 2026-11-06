@@ -35,6 +35,47 @@ const CALLBACK = [
   "",
 ].join("\n");
 
+const BIG_FILE = ["const first = 1;", `${"x".repeat(9_000)}`, "const last = 2;", ""].join("\n");
+
+describe("file-level pick ranges in a large file (#90)", () => {
+  test("resolves a pick near the start of a file over the old limit", () => {
+    expect(BIG_FILE.length).toBeGreaterThan(8_000);
+    const result = resolve(
+      BIG_FILE,
+      ["select file a.ts", "pick 1:7-1:11", replace("alpha")].join("\n"),
+    );
+    expect(result.ok).toBe(true);
+    if (!result.ok) {
+      return;
+    }
+    expect(BIG_FILE.slice(result.start, result.end)).toBe("first");
+    expect(result.stage).toBe("pick");
+  });
+
+  test("resolves a pick near the end of a file over the old limit", () => {
+    const result = resolve(
+      BIG_FILE,
+      ["select file a.ts", "pick 3:7-3:10", replace("omega")].join("\n"),
+    );
+    expect(result.ok).toBe(true);
+    if (!result.ok) {
+      return;
+    }
+    expect(BIG_FILE.slice(result.start, result.end)).toBe("last");
+    expect(result.stage).toBe("pick");
+  });
+
+  test("an out-of-bounds pick still fails in a large file", () => {
+    const result = resolve(BIG_FILE, ["select file a.ts", "pick 99", replace("x")].join("\n"));
+    expect(result.ok).toBe(false);
+    if (result.ok) {
+      return;
+    }
+    expect(result.stage).toBe("range");
+    expect(result.diagnostics).toContain("out-of-bounds");
+  });
+});
+
 describe("file-level unique span resolution (#83)", () => {
   test("edits an incomplete block header literally inside a test callback", () => {
     const result = resolve(

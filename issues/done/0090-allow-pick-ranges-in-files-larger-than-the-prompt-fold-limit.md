@@ -1,7 +1,7 @@
 ---
 id: 90
 title: "Allow pick ranges in files larger than the prompt fold limit"
-status: todo
+status: done
 priority: high
 milestone: null
 parent: null

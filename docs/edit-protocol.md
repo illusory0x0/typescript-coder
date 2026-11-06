@@ -377,7 +377,10 @@ function body, a test callback, an object literal, or a template-literal body;
   picks the first. A `pick` with a `match` filters candidates with the normal
   point/contained rules; without a `match`, the one resolved pick range is the
   target. File-level `pick` coordinates are the same 1-based, inclusive,
-  file-absolute coordinates as the numbered source block.
+  file-absolute coordinates as the numbered source block. A file-level range is
+  bounded by the file, and a declaration range is additionally bounded by the
+  declaration span; neither depends on the total file size. Prompt source blocks
+  are folded, not truncated, and fold markers keep file-absolute line numbers.
 - `replace with <fence>` rewrites the matched/picked span. An empty fence
   deletes it: when the span is an import/export statement, deletion removes its
   line; when it is a named specifier, deletion also removes its `,` separator.
@@ -1049,8 +1052,11 @@ The edit-dsl reply reduces to the same narrowing, one stage at a time.
    new form to the matrix only with its case.
 
 3. **Pick.** Each range resolves through the shared range resolver (bounds,
-   inclusiveness, declaration containment). With a `match`, the candidate set is
-   filtered by the selecter kind: a **point** keeps candidates whose span
+   inclusiveness, declaration containment). A declaration range must sit inside
+   the declaration span; a file-level range must sit inside the file. The total
+   file size does not bound resolution: oversized prompt blocks are folded with
+   file-absolute line numbers, not truncated. With a `match`, the candidate set
+   is filtered by the selecter kind: a **point** keeps candidates whose span
    contains the point, while a line or range keeps candidates contained in the
    picked range. Without a `match`, the pick is not a filter: each resolved text
    span (whole line, one character, or the written range) is a target. The

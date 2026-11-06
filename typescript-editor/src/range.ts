@@ -46,11 +46,7 @@ function positionOffset(
 }
 
 /** Why a `range` selector did not resolve to a spliceable span (#72). */
-export type RangeResolutionFailure =
-  | "out-of-bounds"
-  | "outside-declaration"
-  | "empty"
-  | "truncated";
+export type RangeResolutionFailure = "out-of-bounds" | "outside-declaration" | "empty";
 
 export type RangeResolution =
   | { ok: true; start: number; end: number }
@@ -58,8 +54,9 @@ export type RangeResolution =
 
 // Resolve one 1-based inclusive `(line,column)` range (#72) against the current
 // source block shown in the prompt: `base`/`limit` bound that block and
-// `declaration` is the absolute span the range must sit inside. The reported
-// span is half-open (`[start, end)`) for the splice.
+// `declaration` is the absolute span the range must sit inside. Resolution
+// depends on those bounds, not on the total size of the source file. The
+// reported span is half-open (`[start, end)`) for the splice.
 export function resolveEditRange(
   source: string,
   range: EditRange,
@@ -67,16 +64,6 @@ export function resolveEditRange(
   limit: number,
   declaration: { start: number; end: number },
 ): RangeResolution {
-  // A block larger than the prompt limit is elided on the way to the model, so
-  // its shown line numbers no longer map back to the source; refuse rather than
-  // splice at a wrong offset.
-  if (limit - base > SPEC_FILE_LIMIT) {
-    return {
-      ok: false,
-      reason: "truncated",
-      detail: `the shown current source was truncated (it exceeds ${SPEC_FILE_LIMIT} characters), so its numbered lines do not map back to the file`,
-    };
-  }
   const start = positionOffset(source, base, limit, range.line, range.column);
   if (start === null || start >= limit) {
     return {

@@ -2,14 +2,6 @@
 # rewrites it; `add` appends; other writes keep it. `check` enforces it.
 # A dep, and every child of an umbrella, must be listed before its dependent.
 
-- id: 90
-  title: "Allow pick ranges in files larger than the prompt fold limit"
-  status: todo
-  priority: high
-  milestone: null
-  parent: null
-  deps: []
-  file: 0090-allow-pick-ranges-in-files-larger-than-the-prompt-fold-limit.md
 - id: 91
   title: "Version viewer coordinates with a source revision token"
   status: todo
