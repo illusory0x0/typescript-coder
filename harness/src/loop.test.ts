@@ -8060,14 +8060,16 @@ describe("edit-dsl protocol (#111/#119)", () => {
     expect(edit).toContain("TC_EDIT_BEGIN\nreturn 2;\nTC_EDIT_END");
     expect(edit).toContain("select function clamp in src/x.ts");
     // #117 adds the create and the viewer-then-editor forms, labelled apart.
-    expect(edit).toContain("5. Create:");
+    // #93 adds the content-anchored insertion form, labelled apart.
+    expect(edit).toContain("5. Content-anchored insertion:");
+    expect(edit).toContain("6. Create:");
     expect(edit).toContain("select function make in src/new.ts");
-    expect(edit).toContain("6. Viewer then editor:");
+    expect(edit).toContain("7. Viewer then editor:");
     // #41: the viewer and editor clauses target different declarations, so the
     // example never teaches the duplicate-address rejection.
     const viewerThenEditor = edit.slice(
-      edit.indexOf("6. Viewer then editor:"),
-      edit.indexOf("7. Folded view:"),
+      edit.indexOf("7. Viewer then editor:"),
+      edit.indexOf("8. Folded view:"),
     );
     expect(viewerThenEditor).toContain("select function parse in src/x.ts");
     expect(viewerThenEditor).toContain("select function format in src/x.ts");
@@ -8086,8 +8088,8 @@ describe("edit-dsl protocol (#111/#119)", () => {
     expect(edit).not.toMatch(/^-{5,}$/m);
     expect(edit).not.toMatch(/^`{6,}$/m);
     const writeExample = edit.slice(
-      edit.indexOf("8. Whole-file repair:"),
-      edit.indexOf("9. Kind-aware create:"),
+      edit.indexOf("9. Whole-file repair:"),
+      edit.indexOf("10. Kind-aware create:"),
     );
     expect(writeExample.trimEnd().endsWith("TC_EDIT_END")).toBe(true);
     expect(writeExample).not.toMatch(/\b(done|end)\b/);

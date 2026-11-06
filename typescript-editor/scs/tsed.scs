@@ -61,6 +61,12 @@ interface TsedArgs {
   @arg({ help: "Line or column range to edit", valueName: "RANGE" })
   pick: string?
 
+  @arg({ help: "Insert immediately before the unique literal anchor (use DSL /regex/ for a regex anchor)", valueName: "SNIPPET" })
+  pick-before: string?
+
+  @arg({ help: "Insert immediately after the unique literal anchor (use DSL /regex/ for a regex anchor)", valueName: "SNIPPET" })
+  pick-after: string?
+
   @arg({ help: "Line or column range to view", valueName: "RANGES" })
   within: string?
 

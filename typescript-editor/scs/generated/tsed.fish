@@ -3,7 +3,7 @@
 
 # --- helpers ---
 function __fish_tsed_root_options
-    string join \n protocol-format= write dry-run diff C/directory= read= unify= unify-min-lines= select= select-file= in= rev= kind= resolve= match= pick= within= replace-file= rename= create= delete= rewrite= content-file= h/help V/version
+    string join \n protocol-format= write dry-run diff C/directory= read= unify= unify-min-lines= select= select-file= in= rev= kind= resolve= match= pick= pick-before= pick-after= within= replace-file= rename= create= delete= rewrite= content-file= h/help V/version
 end
 
 function __fish_tsed_needs_command
@@ -93,6 +93,8 @@ complete -c tsed -n '__fish_tsed_offer \'\' \'kind\'' -l kind -r -d 'Declaration
 complete -c tsed -n '__fish_tsed_offer \'\' \'resolve\'' -l resolve -r -f -a 'value type namespace' -d 'TypeScript symbol space filter'
 complete -c tsed -n '__fish_tsed_offer \'\' \'match\'' -l match -r -d 'Snippet that must match inside the declaration'
 complete -c tsed -n '__fish_tsed_offer \'\' \'pick\'' -l pick -r -d 'Line or column range to edit'
+complete -c tsed -n '__fish_tsed_offer \'\' \'pick-before\'' -l pick-before -r -d 'Insert immediately before the unique literal anchor (use DSL /regex/ for a regex anchor)'
+complete -c tsed -n '__fish_tsed_offer \'\' \'pick-after\'' -l pick-after -r -d 'Insert immediately after the unique literal anchor (use DSL /regex/ for a regex anchor)'
 complete -c tsed -n '__fish_tsed_offer \'\' \'within\'' -l within -r -d 'Line or column range to view'
 complete -c tsed -n '__fish_tsed_offer \'\' \'replace-file\'' -l replace-file -r -F -d 'File holding the replacement text'
 complete -c tsed -n '__fish_tsed_offer \'\' \'rename\'' -l rename -r -d 'New name for a symbol rename'
@@ -102,4 +104,4 @@ complete -c tsed -n '__fish_tsed_offer \'\' \'rewrite\'' -l rewrite -r -d 'Rewri
 complete -c tsed -n '__fish_tsed_offer \'\' \'content-file\'' -l content-file -r -F -d 'File holding the content for --rewrite'
 complete -c tsed -n 'not __fish_seen_argument -s V -l version' -s V -l version -d 'Print version'
 complete -c tsed -n 'not __fish_seen_argument -s h -l help' -s h -l help -d 'Print help'
-complete -c tsed -n 'test (__fish_tsed_slot --protocol-format --directory -C --read --unify --unify-min-lines --select --select-file --in --rev --kind --resolve --match --pick --within --replace-file --rename --create --delete --rewrite --content-file) -ge 0' -f
+complete -c tsed -n 'test (__fish_tsed_slot --protocol-format --directory -C --read --unify --unify-min-lines --select --select-file --in --rev --kind --resolve --match --pick --pick-before --pick-after --within --replace-file --rename --create --delete --rewrite --content-file) -ge 0' -f

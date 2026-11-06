@@ -18,6 +18,10 @@ export type EditOperation =
       match?: string;
       pick?: string;
       within?: string;
+      /** A literal `pick before` insertion anchor (#93). */
+      pickBefore?: string;
+      /** A literal `pick after` insertion anchor (#93). */
+      pickAfter?: string;
       replace?: string;
       rename?: string;
     }
@@ -27,6 +31,10 @@ export type EditOperation =
       rev?: string;
       match?: string;
       pick?: string;
+      /** A literal `pick before` insertion anchor (#93). */
+      pickBefore?: string;
+      /** A literal `pick after` insertion anchor (#93). */
+      pickAfter?: string;
       replace?: string;
     }
   | { op: "create"; path: string }
@@ -61,13 +69,15 @@ const OPERATION_FIELDS: Record<OperationKind, readonly string[]> = {
     "within",
     "match",
     "pick",
+    "pickBefore",
+    "pickAfter",
     "replace",
     "rename",
   ],
   create: ["op", "path"],
   delete: ["op", "path"],
   rewrite: ["op", "path", "content"],
-  "select-file": ["op", "path", "rev", "match", "pick", "replace"],
+  "select-file": ["op", "path", "rev", "match", "pick", "pickBefore", "pickAfter", "replace"],
 };
 
 const REQUIRED_FIELDS: Record<OperationKind, readonly string[]> = {
@@ -115,7 +125,12 @@ function rangeToken(operation: OperationKind, field: string, value: string): voi
   }
 }
 
-/** The optional `rev <token>` (#91): exactly 8 lowercase hex characters. */
+/** A literal insertion anchor (#93): a non-empty backtick snippet. */
+function anchorToken(operation: OperationKind, field: string, value: string): void {
+  if (value === "") {
+    reject(`${operation}.${field} must be a non-empty literal anchor snippet`);
+  }
+}
 function revisionToken(operation: OperationKind, field: string, value: string): void {
   if (!/^[0-9a-f]{8}$/.test(value)) {
     reject(
@@ -160,6 +175,32 @@ function validateOperation(operation: EditOperation): void {
       if (operation.within !== undefined) {
         rangeToken(operation.op, "within", operation.within);
       }
+      if (operation.pickBefore !== undefined) {
+        anchorToken(operation.op, "pickBefore", operation.pickBefore);
+      }
+      if (operation.pickAfter !== undefined) {
+        anchorToken(operation.op, "pickAfter", operation.pickAfter);
+      }
+      if (operation.pickBefore !== undefined && operation.pickAfter !== undefined) {
+        reject("select: pickBefore and pickAfter are mutually exclusive");
+      }
+      if (operation.pickBefore !== undefined || operation.pickAfter !== undefined) {
+        if (operation.match !== undefined) {
+          reject("select: an insertion anchor cannot be combined with match");
+        }
+        if (operation.pick !== undefined) {
+          reject("select: an insertion anchor cannot be combined with pick");
+        }
+        if (operation.rename !== undefined) {
+          reject("select: an insertion anchor cannot be combined with rename");
+        }
+        if (operation.within !== undefined) {
+          reject("select: an insertion anchor cannot be combined with within");
+        }
+        if (operation.replace === undefined) {
+          reject("select: an insertion anchor requires replace");
+        }
+      }
       if (operation.replace !== undefined && operation.rename !== undefined) {
         reject("select: replace and rename are mutually exclusive");
       }
@@ -183,6 +224,26 @@ function validateOperation(operation: EditOperation): void {
       }
       if (operation.pick !== undefined) {
         rangeToken(operation.op, "pick", operation.pick);
+      }
+      if (operation.pickBefore !== undefined) {
+        anchorToken(operation.op, "pickBefore", operation.pickBefore);
+      }
+      if (operation.pickAfter !== undefined) {
+        anchorToken(operation.op, "pickAfter", operation.pickAfter);
+      }
+      if (operation.pickBefore !== undefined && operation.pickAfter !== undefined) {
+        reject("select-file: pickBefore and pickAfter are mutually exclusive");
+      }
+      if (operation.pickBefore !== undefined || operation.pickAfter !== undefined) {
+        if (operation.match !== undefined) {
+          reject("select-file: an insertion anchor cannot be combined with match");
+        }
+        if (operation.pick !== undefined) {
+          reject("select-file: an insertion anchor cannot be combined with pick");
+        }
+        if (operation.replace === undefined) {
+          reject("select-file: an insertion anchor requires replace");
+        }
       }
       if (operation.replace !== undefined) {
         fence(operation.op, operation.replace);
@@ -231,6 +292,12 @@ function renderOperation(operation: EditOperation): string {
       if (operation.pick !== undefined) {
         head += ` pick ${operation.pick}`;
       }
+      if (operation.pickBefore !== undefined) {
+        head += `\npick before \`${escapeSnippet(operation.pickBefore)}\``;
+      }
+      if (operation.pickAfter !== undefined) {
+        head += `\npick after \`${escapeSnippet(operation.pickAfter)}\``;
+      }
       if (operation.replace !== undefined) {
         return `${head}\nreplace with\n${fence(operation.op, operation.replace)}`;
       }
@@ -249,6 +316,12 @@ function renderOperation(operation: EditOperation): string {
       }
       if (operation.pick !== undefined) {
         head += `\npick ${operation.pick}`;
+      }
+      if (operation.pickBefore !== undefined) {
+        head += `\npick before \`${escapeSnippet(operation.pickBefore)}\``;
+      }
+      if (operation.pickAfter !== undefined) {
+        head += `\npick after \`${escapeSnippet(operation.pickAfter)}\``;
       }
       if (operation.replace !== undefined) {
         return `${head}\nreplace with\n${fence(operation.op, operation.replace)}`;
@@ -354,6 +427,8 @@ function parseJsonOperation(raw: unknown, index: number): EditOperation {
       const kind = optionalField("kind");
       const match = optionalField("match");
       const pick = optionalField("pick");
+      const pickBefore = optionalField("pickBefore");
+      const pickAfter = optionalField("pickAfter");
       const within = optionalField("within");
       const replace = optionalField("replace");
       const rename = optionalField("rename");
@@ -371,6 +446,12 @@ function parseJsonOperation(raw: unknown, index: number): EditOperation {
       }
       if (pick !== undefined) {
         selection.pick = pick;
+      }
+      if (pickBefore !== undefined) {
+        selection.pickBefore = pickBefore;
+      }
+      if (pickAfter !== undefined) {
+        selection.pickAfter = pickAfter;
       }
       if (within !== undefined) {
         selection.within = within;
@@ -392,6 +473,8 @@ function parseJsonOperation(raw: unknown, index: number): EditOperation {
       const rev = optionalField("rev");
       const match = optionalField("match");
       const pick = optionalField("pick");
+      const pickBefore = optionalField("pickBefore");
+      const pickAfter = optionalField("pickAfter");
       const replace = optionalField("replace");
       if (rev !== undefined) {
         selection.rev = rev;
@@ -401,6 +484,12 @@ function parseJsonOperation(raw: unknown, index: number): EditOperation {
       }
       if (pick !== undefined) {
         selection.pick = pick;
+      }
+      if (pickBefore !== undefined) {
+        selection.pickBefore = pickBefore;
+      }
+      if (pickAfter !== undefined) {
+        selection.pickAfter = pickAfter;
       }
       if (replace !== undefined) {
         selection.replace = replace;

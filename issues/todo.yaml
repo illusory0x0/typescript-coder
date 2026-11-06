@@ -1,12 +1,3 @@
 # Open issues in picking order. This order is authoritative: `reorder`
 # rewrites it; `add` appends; other writes keep it. `check` enforces it.
 # A dep, and every child of an umbrella, must be listed before its dependent.
-
-- id: 93
-  title: "Add content-anchored before/after insertion selectors"
-  status: todo
-  priority: medium
-  milestone: null
-  parent: null
-  deps: []
-  file: 0093-add-content-anchored-before-after-insertion-selectors.md

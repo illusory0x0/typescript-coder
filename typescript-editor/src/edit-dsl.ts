@@ -225,7 +225,17 @@ function stageForCause(cause: CascadeCause): EditDslFailureStage {
       return "matcher";
   }
 }
-
+/**
+ * The matcher kind a region used for telemetry: a `match` matcher wins, or the
+ * insertion anchor's matcher when the clause used `pick before|after` (#93).
+ */
+function selectionMatcherKind(selection: Selection): EditDslMatcherKind | null {
+  if (selection.matcher !== null) {
+    return selection.matcher.kind;
+  }
+  const anchor = selection.anchor ?? null;
+  return anchor === null ? null : anchor.matcher.kind;
+}
 function positionAt(
   source: string,
   offset: number,
@@ -783,7 +793,7 @@ export function resolveEditDslReply(
         end: fileResolved.end,
         text: fileResolved.text,
         stage: fileResolved.stage,
-        matcherKind: selection.matcher === null ? null : selection.matcher.kind,
+        matcherKind: selectionMatcherKind(selection),
         create: false,
       });
       continue;
@@ -840,7 +850,7 @@ export function resolveEditDslReply(
         end: blockResolved.end,
         text: blockResolved.text,
         stage: blockResolved.stage,
-        matcherKind: selection.matcher === null ? null : selection.matcher.kind,
+        matcherKind: selectionMatcherKind(selection),
         create: false,
       });
       continue;
@@ -925,10 +935,12 @@ export function resolveEditDslReply(
     // the declaration's actual kind, and a class addressed through value or
     // type resolves to the one `class` entry (#40).
     const restricted = wholeSymbolRestrictionDiagnostics(address.entry);
+    const hasAnchor = selection.anchor !== undefined && selection.anchor !== null;
     if (
       restricted !== null &&
       selection.matcher === null &&
       selection.pick === null &&
+      !hasAnchor &&
       selection.replacement !== null
     ) {
       failures.push({
@@ -950,8 +962,12 @@ export function resolveEditDslReply(
       name: address.entry.locator.name,
       kind: address.entry.locator.kind,
     };
-    const partial =
-      selection.replacement !== null && (selection.matcher !== null || selection.pick !== null);
+    // #93: an anchor editor also claims only its zero-width insertion region,
+    // so several disjoint anchors may share one declaration. Same-offset
+    // zero-width inserts still collide in `editDslSpansOverlap`.
+    const hasPartialMatcher = selection.matcher !== null || selection.pick !== null || hasAnchor;
+    const partial = selection.replacement !== null && hasPartialMatcher;
+
     const key = editDslTargetKey(resolvedAddress);
     const duplicate = claimEditDslTarget(claims, resolvedAddress, index, false, partial);
     if (duplicate !== null) {
@@ -1162,7 +1178,7 @@ export function resolveEditDslReply(
       end: resolved.end,
       text: resolved.text,
       stage: resolved.stage,
-      matcherKind: selection.matcher === null ? null : selection.matcher.kind,
+      matcherKind: selectionMatcherKind(selection),
       create: false,
     });
   }

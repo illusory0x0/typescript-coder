@@ -1360,7 +1360,9 @@ describe("file-level module-boundary select (#54)", () => {
       fileDeps({ "a.ts": SOURCE }),
     );
     expect(bare.failures[0]?.stage).toBe("address");
-    expect(bare.failures[0]?.diagnostics).toContain("needs `match` or `pick`");
+    expect(bare.failures[0]?.diagnostics).toContain(
+      "needs `match`, `pick`, or a `pick before|after` anchor",
+    );
 
     const unsafe = resolveEditDslReply(
       parseSelection(["select file ../a.ts", "match `beta`", replace("gamma")].join("\n")),
@@ -1694,5 +1696,143 @@ describe("source revision guard (#91)", () => {
     const result = resolveEditDslReply(parseSelection(edit(head)), deps(source));
     expect(result.failures).toEqual([]);
     expect(result.regions).toHaveLength(1);
+  });
+});
+
+describe("insertion anchors in one reply (#93)", () => {
+  const SOURCE = [
+    "export function once(): number {",
+    "  const value = 1;",
+    "  return value;",
+    "}",
+    "",
+  ].join("\n");
+
+  const clause = (position: "before" | "after", matcher: string, body = "  // inserted"): string =>
+    [
+      "select function once in a.ts",
+      `pick ${position} ${matcher}`,
+      "replace with",
+      "TC_EDIT_BEGIN",
+      body,
+      "TC_EDIT_END",
+      "end",
+    ].join("\n");
+
+  test("resolves a declaration anchor into a zero-width region", () => {
+    const result = resolveEditDslReply(
+      parseSelection(clause("after", "`return value;`")),
+      deps(SOURCE),
+    );
+    expect(result.failures).toEqual([]);
+    const region = result.regions[0];
+    expect(region?.start).toBe(region?.end);
+    expect(region?.start).toBe(SOURCE.indexOf("return value;") + "return value;".length);
+    expect(region?.text).toBe("  // inserted");
+    expect(region?.stage).toBe("match");
+    expect(region?.matcherKind).toBe("snippet");
+  });
+
+  test("records a regex anchor's matcher kind", () => {
+    const result = resolveEditDslReply(
+      parseSelection(clause("before", "/return value;/")),
+      deps(SOURCE),
+    );
+    expect(result.failures).toEqual([]);
+    expect(result.regions[0]?.matcherKind).toBe("regex");
+  });
+
+  test("two disjoint anchors on one declaration both apply", () => {
+    const reply = [
+      clause("after", "`const value = 1;`", "  const other = 2;"),
+      clause("after", "`return value;`", "  // tail"),
+    ].join("\n\n");
+    const result = resolveEditDslReply(parseSelection(reply), deps(SOURCE));
+    expect(result.failures).toEqual([]);
+    expect(result.regions).toHaveLength(2);
+    expect(result.regions[0]?.end).toBeLessThanOrEqual(result.regions[1]?.start ?? 0);
+  });
+
+  test("two anchors at one offset fail as duplicates", () => {
+    const reply = [
+      clause("after", "`return value;`", "  // one"),
+      clause("after", "`return value;`", "  // two"),
+    ].join("\n\n");
+    const result = resolveEditDslReply(parseSelection(reply), deps(SOURCE));
+    expect(result.regions).toHaveLength(1);
+    expect(result.failures[0]?.stage).toBe("duplicate");
+    expect(result.failures[0]?.diagnostics).toContain("overlapping resolved spans");
+  });
+
+  test("a viewer and an anchor on one declaration remain duplicates", () => {
+    const reply = ["select function once in a.ts end", clause("after", "`return value;`")].join(
+      "\n\n",
+    );
+    const result = resolveEditDslReply(parseSelection(reply), deps(SOURCE));
+    expect(result.regions).toHaveLength(0);
+    expect(result.failures[0]?.stage).toBe("duplicate");
+  });
+
+  test("a stale rev fails at range before the anchor resolves", () => {
+    const head = [
+      "select function once in a.ts rev 00000000",
+      "pick after `return value;`",
+      "replace with",
+      "TC_EDIT_BEGIN",
+      "  // inserted",
+      "TC_EDIT_END",
+      "end",
+    ].join("\n");
+    const result = resolveEditDslReply(parseSelection(head), deps(SOURCE));
+    expect(result.regions).toEqual([]);
+    expect(result.failures[0]?.stage).toBe("range");
+    expect(result.failures[0]?.diagnostics).toContain("stage: range");
+  });
+
+  test("a file-level anchor resolves a zero-width region", () => {
+    const reply = [
+      "select file a.ts",
+      "pick before `return value;`",
+      "replace with",
+      "TC_EDIT_BEGIN",
+      "  // inserted",
+      "TC_EDIT_END",
+      "end",
+    ].join("\n");
+    const result = resolveEditDslReply(parseSelection(reply), deps(SOURCE));
+    expect(result.failures).toEqual([]);
+    expect(result.regions[0]?.start).toBe(SOURCE.indexOf("return value;"));
+    expect(result.regions[0]?.start).toBe(result.regions[0]?.end);
+  });
+
+  test("a block anchor resolves a zero-width region", () => {
+    const blockSource = [
+      "export function outer(): number {",
+      "  let total = 0;",
+      "  if (true) {",
+      "    total += 1;",
+      "    total += 2;",
+      "    total += 3;",
+      "  }",
+      "  return total;",
+      "}",
+      "",
+    ].join("\n");
+    const reply = [
+      "select block outer:2 in a.ts",
+      "pick after `total += 3;`",
+      "replace with",
+      "TC_EDIT_BEGIN",
+      "    total += 33;",
+      "TC_EDIT_END",
+      "end",
+    ].join("\n");
+    const result = resolveEditDslReply(parseSelection(reply), deps(blockSource));
+    expect(result.failures).toEqual([]);
+    const region = result.regions[0];
+    const point = blockSource.indexOf("total += 3;") + "total += 3;".length;
+    expect(region?.start).toBe(point);
+    expect(region?.end).toBe(point);
+    expect(region?.stage).toBe("match");
   });
 });

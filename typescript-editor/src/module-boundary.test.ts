@@ -205,7 +205,7 @@ describe("file-level unique span resolution (#83)", () => {
       return;
     }
     expect(result.stage).toBe("address");
-    expect(result.diagnostics).toContain("needs `match` or `pick`");
+    expect(result.diagnostics).toContain("needs `match`, `pick`, or a `pick before|after` anchor");
     expect(result.diagnostics).toContain("whole-file");
   });
 
@@ -221,5 +221,97 @@ describe("file-level unique span resolution (#83)", () => {
     expect(result.stage).toBe("address");
     expect(result.diagnostics).toContain("requires `replace with <fence>`");
     expect(result.diagnostics).toContain("--replace-file");
+  });
+});
+
+describe("file-level pick before/after anchors (#93)", () => {
+  const SOURCE = [
+    'import { test } from "bun:test";',
+    "",
+    "const value = 1;",
+    "export function once(): number {",
+    "  return value;",
+    "}",
+    "",
+  ].join("\n");
+
+  function anchored(position: "before" | "after", matcher: string, body = "// inserted"): string {
+    return ["select file a.ts", `pick ${position} ${matcher}`, replace(body)].join("\n");
+  }
+
+  test("inserts after a unique literal span", () => {
+    const result = resolve(SOURCE, anchored("after", "`const value = 1;`"));
+    expect(result.ok).toBe(true);
+    if (!result.ok) {
+      return;
+    }
+    const point = SOURCE.indexOf("const value = 1;") + "const value = 1;".length;
+    expect(result.start).toBe(point);
+    expect(result.end).toBe(point);
+    expect(result.stage).toBe("match");
+    expect(result.gateStart).toBe(point);
+  });
+
+  test("inserts before a unique literal span", () => {
+    const result = resolve(SOURCE, anchored("before", "`export function once`"));
+    expect(result.ok).toBe(true);
+    if (!result.ok) {
+      return;
+    }
+    expect(result.start).toBe(SOURCE.indexOf("export function once"));
+    expect(result.end).toBe(result.start);
+  });
+
+  test("accepts a regex anchor", () => {
+    const result = resolve(SOURCE, anchored("after", "/return value;/"));
+    expect(result.ok).toBe(true);
+    if (!result.ok) {
+      return;
+    }
+    expect(result.start).toBe(SOURCE.indexOf("return value;") + "return value;".length);
+  });
+
+  test("zero matches fail at matcher with the file-level wording", () => {
+    const result = resolve(SOURCE, anchored("after", "`return missing;`"));
+    expect(result.ok).toBe(false);
+    if (result.ok) {
+      return;
+    }
+    expect(result.stage).toBe("matcher");
+    expect(result.diagnostics).toContain("file-level `pick after`");
+    expect(result.diagnostics).toContain("matched nothing");
+  });
+
+  test("multiple matches list candidate lines", () => {
+    const result = resolve(SOURCE, anchored("after", "`value`"));
+    expect(result.ok).toBe(false);
+    if (result.ok) {
+      return;
+    }
+    expect(result.stage).toBe("matcher");
+    expect(result.diagnostics).toContain("matches 2 places");
+    expect(result.diagnostics).toContain("candidates:");
+    expect(result.diagnostics).toContain("a.ts:3:7");
+    expect(result.diagnostics).toContain("a.ts:5:10");
+  });
+
+  test("an empty fence anchor is a no-op failure", () => {
+    const result = resolve(SOURCE, anchored("after", "`const value = 1;`", ""));
+    expect(result.ok).toBe(false);
+    if (result.ok) {
+      return;
+    }
+    expect(result.stage).toBe("no-op");
+    expect(result.diagnostics).toContain("does not change the file");
+  });
+
+  test("an invalid regex anchor fails at matcher", () => {
+    const result = resolve(SOURCE, anchored("after", "/[a-/"));
+    expect(result.ok).toBe(false);
+    if (result.ok) {
+      return;
+    }
+    expect(result.stage).toBe("matcher");
+    expect(result.diagnostics).toContain("`/regex/` anchor is invalid");
   });
 });

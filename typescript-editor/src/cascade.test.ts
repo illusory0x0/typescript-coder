@@ -734,3 +734,126 @@ describe("resolveCascade: replace guards", () => {
     expect(result.text).toBe("default function once(): number {\n  return 2;\n}");
   });
 });
+
+describe("resolveCascade: pick before/after anchors (#93)", () => {
+  const SOURCE = [
+    "export function once(): number {",
+    "  const value = 1;",
+    "  return value;",
+    "}",
+    "",
+  ].join("\n");
+
+  function anchored(
+    position: "before" | "after",
+    matcher: string,
+    body = "  // inserted",
+  ): Selection {
+    return firstSelection(
+      [
+        "select function once in a.ts",
+        `pick ${position} ${matcher}`,
+        "replace with",
+        "TC_EDIT_BEGIN",
+        body,
+        "TC_EDIT_END",
+        "end",
+      ].join("\n"),
+    );
+  }
+
+  test("`pick after` inserts after the unique literal anchor", () => {
+    const entry = entryFor(SOURCE, "once", "function");
+    const result = ok(resolveCascade(SOURCE, entry, anchored("after", "`return value;`")));
+    const point = SOURCE.indexOf("return value;") + "return value;".length;
+    expect(result.stage).toBe<SelectionStage>("match");
+    expect(result.start).toBe(point);
+    expect(result.end).toBe(point);
+    expect(result.text).toBe("  // inserted");
+    expect(result.viewer).toBe(false);
+    expect(result.gateStart).toBe(point);
+  });
+
+  test("`pick before` inserts before the unique literal anchor", () => {
+    const entry = entryFor(SOURCE, "once", "function");
+    const result = ok(resolveCascade(SOURCE, entry, anchored("before", "`const value = 1;`")));
+    const point = SOURCE.indexOf("const value = 1;");
+    expect(result.start).toBe(point);
+    expect(result.end).toBe(point);
+  });
+
+  test("a regex anchor resolves like a literal anchor", () => {
+    const entry = entryFor(SOURCE, "once", "function");
+    const result = ok(resolveCascade(SOURCE, entry, anchored("after", "/return value;/")));
+    const point = SOURCE.indexOf("return value;") + "return value;".length;
+    expect(result.start).toBe(point);
+    expect(result.end).toBe(point);
+  });
+
+  test("a snippet anchor is literal, not structural", () => {
+    const entry = entryFor(SOURCE, "once", "function");
+    const result = failure(resolveCascade(SOURCE, entry, anchored("after", "`return ${value};`")));
+    expect(result.cause).toBe("matcher-not-found");
+  });
+
+  test("zero anchor matches fail at matcher with the not-found wording", () => {
+    const entry = entryFor(SOURCE, "once", "function");
+    const result = failure(resolveCascade(SOURCE, entry, anchored("after", "`return 2;`")));
+    expect(result.cause).toBe("matcher-not-found");
+    expect(result.diagnostics).toContain("stage: matcher");
+    expect(result.diagnostics).toContain("`pick after`");
+    expect(result.diagnostics).toContain("matched nothing");
+  });
+
+  test("multiple anchor matches fail as ambiguous with candidate positions", () => {
+    const entry = entryFor(TWICE, "twice", "function");
+    const result = failure(resolveCascade(TWICE, entry, anchored("after", "`return 1;`")));
+    expect(result.cause).toBe("matcher-ambiguous");
+    expect(result.diagnostics).toContain("matches 2 places");
+    expect(result.diagnostics).toContain("candidates:");
+    expect(result.diagnostics).toContain("2:3  return 1;");
+    expect(result.diagnostics).toContain("3:3  return 1;");
+  });
+
+  test("an invalid regex anchor fails as regex-invalid", () => {
+    const entry = entryFor(SOURCE, "once", "function");
+    const result = failure(resolveCascade(SOURCE, entry, anchored("after", "/[a-/")));
+    expect(result.cause).toBe("regex-invalid");
+    expect(result.diagnostics).toContain("`/regex/` anchor is invalid");
+  });
+
+  test("anchors insert at the declaration boundaries", () => {
+    const entry = entryFor(SOURCE, "once", "function");
+    const atStart = ok(
+      resolveCascade(SOURCE, entry, anchored("before", "`function once(): number {`")),
+    );
+    expect(atStart.start).toBe(entry.node.start);
+    expect(atStart.end).toBe(entry.node.start);
+    const atEnd = ok(resolveCascade(SOURCE, entry, anchored("after", "`}`")));
+    expect(atEnd.start).toBe(entry.node.end);
+    expect(atEnd.end).toBe(entry.node.end);
+  });
+
+  test("an empty fence anchor is a no-op failure", () => {
+    const entry = entryFor(SOURCE, "once", "function");
+    const result = failure(resolveCascade(SOURCE, entry, anchored("after", "`return value;`", "")));
+    expect(result.cause).toBe("no-op");
+    expect(result.diagnostics).toContain("stage: no-op");
+  });
+
+  test("the cascade rejects a mixed anchor selection defensively", () => {
+    const entry = entryFor(SOURCE, "once", "function");
+    const base = anchored("after", "`return value;`");
+    const withMatcher: Selection = {
+      ...base,
+      matcher: { kind: "snippet", value: "return value;" },
+    };
+    const mixed = failure(resolveCascade(SOURCE, entry, withMatcher));
+    expect(mixed.cause).toBe("range-invalid");
+    expect(mixed.diagnostics).toContain("cannot be combined");
+    const viewer: Selection = { ...base, replacement: null };
+    const missing = failure(resolveCascade(SOURCE, entry, viewer));
+    expect(missing.cause).toBe("range-invalid");
+    expect(missing.diagnostics).toContain("requires `replace with <fence>`");
+  });
+});

@@ -1671,3 +1671,213 @@ describe("tsed --unify and select block (#84)", () => {
     expect(read(join(workspace, "src/unify.ts"))).toBe(UNIFY_SOURCE);
   });
 });
+
+describe("tsed pick-before/pick-after anchors (#93)", () => {
+  const INSERTED = [
+    "export function helper(): number {",
+    "  return 1;",
+    "}",
+    "",
+    "export function answer(): number {",
+    "  return 1;",
+    "  return 2;",
+    "}",
+    "",
+  ].join("\n");
+
+  test("--select --pick-after dry-run previews and --write inserts", () => {
+    const workspace = makeWorkspace({ "patch.txt": "\n  return 2;" });
+    const args = [
+      "--select",
+      "answer",
+      "--in",
+      "src/helper.ts",
+      "--pick-after",
+      "return 1;",
+      "--replace-file",
+      "patch.txt",
+    ];
+
+    const preview = run(workspace, [...args, "--dry-run", "--diff"]);
+    expect(preview.status).toBe(0);
+    expect(preview.stdout).toContain("would change: src/helper.ts");
+    expect(preview.stdout).toContain("+  return 2;");
+    expect(preview.stderr).toBe("");
+    expect(read(join(workspace, "src/helper.ts"))).toBe(HELPER);
+
+    const applied = run(workspace, [...args, "--write"]);
+    expect(applied.status).toBe(0);
+    expect(applied.stdout).toContain("changed: src/helper.ts");
+    expect(read(join(workspace, "src/helper.ts"))).toBe(INSERTED);
+  });
+
+  test("--select-file --pick-before resolves a unique file-level literal", () => {
+    const workspace = makeWorkspace({ "patch.txt": "// answer\n" });
+    const result = run(workspace, [
+      "--select-file",
+      "src/helper.ts",
+      "--pick-before",
+      "export function answer(): number {",
+      "--replace-file",
+      "patch.txt",
+      "--write",
+    ]);
+    expect(result.status).toBe(0);
+    expect(result.stdout).toContain("changed: src/helper.ts");
+    expect(read(join(workspace, "src/helper.ts"))).toBe(
+      HELPER.replace("export function answer", "// answer\nexport function answer"),
+    );
+  });
+
+  test("a JSON pickAfter operation previews an anchor insertion", () => {
+    const workspace = makeWorkspace();
+    const payload = JSON.stringify({
+      operations: [
+        {
+          op: "select",
+          symbol: "answer",
+          path: "src/helper.ts",
+          pickAfter: "return 1;",
+          replace: "\n  return 2;",
+        },
+      ],
+    });
+    const result = run(workspace, ["--protocol-format", "json", "--dry-run"], payload);
+    expect(result.status).toBe(0);
+    expect(result.stdout).toContain("would change: src/helper.ts");
+    expect(result.stderr).toBe("");
+    expect(read(join(workspace, "src/helper.ts"))).toBe(HELPER);
+  });
+
+  test("anchor flags are mutually exclusive with pick, match, rename, and each other", () => {
+    const workspace = makeWorkspace({ "patch.txt": "x" });
+    const cases: { args: string[]; message: string }[] = [
+      {
+        args: [
+          "--select",
+          "answer",
+          "--in",
+          "src/helper.ts",
+          "--pick-before",
+          "return 1;",
+          "--pick-after",
+          "return 1;",
+          "--replace-file",
+          "patch.txt",
+          "--dry-run",
+        ],
+        message: "--pick-before and --pick-after are mutually exclusive",
+      },
+      {
+        args: [
+          "--select",
+          "answer",
+          "--in",
+          "src/helper.ts",
+          "--pick-before",
+          "return 1;",
+          "--pick",
+          "2",
+          "--replace-file",
+          "patch.txt",
+          "--dry-run",
+        ],
+        message: "--pick-before and --pick are mutually exclusive",
+      },
+      {
+        args: [
+          "--select",
+          "answer",
+          "--in",
+          "src/helper.ts",
+          "--pick-after",
+          "return 1;",
+          "--match",
+          "return 1;",
+          "--replace-file",
+          "patch.txt",
+          "--dry-run",
+        ],
+        message: "--pick-after and --match are mutually exclusive",
+      },
+      {
+        args: [
+          "--select",
+          "answer",
+          "--in",
+          "src/helper.ts",
+          "--pick-after",
+          "return 1;",
+          "--rename",
+          "value",
+          "--dry-run",
+        ],
+        message: "--pick-after and --rename are mutually exclusive",
+      },
+    ];
+    for (const { args, message } of cases) {
+      const result = run(workspace, args);
+      expect(result.status).toBe(2);
+      expect(result.stderr).toContain(message);
+      expect(result.stderr).toContain("usage:");
+      expect(read(join(workspace, "src/helper.ts"))).toBe(HELPER);
+    }
+  });
+
+  test("an anchor without --replace-file is a usage error", () => {
+    const workspace = makeWorkspace();
+    const result = run(workspace, [
+      "--select",
+      "answer",
+      "--in",
+      "src/helper.ts",
+      "--pick-after",
+      "return 1;",
+      "--dry-run",
+    ]);
+    expect(result.status).toBe(2);
+    expect(result.stderr).toContain("--pick-after requires --replace-file");
+    expect(result.stderr).toContain("an anchor is an insertion point, not a viewer");
+    expect(read(join(workspace, "src/helper.ts"))).toBe(HELPER);
+  });
+
+  test("an invalid anchor insertion fails the parse gate and writes nothing", () => {
+    const workspace = makeWorkspace({ "broken.txt": "if (\n" });
+    for (const mode of ["--dry-run", "--write"]) {
+      const result = run(workspace, [
+        "--select",
+        "answer",
+        "--in",
+        "src/helper.ts",
+        "--pick-after",
+        "return 1;",
+        "--replace-file",
+        "broken.txt",
+        mode,
+      ]);
+      expect(result.status).toBe(1);
+      expect(result.stderr).toContain("stage: gate");
+      expect(read(join(workspace, "src/helper.ts"))).toBe(HELPER);
+    }
+  });
+
+  test("an empty replacement file is a no-op failure", () => {
+    const workspace = makeWorkspace({ "empty.txt": "" });
+    for (const mode of ["--dry-run", "--write"]) {
+      const result = run(workspace, [
+        "--select",
+        "answer",
+        "--in",
+        "src/helper.ts",
+        "--pick-after",
+        "return 1;",
+        "--replace-file",
+        "empty.txt",
+        mode,
+      ]);
+      expect(result.status).toBe(1);
+      expect(result.stderr).toContain("stage: no-op");
+      expect(read(join(workspace, "src/helper.ts"))).toBe(HELPER);
+    }
+  });
+});

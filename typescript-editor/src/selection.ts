@@ -3,6 +3,21 @@ import type { Locator, SymbolSpace } from "./utility";
 import { positionAtOffset, renderDslIssues } from "./dsl-diagnostics";
 import type { DslIssue, DslParseResult } from "./dsl-diagnostics";
 
+/** Which side of the unique anchor content an insertion lands on. */
+export type InsertionAnchorPosition = "before" | "after";
+
+/**
+ * A `pick before|after <matcher>` insertion anchor: a zero-width splice point
+ * next to the one unique occurrence of `matcher` inside the selected
+ * declaration, file, or block. `position` says whether the replacement text
+ * goes immediately before or after the anchor occurrence.
+ */
+export interface InsertionAnchor {
+  position: InsertionAnchorPosition;
+  /** The content to locate; matched literally for a snippet, ECMA regex for regex. */
+  matcher: SelectionMatcher;
+}
+
 /**
  * The matcher an edit-dsl clause carries: a verbatim source `snippet` or an
  * ECMA-262 `regex` pattern (no flags). `value` is already decoded: a `snippet`
@@ -35,6 +50,12 @@ export interface Selection {
    */
   space: SymbolSpace | null;
   matcher: SelectionMatcher | null;
+  /**
+   * A `pick before|after <matcher>` zero-width insertion anchor. Absent/null
+   * for every ordinary selection; present exactly when the clause locates an
+   * insertion point next to one unique occurrence inside the target scope.
+   */
+  anchor?: InsertionAnchor | null;
   pick: EditRange[] | null;
   /**
    * A viewer-only slice. When present, the clause has no matcher, pick,
@@ -51,7 +72,13 @@ export interface Selection {
    */
   revision?: string | null;
 }
-
+/** One parsed optional `pick` clause: range selecters or a content anchor. */
+interface PickClause {
+  pick: EditRange[] | null;
+  anchor: InsertionAnchor | null;
+  /** Offset of the `pick` keyword for the range-without-replace diagnostic. */
+  offset: number | null;
+}
 /** A `create <path> end` file command. */
 export interface CreateFileStatement {
   op: "create";
@@ -897,14 +924,35 @@ class SelectionReader {
       this.rejectFileRename();
     }
 
-    let pick: EditRange[] | null = null;
-    if (this.matchKeyword("pick")) {
-      pick = this.parseMultiRange();
+    const pickClause = this.parsePickClause();
+    let pick = pickClause.pick;
+    const anchor = pickClause.anchor;
+    if (anchor !== null) {
+      this.skipWhitespace();
+      if (matcher !== null || this.keywordAt("match")) {
+        this.syntax(
+          "EDIT_ANCHOR_MATCHED",
+          "`pick before`/`pick after` cannot be combined with `match`; the anchor locates an insertion point and the matcher locates a replacement span",
+          {
+            expected: ["pick before|after <matcher>", "match <matcher>"],
+            found: "match",
+            hint: "keep the anchor and drop `match`, or replace the matched span instead of inserting",
+          },
+        );
+      }
+      if (this.keywordAt("pick")) {
+        this.syntax(
+          "EDIT_ANCHOR_PICK_MIXED",
+          "`pick before`/`pick after` cannot be combined with a range `pick`; one clause has either an insertion anchor or range selecters",
+          {
+            expected: ["pick before|after <matcher>", "pick <selecters>"],
+            found: "pick",
+            hint: "keep the anchor alone, or use a range pick when you mean to replace an existing span",
+          },
+        );
+      }
     }
-    this.skipWhitespace();
-    if (this.keywordAt("rename")) {
-      this.rejectFileRename();
-    }
+
     let replacement: string | null = null;
     if (this.matchKeyword("replace")) {
       this.expectKeyword("with", "expected `with` after `replace`");
@@ -920,6 +968,17 @@ class SelectionReader {
     } else {
       this.consumeBodyEnd("`select file` command");
     }
+    if (anchor !== null && replacement === null) {
+      this.syntax(
+        "EDIT_ANCHOR_WITHOUT_REPLACE",
+        "`pick before`/`pick after` requires a `replace`: an anchor is an insertion point, not a viewer; add `replace with <fence>`",
+        {
+          expected: ["replace with <fence>", "omit the anchor"],
+          found: "anchor without replace",
+          hint: "add `replace with <fence>` or remove `pick before`/`pick after`",
+        },
+      );
+    }
 
     // A file-level select is an editor, but the missing replacement is a
     // resolution failure, not a syntax one: the protocol renderer emits this
@@ -932,6 +991,10 @@ class SelectionReader {
       pick,
       replacement,
     };
+    if (anchor !== null) {
+      selection.anchor = anchor;
+    }
+
     if (revision !== null) {
       selection.revision = revision;
     }
@@ -1005,13 +1068,44 @@ class SelectionReader {
       this.rejectBlockRename();
     }
 
-    let pick: EditRange[] | null = null;
-    if (this.matchKeyword("pick")) {
-      pick = this.parseMultiRange();
-    }
-    this.skipWhitespace();
-    if (this.keywordAt("rename")) {
-      this.rejectBlockRename();
+    const pickClause = this.parsePickClause();
+    let pick = pickClause.pick;
+    const anchor = pickClause.anchor;
+    if (anchor !== null) {
+      this.skipWhitespace();
+      if (matcher !== null || this.keywordAt("match")) {
+        this.syntax(
+          "EDIT_ANCHOR_MATCHED",
+          "`pick before`/`pick after` cannot be combined with `match`; the anchor locates an insertion point and the matcher locates a replacement span",
+          {
+            expected: ["pick before|after <matcher>", "match <matcher>"],
+            found: "match",
+            hint: "keep the anchor and drop `match`, or replace the matched span instead of inserting",
+          },
+        );
+      }
+      if (this.keywordAt("pick")) {
+        this.syntax(
+          "EDIT_ANCHOR_PICK_MIXED",
+          "`pick before`/`pick after` cannot be combined with a range `pick`; one clause has either an insertion anchor or range selecters",
+          {
+            expected: ["pick before|after <matcher>", "pick <selecters>"],
+            found: "pick",
+            hint: "keep the anchor alone, or use a range pick when you mean to replace an existing span",
+          },
+        );
+      }
+      if (this.keywordAt("rename")) {
+        this.syntax(
+          "EDIT_ANCHOR_RENAME_MIXED",
+          "`pick before`/`pick after` cannot be combined with `rename`; an anchor inserts text, while a rename is a semantic whole-symbol edit",
+          {
+            expected: ["pick before|after <matcher>", "rename <from> to <to>"],
+            found: "rename",
+            hint: "keep the anchor and use `replace with <fence>`, or use `rename` alone",
+          },
+        );
+      }
     }
 
     let replacement: string | null = null;
@@ -1040,6 +1134,17 @@ class SelectionReader {
         },
       );
     }
+    if (anchor !== null && replacement === null) {
+      this.syntax(
+        "EDIT_ANCHOR_WITHOUT_REPLACE",
+        "`pick before`/`pick after` requires a `replace`: an anchor is an insertion point, not a viewer; add `replace with <fence>`",
+        {
+          expected: ["replace with <fence>", "omit the anchor"],
+          found: "anchor without replace",
+          hint: "add `replace with <fence>` or remove `pick before`/`pick after`",
+        },
+      );
+    }
     const selection: Selection = {
       locator: { path, name: rawId, kind: "block" },
       space: null,
@@ -1047,6 +1152,10 @@ class SelectionReader {
       pick,
       replacement,
     };
+    if (anchor !== null) {
+      selection.anchor = anchor;
+    }
+
     if (revision !== null) {
       selection.revision = revision;
     }
@@ -1150,6 +1259,7 @@ class SelectionReader {
       matcher = this.parseMatcher();
     }
 
+    let anchor: InsertionAnchor | null = null;
     let pick: EditRange[] | null = null;
     let pickOffset: number | undefined;
     let replacement: string | null = null;
@@ -1174,7 +1284,7 @@ class SelectionReader {
       if (this.keywordAt("pick")) {
         this.syntax(
           "EDIT_RENAME_MIXED",
-          "rename cannot be combined with `pick`; use either `rename <from> to <to>` or `pick … replace with …`",
+          "rename cannot be combined with `pick` or an insertion anchor; use either `rename <from> to <to>` or `pick … replace with …`",
           {
             expected: ["rename <from> to <to>", "pick … replace with …"],
             found: "pick",
@@ -1194,10 +1304,47 @@ class SelectionReader {
         );
       }
     } else {
-      const pickCandidate = this.pos;
-      if (this.matchKeyword("pick")) {
-        pickOffset = this.text.indexOf("pick", pickCandidate);
-        pick = this.parseMultiRange();
+      const pickClause = this.parsePickClause();
+      pick = pickClause.pick;
+      anchor = pickClause.anchor;
+      if (pickClause.offset !== null) {
+        pickOffset = pickClause.offset;
+      }
+      if (anchor !== null) {
+        this.skipWhitespace();
+        if (matcher !== null || this.keywordAt("match")) {
+          this.syntax(
+            "EDIT_ANCHOR_MATCHED",
+            "`pick before`/`pick after` cannot be combined with `match`; the anchor locates an insertion point and the matcher locates a replacement span",
+            {
+              expected: ["pick before|after <matcher>", "match <matcher>"],
+              found: "match",
+              hint: "keep the anchor and drop `match`, or replace the matched span instead of inserting",
+            },
+          );
+        }
+        if (this.keywordAt("pick")) {
+          this.syntax(
+            "EDIT_ANCHOR_PICK_MIXED",
+            "`pick before`/`pick after` cannot be combined with a range `pick`; one clause has either an insertion anchor or range selecters",
+            {
+              expected: ["pick before|after <matcher>", "pick <selecters>"],
+              found: "pick",
+              hint: "keep the anchor alone, or use a range pick when you mean to replace an existing span",
+            },
+          );
+        }
+        if (this.keywordAt("rename")) {
+          this.syntax(
+            "EDIT_ANCHOR_RENAME_MIXED",
+            "`pick before`/`pick after` cannot be combined with `rename`; an anchor inserts text, while a rename is a semantic whole-symbol edit",
+            {
+              expected: ["pick before|after <matcher>", "rename <from> to <to>"],
+              found: "rename",
+              hint: "keep the anchor and use `replace with <fence>`, or use `rename` alone",
+            },
+          );
+        }
       }
       if (this.matchKeyword("replace")) {
         this.expectKeyword("with", "expected `with` after `replace`");
@@ -1206,6 +1353,17 @@ class SelectionReader {
       }
       this.skipWhitespace();
       if (this.keywordAt("rename")) {
+        if (anchor !== null) {
+          this.syntax(
+            "EDIT_ANCHOR_RENAME_MIXED",
+            "`pick before`/`pick after` cannot be combined with `rename`; an anchor inserts text, while a rename is a semantic whole-symbol edit",
+            {
+              expected: ["pick before|after <matcher>", "rename <from> to <to>"],
+              found: "rename",
+              hint: "keep the anchor and use `replace with <fence>`, or use `rename` alone",
+            },
+          );
+        }
         this.syntax(
           "EDIT_RENAME_MIXED",
           pick !== null
@@ -1239,13 +1397,29 @@ class SelectionReader {
       );
     }
 
+    if (anchor !== null && replacement === null) {
+      this.syntax(
+        "EDIT_ANCHOR_WITHOUT_REPLACE",
+        "`pick before`/`pick after` requires a `replace`: an anchor is an insertion point, not a viewer; add `replace with <fence>`",
+        {
+          expected: ["replace with <fence>", "omit the anchor"],
+          found: "anchor without replace",
+          hint: "add `replace with <fence>` or remove `pick before`/`pick after`",
+        },
+      );
+    }
+
     if (
       within !== null &&
-      (matcher !== null || pick !== null || replacement !== null || rename !== null)
+      (matcher !== null ||
+        pick !== null ||
+        anchor !== null ||
+        replacement !== null ||
+        rename !== null)
     ) {
       this.syntax(
         "EDIT_WITHIN_EDITOR",
-        "`within` is a viewer-only slice; it cannot be combined with `match`, `pick`, `replace`, or `rename`",
+        "`within` is a viewer-only slice; it cannot be combined with `match`, `pick`, an insertion anchor, `replace`, or `rename`",
         {
           expected: ["a viewer slice", "an editor without within"],
           found: "within with an editor field",
@@ -1261,6 +1435,10 @@ class SelectionReader {
       pick,
       replacement,
     };
+    if (anchor !== null) {
+      selection.anchor = anchor;
+    }
+
     if (revision !== null) {
       selection.revision = revision;
     }
@@ -1387,7 +1565,7 @@ class SelectionReader {
     return token as SymbolSpace;
   }
 
-  private parseMatcher(): SelectionMatcher {
+  private parseMatcher(label = "match"): SelectionMatcher {
     const start = this.pos;
     this.skipWhitespace();
     const char = this.text[this.pos];
@@ -1398,14 +1576,43 @@ class SelectionReader {
       return { kind: "regex", value: this.parseRegex() };
     }
     const found = this.atEnd() ? "<eof>" : this.peekToken();
-    this.syntax("EDIT_MATCHER_MISSING", "expected a backtick snippet or `/regex/` after `match`", {
-      offset: start,
-      expected: ["`snippet`", "/regex/"],
-      found,
-      hint: found.startsWith("(")
-        ? "remove the parentheses: write `match` followed by a backtick snippet or a slash regex"
-        : "use `match `return 1;`` or omit match to rewrite the whole declaration",
-    });
+    this.syntax(
+      "EDIT_MATCHER_MISSING",
+      `expected a backtick snippet or \`/regex/\` after \`${label}\``,
+      {
+        offset: start,
+        expected: ["`snippet`", "/regex/"],
+        found,
+        hint: found.startsWith("(")
+          ? `remove the parentheses: write \`${label}\` followed by a backtick snippet or a slash regex`
+          : label === "match"
+            ? "use `match `return 1;`` or omit match to rewrite the whole declaration"
+            : `copy a unique exact snippet (or use \`/regex/\`) so the \`${label}\` anchor has exactly one occurrence`,
+      },
+    );
+  }
+
+  /**
+   * Parse the optional `pick` clause. `pick before|after <matcher>` is a
+   * content-anchored insertion selector; a bare `pick` keeps the range form.
+   */
+  private parsePickClause(label = "pick"): PickClause {
+    this.skipWhitespace();
+    const start = this.pos;
+    if (!this.matchKeyword("pick")) {
+      return { pick: null, anchor: null, offset: null };
+    }
+    let position: InsertionAnchorPosition | null = null;
+    if (this.matchKeyword("before")) {
+      position = "before";
+    } else if (this.matchKeyword("after")) {
+      position = "after";
+    }
+    if (position === null) {
+      return { pick: this.parseMultiRange(label), anchor: null, offset: start };
+    }
+    const matcher = this.parseMatcher(`pick ${position}`);
+    return { pick: null, anchor: { position, matcher }, offset: null };
   }
 
   private parseSnippet(): string {
@@ -2006,6 +2213,34 @@ export function serializeSelection(selection: Selection): string {
       "cannot serialize a rename with a match; a rename is a semantic whole-symbol edit; remove `match` or use `pick … replace with …`",
     );
   }
+  const anchor = selection.anchor ?? null;
+  if (anchor !== null) {
+    if (selection.matcher !== null) {
+      throw new SelectionSyntaxError(
+        "cannot serialize an insertion anchor with a match; use either `pick before|after <matcher>` or `match <matcher>`",
+      );
+    }
+    if (selection.pick !== null) {
+      throw new SelectionSyntaxError(
+        "cannot serialize an insertion anchor with a range `pick`; one clause has either an anchor or range selecters",
+      );
+    }
+    if (selection.within !== undefined && selection.within !== null) {
+      throw new SelectionSyntaxError(
+        "cannot serialize an insertion anchor with `within`; `within` is a viewer-only slice and an anchor is an editor",
+      );
+    }
+    if (selection.rename !== undefined && selection.rename !== null) {
+      throw new SelectionSyntaxError(
+        "cannot serialize an insertion anchor with a rename; a rename is a semantic whole-symbol edit",
+      );
+    }
+    if (selection.replacement === null) {
+      throw new SelectionSyntaxError(
+        "cannot serialize an insertion anchor without `replace`; an anchor is an insertion point, not a viewer",
+      );
+    }
+  }
   const { locator } = selection;
   let head: string;
   if (locator.kind === "file" && locator.name === "") {
@@ -2032,7 +2267,9 @@ export function serializeSelection(selection: Selection): string {
   if (selection.rename !== undefined && selection.rename !== null) {
     parts.push(`rename ${selection.rename.from} to ${selection.rename.to}`);
   }
-  if (selection.pick !== null) {
+  if (anchor !== null) {
+    parts.push(`pick ${anchor.position} ${renderMatcher(anchor.matcher)}`);
+  } else if (selection.pick !== null) {
     parts.push(`pick ${renderMultiRange(selection.pick)}`);
   }
   if (selection.replacement !== null) {

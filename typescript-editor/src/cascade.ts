@@ -15,9 +15,11 @@ import { sourceLineAt } from "./dsl-diagnostics";
 import { stripLeadingExportModifier } from "./export-modifier";
 import { resolveEditRange } from "./range";
 import type { EditRange, RangeResolutionFailure } from "./range";
+import { findAnchorMatches } from "./module-boundary";
 import { END_OF_LINE_COLUMN } from "./selection";
-import type { Selection } from "./selection";
+import type { InsertionAnchorPosition, Selection } from "./selection";
 import type { IndexEntry } from "./utility";
+
 import { memberDeletionRange } from "./utility";
 
 /** The finest stage that resolved a target. */
@@ -150,7 +152,49 @@ function regexAmbiguousDiagnostics(
     "use one candidate's line:column in `pick`, or anchor/lengthen the pattern until it is unique",
   ].join("\n");
 }
+function anchorCandidateLines(entry: IndexEntry, source: string, spans: readonly Span[]): string[] {
+  const listed = spans.slice(0, CANDIDATE_LIST_LIMIT);
+  const lines = ["candidates:"];
+  for (const span of listed) {
+    const at = sourceLineAt(source, span.start);
+    lines.push(`- ${entry.locator.path}:${at.line}:${at.column}  ${at.text.trim()}`);
+  }
+  const more = spans.length - listed.length;
+  if (more > 0) {
+    lines.push(`- ... and ${more} more`);
+  }
+  return lines;
+}
 
+function anchorNotFoundDiagnostics(
+  entry: IndexEntry,
+  position: InsertionAnchorPosition,
+  matcherKind: "snippet" | "regex",
+): string {
+  return [
+    "stage: matcher",
+    `the \`pick ${position}\` ${matcherKind === "regex" ? "`/regex/` anchor" : "exact anchor"} matched nothing inside ${declarationLabel(entry)}; an insertion anchor needs exactly one occurrence`,
+    "copy a unique exact snippet verbatim from the current source, or use `/regex/`; the anchor is matched literally, not structurally",
+  ].join("\n");
+}
+
+function anchorAmbiguousDiagnostics(
+  entry: IndexEntry,
+  source: string,
+  spans: readonly Span[],
+  position: InsertionAnchorPosition,
+): string {
+  return [
+    "stage: matcher",
+    `the \`pick ${position}\` anchor matches ${spans.length} places inside ${declarationLabel(entry)}; an insertion anchor needs exactly one occurrence`,
+    ...anchorCandidateLines(entry, source, spans),
+    "lengthen the anchor snippet until it is unique, or copy a longer exact snippet (or use `/regex/`)",
+  ].join("\n");
+}
+
+function anchorRegexInvalidDiagnostics(entry: IndexEntry, message: string): string {
+  return `stage: matcher\nthe \`/regex/\` anchor is invalid: ${message}; write a valid ECMA-262 pattern with no flags, or use a backtick \`snippet\` copied verbatim from the current source in ${declarationLabel(entry)}`;
+}
 function pickInvalidDiagnostics(
   entry: IndexEntry,
   range: EditRange,
@@ -393,7 +437,70 @@ export function resolveCascade(
   selection: Selection,
 ): CascadeResolution {
   const declaration = { start: entry.node.start, end: entry.node.end };
+  const anchor = selection.anchor ?? null;
+  if (anchor !== null) {
+    if (
+      selection.matcher !== null ||
+      selection.pick !== null ||
+      (selection.rename !== undefined && selection.rename !== null)
+    ) {
+      return {
+        ok: false,
+        cause: "range-invalid",
+        diagnostics:
+          "stage: range\nan insertion anchor cannot be combined with `match`, a range `pick`, or `rename`; use the anchor alone with `replace with <fence>`",
+      };
+    }
+    if (selection.replacement === null) {
+      return {
+        ok: false,
+        cause: "range-invalid",
+        diagnostics:
+          "stage: range\n`pick before`/`pick after` is an insertion point and requires `replace with <fence>`; it is not a viewer",
+      };
+    }
+    const found = findAnchorMatches(source, declaration, anchor.matcher);
+    if (found.kind === "invalid") {
+      return {
+        ok: false,
+        cause: "regex-invalid",
+        diagnostics: anchorRegexInvalidDiagnostics(entry, found.message),
+      };
+    }
+    if (found.spans.length !== 1) {
+      return {
+        ok: false,
+        cause: found.spans.length === 0 ? "matcher-not-found" : "matcher-ambiguous",
+        diagnostics:
+          found.spans.length === 0
+            ? anchorNotFoundDiagnostics(entry, anchor.position, anchor.matcher.kind)
+            : anchorAmbiguousDiagnostics(entry, source, found.spans, anchor.position),
+      };
+    }
+    const only = found.spans[0];
+    if (only === undefined) {
+      return {
+        ok: false,
+        cause: "matcher-not-found",
+        diagnostics: anchorNotFoundDiagnostics(entry, anchor.position, anchor.matcher.kind),
+      };
+    }
+    const point = anchor.position === "before" ? only.start : only.end;
+    if (selection.replacement === "") {
+      return { ok: false, cause: "no-op", diagnostics: NOOP_DIAGNOSTICS };
+    }
+    return {
+      ok: true,
+      start: point,
+      end: point,
+      text: selection.replacement,
+      viewer: false,
+      stage: "match",
+      gateStart: point,
+    };
+  }
   let start: number;
+
   let end: number;
   let stage: SelectionStage;
 

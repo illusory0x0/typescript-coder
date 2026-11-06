@@ -11,12 +11,18 @@
 import type { SelectionStage } from "./cascade";
 import { positionAtOffset, sourceLineAt } from "./dsl-diagnostics";
 import { findMatcherMatches, findRegexMatches } from "./matcher";
-import { findLiteralMatches, pickMatchesSpan, resolvePickSpans } from "./module-boundary";
+import {
+  findAnchorMatches,
+  findLiteralMatches,
+  pickMatchesSpan,
+  resolvePickSpans,
+} from "./module-boundary";
 import type { Span } from "./module-boundary";
 import { Parser } from "./parser";
 import type { BlockStatement, Node, Program } from "./parser";
 import { isBlockSelection } from "./selection";
-import type { Selection } from "./selection";
+import type { InsertionAnchorPosition, Selection } from "./selection";
+
 import { buildIndex } from "./utility";
 import type { IndexEntry } from "./utility";
 
@@ -375,7 +381,44 @@ function notFoundDiagnostics(
     "copy the exact source text (or a complete statement/expression), use a regex anchored on that text, or use `pick` with file-absolute coordinates",
   ].join("\n");
 }
+function anchorNotFoundDiagnostics(
+  path: string,
+  block: BlockInfo,
+  position: InsertionAnchorPosition,
+  matcherKind: "snippet" | "regex",
+): string {
+  return [
+    "stage: matcher",
+    `the \`pick ${position}\` ${matcherKind === "regex" ? "`/regex/` anchor" : "exact anchor"} matched nothing inside the ${blockLabel(block)} in ${JSON.stringify(path)}; a block insertion anchor needs exactly one occurrence`,
+    "copy a unique exact snippet verbatim from inside the block, or use `/regex/`; the anchor is matched literally, not structurally",
+  ].join("\n");
+}
 
+function anchorAmbiguousDiagnostics(
+  path: string,
+  source: string,
+  block: BlockInfo,
+  spans: readonly Span[],
+  position: InsertionAnchorPosition,
+): string {
+  const listed = spans.slice(0, CANDIDATE_LIST_LIMIT);
+  const more = spans.length - listed.length;
+  return [
+    "stage: matcher",
+    `the \`pick ${position}\` anchor matches ${spans.length} places inside the ${blockLabel(block)} in ${JSON.stringify(path)}; a block insertion anchor needs exactly one occurrence`,
+    "candidates:",
+    ...listed.map((span) => candidateLine(path, source, span)),
+    ...(more > 0 ? [`- ... and ${more} more`] : []),
+    "hint: lengthen the anchor snippet until it is unique, or copy a longer exact snippet (or use `/regex/`)",
+  ].join("\n");
+}
+
+function anchorRegexInvalidDiagnostics(path: string, block: BlockInfo, message: string): string {
+  return [
+    "stage: matcher",
+    `the block \`/regex/\` anchor is invalid in the ${blockLabel(block)} of ${JSON.stringify(path)}: ${message}; write a valid ECMA-262 pattern with no flags`,
+  ].join("\n");
+}
 function insideBlock(span: Span, block: BlockInfo): boolean {
   return block.start <= span.start && span.end <= block.end;
 }
@@ -436,7 +479,71 @@ export function resolveBlockSelection(
     );
   }
 
+  const anchor = selection.anchor ?? null;
+  if (anchor !== null) {
+    if (selection.matcher !== null || selection.pick !== null) {
+      return blockFailure(
+        "matcher",
+        "stage: matcher\na block insertion anchor cannot be combined with `match` or a range `pick`; use the anchor alone",
+      );
+    }
+    const found = findAnchorMatches(source, { start: block.start, end: block.end }, anchor.matcher);
+    if (found.kind === "invalid") {
+      return blockFailure(
+        "matcher",
+        anchorRegexInvalidDiagnostics(selection.locator.path, block, found.message),
+      );
+    }
+    if (found.spans.length !== 1) {
+      return blockFailure(
+        "matcher",
+        found.spans.length === 0
+          ? anchorNotFoundDiagnostics(
+              selection.locator.path,
+              block,
+              anchor.position,
+              anchor.matcher.kind,
+            )
+          : anchorAmbiguousDiagnostics(
+              selection.locator.path,
+              source,
+              block,
+              found.spans,
+              anchor.position,
+            ),
+      );
+    }
+    const only = found.spans[0];
+    if (only === undefined) {
+      return blockFailure(
+        "matcher",
+        anchorNotFoundDiagnostics(
+          selection.locator.path,
+          block,
+          anchor.position,
+          anchor.matcher.kind,
+        ),
+      );
+    }
+    const point = anchor.position === "before" ? only.start : only.end;
+    if (selection.replacement === "") {
+      return blockFailure(
+        "no-op",
+        "stage: no-op\nthe block insert does not change the file: the anchor replacement is empty; put at least one line between the fences",
+      );
+    }
+    return {
+      ok: true,
+      start: point,
+      end: point,
+      text: selection.replacement,
+      stage: "match",
+      gateStart: point,
+      block,
+    };
+  }
   let candidates: Span[] = [{ start: block.start, end: block.end }];
+
   let stage: SelectionStage = "whole-symbol";
 
   if (selection.matcher !== null) {

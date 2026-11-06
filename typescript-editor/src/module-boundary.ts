@@ -21,7 +21,14 @@ import type { Node, Program, Statement } from "./parser";
 import { resolveEditRange } from "./range";
 import type { EditRange } from "./range";
 import { END_OF_LINE_COLUMN, isFileSelection } from "./selection";
-import type { CreateModuleStatement, ModuleCreateKind, Selection } from "./selection";
+import type {
+  CreateModuleStatement,
+  InsertionAnchorPosition,
+  ModuleCreateKind,
+  Selection,
+  SelectionMatcher,
+} from "./selection";
+
 import { memberDeletionRange } from "./utility";
 
 /** The stage a file-level clause failed at, in the edit-dsl failure vocabulary. */
@@ -222,7 +229,43 @@ function notFoundDiagnostics(path: string, matcherKind: "snippet" | "regex"): st
     "copy the exact source text (or a complete statement/expression), use a regex anchored on that text, or use `pick` with file-absolute coordinates",
   ].join("\n");
 }
+function anchorNotFoundDiagnostics(
+  path: string,
+  position: InsertionAnchorPosition,
+  matcherKind: "snippet" | "regex",
+): string {
+  return [
+    "stage: matcher",
+    `the file-level \`pick ${position}\` ${matcherKind === "regex" ? "`/regex/` anchor" : "exact anchor"} matched nothing in ${JSON.stringify(path)}; a file-level insertion anchor needs exactly one occurrence`,
+    "copy a unique exact snippet verbatim from the current file, or use `/regex/`; the anchor is matched literally, not structurally",
+  ].join("\n");
+}
 
+function anchorAmbiguousDiagnostics(
+  path: string,
+  source: string,
+  program: Program,
+  spans: readonly Span[],
+  position: InsertionAnchorPosition,
+): string {
+  const listed = spans.slice(0, CANDIDATE_LIST_LIMIT);
+  const more = spans.length - listed.length;
+  return [
+    "stage: matcher",
+    `the file-level \`pick ${position}\` anchor matches ${spans.length} places in ${JSON.stringify(path)}; a file-level insertion anchor needs exactly one occurrence`,
+    "candidates:",
+    ...listed.map((span) => candidateLine(path, source, program, span)),
+    ...(more > 0 ? [`- ... and ${more} more`] : []),
+    "hint: lengthen the anchor snippet until it is unique, or copy a longer exact snippet (or use `/regex/`)",
+  ].join("\n");
+}
+
+function anchorRegexInvalidDiagnostics(path: string, message: string): string {
+  return [
+    "stage: matcher",
+    `the file-level \`/regex/\` anchor is invalid: ${message}; write a valid ECMA-262 pattern with no flags`,
+  ].join("\n");
+}
 export function pickMatchesSpan(span: Span, range: EditRange, pickSpan: Span): boolean {
   const point = range.line === range.endLine && range.column === range.endColumn;
   if (point) {
@@ -249,7 +292,27 @@ export function findLiteralMatches(source: string, value: string): Span[] {
   }
   return spans;
 }
-
+/**
+ * Resolve a `pick before|after` anchor inside a declaration, file, or block
+ * scope. A snippet anchor is matched **literally** (not structurally): every
+ * occurrence wholly inside `scope` is a candidate. A `/regex/` anchor uses the
+ * same engine and bounds as a regex matcher.
+ */
+export function findAnchorMatches(
+  source: string,
+  scope: Span,
+  matcher: SelectionMatcher,
+): { kind: "matches"; spans: Span[] } | { kind: "invalid"; message: string } {
+  if (matcher.kind === "regex") {
+    return findRegexMatches(source, scope, matcher.value);
+  }
+  return {
+    kind: "matches",
+    spans: findLiteralMatches(source, matcher.value).filter(
+      (span) => scope.start <= span.start && span.end <= scope.end,
+    ),
+  };
+}
 function wholeLineRange(source: string, span: Span): Span {
   const lineStart = source.lastIndexOf("\n", Math.max(0, span.start - 1)) + 1;
   const lineEnd = source.indexOf("\n", span.end);
@@ -356,16 +419,18 @@ export function resolveFileSelection(
       "stage: address\na file-level select is an editor and requires `replace with <fence>` (the native form is --replace-file); use `read <path> end` to view the file",
     );
   }
-  if (selection.matcher === null && selection.pick === null) {
+  const anchor = selection.anchor ?? null;
+  if (selection.matcher === null && selection.pick === null && anchor === null) {
     return moduleEditFailure(
       "address",
       [
         "stage: address",
-        "a file-level select needs `match` or `pick`; without one it would rewrite the whole file",
-        "add `match (<snippet> | /regex/)` or `pick <selecters>`, or use `write <path> with <fence>` for a whole-file replacement",
+        "a file-level select needs `match`, `pick`, or a `pick before|after` anchor; without one it would rewrite the whole file",
+        "add `match (<snippet> | /regex/)`, `pick <selecters>`, or `pick before|after <matcher>`, or use `write <path> with <fence>` for a whole-file replacement",
       ].join("\n"),
     );
   }
+
   const program = parseProgram(source);
   if (program === null) {
     return moduleEditFailure(
@@ -374,7 +439,59 @@ export function resolveFileSelection(
     );
   }
 
+  if (anchor !== null) {
+    if (selection.matcher !== null || selection.pick !== null) {
+      return moduleEditFailure(
+        "matcher",
+        "stage: matcher\na file-level insertion anchor cannot be combined with `match` or a range `pick`; use the anchor alone",
+      );
+    }
+    const found = findAnchorMatches(source, { start: 0, end: source.length }, anchor.matcher);
+    if (found.kind === "invalid") {
+      return moduleEditFailure(
+        "matcher",
+        anchorRegexInvalidDiagnostics(selection.locator.path, found.message),
+      );
+    }
+    if (found.spans.length !== 1) {
+      return moduleEditFailure(
+        "matcher",
+        found.spans.length === 0
+          ? anchorNotFoundDiagnostics(selection.locator.path, anchor.position, anchor.matcher.kind)
+          : anchorAmbiguousDiagnostics(
+              selection.locator.path,
+              source,
+              program,
+              found.spans,
+              anchor.position,
+            ),
+      );
+    }
+    const only = found.spans[0];
+    if (only === undefined) {
+      return moduleEditFailure(
+        "matcher",
+        anchorNotFoundDiagnostics(selection.locator.path, anchor.position, anchor.matcher.kind),
+      );
+    }
+    const point = anchor.position === "before" ? only.start : only.end;
+    if (selection.replacement === "") {
+      return moduleEditFailure(
+        "no-op",
+        "stage: no-op\nthe file-level insert does not change the file: the anchor replacement is empty; put at least one line between the fences",
+      );
+    }
+    return {
+      ok: true,
+      start: point,
+      end: point,
+      text: selection.replacement,
+      stage: "match",
+      gateStart: point,
+    };
+  }
   let candidates: Span[] = [];
+
   let stage: SelectionStage = "match";
   const picked = selection.pick !== null;
 

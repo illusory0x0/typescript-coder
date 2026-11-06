@@ -1730,3 +1730,114 @@ describe("source revision token (#91)", () => {
     expect(first(text)).toEqual(selection);
   });
 });
+
+describe("pick before/after insertion anchors (#93)", () => {
+  const edit = (head: string, body: string): string =>
+    [head, "replace with", BEGIN, body, END, "end"].join("\n");
+
+  test("parses a `pick after` literal anchor as an insertion", () => {
+    const selection = first(
+      edit("select function once in a.ts\npick after `return 1;`", "  // inserted"),
+    );
+    expect(selection.anchor).toEqual({
+      position: "after",
+      matcher: { kind: "snippet", value: "return 1;" },
+    });
+    expect(selection.matcher).toBeNull();
+    expect(selection.pick).toBeNull();
+    expect(selection.replacement).toBe("  // inserted");
+  });
+
+  test("parses a `pick before` regex anchor on a file select", () => {
+    const selection = first(edit("select file a.ts\npick before /^\\s+return/", "// note"));
+    expect(selection.anchor).toEqual({
+      position: "before",
+      matcher: { kind: "regex", value: "^\\s+return" },
+    });
+    expect(selection.locator).toEqual({ path: "a.ts", name: "", kind: "file" });
+  });
+
+  test("an ordinary selection omits the anchor field", () => {
+    expect("anchor" in first("select function once in a.ts end")).toBe(false);
+  });
+
+  test("rejects an anchor combined with match", () => {
+    const error = expectSyntax(
+      "select once in a.ts\npick after `x`\nmatch `x`\nreplace with\nTC_EDIT_BEGIN\ny\nTC_EDIT_END\nend",
+      "cannot be combined with `match`",
+    );
+    expect(error.issues[0]?.code).toBe("EDIT_ANCHOR_MATCHED");
+  });
+
+  test("rejects an anchor combined with a range pick", () => {
+    const error = expectSyntax(
+      "select once in a.ts\npick after `x`\npick 2\nreplace with\nTC_EDIT_BEGIN\ny\nTC_EDIT_END\nend",
+      "cannot be combined with a range `pick`",
+    );
+    expect(error.issues[0]?.code).toBe("EDIT_ANCHOR_PICK_MIXED");
+  });
+
+  test("rejects an anchor combined with rename", () => {
+    const error = expectSyntax(
+      "select once in a.ts\npick after `x`\nrename a to b",
+      "cannot be combined with `rename`",
+    );
+    expect(error.issues[0]?.code).toBe("EDIT_ANCHOR_RENAME_MIXED");
+  });
+
+  test("rejects an anchor combined with within", () => {
+    const error = expectSyntax(
+      "select once in a.ts within 1-2\npick after `x`\nreplace with\nTC_EDIT_BEGIN\ny\nTC_EDIT_END\nend",
+      "cannot be combined with",
+    );
+    expect(error.issues[0]?.code).toBe("EDIT_WITHIN_EDITOR");
+  });
+
+  test("rejects an anchor without a replace", () => {
+    const error = expectSyntax("select once in a.ts\npick after `x`\nend", "requires a `replace`");
+    expect(error.issues[0]?.code).toBe("EDIT_ANCHOR_WITHOUT_REPLACE");
+  });
+
+  test("names the anchor form when its matcher is missing", () => {
+    const error = expectSyntax(
+      "select once in a.ts\npick before\nreplace with\nTC_EDIT_BEGIN\ny\nTC_EDIT_END\nend",
+      "after `pick before`",
+    );
+    expect(error.issues[0]?.code).toBe("EDIT_MATCHER_MISSING");
+  });
+
+  test("round-trips an anchor clause through the serializer", () => {
+    const text = edit("select function once in a.ts\npick after `return 1;`", "  // inserted");
+    const serialized = serializeSelection(first(text));
+    expect(serialized).toBe(
+      [
+        "select function once in a.ts",
+        "pick after `return 1;`",
+        "replace with",
+        BEGIN,
+        "  // inserted",
+        END,
+      ].join("\n"),
+    );
+    expect(first(serialized)).toEqual(first(text));
+  });
+
+  test("round-trips a file-level regex anchor", () => {
+    const text = edit("select file a.ts\npick before /^\\s+return/", "// note");
+    expect(first(serializeSelection(first(text)))).toEqual(first(text));
+  });
+
+  test("refuses to serialize impossible anchor combinations", () => {
+    const base = first(edit("select function once in a.ts\npick after `return 1;`", "x"));
+    const combos: Selection[] = [
+      { ...base, matcher: { kind: "snippet", value: "return 1;" } },
+      { ...base, pick: [{ line: 2, column: 1, endLine: 2, endColumn: END_OF_LINE_COLUMN }] },
+      { ...base, within: [{ line: 2, column: 1, endLine: 2, endColumn: END_OF_LINE_COLUMN }] },
+      { ...base, rename: { from: "a", to: "b" } },
+      { ...base, replacement: null },
+    ];
+    for (const selection of combos) {
+      expect(() => serializeSelection(selection)).toThrow(/anchor/);
+    }
+  });
+});

@@ -29,6 +29,8 @@ module completions {
     --resolve: string@"nu-complete tsed resolve" # TypeScript symbol space filter
     --match: string           # Snippet that must match inside the declaration
     --pick: string            # Line or column range to edit
+    --pick-before: string     # Insert immediately before the unique literal anchor (use DSL /regex/ for a regex anchor)
+    --pick-after: string      # Insert immediately after the unique literal anchor (use DSL /regex/ for a regex anchor)
     --within: string          # Line or column range to view
     --replace-file: path      # File holding the replacement text
     --rename: string          # New name for a symbol rename

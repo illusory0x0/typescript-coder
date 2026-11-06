@@ -54,6 +54,8 @@ const NATIVE_FLAGS: readonly { flag: string; used: (values: TsedArgs) => boolean
   { flag: "--rev", used: (values) => values.rev !== undefined },
   { flag: "--match", used: (values) => values.match !== undefined },
   { flag: "--pick", used: (values) => values.pick !== undefined },
+  { flag: "--pick-before", used: (values) => values.pick_before !== undefined },
+  { flag: "--pick-after", used: (values) => values.pick_after !== undefined },
   { flag: "--within", used: (values) => values.within !== undefined },
   { flag: "--replace-file", used: (values) => values.replace_file !== undefined },
   { flag: "--rename", used: (values) => values.rename !== undefined },
@@ -210,6 +212,8 @@ function renderFlagRequest(values: TsedArgs, workspaceRoot: string): string {
     { flag: "--rev", present: values.rev !== undefined, file: true },
     { flag: "--match", present: values.match !== undefined, file: true },
     { flag: "--pick", present: values.pick !== undefined, file: true },
+    { flag: "--pick-before", present: values.pick_before !== undefined, file: true },
+    { flag: "--pick-after", present: values.pick_after !== undefined, file: true },
     { flag: "--replace-file", present: values.replace_file !== undefined, file: true },
     { flag: "--rename", present: values.rename !== undefined, file: false },
   ];
@@ -239,6 +243,38 @@ function renderFlagRequest(values: TsedArgs, workspaceRoot: string): string {
     throw new UsageError("--replace-file and --rename are mutually exclusive");
   }
 
+  if (values.pick_before !== undefined && values.pick_after !== undefined) {
+    throw new UsageError("--pick-before and --pick-after are mutually exclusive");
+  }
+  const anchorFlag =
+    values.pick_before !== undefined
+      ? "--pick-before"
+      : values.pick_after !== undefined
+        ? "--pick-after"
+        : null;
+  if (anchorFlag !== null) {
+    if (values.pick !== undefined) {
+      throw new UsageError(
+        `${anchorFlag} and --pick are mutually exclusive; an anchor is an insertion point`,
+      );
+    }
+    if (values.match !== undefined) {
+      throw new UsageError(
+        `${anchorFlag} and --match are mutually exclusive; an anchor is an insertion point`,
+      );
+    }
+    if (values.rename !== undefined) {
+      throw new UsageError(`${anchorFlag} and --rename are mutually exclusive`);
+    }
+    if (values.within !== undefined) {
+      throw new UsageError(`${anchorFlag} cannot be used with --within; --within is viewer-only`);
+    }
+    if (values.replace_file === undefined) {
+      throw new UsageError(
+        `${anchorFlag} requires --replace-file; an anchor is an insertion point, not a viewer`,
+      );
+    }
+  }
   let rewriteContent: string | undefined;
   if (values.rewrite !== undefined) {
     if (values.content_file === undefined) {
@@ -299,6 +335,12 @@ function renderFlagRequest(values: TsedArgs, workspaceRoot: string): string {
     if (values.pick !== undefined) {
       selection.pick = values.pick;
     }
+    if (values.pick_before !== undefined) {
+      selection.pickBefore = values.pick_before;
+    }
+    if (values.pick_after !== undefined) {
+      selection.pickAfter = values.pick_after;
+    }
     if (values.replace_file !== undefined) {
       selection.replace = readFileArg(values.replace_file, "replacement file", workspaceRoot);
     }
@@ -327,6 +369,12 @@ function renderFlagRequest(values: TsedArgs, workspaceRoot: string): string {
     }
     if (values.pick !== undefined) {
       selection.pick = values.pick;
+    }
+    if (values.pick_before !== undefined) {
+      selection.pickBefore = values.pick_before;
+    }
+    if (values.pick_after !== undefined) {
+      selection.pickAfter = values.pick_after;
     }
     if (values.rename !== undefined) {
       selection.rename = values.rename;

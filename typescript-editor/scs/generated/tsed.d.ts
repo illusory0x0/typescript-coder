@@ -37,6 +37,10 @@ export interface TsedArgs {
   match?: string;
   /** Line or column range to edit */
   pick?: string;
+  /** Insert immediately before the unique literal anchor (use DSL /regex/ for a regex anchor) */
+  pick_before?: string;
+  /** Insert immediately after the unique literal anchor (use DSL /regex/ for a regex anchor) */
+  pick_after?: string;
   /** Line or column range to view */
   within?: string;
   /** File holding the replacement text */
@@ -71,6 +75,8 @@ export type ValueName =
   | "resolve"
   | "match"
   | "pick"
+  | "pick_before"
+  | "pick_after"
   | "within"
   | "replace_file"
   | "rename"
@@ -87,9 +93,9 @@ export interface Tsed {
  * Runtime-boundary note:
  * Only enum- and union-typed options have narrow types. `directory`,
  * `read`, `unify`, `unify_min_lines`, `select`, `select_file`, `input`,
- * `rev`, `kind`, `match`, `pick`, `within`, `replace_file`, `rename`,
- * `create`, `delete`, `rewrite` and `content_file` are `number`/`string`
- * because the .scs source carries no value range or format information.
- * Narrowing those would make the .d.ts assert more than the completion
- * script can guarantee.
+ * `rev`, `kind`, `match`, `pick`, `pick_before`, `pick_after`, `within`,
+ * `replace_file`, `rename`, `create`, `delete`, `rewrite` and
+ * `content_file` are `number`/`string` because the .scs source carries no
+ * value range or format information. Narrowing those would make the .d.ts
+ * assert more than the completion script can guarantee.
  */

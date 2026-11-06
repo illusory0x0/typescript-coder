@@ -358,3 +358,90 @@ describe("select block resolution (#84)", () => {
     expect(result.diagnostics).toContain("does not parse");
   });
 });
+
+describe("block pick before/after anchors (#93)", () => {
+  test("inserts after a unique literal span inside the block", () => {
+    const result = resolve(
+      OUTER,
+      [
+        "select block outer:2 in a.ts",
+        "pick after `total += 2;`",
+        replace("    total += 42;"),
+      ].join("\n"),
+    );
+    expect(result.ok).toBe(true);
+    if (!result.ok) {
+      return;
+    }
+    const point = OUTER.indexOf("total += 2;") + "total += 2;".length;
+    expect(result.start).toBe(point);
+    expect(result.end).toBe(point);
+    expect(result.stage).toBe("match");
+  });
+
+  test("inserts before a unique literal span inside the block", () => {
+    const result = resolve(
+      OUTER,
+      ["select block outer:2 in a.ts", "pick before `total += 1;`", replace("    // first")].join(
+        "\n",
+      ),
+    );
+    expect(result.ok).toBe(true);
+    if (!result.ok) {
+      return;
+    }
+    expect(result.start).toBe(OUTER.indexOf("total += 1;"));
+    expect(result.end).toBe(result.start);
+  });
+
+  test("zero matches fail at matcher", () => {
+    const result = resolve(
+      OUTER,
+      ["select block outer:2 in a.ts", "pick after `total += 9;`", replace("x")].join("\n"),
+    );
+    expect(result.ok).toBe(false);
+    if (result.ok) {
+      return;
+    }
+    expect(result.stage).toBe("matcher");
+    expect(result.diagnostics).toContain("matched nothing");
+  });
+
+  test("multiple matches fail as ambiguous with candidate lines", () => {
+    const result = resolve(
+      OUTER,
+      ["select block outer:2 in a.ts", "pick after /total \\+= /", replace("x")].join("\n"),
+    );
+    expect(result.ok).toBe(false);
+    if (result.ok) {
+      return;
+    }
+    expect(result.stage).toBe("matcher");
+    expect(result.diagnostics).toContain("matches 6 places");
+    expect(result.diagnostics).toContain("candidates:");
+  });
+
+  test("an anchor outside the block is not a candidate", () => {
+    const result = resolve(
+      OUTER,
+      ["select block outer:2 in a.ts", "pick before `let total = 0;`", replace("x")].join("\n"),
+    );
+    expect(result.ok).toBe(false);
+    if (result.ok) {
+      return;
+    }
+    expect(result.stage).toBe("matcher");
+  });
+
+  test("an empty fence anchor is a no-op", () => {
+    const result = resolve(
+      OUTER,
+      ["select block outer:2 in a.ts", "pick after `total += 2;`", replace("")].join("\n"),
+    );
+    expect(result.ok).toBe(false);
+    if (result.ok) {
+      return;
+    }
+    expect(result.stage).toBe("no-op");
+  });
+});

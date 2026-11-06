@@ -454,3 +454,200 @@ describe("isMutatingOperation", () => {
     expect(isMutatingOperation({ op: "rewrite", path: "a.ts", content: "" })).toBe(true);
   });
 });
+
+describe("insertion anchors in the JSON/flag protocol (#93)", () => {
+  test("renders a select with a pick-after literal anchor", () => {
+    const rendered = renderEditRequest(
+      request({
+        op: "select",
+        symbol: "answer",
+        path: "src/a.ts",
+        pickAfter: "return 1;",
+        replace: "  return 2;",
+      }),
+    );
+    expect(rendered).toBe(
+      [
+        "select answer in src/a.ts",
+        "pick after `return 1;`",
+        "replace with",
+        BEGIN,
+        "  return 2;",
+        END,
+      ].join("\n"),
+    );
+  });
+
+  test("renders a select-file with a pick-before literal anchor", () => {
+    const rendered = renderEditRequest(
+      request({
+        op: "select-file",
+        path: "src/a.ts",
+        pickBefore: "export function once",
+        replace: "// inserted",
+      }),
+    );
+    expect(rendered).toBe(
+      [
+        "select file src/a.ts",
+        "pick before `export function once`",
+        "replace with",
+        BEGIN,
+        "// inserted",
+        END,
+      ].join("\n"),
+    );
+  });
+
+  test("escapes backslashes and backticks in an anchor", () => {
+    const rendered = renderEditRequest(
+      request({
+        op: "select",
+        symbol: "answer",
+        path: "src/a.ts",
+        pickBefore: "a`b\\c",
+        replace: "x",
+      }),
+    );
+    expect(rendered).toContain("pick before `a\\`b\\\\c`");
+  });
+
+  test("accepts pickAfter from JSON and renders the anchor clause", () => {
+    const parsed = parseJsonEditRequest(
+      JSON.stringify([
+        {
+          op: "select",
+          symbol: "answer",
+          path: "a.ts",
+          pickAfter: "return 1;",
+          replace: "  return 2;",
+        },
+      ]),
+    );
+    expect(parsed.operations[0]).toEqual({
+      op: "select",
+      symbol: "answer",
+      path: "a.ts",
+      pickAfter: "return 1;",
+      replace: "  return 2;",
+    });
+    expect(renderEditRequest(parsed)).toBe(
+      [
+        "select answer in a.ts",
+        "pick after `return 1;`",
+        "replace with",
+        BEGIN,
+        "  return 2;",
+        END,
+      ].join("\n"),
+    );
+  });
+
+  test("accepts pickBefore on a select-file operation", () => {
+    const parsed = parseJsonEditRequest(
+      JSON.stringify([
+        {
+          op: "select-file",
+          path: "a.ts",
+          pickBefore: "// anchor",
+          replace: "// inserted",
+        },
+      ]),
+    );
+    expect(renderEditRequest(parsed)).toContain("pick before `// anchor`");
+  });
+
+  test("rejects both anchors on one operation", () => {
+    expectProtocolError(
+      () =>
+        renderEditRequest(
+          request({
+            op: "select",
+            symbol: "answer",
+            path: "src/a.ts",
+            pickBefore: "a",
+            pickAfter: "b",
+            replace: "x",
+          }),
+        ),
+      "mutually exclusive",
+    );
+    expectProtocolError(
+      () =>
+        renderEditRequest(
+          request({
+            op: "select-file",
+            path: "src/a.ts",
+            pickBefore: "a",
+            pickAfter: "b",
+            replace: "x",
+          }),
+        ),
+      "mutually exclusive",
+    );
+  });
+
+  test("rejects an anchor combined with match, pick, rename, or within", () => {
+    const selectBase = { op: "select" as const, symbol: "answer", path: "src/a.ts" };
+    expectProtocolError(
+      () => renderEditRequest(request({ ...selectBase, pickAfter: "x", match: "y", replace: "z" })),
+      "cannot be combined with match",
+    );
+    expectProtocolError(
+      () => renderEditRequest(request({ ...selectBase, pickAfter: "x", pick: "1", replace: "z" })),
+      "cannot be combined with pick",
+    );
+    expectProtocolError(
+      () => renderEditRequest(request({ ...selectBase, pickAfter: "x", rename: "value" })),
+      "cannot be combined with rename",
+    );
+    expectProtocolError(
+      () =>
+        renderEditRequest(request({ ...selectBase, pickAfter: "x", within: "1-2", replace: "z" })),
+      "cannot be combined with within",
+    );
+    expectProtocolError(
+      () =>
+        renderEditRequest(
+          request({
+            op: "select-file",
+            path: "src/a.ts",
+            pickAfter: "x",
+            match: "y",
+            replace: "z",
+          }),
+        ),
+      "cannot be combined with match",
+    );
+  });
+
+  test("rejects an anchor without replace", () => {
+    expectProtocolError(
+      () =>
+        renderEditRequest(
+          request({ op: "select", symbol: "answer", path: "src/a.ts", pickAfter: "x" }),
+        ),
+      "requires replace",
+    );
+    expectProtocolError(
+      () => renderEditRequest(request({ op: "select-file", path: "src/a.ts", pickBefore: "x" })),
+      "requires replace",
+    );
+  });
+
+  test("rejects an empty anchor", () => {
+    expectProtocolError(
+      () =>
+        renderEditRequest(
+          request({
+            op: "select",
+            symbol: "answer",
+            path: "src/a.ts",
+            pickBefore: "",
+            replace: "x",
+          }),
+        ),
+      "non-empty literal anchor",
+    );
+  });
+});

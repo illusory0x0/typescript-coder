@@ -51,6 +51,7 @@ where the reply stopped. A partial selection is never returned.
 
 ```text
 select [kind] <symbol> in <path> [ resolve (value|type|namespace) ] [ within <selecters> ] [ match <snippet> | match /<regex>/ ] [ [ pick <selecters> ] replace with <fence> | end ]
+select [kind] <symbol> in <path> [ resolve (value|type|namespace) ] pick (before|after) <matcher> replace with <fence>
 select [kind] <symbol> in <path> [ resolve (value|type|namespace) ] rename <old> to <new> end
 ```
 
@@ -58,21 +59,23 @@ The file-level editor edits a unique span anywhere in the file:
 
 ```text
 select file <path> [ match <snippet> | match /<regex>/ ] [ pick <selecters> ] replace with <fence>
+select file <path> pick (before|after) <matcher> replace with <fence>
 select file <path> [ match <snippet> | match /<regex>/ ] [ pick <selecters> ] end
 ```
 
-The second form is the protocol renderer's missing-replacement shape; it
+The third form is the protocol renderer's missing-replacement shape; it
 resolves to an `address` failure with the replacement hint rather than a
-whole-file write.
+whole-file write. An insertion anchor always requires `replace`.
 
 The block editor names a brace span by the marker ID printed by `tsed --unify`:
 
 ```text
 select block <symbol-id>:<node-id> in <path> [ match <snippet> | match /<regex>/ ] [ pick <selecters> ] replace with <fence>
+select block <symbol-id>:<node-id> in <path> pick (before|after) <matcher> replace with <fence>
 select block <symbol-id>:<node-id> in <path> [ match <snippet> | match /<regex>/ ] [ pick <selecters> ] end
 ```
 
-The second form is likewise an `address` failure with the replacement hint.
+The third form is likewise an `address` failure with the replacement hint.
 A declaration literally named `block` keeps the ordinary symbol form
 (`select block in <path>`); a token after `block` that is not `in` starts the
 block-select form.
@@ -106,8 +109,8 @@ carry `within`.
 - **`within`**: optional viewer-only slice, after `resolve`. It uses the same
   1-based inclusive file-absolute ranges as `read ... within`. The viewer returns
   exactly those lines from the declaration, unfolded. It cannot be combined with
-  `match`, `pick`, `replace`, or `rename`; editors use `pick` for a narrowed
-  rewrite.
+  `match`, `pick`, a `pick before|after` anchor, `replace`, or `rename`;
+  editors use `pick` for a narrowed rewrite.
 - **`match`**: exactly one of two locators: `match` followed by a backtick
   snippet, or `match` followed by a slash regex. The prompt writes both forms
   without parentheses; a parenthesized matcher or unquoted code is not a
@@ -116,7 +119,23 @@ carry `within`.
     every other backslash is literal;
   - a `/regex/` in slashes, where only a backslash-escaped slash decodes to `/`
     and every other backslash passes through to the engine.
-- **`pick`**: one range or a `{a, b, …}` set. `pick` requires a following
+- **`pick before <matcher>` / `pick after <matcher>`**: a **zero-width
+  insertion** selector. `pick after \`return value;\``places the fence body
+  immediately after the one unique occurrence of`return value;`inside the
+  selected declaration, file, or block;`pick before`places it immediately
+  before that occurrence. The snippet is matched **literally** — every
+  occurrence wholly inside the owner span is a candidate, not a structural
+  parse of the snippet. A`/regex/`anchor is accepted in the DSL and uses the
+  same regex engine as`match`(the`g`and`m`flags, no user flags), including
+  zero-width matches. Exactly one occurrence is required: zero is a`stage: matcher`not-found failure, and several is an ambiguity failure that
+  lists each candidate's`path:line:column`; both write nothing. An anchor
+  cannot be combined with `match`, a range `pick`, or `rename`, and it requires
+  `replace`; an empty fence is a `no-op`failure. Because the anchor is a
+  zero-width splice point, the existing formatter and parse gate still run, so
+  an insertion that would break the file is rejected. Prefer an anchor over
+  line/column`pick` for insertions that do not move existing text.
+- **`pick <selecters>`**: a line/point/range selector, one range or a
+  `{a, b, …}` set. `pick` requires a following
   `replace`; a clause that stops at `pick` is a syntax error, not a viewer
   (a braced set needs at least one range). With a `match`, a point selecter
   (`line:column`) picks the match candidates whose span **contains the point**,
@@ -151,9 +170,10 @@ carry `within`.
   for namespaces, enum members, and class fields (`this.field` plus same-class
   static accesses). A collision with an existing binding at the same scope or
   qualified path, or a duplicate public export name, is an `address` failure,
-  and a rename cannot be combined with `match`, `pick`, or `replace`. A
-  `match` on a rename is an `EDIT_RENAME_MATCHED` syntax error: remove the
-  matcher, or use `pick … replace with …` for a matcher-scoped rewrite.
+  and a rename cannot be combined with `match`, `pick`, a `pick before|after`
+  anchor, or `replace`. A `match` on a rename is an `EDIT_RENAME_MATCHED`
+  syntax error: remove the matcher, or use `pick … replace with …` for a
+  matcher-scoped rewrite.
 - **`end`** terminates a viewer or rename select clause. `create <path> end`,
   `delete <path> end`, and `read <path> end` use it too. A `replace with`,
   `create … with`, or `write … with` body ends at its `TC_EDIT_END` close, not
@@ -163,7 +183,25 @@ carry `within`.
 A select clause with neither `replace` nor `rename` is a **viewer**: it locates
 and writes nothing (§4). A select clause with `replace` is an editor (after
 `pick` when present); `pick` requires `replace`. A `rename` is always an editor,
-never a viewer.
+never a viewer. A `pick before|after` anchor is likewise always an editor and
+requires `replace`.
+
+A typical insertion:
+
+```text
+select function answer in src/helper.ts
+pick after `return 1;`
+replace with
+TC_EDIT_BEGIN
+  return 2;
+TC_EDIT_END
+```
+
+The anchor resolves to the zero-width point immediately after `return 1;`, so
+the fence body is spliced there. The body lands on the same line unless it
+starts with a newline; write a leading newline when the insertion should occupy
+its own line. The parse gate and formatter then validate the spliced file as
+usual.
 
 **Select first.** The first edit-dsl reply is exactly one select clause or file
 commands; it is never both. The harness renders its symbol index as top-level
@@ -329,7 +367,9 @@ missing feature. In the selector column, **whole-symbol** means no `match` and n
 **`/regex/`** is the regex locator, and **`pick`** is a line/point/range
 selector. **Owner + selector** means select the class/interface/type-alias/
 object/enum owner first; **rejected-with-candidates** means the address or
-matcher fails and names every candidate, never the first.
+matcher fails and names every candidate, never the first. Every selector path
+that lists `pick` also accepts `pick before|after <matcher>` for a zero-width
+insertion of a `replace` fence (the anchor form requires `replace`).
 
 | Form/owner                                                                           | Address                                                                                                                              | Supported selectors/create                                                                                                                                                          | Notes/limits                                                                                                                                                                                    |
 | ------------------------------------------------------------------------------------ | ------------------------------------------------------------------------------------------------------------------------------------ | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
@@ -374,6 +414,11 @@ function body, a test callback, an object literal, or a template-literal body;
 `create import|export` remains module-boundary-only.
 
 - `match` (a structural snippet or `/regex/`) or `pick` locates the target.
+- `pick before|after <matcher>` is the insertion form: the literal snippet (or
+  a `/regex/` in the DSL) must occur exactly once in the file, and the fence
+  body is spliced immediately before/after that occurrence. It cannot be
+  combined with `match` or a range `pick`, and it requires `replace`; an empty
+  fence is a `no-op` failure.
 - `rev <token>` is the optional freshness guard from a viewer/read header,
   placed after the path and before `match`/`pick`.
   A snippet that is not valid TypeScript on its own (for example an incomplete
@@ -429,10 +474,12 @@ comment, so the annotated view stays syntactically valid.
   path guards those coordinates like every other select. `match` (structural snippet or
   `/regex/`) narrows structurally inside the span, and `pick` narrows by
   1-based file-absolute coordinates; with both, the match candidates are
-  filtered by the pick. The block span is the whole target when neither is
-  present. Exactly one candidate is required; `address` reports an unknown or
-  ambiguous ID with the available markers, and `matcher` reports zero,
-  ambiguous, or non-intersecting candidates.
+  filtered by the pick. `pick before|after <matcher>` instead splices at the
+  unique literal (or `/regex/`) occurrence inside the block; it cannot combine
+  with `match` or a range `pick`, and it requires `replace`. The block span is
+  the whole target when neither is present. Exactly one candidate is required;
+  `address` reports an unknown or ambiguous ID with the available markers, and
+  `matcher` reports zero, ambiguous, or non-intersecting candidates.
 - A block select is an **editor only** and needs `replace with <fence>`; the
   DSL reader accepts the `end` shape so resolution can report the missing
   replacement. An empty fence deletes exactly the resolved span. `resolve`,
@@ -549,21 +596,29 @@ select-tail  = replacer | renamer | 'end' ;
 
 file-select-clause = 'select', 'file', path,
                      [ 'rev', revision ],
-                     [ 'match', ( snippet | regex ) ],
-                     [ 'pick', selecters ],
-                     ( 'replace', 'with', fence | 'end' ) ;
+                     ( [ 'match', ( snippet | regex ) ],
+                       [ 'pick', selecters ],
+                       ( 'replace', 'with', fence | 'end' )
+                     | 'pick', anchor-side, ( snippet | regex ),
+                       'replace', 'with', fence ) ;
                      (* the end form is accepted so resolution can report the
-                        missing replacement; validate it as an address failure *)
+                        missing replacement; validate it as an address failure.
+                        The anchor form always requires 'replace'. *)
 
 block-select-clause = 'select', 'block', block-id, 'in', path,
                       [ 'rev', revision ],
-                      [ 'match', ( snippet | regex ) ],
-                      [ 'pick', selecters ],
-                      ( 'replace', 'with', fence | 'end' ) ;
+                      ( [ 'match', ( snippet | regex ) ],
+                        [ 'pick', selecters ],
+                        ( 'replace', 'with', fence | 'end' )
+                      | 'pick', anchor-side, ( snippet | regex ),
+                        'replace', 'with', fence ) ;
                       (* the end form is an address failure, like file-select;
                          `select block in path` stays the symbol form *)
 
-replacer     = [ 'pick', selecters ], 'replace', 'with', fence ;
+replacer     = [ 'pick', selecters ], 'replace', 'with', fence
+             | 'pick', anchor-side, ( snippet | regex ), 'replace', 'with', fence ;
+             (* the anchor form rejects a preceding 'match' or rename *)
+anchor-side  = 'before' | 'after' ;
 renamer      = 'rename', identifier, 'to', identifier, 'end' ;
 
 selecters    = '{', range, { ',', range }, '}'
@@ -739,9 +794,13 @@ a partial destructive result. In particular:
   after a `write` close is accepted as compatibility, and a second one is an
   error.
 - `match` without a snippet/regex reports `EDIT_MATCHER_MISSING` with the
-  accepted forms and an example.
+  accepted forms and an example. A missing `pick before`/`pick after` matcher
+  reports the same code and names the anchor form.
 - `pick` without `replace`, `rename` mixed with `replace`, unknown `resolve`
   space, and a malformed fence each get a dedicated code and a one-line hint.
+  An insertion anchor reports `EDIT_ANCHOR_MATCHED`,
+  `EDIT_ANCHOR_PICK_MIXED`, `EDIT_ANCHOR_RENAME_MIXED`, or
+  `EDIT_ANCHOR_WITHOUT_REPLACE` for its forbidden combinations.
 - Multiple statements are all parsed before any application. One bad editor
   statement rejects all writes; good view-only statements may still return
   feedback.
@@ -751,7 +810,8 @@ Shipped `EDIT_*` error codes: `MISSING_END`, `MISSING_FIELD`, `UNKNOWN_FIELD`,
 `FENCE_TRAILING_TEXT`, `EMBEDDED_FENCE_END`, `RETIRED_DONE`, `STRAY_END`,
 `MATCHER_MISSING`, `FILE_RENAME_UNSUPPORTED`, `FILE_VIEWER_UNSUPPORTED`,
 `PICK_WITHOUT_REPLACE`, `RENAME_MIXED`, `UNKNOWN_SPACE`, `TARGET_MISMATCH`,
-`TRUNCATED`.
+`ANCHOR_MATCHED`, `ANCHOR_PICK_MIXED`, `ANCHOR_RENAME_MIXED`,
+`ANCHOR_WITHOUT_REPLACE`, `TRUNCATED`.
 
 ### Outer wrapper (whole-reply Markdown fence)
 
@@ -1191,17 +1251,17 @@ next diagnostics. The feedback ends by asking for an editor select clause: add
 Every rejection carries a `stage:` tag and costs one exchange. The vocabulary is
 shared by every reply path so metrics compare.
 
-| Stage       | Cause                                                                                                                         |
-| ----------- | ----------------------------------------------------------------------------------------------------------------------------- |
-| `syntax`    | Edit-dsl only: the reply does not parse as a statement (`select …` or a file command), including a fence or terminator error. |
-| `protocol`  | The reply is not edit-dsl, including a JSON edit payload.                                                                     |
-| `address`   | The address does not resolve uniquely.                                                                                        |
-| `matcher`   | `matcher-unparseable`, `matcher-not-found`, `matcher-ambiguous`, or `regex-invalid`.                                          |
-| `range`     | A `range`/`pick` that is out of bounds, empty, inverted, outside the declaration, or copied from a stale `rev` token.         |
-| `no-op`     | The replacement equals the text it replaces; ignored when another clause in the reply applies, otherwise a rejection.         |
-| `duplicate` | A repeated resolved target; a duplicate top-level declaration or create.                                                      |
-| `gate`      | The file parsed before and does not parse after.                                                                              |
-| `format`    | oxfmt rejected the result, or the formatted source equals the pre-edit source.                                                |
+| Stage       | Cause                                                                                                                                                          |
+| ----------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `syntax`    | Edit-dsl only: the reply does not parse as a statement (`select …` or a file command), including a fence or terminator error.                                  |
+| `protocol`  | The reply is not edit-dsl, including a JSON edit payload.                                                                                                      |
+| `address`   | The address does not resolve uniquely.                                                                                                                         |
+| `matcher`   | `matcher-unparseable`, `matcher-not-found`, `matcher-ambiguous`, or `regex-invalid`; an insertion anchor resolves through the same causes.                     |
+| `range`     | A `range`/`pick` that is out of bounds, empty, inverted, outside the declaration, or copied from a stale `rev` token.                                          |
+| `no-op`     | The replacement equals the text it replaces, or an insertion anchor's fence is empty; ignored when another clause in the reply applies, otherwise a rejection. |
+| `duplicate` | A repeated resolved target; a duplicate top-level declaration or create.                                                                                       |
+| `gate`      | The file parsed before and does not parse after.                                                                                                               |
+| `format`    | oxfmt rejected the result, or the formatted source equals the pre-edit source.                                                                                 |
 
 When an edit-dsl statement fails at any stage other than `no-op`, its
 diagnostic names the statement, its position in the reply (`clause N of M`), its
